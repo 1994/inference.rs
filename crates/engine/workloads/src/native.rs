@@ -71,6 +71,11 @@ impl WorkloadProvider for NativeWorkloads {
             .sampling
             .eos_token
             .is_some_and(|t| t as usize >= model.vocab_size)
+            || request
+                .sampling
+                .eos_tokens
+                .iter()
+                .any(|t| *t as usize >= model.vocab_size)
             || request.sampling.top_k.is_some_and(|k| k > model.vocab_size)
         {
             return Err(Error::invalid("sampling exceeds model vocabulary"));

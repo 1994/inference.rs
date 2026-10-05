@@ -1,45 +1,54 @@
-# ml-llm
+# inference.rs
 
-Rust 推理引擎：由 CPU 管理请求、调度、KV 页所有权和异步交接，由独立 GPU backend 执行模型。Linux 是首要生产平台，NVIDIA CUDA 是首要设备 backend；macOS 使用 Metal 做本地验证。CPU 执行器仅用于正确性对照，不进入默认生产依赖。
+[![Quality](https://github.com/1994/inference.rs/actions/workflows/ci.yml/badge.svg)](https://github.com/1994/inference.rs/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange?logo=rust)](rust-toolchain.toml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-## 代码入口
+用 Rust 编写的模型推理引擎：直接加载 Hugging Face Safetensors 模型，在一个二进制里完成推理、服务与诊断。目标是单节点 SLO 吞吐对照 vLLM、SGLang 与 TensorRT-LLM。
 
-```text
-crates/
-  foundation/   core · ir · spi             基础类型、IR 与扩展合约
-  backend/      api · kernel-api · metal    设备执行；cuda 保存迁移约定
-  model/        package · compiler          权重包、文本资产与执行图编译
-  engine/       state · scheduler · workloads · runtime
-  diagnostics/  observe · quality           观测、诊断与质量验证
-  service/      frontdoor · agent · cli      服务入口、诊断 Agent 与命令行
-  testing/cpu/  host · reference             显式启用的 CPU 对照
-```
+## 特点
 
-[代码布局与调用链](docs/architecture/layout.md)说明模块职责、依赖方向和改动归属。[文档导航](docs/README.md)汇总运行、架构、设计与验证资料；总体设计与模块契约见[技术方案](docs/design/technical-plan.md)。
+- **纯 Rust，无 Python 运行时**：直接读取 HF 模型包，不需要 Python、PyTorch 或现场编译，部署就是一个二进制。
+- **不止于文本生成**：同一个引擎原生支持 Generate、Embed、Rerank 和 Decision（分类 / 打分 / 决策），不必拼装多个服务。
+- **为并发服务而建**：paged KV、prefix cache、copy-on-write、多租户调度、SLO 感知准入与重算抢占，配合有界队列、背压、取消和在途资源排空。
+- **可确定复现**：quiescent checkpoint 与 journal replay 能从请求、状态、成本三层重建一次执行，线上问题可以在本地回放。
+- **自带诊断 Agent**：通过 JSON-RPC 暴露调度决策、状态所有权与源码关联等 typed 证据，并能在隔离环境运行 baseline / candidate 配置实验。
+- **观测与正确性内建**：Prometheus、Chrome Trace、OTLP JSON 开箱可用；每项能力都有独立于实现的 golden / 参考验证和零分配门禁。
 
-## 运行
+> **项目处于开发阶段。** 当前可在 Apple GPU 上运行仓库自带的微型混合模型；CUDA 算子已验证、完整执行器尚未接入，Qwen3.8-27B 全模型与生产性能目标仍待验收。详见[实现状态](docs/design/status.md)。
+
+## 快速开始
+
+需要 Rust 1.90+（仓库固定 1.99.0）和 C 编译器。
 
 ```sh
-cargo build --locked --release -p infer-cli --no-default-features
-target/release/infer --backend metal run --package examples/qwen-hybrid-tiny \
+git clone https://github.com/1994/inference.rs.git
+cd inference.rs
+
+# 用仓库自带权重在本机验证数值
+cargo build --locked -p infer-cli --features test-backends
+target/debug/infer --backend test-cpu verify \
+  --package examples/qwen-hybrid-tiny \
+  --golden examples/qwen-hybrid-tiny/golden.json --atol 0.000002 --rtol 0.00002
+
+# macOS 上运行样例请求
+cargo build --locked --release -p infer-cli
+target/release/infer --backend metal run \
+  --package examples/qwen-hybrid-tiny \
   --requests examples/requests.json --config examples/runtime.json
 ```
 
-macOS 需要可用的 Metal 设备。服务、模型加载、文本与测试对照命令见[开发指南](docs/guides/development.md)。
+`infer serve` 启动服务后，除原生接口外还提供 `/v1/models`、`/v1/chat/completions` 和 `/v1/completions`。完整参数见 `infer --help`。
 
-## 验证
+## 文档
 
-```sh
-make check-rust     # 布局、严格 lint、测试、文档、独立 CPU golden 与分配检查
-make check-tools    # Python 与 CI 配置
-make check-msrv     # Rust 1.90
-make check-linux    # Linux placement 原生测试或跨平台编译检查
-make check-metal    # 真实 GPU、服务、KV 压力与短负载验证
-make check-security
-```
+- [文档导航](docs/README.md)
+- [开发与运行](docs/guides/development.md)
+- [模型执行](docs/guides/model-execution.md)
+- [实现状态](docs/design/status.md)
 
-完整入口为 `make check`，规则见[质量门禁](docs/guides/quality-gates.md)。[工具导航](tools/README.md)按 `tools/check`、`tools/validation`、`tools/fixtures`、`tools/bench` 分组；运行产物位于 `artifacts`，模型样例位于 `examples`。
+## 贡献与许可
 
-## 当前边界
+欢迎提交 [Issue](https://github.com/1994/inference.rs/issues) 和 Pull Request；流程见[贡献指南](CONTRIBUTING.md)，安全问题见[安全策略](SECURITY.md)。
 
-微型混合模型、Metal paged KV 和 CPU 调度协议已有本机验证；完整 Qwen3.8-27B、RTX 5090 CUDA、全引擎零分配、多 GPU flight 与远程 PD 尚未验收。CPU 目标负载的 P99 与吞吐仍未达标，具体结果和剩余项见[CPU 验证](docs/validation/cpu.md)及[设计状态](docs/design/status.md)。
+[Apache License 2.0](LICENSE)。

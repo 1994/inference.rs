@@ -25,6 +25,9 @@ impl RuntimeHandle {
         B::Ticket: Send,
     {
         config.validate()?;
+        let request_ids = Arc::new(std::sync::atomic::AtomicU64::new(
+            engine.request_id_high_watermark(),
+        ));
         let preparer = engine.request_preparer()?;
         let cpu = crate::cpu::CpuPool::new(config.clone())?;
         let delivery = crate::cpu::CpuPool::named(
@@ -63,6 +66,7 @@ impl RuntimeHandle {
             stop,
             clock_started,
             clock_origin_us,
+            request_ids,
             preparer,
             cpu,
             delivery,

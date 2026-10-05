@@ -1,11 +1,47 @@
-# NVIDIA CUDA 迁移位置
+# NVIDIA CUDA 后端
 
-首要设备 RTX 5090，首要模型 Qwen3.8-27B。用户已要求 CUDA 部分在迁移至测试环境后实现；此目录当前不包含执行器 crate，CLI 明确返回 Unsupported。
+GPU kernel 使用 NVIDIA cuTile Rust 0.4.0。host 与 device 程序都用 Rust 编写，由 CUDA Driver 与 Tile IR 负责执行和编译。
 
-专属类型位于 infer_ir::hardware::cuda：NvidiaArchitecture、NvidiaCapabilities、CudaRequirements。DeviceBackend::Cuda 绑定这些属性，Metal/CPU 无法携带 CUDA 属性或满足 CUDA 要求。
+## 已验证范围
 
-后续执行器在本组接入真实 device query、HBM buffer、stream/event、submit/poll 和 checkpoint。复用 infer-state 的物理 BlockLease {owner, index, generation} / BlockPool、PrefixCache，以及 BackendProvider 的 state_page_growth、kv_cache、prefix attachment、recompute preemption 合约；CUDA kernel 读取 u32 page table。设备字节与 stream lifetime 由 CUDA 自己管理，不能复制 Metal handle 或把 Host 结果作为 CUDA 验收。
+- dense BF16/F32 矩阵向量乘与显式 tile 选择。
+- FP8 channel-scaled 与 NVFP4 packed-weight 的参考投影。
+- RTX 5090 上全部搜索候选的逐元素数值检查，包括不整除的行 tile。
+- 配套 CUDA event 基线：预热、冷 L2、原始样本与 A/B 比较。
 
-物理页与 prefix 的入口已集中到 `infer_state::kv::KvCacheManager<P>`：prepare_append 返回 KvCopy，manager 负责引用、COW、淘汰、rollback 与容量证据，backend 负责 device buffers/复制。CUDA 接入时使用自己的 KvPrefix snapshot，并把 shared-tail copy pins 保留到真实 event 完成；多 stream 要逐 flight 管理 pins。模型加载使用 `infer_models::WeightTarget`，异步 H2D 必须在自己的 staging budget 与 fence 合约内消费 loader 借用切片。当前 Metal 的共享 tile prefill/F32 compute 不代表 CUDA precision 或性能已经实现。
+量化参考 kernel 使用 F32 activation。动态 activation 量化、block-scaled Tensor Core 执行、完整模型执行与 MTP 推测执行**尚未实现**，CLI 也没有可用的 CUDA 模型执行器。kernel 验证不代表模型质量。
 
-BF16/量化、CUDA Graph、批量 attention 和 CUPTI 在真实设备上验证后再声明支持；当前 Metal F32 数值结果只用作公共语义对照。
+## 构建与验证
+
+需要 Linux、Rust、带 `tileiras` 的 CUDA Toolkit、CUDA driver、libclang 及其标准 C 头文件。本地已使用 CUDA 13.4 与 RTX 5090 验证。
+
+```sh
+CUDA_TOOLKIT_PATH=/opt/cuda cargo +stable run -p infer-backend-cuda \
+  --features cuda --example cuda-kernels
+
+CUDA_TOOLKIT_PATH=/opt/cuda cargo +stable run -p infer-backend-cuda \
+  --features cuda --example cuda-baseline -- 17408 5120
+```
+
+本机 bindgen 还需要 `BINDGEN_EXTRA_CLANG_ARGS='-isystem /usr/lib/gcc/x86_64-pc-linux-gnu/16/include'`；该路径与主机相关，不是可移植的构建要求。
+
+不上传权重、只查看模型投影尺寸：
+
+```sh
+target/debug/examples/cuda-baseline --catalog /path/to/Qwen3.8-27B-NVFP4
+```
+
+采集流程与结果范围见 [CUDA 性能指南](../../../docs/guides/cuda-performance.md)。`make check-cuda` 运行严格 Clippy、测试、Rustdoc 与真实 GPU kernel 检查；托管 CI 的 `make check-rust` 只检查可移植的 CUDA strategy API，不启用依赖 Toolkit 的 feature。GPU 验收必须在 CUDA 主机上执行。
+
+## 职责边界
+
+| 职责 | 归属 |
+|---|---|
+| 校验存储格式、scale 与逻辑 shape | `infer-models::QuantizedPackage` |
+| 把模型适配为投影 workload | `infer-models::ProjectionCatalog` |
+| 枚举合法 launch 配置 | `strategy::LinearStrategy` |
+| 分配并启动 typed device tensor | `device::CudaDevice` |
+| 数学计算 | `kernels` |
+| 对比配置并记录样本 | `benchmark` |
+
+模型名称不会进入 kernel 来选择 tile。prefill、decode 与 MTP 需要各自独立的策略，decode GEMV 的测量结果不能用来选择 prefill GEMM tile。后续执行器必须遵守 `BackendProvider` 与 `KvCacheManager` 的所有权、checkpoint 与回滚契约。

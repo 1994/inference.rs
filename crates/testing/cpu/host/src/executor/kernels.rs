@@ -41,6 +41,9 @@ fn norm(x: &[f32], weight: &[f32], dim: usize, epsilon: f32, offset: f32) -> Res
     }
     Ok(out)
 }
+/// Execute an operation against validated test-backend bindings.
+/// # Errors
+/// Returns an error for inconsistent operation dimensions or physical state.
 pub fn execute(
     op: &TensorOp,
     inputs: &[&[f32]],

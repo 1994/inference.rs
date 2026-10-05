@@ -1,6 +1,10 @@
-# 架构决策
+# 架构决策记录
 
-- [Runtime 边界](0001-runtime-boundaries.md)
-- [CPU Runtime](0002-cpu-runtime.md)
+本目录保存已采纳的架构决策（ADR）。每条记录包含状态、日期、背景、决策与后果；修改已采纳决策时新增一条记录，而不是改写历史。
 
-当前代码组织见[布局说明](../architecture/layout.md)。
+| 编号 | 决策 | 状态 |
+|---|---|---|
+| [ADR-0001](0001-runtime-boundaries.md) | 核心与执行边界 | 采用 |
+| [ADR-0002](0002-cpu-runtime.md) | CPU 与 GPU 提交流水线 | 采用 |
+
+当前代码组织见[代码布局](../architecture/layout.md)，设计契约见[技术方案](../design/technical-plan.md)。

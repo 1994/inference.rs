@@ -33,7 +33,7 @@ pub struct QwenPackage {
     pub manifest: PackageManifest,
     pub(crate) shards: BTreeMap<String, SafetensorsFile>,
 }
-fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
+pub fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
     let file = std::fs::File::open(path)
         .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
     if file
@@ -179,7 +179,7 @@ impl QwenPackage {
 
 type Shards = BTreeMap<String, SafetensorsFile>;
 type TensorShards = BTreeMap<String, String>;
-fn load_shards(root: &Path) -> Result<(Shards, TensorShards)> {
+pub fn load_shards(root: &Path) -> Result<(Shards, TensorShards)> {
     let index_path = root.join("model.safetensors.index.json");
     let index = if index_path.exists() {
         Some(SafetensorsIndex::parse(&read_bounded(
@@ -217,7 +217,15 @@ fn load_shards(root: &Path) -> Result<(Shards, TensorShards)> {
             .flat_map(|s| s.tensors.values())
             .try_fold(0u64, |sum, h| sum.checked_add(h.byte_len()))
             .ok_or_else(|| Error::invalid("package size overflow"))?;
-        if bytes != index.weight_bytes()? {
+        // Some compressed-tensors exporters include safetensors headers in
+        // total_size. Accept either exact convention; tensor maps, offsets and
+        // complete payload coverage have already been independently validated.
+        let file_bytes = shards
+            .values()
+            .try_fold(bytes, |sum, shard| sum.checked_add(shard.header_bytes()))
+            .ok_or_else(|| Error::invalid("package file size overflow"))?;
+        let declared = index.weight_bytes()?;
+        if bytes != declared && file_bytes != declared {
             return Err(Error::invalid(
                 "HF index total_size disagrees with shard payload",
             ));

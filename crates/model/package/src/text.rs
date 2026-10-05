@@ -33,6 +33,7 @@ pub struct TextAssets {
     special: BTreeMap<String, serde_json::Value>,
     pub fingerprint: String,
     max_tokens: usize,
+    pub generation: crate::GenerationDefaults,
 }
 fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -119,6 +120,7 @@ impl TextAssets {
             template = Some(String::from_utf8(bytes).map_err(|e| Error::invalid(e.to_string()))?);
         }
         Ok(Self {
+            generation: crate::GenerationDefaults::open(root)?,
             tokenizer,
             template,
             special,

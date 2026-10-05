@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub(super) struct TextState {
-    handle: RuntimeHandle,
-    assets: std::sync::Arc<infer_models::TextAssets>,
-    delivery: cpu::CpuPool,
+    pub(super) handle: RuntimeHandle,
+    pub(super) assets: std::sync::Arc<infer_models::TextAssets>,
+    pub(super) delivery: cpu::CpuPool,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,9 +25,9 @@ pub struct NativeTextRequest {
     #[serde(default)]
     pub qos: infer_ir::Qos,
     #[serde(default)]
-    pub sampling: infer_ir::Sampling,
+    pub sampling: infer_models::SamplingOverrides,
     #[serde(default)]
-    pub options: infer_models::ChatOptions,
+    pub options: Option<infer_models::ChatOptions>,
 }
 pub fn router_with_text(
     handle: RuntimeHandle,
@@ -41,6 +41,7 @@ pub fn router_with_text(
     router(handle).merge(
         Router::new()
             .route("/native/v1/text", post(text_infer))
+            .merge(super::openai::routes())
             .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
             .with_state(state),
     )
@@ -80,9 +81,18 @@ pub(super) async fn text_infer(
             request.qos.deadline_us,
             move |context| {
                 context.check()?;
+                let mut overrides = request.sampling;
+                if let Some(options) = &request.options {
+                    overrides.enable_thinking = Some(options.enable_thinking);
+                }
+                let resolved = assets.generation.resolve(&overrides)?;
+                let options = request.options.unwrap_or(infer_models::ChatOptions {
+                    enable_thinking: resolved.enable_thinking,
+                    ..Default::default()
+                });
                 let tokens = match (request.prompt, request.messages) {
                     (Some(prompt), None) => assets.encode(&prompt, true)?,
-                    (None, Some(messages)) => assets.encode_chat(&messages, &request.options)?,
+                    (None, Some(messages)) => assets.encode_chat(&messages, &options)?,
                     _ => return Err(Error::invalid("provide exactly one of prompt/messages")),
                 };
                 Ok(CanonicalRequest {
@@ -95,7 +105,7 @@ pub(super) async fn text_infer(
                     },
                     workload: request.workload,
                     qos: request.qos,
-                    sampling: request.sampling,
+                    sampling: resolved.sampling,
                     extensions: BTreeMap::new(),
                 })
             },

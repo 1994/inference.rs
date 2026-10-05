@@ -7,6 +7,28 @@ use infer_runtime::{EngineOutput, RuntimeInspection};
 use std::{time::Duration, time::Instant};
 
 impl RuntimeHandle {
+    /// Allocate a process-local request identity shared by all clones of this handle.
+    /// Explicit submissions advance the same counter; allocated identities are never reused.
+    /// # Errors
+    /// Returns capacity if the request identity space is exhausted.
+    pub fn allocate_request_id(&self) -> Result<RequestId> {
+        use std::sync::atomic::Ordering;
+        let mut previous = self.request_ids.load(Ordering::Relaxed);
+        loop {
+            let next = previous
+                .checked_add(1)
+                .ok_or_else(|| Error::new(ErrorCode::Capacity, "request identities exhausted"))?;
+            match self.request_ids.compare_exchange_weak(
+                previous,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return RequestId::new(next),
+                Err(current) => previous = current,
+            }
+        }
+    }
     #[must_use]
     pub fn cpu_pool(&self) -> crate::cpu::CpuPool {
         self.cpu.clone()
@@ -103,6 +125,8 @@ impl RuntimeHandle {
             Instant::now() + Duration::from_micros(deadline.saturating_sub(now_us))
         });
         let pending = self.ingress.reserve(id, bytes)?;
+        self.request_ids
+            .fetch_max(id.get(), std::sync::atomic::Ordering::Relaxed);
         let _abandon = crate::ingress::Abandon(pending.clone());
         let preparing = pending.clone();
         let preparer = self.preparer.clone();

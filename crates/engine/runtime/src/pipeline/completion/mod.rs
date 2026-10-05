@@ -360,7 +360,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             r.max_tpot_us = Some(r.max_tpot_us.unwrap_or(0).max(self.now_us - last));
         }
         r.last_token_us = Some(self.now_us);
-        let reason = if r.request.sampling.eos_token == Some(token) {
+        let reason = if r.request.sampling.is_eos(token) {
             Some(FinishReason::Eos)
         } else if r.generated.len() >= max_new_tokens {
             Some(FinishReason::Length)

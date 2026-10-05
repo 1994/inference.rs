@@ -67,6 +67,11 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
     }
     #[cfg(not(any(target_os = "macos", feature = "test-backends")))]
     {
+        if package.is_none() {
+            return Err(Error::invalid(
+                "device backend verification requires --package and --golden",
+            ));
+        }
         let _ = (golden, device_memory_mib, backend_choice);
         Err(Error::unsupported(
             "GPU verification requires a supported device backend",

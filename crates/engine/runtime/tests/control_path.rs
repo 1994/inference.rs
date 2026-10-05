@@ -255,12 +255,16 @@ fn consumed_request_id_cannot_alias_a_new_request() {
         history_capacity: 2,
         ..Default::default()
     });
+    assert_eq!(e.request_id_high_watermark(), 0);
     for id in 1..=3 {
         e.submit(request(id, Workload::Generate { max_new_tokens: 1 }))
             .unwrap();
         e.cancel(RequestId::new(id).unwrap()).unwrap();
         e.take_completed(RequestId::new(id).unwrap()).unwrap();
     }
+    assert_eq!(e.request_id_high_watermark(), 3);
+    let restored = Engine::restore(backend(), &registry(), e.snapshot().unwrap()).unwrap();
+    assert_eq!(restored.request_id_high_watermark(), 3);
     for id in 1..=3 {
         assert_eq!(
             e.submit(request(id, Workload::Generate { max_new_tokens: 1 }))

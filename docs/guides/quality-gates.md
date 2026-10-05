@@ -1,38 +1,54 @@
 # 质量门禁
 
-统一入口 `make check`，任一步失败退出；CI 复用脚本，`quality-gate` 汇总 Linux/macOS Rust、工具、MSRV 与依赖安全 jobs，接入仓库后设为 required check。
+所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV 与依赖安全结果。
 
-## 检查规则
+## 检查项
 
 | 范围 | 要求 |
 |---|---|
-| 目录/依赖 | 职责分组、crate/path 注册、小型 facade、禁止反向 service/具体 backend 依赖、文档与源码链接 |
-| Rust lint | fmt；Clippy all/pedantic/nursery deny；所有警告失败 |
-| 长度/复杂度 | too_many_lines≤100、cognitive_complexity≤25；禁止 allow/expect 或调高阈值 |
-| 错误路径 | 生产拒绝 unwrap/expect/panic/todo/unimplemented/dbg、忽略 Result |
-| unsafe | 默认 deny；仅 OS placement FFI、Metal device FFI、隔离 benchmark allocator 开放并说明安全条件 |
-| 局部例外 | 禁止关闭 lint group；allow/expect 有具体原因，失效 expect 失败；长度/复杂度无例外 |
-| Features | 独立默认 CLI/IR/workspace 与 all-features；生产依赖图排除 CPU executor |
-| 编译/测试/文档 | 发布构建、unit/integration/doctest、独立 golden；Rustdoc 警告失败 |
-| CPU | release 协议、KV primitives、Engine tick 分配门禁；[计数范围](../validation/cpu.md) |
-| MSRV | Rust 1.90 生产、全 workspace 与隔离 CPU benchmark |
-| 依赖 | frozen lockfile；advisory/yanked、license/source allowlist、duplicate/wildcard 与闲置声明检查 |
-| 凭证 | Gitleaks 脱敏扫描源码；有 Git 时另扫历史 |
-| 工具 | Ruff lint/format、actionlint、workspace lint 继承 |
-| Linux | 原生 affinity/cpuset/恢复与启动测试；Mac cross compile；NUMA 硬件专项见[Linux 指南](linux.md) |
-| Metal | 实际 CLI/Agent/HTTP/SSE、golden、页压力、checkpoint、fixed-arrival HTTP 与资源排空 |
-
-Clippy restriction 逐项启用。测试断言可用 unwrap/expect/panic，helper 返回 Result；数值/接口例外局部说明，独立 golden 保留运算顺序。
+| 目录与依赖 | crate 分组、路径注册、小型 facade、禁止实现层反向依赖服务或具体 backend、本地文档链接有效 |
+| Rust lint | `cargo fmt --check`；Clippy all / pedantic / nursery 全部 `-D warnings` |
+| 长度与复杂度 | `too_many_lines` ≤ 100、`cognitive_complexity` ≤ 25，不允许调高阈值 |
+| 错误路径 | 生产代码禁止 `unwrap` / `expect` / `panic` / `todo` / `unimplemented` / `dbg` 与忽略 `Result` |
+| unsafe | 默认 `deny`；仅 OS 放置 FFI、Metal device FFI 与隔离的 benchmark allocator 开放，并说明安全条件 |
+| Feature 隔离 | 默认 CLI / IR / workspace 与 `--all-features` 分别构建；生产依赖图不含 CPU 执行器 |
+| 编译与文档 | release 构建、unit / integration / doctest、独立 golden、Rustdoc 警告失败 |
+| CPU | release 协议、KV primitives、Engine tick 分配门禁，范围见 [CPU 验证](../validation/cpu.md) |
+| MSRV | Rust 1.90 检查 workspace（不含 CUDA）与隔离的 CPU benchmark |
+| 依赖 | frozen lockfile；advisory / yanked、license / source allowlist、重复与通配版本、闲置声明 |
+| 凭证 | Gitleaks 扫描源码；在 Git 仓库中另扫历史 |
+| 工具 | Ruff 检查与格式化、actionlint、workspace lint 继承 |
+| Linux | 原生 affinity / cpuset / 失败恢复与 owner 启动；Mac 上交叉编译检查 |
+| Metal | 真实 CLI / Agent / HTTP / SSE、golden、页压力、checkpoint、固定到达负载与资源排空 |
 
 ## 执行入口
 
-`make check-rust`、`check-tools`、`check-security`、`check-msrv`、`check-cpu`、`check-metal`、`check-linux`、`check-linux-numa` 可独立运行。CPU benchmark 的 manifest/lockfile 同样受 MSRV/安全门禁。
+```sh
+make check            # 全部（macOS 上包含 Metal 实机）
+make check-rust       # 目录、lint、测试、文档、release、CPU 分配与 golden
+make check-tools      # Ruff 与 actionlint
+make check-security   # cargo-deny、cargo-audit、Gitleaks
+make check-msrv       # Rust 1.90
+make check-cpu        # 隔离的 CPU 分配计数
+make check-metal      # Metal 实机验收（仅 macOS）
+make check-cuda       # CUDA 实机 kernel 验收（需 Toolkit 与 GPU）
+make check-linux      # Linux 原生放置测试
+make check-linux-numa # Linux NUMA 硬件验收，见 Linux 指南
+```
 
-macOS 的完整本地门禁包含真实 Metal，缺少设备时专项失败；公共 CI 的编译不能替代硬件验收。Linux 原生测试在 required Rust job 执行，NUMA 专项要求相应 syscall 权限。CUDA 硬件门禁随 5090 原生执行器接入。
+`check-rust` 会单独构建 CUDA crate 的无 feature 版本，因此托管 CI 不需要 CUDA Toolkit；设备检查集中在 `check-cuda`。缺少 GPU 或相应 syscall 权限时，硬件门禁明确失败，不会跳过。
 
-## 工具与依赖例外
+## 工具链与版本
 
-Rust 1.99.0/rustfmt/Clippy 由 rust-toolchain.toml 固定；另需 Rust 1.90.0、Python 3.12+、uv、Go、cargo-deny 0.20.2、cargo-audit 0.22.2。Ruff 0.15.7、actionlint 1.7.7、Gitleaks 8.24.3。CI actions 固定 commit，权限 contents/read。
+| 工具 | 版本 |
+|---|---|
+| Rust（固定） | 1.99.0，由 `rust-toolchain.toml` 提供 |
+| Rust（MSRV） | 1.90.0 |
+| Python | 3.12+ |
+| uv | 任意近期版本 |
+| Go | 用于 `go run` 执行 actionlint 与 gitleaks |
+| cargo-deny / cargo-audit | 0.20.2 / 0.22.2 |
+| Ruff / actionlint / Gitleaks | 0.15.7 / 1.7.7 / 8.24.3 |
 
 ```sh
 rustup toolchain install 1.90.0 --profile minimal
@@ -41,6 +57,10 @@ cargo install --locked cargo-audit --version 0.22.2
 make check
 ```
 
-[deny.toml](../../deny.toml)记录 paste 1.0.15 的 RUSTSEC-2024-0436 例外与两条精确重复版本例外；原因和移除条件以配置为准。[policy.py](../../tools/check/policy.py)另校验 workspace 继承与闲置依赖。
+## 例外
 
-Metal 间接依赖 block 0.1.6 有已知 future-incompatibility 报告，作为上游迁移项保留；不通过全局 RUSTFLAGS/allow 隐藏。实际通过的门禁和证据见[验证记录](../validation/index.md)。
+- [deny.toml](../../deny.toml) 记录 `paste 1.0.15`（RUSTSEC-2024-0436）与两条精确重复版本例外，原因和移除条件以配置为准。
+- `tools/check/policy.py` 另外校验 workspace lint 继承与闲置依赖。
+- Metal 间接依赖 `block 0.1.6` 有已知 future-incompatibility 报告，作为上游迁移项保留，不用全局 `RUSTFLAGS` 隐藏。
+- 测试代码允许 `unwrap` / `expect` / `panic` 用于断言，helper 仍返回 `Result`；其他数值或接口例外需在局部说明。
+- 可选的官方 tokenizer parity 测试通过 `INFER_QWEN_TEXT_PACKAGE` 指向外部包，普通 CI 使用仓库内微型资产。

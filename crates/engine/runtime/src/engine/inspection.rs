@@ -6,6 +6,15 @@ use infer_spi::{BackendProvider, SchedulingPolicy, WorkloadProvider};
 use std::collections::VecDeque;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
+    /// Largest accepted or retired identity, including restored request history.
+    #[must_use]
+    pub fn request_id_high_watermark(&self) -> u64 {
+        self.seen_requests
+            .last()
+            .map_or(self.retired_request_floor, |id| {
+                id.get().max(self.retired_request_floor)
+            })
+    }
     pub const fn program(&self) -> &ExecutionProgram {
         &self.program
     }

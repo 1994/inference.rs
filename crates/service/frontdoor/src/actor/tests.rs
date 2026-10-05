@@ -6,6 +6,39 @@ use infer_runtime::RuntimeConfig;
 use std::time::Duration;
 
 use super::*;
+
+#[tokio::test]
+async fn automatic_request_ids_are_shared_concurrent_and_never_wrap() -> Result<()> {
+    let handle = handle()?;
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let handle = handle.clone();
+        workers.push(std::thread::spawn(move || {
+            (0..32)
+                .map(|_| handle.allocate_request_id())
+                .collect::<Result<Vec<_>>>()
+        }));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for worker in workers {
+        for id in worker.join().unwrap()? {
+            assert!(ids.insert(id));
+        }
+    }
+    assert_eq!(ids.len(), 256);
+    assert_eq!(handle.allocate_request_id()?.get(), 257);
+    handle.request_ids.store(u64::MAX - 1, Ordering::Relaxed);
+    assert_eq!(handle.allocate_request_id()?.get(), u64::MAX);
+    assert_eq!(
+        handle.allocate_request_id().unwrap_err().code,
+        ErrorCode::Capacity
+    );
+    assert_eq!(
+        handle.allocate_request_id().unwrap_err().code,
+        ErrorCode::Capacity
+    );
+    handle.shutdown().await
+}
 fn handle() -> Result<RuntimeHandle> {
     let model = ReferenceModel::fixture(ModelId::ONE, 7);
     let ir = model.ir.clone();

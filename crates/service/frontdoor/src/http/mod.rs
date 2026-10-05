@@ -10,6 +10,7 @@ use observability::{diagnostics, events, metrics, observability, otlp, timeline}
 mod error;
 mod native;
 mod observability;
+mod openai;
 mod protocol;
 mod server;
 mod text;

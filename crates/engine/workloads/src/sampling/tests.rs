@@ -80,3 +80,41 @@ fn repeated_sampling_preserves_allocations_and_greedy_ties_use_lowest_token() ->
     assert!(sample(&[f32::NAN], &sampling, 1, 0).is_err());
     Ok(())
 }
+
+#[test]
+fn nucleus_minimum_probability_and_penalties_change_candidates() -> Result<()> {
+    let mut scratch = SamplingWorkspace::default();
+    let mut parameters = Sampling {
+        temperature: 1.0,
+        top_p: 0.5,
+        ..Sampling::default()
+    };
+    for seed in 0..20 {
+        parameters.seed = seed;
+        assert_eq!(sample(&[3.0, 1.0, 0.0], &parameters, 1, 0)?, 0);
+    }
+    parameters.top_p = 1.0;
+    parameters.min_p = 0.9;
+    assert_eq!(sample(&[3.0, 1.0, 0.0], &parameters, 1, 0)?, 0);
+    parameters.temperature = 0.0;
+    parameters.presence_penalty = 2.0;
+    let history = SamplingHistory {
+        prompt: &[1],
+        generated: &[0, 0],
+    };
+    assert_eq!(
+        sample_with_history(&[3.0, 2.0], &parameters, 1, 0, history, &mut scratch)?,
+        1
+    );
+    parameters.presence_penalty = 0.0;
+    parameters.repetition_penalty = 2.0;
+    let history = SamplingHistory {
+        prompt: &[0],
+        generated: &[],
+    };
+    assert_eq!(
+        sample_with_history(&[3.0, 2.0], &parameters, 1, 0, history, &mut scratch)?,
+        1
+    );
+    Ok(())
+}

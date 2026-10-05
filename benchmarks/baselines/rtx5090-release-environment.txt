@@ -1,0 +1,57 @@
+2026-10-05T17:41:02+00:00
+rustc 1.99.0 (b940084d7 2026-09-28)
+binary: rustc
+commit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+commit-date: 2026-09-28
+host: x86_64-unknown-linux-gnu
+release: 1.99.0
+LLVM version: 23.1.1
+tileiras: NVIDIA (R) Cuda Tile IR optimizing assembler
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Tue_Sep__1_09:35:26_PDT_2026
+Cuda compilation tools, release 13.4, V13.4.92
+Build local.local.38855100_
+3a1b255ee3a1f8d3b099947de8af33b11a304b05
+ M Cargo.lock
+ M Cargo.toml
+ M README.md
+ M crates/backend/cuda/README.md
+ M crates/engine/runtime/src/engine/inspection.rs
+ M crates/engine/runtime/tests/control_path.rs
+ M crates/model/package/src/lib.rs
+ M crates/model/package/src/package.rs
+ M crates/model/package/src/safetensors.rs
+ M crates/service/cli/src/backend/cuda.rs
+ M crates/service/cli/src/backend/mod.rs
+ M crates/service/cli/src/commands/verification.rs
+ M crates/service/cli/src/dispatch.rs
+ M crates/service/frontdoor/src/actor/handle.rs
+ M crates/service/frontdoor/src/actor/mod.rs
+ M crates/service/frontdoor/src/actor/startup.rs
+ M crates/service/frontdoor/src/actor/tests.rs
+ M crates/service/frontdoor/src/http/mod.rs
+ M crates/service/frontdoor/src/http/text.rs
+ M docs/README.md
+ M docs/design/status.md
+ M docs/guides/development.md
+ M tools/check/layout.py
+?? .github/PULL_REQUEST_TEMPLATE.md
+?? CONTRIBUTING.md
+?? benchmarks/
+?? crates/backend/cuda/Cargo.toml
+?? crates/backend/cuda/examples/
+?? crates/backend/cuda/src/
+?? crates/model/package/src/quantized.rs
+?? crates/model/package/src/shards_tests.rs
+?? crates/model/package/src/workload.rs
+?? crates/service/frontdoor/src/http/openai/
+?? docs/guides/cuda-performance.md
+?? docs/guides/openai-api.md
+?? tools/bench/cuda-baseline.sh
+profile=release
+rows=17408
+columns=5120
+CUDA_TOOLKIT_PATH=/opt/cuda
+BINDGEN_EXTRA_CLANG_ARGS=-isystem /usr/lib/gcc/x86_64-pc-linux-gnu/16/include
+fd4365c60e255ced990f9fced1c58db791687f1bf4a86539aa651a56bc44cd28  target/release/examples/cuda-baseline
+3ceb5f7aa4ea76bafbb5cb56d28854fac0fb5316fc7b1807467cbc5f92713bac  Cargo.lock

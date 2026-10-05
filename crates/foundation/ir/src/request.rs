@@ -41,6 +41,11 @@ impl Default for Qos {
 pub struct Sampling {
     pub temperature: f32,
     pub top_k: Option<usize>,
+    pub top_p: f32,
+    pub min_p: f32,
+    pub presence_penalty: f32,
+    pub repetition_penalty: f32,
+    pub eos_tokens: Vec<u32>,
     pub seed: u64,
     pub eos_token: Option<u32>,
 }
@@ -49,6 +54,11 @@ impl Default for Sampling {
         Self {
             temperature: 0.0,
             top_k: None,
+            top_p: 1.0,
+            min_p: 0.0,
+            presence_penalty: 0.0,
+            repetition_penalty: 1.0,
+            eos_tokens: vec![],
             seed: 0,
             eos_token: None,
         }
@@ -87,12 +97,7 @@ impl CanonicalRequest {
                 "positive TTFT/TPOT SLOs require a generate workload",
             ));
         }
-        if !self.sampling.temperature.is_finite()
-            || self.sampling.temperature < 0.0
-            || self.sampling.top_k == Some(0)
-        {
-            return Err(Error::invalid("invalid sampling parameters"));
-        }
+        self.sampling.validate()?;
         if !self.extensions.is_empty() {
             return Err(Error::unsupported(
                 "no feature provider registered for extension fields",
@@ -120,5 +125,33 @@ impl CanonicalRequest {
             }
         }
         self.workload.validate()
+    }
+}
+
+impl Sampling {
+    /// # Errors
+    /// Rejects non-finite values and invalid probability/penalty ranges.
+    pub fn validate(&self) -> Result<()> {
+        if !self.temperature.is_finite()
+            || self.temperature < 0.0
+            || self.top_k == Some(0)
+            || !self.top_p.is_finite()
+            || self.top_p <= 0.0
+            || self.top_p > 1.0
+            || !self.min_p.is_finite()
+            || !(0.0..=1.0).contains(&self.min_p)
+            || !self.presence_penalty.is_finite()
+            || !(-2.0..=2.0).contains(&self.presence_penalty)
+            || !self.repetition_penalty.is_finite()
+            || self.repetition_penalty <= 0.0
+        {
+            return Err(Error::invalid("invalid sampling parameters"));
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_eos(&self, token: u32) -> bool {
+        self.eos_token == Some(token) || self.eos_tokens.contains(&token)
     }
 }

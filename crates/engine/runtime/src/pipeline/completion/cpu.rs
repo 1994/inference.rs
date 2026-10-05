@@ -67,6 +67,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         let generate = matches!(r.request.workload, Workload::Generate { .. });
         Ok(OutputJob {
             request: r.request.clone(),
+            generated: r.generated.clone(),
             output,
             shape: OutputShape {
                 logits: if readout == OutputReadout::None {

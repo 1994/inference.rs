@@ -30,7 +30,7 @@ pub const fn metal_available() -> bool {
 }
 pub fn catalog() -> serde_json::Value {
     serde_json::json!({"primary_target":"cuda","supported":["cuda","metal"],"auto_priority":["cuda","metal"],
-        "cuda":{"implemented":false,"available":false,"reason":"native CUDA execution deferred to RTX 5090 migration"},
+        "cuda":{"implemented":false,"available":false,"reason":"cuTile kernels verified; model executor not integrated"},
         "metal":{"implemented":cfg!(target_os="macos"),"available":metal_available()},
         "testing_backends":{"enabled":cfg!(feature="test-backends"),"supported_for_deployment":false}})
 }

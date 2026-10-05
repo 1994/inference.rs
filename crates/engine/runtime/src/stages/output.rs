@@ -15,6 +15,7 @@ pub struct OutputJob {
     pub output: ModelOutput,
     pub shape: OutputShape,
     pub sample: Option<usize>,
+    pub generated: infer_ir::TokenBuffer,
     pub project: Option<Vec<ModelOutput>>,
 }
 pub struct OutputAcknowledgement {
@@ -34,11 +35,18 @@ impl OutputJob {
     ) -> Result<ProcessedOutput> {
         self.shape.validate(&self.output)?;
         if let Some(position) = self.sample {
-            let token = infer_workloads::sample_reusing(
+            let token = infer_workloads::sample_with_history(
                 &self.output.logits,
                 &self.request.sampling,
                 self.request.id.get(),
                 position,
+                infer_workloads::SamplingHistory {
+                    prompt: match &self.request.input {
+                        infer_ir::RequestInput::Sequence { tokens, .. } => tokens,
+                        _ => &[],
+                    },
+                    generated: &self.generated,
+                },
                 scratch,
             )?;
             return Ok(ProcessedOutput {

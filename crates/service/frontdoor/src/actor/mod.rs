@@ -61,6 +61,7 @@ pub struct RuntimeHandle {
     ingress: Arc<crate::ingress::Registry>,
     clock_started: Instant,
     clock_origin_us: u64,
+    request_ids: Arc<std::sync::atomic::AtomicU64>,
 }
 
 struct RuntimeActor<B: BackendProvider> {

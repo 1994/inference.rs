@@ -8,7 +8,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 GROUPS = {"foundation", "backend", "model", "engine", "diagnostics", "service", "testing"}
 SERVICE = {"infer-frontdoor", "infer-agent", "infer-cli"}
-BACKENDS = {"infer-backend-metal", "infer-backend-host", "infer-backend-reference"}
+BACKENDS = {"infer-backend-metal", "infer-backend-cuda", "infer-backend-host", "infer-backend-reference"}
 
 
 def require(condition, message):

@@ -92,6 +92,34 @@ pub struct SafetensorsFile {
     data_start: u64,
 }
 impl SafetensorsFile {
+    /// Bytes preceding the validated, contiguous tensor payload.
+    #[must_use]
+    pub const fn header_bytes(&self) -> u64 {
+        self.data_start
+    }
+    /// Read validated raw tensor storage without expanding a quantized representation.
+    /// # Errors
+    /// Rejects missing tensors, address overflow, short reads or an exceeded staging budget.
+    pub fn read_bytes(&mut self, name: &str, budget_bytes: u64) -> Result<Vec<u8>> {
+        let header = self
+            .tensors
+            .get(name)
+            .ok_or_else(|| Error::invalid(format!("missing tensor {name}")))?;
+        if header.byte_len() > budget_bytes {
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "raw tensor exceeds staging budget",
+            ));
+        }
+        let length = usize::try_from(header.byte_len())
+            .map_err(|_| Error::invalid("raw tensor exceeds address space"))?;
+        let mut bytes = vec![0; length];
+        self.file
+            .seek(SeekFrom::Start(self.data_start + header.data_offsets[0]))
+            .map_err(io_error)?;
+        self.file.read_exact(&mut bytes).map_err(io_error)?;
+        Ok(bytes)
+    }
     /// Read native floating-point payload in aligned bounded chunks, validating every value.
     /// # Errors
     /// Returns I/O, format, numeric, or callback errors. Earlier chunks may already be consumed.

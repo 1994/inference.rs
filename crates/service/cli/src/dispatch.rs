@@ -24,6 +24,10 @@ pub fn run() {
 
 pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<()> {
     match command {
+        #[cfg(not(any(target_os = "macos", feature = "test-backends")))]
+        Command::Run(options) if options.package.is_none() => Err(infer_core::Error::invalid(
+            "device backend requires --package; CPU fixtures require a test-backends build",
+        )),
         #[cfg(any(target_os = "macos", feature = "test-backends"))]
         Command::Serve(options) => commands::serve(options, backend_choice),
         #[cfg(any(target_os = "macos", feature = "test-backends"))]
@@ -42,7 +46,7 @@ pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<(
         Command::InspectPackage(options) => commands::inspect_package(options),
         Command::Tokenize(options) => commands::tokenize(options),
         Command::Doctor => print(
-            &serde_json::json!({"host_arch":std::env::consts::ARCH,"host_os":std::env::consts::OS,"backends":backend::catalog(),"qwen38_config_import":true,"safetensors_weight_binding":true,"native_tokenizer":true,"incremental_hybrid_state":true,"cuda_execution":"deferred until RTX 5090 migration","qwen38_27b_execution_validated":false,"native_workloads":["generate","embed","rerank","decision"]}),
+            &serde_json::json!({"host_arch":std::env::consts::ARCH,"host_os":std::env::consts::OS,"backends":backend::catalog(),"qwen38_config_import":true,"safetensors_weight_binding":true,"native_tokenizer":true,"incremental_hybrid_state":true,"cuda_execution":"cuTile kernels verified; model executor not integrated","qwen38_27b_execution_validated":false,"native_workloads":["generate","embed","rerank","decision"]}),
         ),
         #[cfg(any(target_os = "macos", feature = "test-backends"))]
         Command::Agent(options) => agent(
@@ -52,9 +56,9 @@ pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<(
             backend_choice,
         ),
         #[cfg(not(any(target_os = "macos", feature = "test-backends")))]
-        _ => Err(Error::unsupported(match backend_choice.kind {
+        _ => Err(infer_core::Error::unsupported(match backend_choice.kind {
             backend::BackendChoice::Cuda => {
-                "native NVIDIA CUDA executor is not installed; CUDA implementation is deferred to RTX 5090 migration"
+                "native NVIDIA CUDA executor is not installed; cuTile kernels are available but the model executor is not integrated"
             }
             backend::BackendChoice::Metal => {
                 "Metal backend requires macOS and a supported Metal device"

@@ -1,6 +1,9 @@
 //! Native planning and output semantics for four orthogonal workloads.
 mod sampling;
-pub use sampling::{SamplingWorkspace, sample, sample_reusing};
+pub use sampling::{
+    SamplingHistory, SamplingWorkspace, probabilities, sample, sample_reusing, sample_with_history,
+    sampling_uniform,
+};
 mod registry;
 pub use registry::WorkloadRegistry;
 mod readouts;
@@ -13,3 +16,5 @@ mod tests;
 pub use math::{pool, softmax};
 pub use native::NativeWorkloads;
 use outputs::{decisions, embedding, ranking};
+mod speculative;
+pub use speculative::{Verification, draw_distribution, verify_draft};

@@ -106,6 +106,7 @@ def check_exceptions():
                     path
                     in (
                         ROOT / "crates/backend/metal/src/device.rs",
+                        ROOT / "crates/backend/cuda/src/device.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",
                         ROOT / "tools/bench/cpu/src/main.rs",
                     ),
