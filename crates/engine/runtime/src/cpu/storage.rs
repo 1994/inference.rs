@@ -1,0 +1,113 @@
+//! Scheduler-owned preallocated CPU storage; no backend-specific implementation belongs here.
+use crate::{
+    RuntimeConfig, pipeline::scheduling::index::ReadyIndex,
+    pipeline::scheduling::index::ReadyWindow, pipeline::scheduling::overlap::PreparedNext,
+    requests::RequestArena,
+};
+use infer_core::{Error, ErrorCode, ProgramId, RequestId, Result};
+use infer_ir::{BackendKind, CostEstimate, CostQuery, ExecutionRole};
+
+pub struct HostStorage {
+    pub placement: infer_core::placement::PlacementReport,
+    pub preemption: infer_scheduler::PreemptionWorkspace,
+    pub history: super::history::HistoryStorage,
+    pub decisions: infer_spi::DecisionStorage,
+    pub steps: super::plans::StepPool,
+    pub queries: super::plans::QueryPool,
+    pub ready_buffer: Option<ReadyWindow>,
+    pub ready_index: ReadyIndex,
+    pub cost_epoch: u64,
+    pub history_tokens: usize,
+    pub history_bytes: usize,
+    pub validation: infer_scheduler::ValidationScratch,
+    pub dispatch: Option<crate::pipeline::dispatch::PreparedDispatch>,
+    pub sampling: infer_workloads::SamplingWorkspace,
+    pub output_jobs: Vec<(usize, crate::stages::output::OutputJob)>,
+    pub resource_poll_buffer: Vec<RequestId>,
+    pub credits: infer_core::credits::CreditPool,
+    pub bytes: infer_core::credits::CreditPool,
+    pub wake_buffer: Vec<RequestId>,
+    pub expiry_buffer: Vec<RequestId>,
+    pub prepared_next: Option<PreparedNext>,
+    pub checkpoint: Option<crate::persistence::checkpoint::CheckpointFlight>,
+    pub prepare_versions: Vec<u64>,
+    pub requests: RequestArena,
+    pub queues: infer_scheduler::RequestQueue,
+}
+fn scratch<T>(capacity: usize) -> Result<Vec<T>> {
+    let mut storage = Vec::new();
+    storage
+        .try_reserve_exact(capacity)
+        .map_err(|e| Error::new(ErrorCode::Capacity, e.to_string()))?;
+    Ok(storage)
+}
+impl HostStorage {
+    pub fn new(
+        config: &RuntimeConfig,
+        program: ProgramId,
+        backend: BackendKind,
+        vocabulary: usize,
+    ) -> Result<Self> {
+        config
+            .cpu
+            .placement
+            .scheduler
+            .scope(|| Self::initialize(config, program, backend, vocabulary))
+    }
+    fn initialize(
+        config: &RuntimeConfig,
+        program: ProgramId,
+        backend: BackendKind,
+        vocabulary: usize,
+    ) -> Result<Self> {
+        let candidates = config.candidate_limit.min(config.max_requests);
+        let query = CostQuery::from_unit(
+            program,
+            backend,
+            ExecutionRole::Prefill,
+            1,
+            1,
+            CostEstimate::default(),
+        );
+        Ok(Self {
+            placement: config.cpu.placement.scheduler.report()?,
+            preemption: infer_scheduler::PreemptionWorkspace::new(candidates)?,
+            history: super::history::HistoryStorage::new(
+                config.history_capacity,
+                candidates,
+                config.max_batch,
+                program,
+            )?,
+            decisions: infer_spi::DecisionStorage::new(candidates, config.max_batch)?,
+            steps: super::plans::StepPool::new(config.max_batch, program)?,
+            queries: super::plans::QueryPool::new(config.history_capacity, config.max_batch)?,
+            ready_buffer: Some(ReadyWindow::new(candidates, query)?),
+            ready_index: ReadyIndex::new(config.max_requests, candidates, query)?,
+            cost_epoch: 0,
+            history_tokens: 0,
+            history_bytes: 0,
+            validation: infer_scheduler::ValidationScratch::new(candidates, config.max_batch)?,
+            dispatch: Some(crate::pipeline::dispatch::PreparedDispatch::new(
+                config.max_batch,
+            )?),
+            sampling: infer_workloads::SamplingWorkspace::with_capacity(vocabulary)?,
+            output_jobs: scratch(config.max_batch)?,
+            credits: infer_core::credits::CreditPool::new(
+                config.max_requests,
+                config.cpu.host_tokens,
+            )?,
+            bytes: infer_core::credits::CreditPool::new(
+                config.max_requests,
+                config.cpu.host_bytes - config.cpu.fixed_bytes_for(config, vocabulary)?,
+            )?,
+            prepared_next: None,
+            checkpoint: None,
+            resource_poll_buffer: scratch(config.max_requests)?,
+            wake_buffer: scratch(config.max_requests)?,
+            expiry_buffer: scratch(config.max_requests)?,
+            prepare_versions: scratch(candidates)?,
+            requests: RequestArena::new(config.max_requests)?,
+            queues: infer_scheduler::RequestQueue::new(config.max_requests)?,
+        })
+    }
+}

@@ -1,0 +1,125 @@
+{
+  "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "cases": [
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是一个助手。"
+        },
+        {
+          "role": "user",
+          "content": "解释 Rust 的 ownership。"
+        }
+      ],
+      "enable_thinking": false,
+      "rendered": "<|im_start|>system\n你是一个助手。<|im_end|>\n<|im_start|>user\n解释 Rust 的 ownership。<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "tokens": [
+        248045,
+        8678,
+        198,
+        133653,
+        110257,
+        1710,
+        248046,
+        198,
+        248045,
+        846,
+        198,
+        98682,
+        32671,
+        220,
+        95726,
+        14834,
+        1710,
+        248046,
+        198,
+        248045,
+        74455,
+        198,
+        248068,
+        271,
+        248069,
+        271
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是一个助手。"
+        },
+        {
+          "role": "user",
+          "content": "解释 Rust 的 ownership。"
+        }
+      ],
+      "enable_thinking": true,
+      "rendered": "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\n\n你是一个助手。<|im_end|>\n<|im_start|>user\n解释 Rust 的 ownership。<|im_end|>\n<|im_start|>assistant\n<think>\n",
+      "tokens": [
+        248045,
+        8678,
+        198,
+        24342,
+        286,
+        4879,
+        369,
+        716,
+        310,
+        830,
+        11553,
+        13,
+        5044,
+        1683,
+        15060,
+        1472,
+        279,
+        3274,
+        11,
+        9307,
+        1328,
+        30800,
+        11,
+        2814,
+        47675,
+        25605,
+        11,
+        321,
+        60445,
+        55404,
+        11,
+        27224,
+        11,
+        321,
+        30246,
+        303,
+        279,
+        1534,
+        4087,
+        13,
+        271,
+        133653,
+        110257,
+        1710,
+        248046,
+        198,
+        248045,
+        846,
+        198,
+        98682,
+        32671,
+        220,
+        95726,
+        14834,
+        1710,
+        248046,
+        198,
+        248045,
+        74455,
+        198,
+        248068,
+        198
+      ]
+    }
+  ]
+}

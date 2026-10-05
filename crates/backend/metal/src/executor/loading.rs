@@ -1,0 +1,358 @@
+use super::{MetalBackend, MetalConfig, MetalDevice, allocate_kv, bytes};
+use infer_core::{Error, ErrorCode, Result, TensorId};
+use infer_ir::{DataflowGraph, ModelIr, TensorStorage};
+use infer_models::{
+    HostTensor, LoadOptions, QwenPackage, TensorDtype, TensorLoadPlan, WeightLoadPlan,
+    WeightStorage, WeightTarget, load_weights,
+};
+use infer_state::{kv::KvCacheConfig, kv::KvCacheManager};
+use metal::Buffer;
+use sha2::{Digest, Sha256};
+use std::{collections::BTreeMap, collections::VecDeque, sync::Arc, time::Instant};
+
+pub(super) struct ResidentWeights {
+    pub buffers: BTreeMap<TensorId, Buffer>,
+    pub formats: BTreeMap<TensorId, TensorDtype>,
+    pub plan: WeightLoadPlan,
+    pub identity: String,
+}
+struct Upload<'a>(&'a MetalDevice);
+impl WeightTarget for Upload<'_> {
+    type Tensor = Buffer;
+    fn allocate(&mut self, tensor: &TensorLoadPlan) -> Result<Buffer> {
+        self.0.allocate_bytes(tensor.bytes)
+    }
+    fn upload(&mut self, tensor: &mut Buffer, offset: u64, input: &[u8]) -> Result<()> {
+        MetalDevice::write_bytes_idle(tensor, offset, input)
+    }
+}
+
+pub(super) fn scratch_layout(graph: &DataflowGraph, rows: usize) -> Result<Vec<usize>> {
+    let mut sizes = vec![
+        0usize;
+        graph
+            .lifetimes
+            .iter()
+            .map(|l| l.slot + 1)
+            .max()
+            .unwrap_or(0)
+    ];
+    for life in &graph.lifetimes {
+        let count = if Some(life.tensor) == graph.logits {
+            1
+        } else {
+            rows
+        };
+        let elements = life
+            .elements
+            .checked_mul(count)
+            .ok_or_else(|| Error::invalid("prefill scratch shape overflow"))?;
+        super::u32_size(elements)?;
+        sizes[life.slot] = sizes[life.slot].max(elements);
+    }
+    Ok(sizes)
+}
+fn retained_bytes(graph: &DataflowGraph, weights: u64, config: &MetalConfig) -> Result<u64> {
+    scratch_layout(graph, config.prefill_chunk_tokens)?
+        .into_iter()
+        .try_fold(
+            weights
+                .checked_add(4)
+                .ok_or_else(|| Error::invalid("Metal retained size overflow"))?,
+            |n, elements| {
+                n.checked_add(bytes(elements)?)
+                    .ok_or_else(|| Error::invalid("Metal scratch size overflow"))
+            },
+        )
+}
+fn preflight(
+    gpu: &MetalDevice,
+    graph: &DataflowGraph,
+    weights: u64,
+    config: &MetalConfig,
+) -> Result<()> {
+    for spec in &graph.tensors {
+        super::u32_size(spec.elements()?)?;
+    }
+    if config.memory_bytes == 0
+        || config.page_tokens == 0
+        || config.trace_capacity == 0
+        || config.prefill_chunk_tokens == 0
+        || config.upload_staging_bytes < 4
+    {
+        return Err(Error::invalid("invalid Metal load/execution configuration"));
+    }
+    if config.memory_bytes > gpu.device.recommended_max_working_set_size() {
+        return Err(Error::new(
+            ErrorCode::Capacity,
+            "Metal budget exceeds recommended device working set",
+        ));
+    }
+    let retained = retained_bytes(graph, weights, config)?;
+    if retained
+        .checked_add(
+            config
+                .prefix_cache_bytes
+                .checked_mul(2)
+                .ok_or_else(|| Error::invalid("prefix budget overflow"))?,
+        )
+        .and_then(|n| n.checked_add(config.probe_bytes))
+        .is_none_or(|n| n > config.memory_bytes)
+    {
+        return Err(Error::new(
+            ErrorCode::Capacity,
+            "Metal weight/prefill scratch/cache budget exhausted",
+        ));
+    }
+    Ok(())
+}
+fn identity(model: &ModelIr, payload: &str, page_tokens: usize) -> Result<String> {
+    let mut digest = Sha256::new();
+    digest.update(include_bytes!("../kernels.metal"));
+    digest.update(b"fast-math=false;compute=f32;native-weights;layer-major-v1");
+    digest.update(serde_json::to_vec(model).map_err(|e| Error::invalid(e.to_string()))?);
+    digest.update(payload.as_bytes());
+    Ok(format!(
+        "metal-paged-dataflow-v3:{:x}:page{page_tokens}",
+        digest.finalize()
+    ))
+}
+
+impl MetalBackend {
+    /// Stream source-precision weights directly into resident device buffers.
+    /// # Errors
+    /// Returns metadata, budget, shader, payload, or upload errors before publishing a backend.
+    pub fn from_package(package: &mut QwenPackage, config: MetalConfig) -> Result<Self> {
+        package.validate_weight_bindings()?;
+        let model = package.imported.model.clone();
+        let graph = package.graph.clone();
+        let gpu = objc::rc::autoreleasepool(MetalDevice::open)?;
+        preflight(&gpu, &graph, package.manifest.weights_bytes, &config)?;
+        let options = LoadOptions {
+            storage: WeightStorage::Native,
+            resident_budget_bytes: config.memory_bytes,
+            staging_budget_bytes: config.upload_staging_bytes,
+            chunk_bytes: config.upload_staging_bytes.min(4 * 1024 * 1024),
+        };
+        let loaded = load_weights(package, &mut Upload(&gpu), options)?;
+        let slots: BTreeMap<_, _> = graph
+            .tensors
+            .iter()
+            .filter_map(|s| {
+                if let TensorStorage::Weight { slot } = &s.storage {
+                    Some((slot.as_str(), s.id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let formats = loaded
+            .plan
+            .tensors
+            .iter()
+            .map(|t| (slots[t.slot.as_str()], t.dtype))
+            .collect();
+        let buffers = loaded
+            .tensors
+            .into_iter()
+            .map(|(slot, buffer)| (slots[slot.as_str()], buffer))
+            .collect();
+        let identity = identity(&model, &loaded.payload_fingerprint, config.page_tokens)?;
+        Self::assemble(
+            model,
+            graph,
+            gpu,
+            ResidentWeights {
+                buffers,
+                formats,
+                plan: loaded.plan,
+                identity,
+            },
+            config,
+        )
+    }
+
+    /// Construct from caller-owned F32 tensors; package loading uses the bounded streaming path.
+    /// # Errors
+    /// Returns model, budget, payload, or device errors for invalid weights or resources.
+    pub fn new(
+        model: ModelIr,
+        weights: BTreeMap<String, HostTensor>,
+        config: MetalConfig,
+    ) -> Result<Self> {
+        let graph = infer_compiler::dataflow::lower(&model)?;
+        let gpu = objc::rc::autoreleasepool(MetalDevice::open)?;
+        let resident = graph
+            .tensors
+            .iter()
+            .filter(|s| matches!(s.storage, TensorStorage::Weight { .. }))
+            .try_fold(0u64, |n, s| {
+                n.checked_add(bytes(s.elements()?)?)
+                    .ok_or_else(|| Error::invalid("weight size overflow"))
+            })?;
+        preflight(&gpu, &graph, resident, &config)?;
+        let weights = upload_host(&gpu, &model, &graph, weights, &config)?;
+        Self::assemble(model, graph, gpu, weights, config)
+    }
+
+    pub(super) fn assemble(
+        model: ModelIr,
+        graph: DataflowGraph,
+        gpu: MetalDevice,
+        weights: ResidentWeights,
+        config: MetalConfig,
+    ) -> Result<Self> {
+        preflight(&gpu, &graph, weights.plan.resident_bytes, &config)?;
+        let sizes = scratch_layout(&graph, config.prefill_chunk_tokens)?;
+        let scratch_bytes = sizes.iter().try_fold(0u64, |n, size| {
+            n.checked_add(bytes(*size)?)
+                .ok_or_else(|| Error::invalid("scratch overflow"))
+        })?;
+        let scratch = sizes
+            .into_iter()
+            .map(|n| gpu.zeros(n))
+            .collect::<Result<_>>()?;
+        let kv = allocate_kv(
+            &gpu,
+            &graph,
+            &config,
+            retained_bytes(&graph, weights.plan.resident_bytes, &config)?,
+        )?;
+        let specs = graph.tensors.iter().map(|t| (t.id, t.clone())).collect();
+        let slots = graph.lifetimes.iter().map(|l| (l.tensor, l.slot)).collect();
+        let mut last = BTreeMap::new();
+        for node in &graph.nodes {
+            if let Some(layer) = node.layer {
+                last.insert(layer, node.id);
+            }
+        }
+        let kv_manager = KvCacheManager::new(KvCacheConfig {
+            namespace: weights.identity.as_bytes().to_vec(),
+            page_tokens: config.page_tokens,
+            blocks: kv.blocks,
+            bytes_per_block: kv.block_bytes,
+            prefix_bytes: config.prefix_cache_bytes,
+            max_prefixes: 4096,
+        })?;
+        let dummy = gpu.zeros(1)?;
+        let state_recipe = infer_ir::StateRecipe::compile(
+            &model,
+            &graph,
+            config.page_tokens,
+            4,
+            config.probe_bytes > 0,
+            size_of::<infer_state::blocks::BlockLease>(),
+        )?;
+        let mut backend = Self {
+            owner: Arc::new(()),
+            resources: infer_spi::ResourcePool::new(260)?,
+            gpu,
+            model,
+            graph,
+            specs,
+            weights: weights.buffers,
+            weight_formats: weights.formats,
+            load_plan: weights.plan,
+            identity: weights.identity,
+            slots,
+            scratch,
+            scratch_bytes,
+            dummy,
+            config,
+            sequences: BTreeMap::new(),
+            busy: None,
+            inflight_states: vec![],
+            inflight_pins: vec![],
+            ticket_work: Vec::with_capacity(64),
+            completion_pool: (0..4).map(|_| Vec::with_capacity(64)).collect(),
+            tokens_executed: 0,
+            prefix_hits: 0,
+            kv: kv_manager,
+            kv_buffers: kv.buffers,
+            kv_block_bytes: kv.block_bytes,
+            state_recipe,
+            traces: VecDeque::new(),
+            trace_dropped: 0,
+            probes: VecDeque::new(),
+            probe_dropped: 0,
+            commands: VecDeque::new(),
+            transfers: vec![],
+            layer_outputs: last.into_iter().map(|(l, o)| (o, l)).collect(),
+            origin: Instant::now(),
+            forward_nodes: vec![],
+        };
+        backend.prepare_forward()?;
+        Ok(backend)
+    }
+    #[must_use]
+    pub const fn load_plan(&self) -> &WeightLoadPlan {
+        &self.load_plan
+    }
+}
+
+fn upload_host(
+    gpu: &MetalDevice,
+    model: &ModelIr,
+    graph: &DataflowGraph,
+    mut weights: BTreeMap<String, HostTensor>,
+    config: &MetalConfig,
+) -> Result<ResidentWeights> {
+    let mut digest = Sha256::new();
+    let mut buffers = BTreeMap::new();
+    let mut formats = BTreeMap::new();
+    let mut tensors = Vec::new();
+    let mut resident_bytes = 0u64;
+    let chunk_elements = config.upload_staging_bytes / 4;
+    let mut staging_bytes = 0;
+    for spec in &graph.tensors {
+        let TensorStorage::Weight { slot } = &spec.storage else {
+            continue;
+        };
+        let tensor = weights
+            .remove(slot)
+            .ok_or_else(|| Error::invalid(format!("unbound Metal weight {slot}")))?;
+        tensor.validate()?;
+        if tensor.shape != spec.shape {
+            return Err(Error::invalid("Metal weight shape mismatch"));
+        }
+        let plan = TensorLoadPlan {
+            slot: slot.clone(),
+            shape: spec.shape.clone(),
+            dtype: TensorDtype::F32,
+            bytes: bytes(tensor.data.len())?,
+        };
+        digest.update(serde_json::to_vec(&plan).map_err(|e| Error::invalid(e.to_string()))?);
+        let buffer = gpu.allocate_bytes(plan.bytes)?;
+        for (at, chunk) in tensor.data.chunks(chunk_elements).enumerate() {
+            let input: Vec<_> = chunk.iter().flat_map(|v| v.to_le_bytes()).collect();
+            digest.update(&input);
+            MetalDevice::write_bytes_idle(&buffer, (at * chunk_elements * 4) as u64, &input)?;
+            staging_bytes = staging_bytes.max(input.len());
+        }
+        resident_bytes += plan.bytes;
+        buffers.insert(spec.id, buffer);
+        formats.insert(spec.id, plan.dtype);
+        tensors.push(plan);
+    }
+    if !weights.is_empty() {
+        return Err(Error::invalid("unconsumed Metal weights"));
+    }
+    let identity = identity(
+        model,
+        &format!("{:x}", digest.finalize()),
+        config.page_tokens,
+    )?;
+    let plan = WeightLoadPlan {
+        tensors,
+        source_bytes: resident_bytes,
+        resident_bytes,
+        staging_bytes,
+        chunk_bytes: chunk_elements * 4,
+    };
+    Ok(ResidentWeights {
+        buffers,
+        formats,
+        plan,
+        identity,
+    })
+}

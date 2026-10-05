@@ -1,0 +1,18 @@
+[package]
+name = "infer-backend-reference"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir = { workspace = true, features = ["test-backends"] }
+infer-spi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+infer-compiler.workspace = true

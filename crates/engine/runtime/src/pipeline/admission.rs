@@ -1,0 +1,461 @@
+//! Validate and prepare the entire request before reserving execution state.
+use crate::{Engine, RequestRecord, TenantService};
+use infer_core::{
+    Error, ErrorCode, RequestId, RequestStatus, Result, StateId, event::EventKind,
+    event::ObjectKind,
+};
+use infer_ir::{AdmissionDecision, CanonicalRequest, RequestInput, StateKind, WorkloadPlan};
+use infer_observe::{DiagnosticCode, trace::TraceContext};
+use infer_spi::{BackendProvider, SchedulingPolicy};
+
+#[derive(Clone, Copy)]
+enum ReservationQuote {
+    Query,
+    Acknowledged(Option<u64>),
+}
+struct PreparedAdmission {
+    request: std::sync::Arc<CanonicalRequest>,
+    tenant: std::sync::Arc<str>,
+    plan: WorkloadPlan,
+    admission: AdmissionDecision,
+    context: infer_ir::TokenBuffer,
+    generated: infer_ir::TokenBuffer,
+}
+impl PreparedAdmission {
+    fn into_record(
+        mut self,
+        state: StateId,
+        now_us: u64,
+        credit: infer_core::credits::CreditLease,
+        byte_credit: infer_core::credits::CreditLease,
+    ) -> RequestRecord {
+        self.generated.attach_credit(credit.clone());
+        self.generated.attach_byte_credit(byte_credit.clone());
+        self.context.attach_byte_credit(byte_credit.clone());
+        for unit in &mut self.plan.units {
+            unit.attach_byte_credit(byte_credit.clone());
+        }
+        self.context.attach_credit(credit.clone());
+        RequestRecord {
+            request: self.request,
+            tenant: self.tenant,
+            host_lease: Some(credit),
+            byte_lease: Some(byte_credit),
+            plan: self.plan,
+            state: Some(state),
+            status: RequestStatus::Runnable,
+            progress_epoch: 0,
+            unit: 0,
+            prefill_done: 0,
+            prefill_target: self.context.len(),
+            preemptions: 0,
+            cached_tokens: 0,
+            prefix_attempted: false,
+            context: crate::TokenContext::new(self.context),
+            generated: self.generated,
+            outputs: Vec::new(),
+            completed: None,
+            pending_finish: None,
+            accepted_us: now_us,
+            first_token_us: None,
+            last_token_us: None,
+            max_tpot_us: None,
+            last_service_us: now_us,
+            admission: self.admission,
+        }
+    }
+}
+impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
+    /// # Errors
+    /// Returns validation, capacity or execution-state admission errors.
+    pub fn submit(&mut self, request: CanonicalRequest) -> Result<()> {
+        self.submit_with_trace(request, None)
+    }
+    /// Transport trace metadata is separate from workload feature extensions.
+    /// # Errors
+    /// Returns request validation, capacity, conflict or quarantine errors.
+    pub fn submit_with_trace(
+        &mut self,
+        request: CanonicalRequest,
+        parent: Option<TraceContext>,
+    ) -> Result<()> {
+        let id = request.id;
+        let result = self.submit_inner(request.into(), None);
+        self.record_admission_result(id, parent, &result);
+        result
+    }
+    /// Freeze an immutable preparation context before starting CPU workers.
+    /// # Errors
+    /// Returns unsupported if a custom workload provider cannot create an isolated preparer.
+    pub fn request_preparer(&self) -> Result<crate::RequestPreparer> {
+        Ok(crate::RequestPreparer::new(
+            self.model.clone(),
+            self.program.id,
+            self.fork_workloads()?,
+            self.config.clone(),
+        ))
+    }
+    /// Admit a CPU-prepared request after checking live resources and request identity.
+    /// # Errors
+    /// Rejects a foreign preparation context or dynamic admission/reservation failures.
+    pub fn submit_prepared_with_trace(
+        &mut self,
+        prepared: crate::PreparedRequest,
+        parent: Option<TraceContext>,
+    ) -> Result<()> {
+        if *prepared.model != self.model
+            || prepared.provider != self.workloads.identity()
+            || prepared.plan.program != self.program.id
+        {
+            return Err(Error::invalid("foreign request preparation context"));
+        }
+        let id = prepared.request.id;
+        let result = self.submit_inner(
+            prepared.request,
+            Some((prepared.plan, prepared.generated, prepared.tenant)),
+        );
+        self.record_admission_result(id, parent, &result);
+        result
+    }
+    /// Begin resource sizing without waiting for the backend owner.
+    /// # Errors
+    /// Rejects foreign preparation contexts or a full/stopped resource command lane.
+    pub fn admission_quote(
+        &mut self,
+        prepared: &crate::PreparedRequest,
+    ) -> Result<infer_spi::ResourceTicket> {
+        if *prepared.model != self.model
+            || prepared.provider != self.workloads.identity()
+            || prepared.plan.program != self.program.id
+        {
+            return Err(Error::invalid("foreign request preparation context"));
+        }
+        self.validate_request_admission(&prepared.request)?;
+        self.backend
+            .begin_resource(infer_spi::ResourceCommand::ReservationBytes {
+                capacity: prepared.plan.reserved_tokens,
+                readout: crate::stages::prefill::retained_readout(&prepared.request.workload),
+            })
+    }
+    /// Admit with the already acknowledged sizing quote, while rechecking live quotas/resources.
+    /// # Errors
+    /// Rejects a stale context, capacity, duplicate identity or failed resource reservation.
+    pub fn submit_quoted_with_trace(
+        &mut self,
+        prepared: crate::PreparedRequest,
+        bytes: Option<u64>,
+        parent: Option<TraceContext>,
+    ) -> Result<()> {
+        if *prepared.model != self.model
+            || prepared.provider != self.workloads.identity()
+            || prepared.plan.program != self.program.id
+        {
+            return Err(Error::invalid("foreign request preparation context"));
+        }
+        let id = prepared.id();
+        let result = self.submit_inner_quoted(
+            prepared.request,
+            Some((prepared.plan, prepared.generated, prepared.tenant)),
+            ReservationQuote::Acknowledged(bytes),
+        );
+        self.record_admission_result(id, parent, &result);
+        result
+    }
+    fn record_admission_result(
+        &mut self,
+        id: RequestId,
+        parent: Option<TraceContext>,
+        result: &Result<()>,
+    ) {
+        match result {
+            Ok(()) => {
+                if let Some(parent) = parent.filter(TraceContext::valid)
+                    && self
+                        .observations
+                        .collector
+                        .as_mut()
+                        .is_none_or(|collector| collector.parent(id.get(), parent.clone()))
+                {
+                    self.observations.parents.insert(id.get(), parent);
+                    self.observations.parents_dirty = true;
+                }
+            }
+            Err(error) => self.record_admission_rejection(id, error),
+        }
+    }
+    /// Retain cold-stage rejection evidence even when no runtime record was admitted.
+    pub fn record_admission_rejection(&mut self, id: RequestId, error: &Error) {
+        self.event(
+            EventKind::Rejected,
+            ObjectKind::Request,
+            id.get(),
+            0,
+            infer_observe::error_code(error.code),
+            0,
+        );
+        self.retain_diagnostic(DiagnosticCode::AdmissionRejected, error, Some(id), None);
+    }
+    fn submit_inner(
+        &mut self,
+        request: std::sync::Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+    ) -> Result<()> {
+        self.submit_inner_quoted(request, plan, ReservationQuote::Query)
+    }
+    fn submit_inner_quoted(
+        &mut self,
+        request: std::sync::Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+        quote: ReservationQuote,
+    ) -> Result<()> {
+        if self.fault.is_some() {
+            return Err(Error::new(
+                ErrorCode::Backend,
+                "engine is quarantined; replace it after in-flight work drains",
+            ));
+        }
+        let prepared = self.prepare_admission(request, plan, quote)?;
+        let tokens = crate::preparation::retained_tokens(
+            &prepared.plan,
+            crate::preparation::generation_capacity(&prepared.request),
+        )?;
+        let credit = self.host.credits.reserve(tokens)?;
+        let bytes = crate::preparation::retained_bytes(
+            &prepared.request,
+            &prepared.plan,
+            &self.model,
+            self.config.page_tokens,
+        )?;
+        let bytes = self.execution_host_bytes(&prepared, bytes)?;
+        let byte_credit = self.host.bytes.reserve(bytes)?;
+        let state = self.reserve_execution_state(&prepared)?;
+        let id = prepared.request.id;
+        self.retain_request_identity(id);
+        self.register_tenant(&prepared.request, prepared.tenant.clone(), &prepared.plan)?;
+        let record = prepared.into_record(state, self.now_us, credit, byte_credit);
+        self.record_action(crate::ReplayAction::Submit(record.request.clone()));
+        self.host.requests.insert(id, record)?;
+        self.discard_prepared();
+        self.enqueue_request(id)?;
+        if let Some(pending) = self.resources_pending.remove(id) {
+            self.park_resource(
+                id,
+                pending
+                    .ticket
+                    .ok_or_else(|| Error::invariant("reservation ticket lost"))?,
+                pending.phase,
+            )?;
+        }
+        self.event(
+            EventKind::Accepted,
+            ObjectKind::Request,
+            id.get(),
+            self.program.id.get(),
+            0,
+            0,
+        );
+        self.event(
+            EventKind::StateReserved,
+            ObjectKind::State,
+            state.get(),
+            id.get(),
+            self.state.get(state)?.pages.len() as u64,
+            0,
+        );
+        self.progress(id)
+    }
+    fn prepare_admission(
+        &mut self,
+        request: std::sync::Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+        quote: ReservationQuote,
+    ) -> Result<PreparedAdmission> {
+        self.apply_cost_feedback()?;
+        self.validate_request_admission(&request)?;
+        let (plan, generated, tenant) = if let Some(plan) = plan {
+            plan
+        } else {
+            request.validate()?;
+            self.validate_input_budget(&request.input)?;
+            if !self.workloads.supports(&request.workload) {
+                return Err(Error::unsupported("workload provider not installed"));
+            }
+            let plan = self
+                .workloads
+                .plan(&request, &self.model, self.program.id)?;
+            self.validate_workload_plan(&request, &plan)?;
+            (
+                plan,
+                crate::preparation::generation_storage(&request)?,
+                std::sync::Arc::from(request.qos.tenant.as_str()),
+            )
+        };
+        let admission = match quote {
+            ReservationQuote::Acknowledged(bytes) => {
+                self.check_admission_with_bytes(&request, &plan, bytes)?
+            }
+            ReservationQuote::Query => self.check_admission(&request, &plan)?,
+        };
+        let context = plan
+            .units
+            .first()
+            .cloned()
+            .ok_or_else(|| Error::invariant("validated plan has no initial unit"))?;
+        Ok(PreparedAdmission {
+            request,
+            tenant,
+            plan,
+            admission,
+            context,
+            generated,
+        })
+    }
+    fn validate_request_admission(&self, request: &CanonicalRequest) -> Result<()> {
+        if self.host.requests.contains_key(request.id)
+            || self.seen_requests.contains(&request.id)
+            || request.id.get() <= self.retired_request_floor
+        {
+            return Err(Error::new(ErrorCode::Conflict, "duplicate request ID"));
+        }
+        if self.host.requests.len() >= self.config.max_requests {
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "request/result buffer is full; drain completed requests",
+            ));
+        }
+        if request.qos.deadline_us.is_some_and(|d| d <= self.now_us) {
+            return Err(Error::invalid("request deadline has expired"));
+        }
+        if self
+            .tenants
+            .get(request.qos.tenant.as_str())
+            .is_some_and(|t| t.weight != request.qos.weight)
+        {
+            return Err(Error::invalid(
+                "tenant weight must be consistent across requests",
+            ));
+        }
+        Ok(())
+    }
+    fn validate_input_budget(&self, input: &RequestInput) -> Result<()> {
+        crate::preparation::validate_input(input, &self.config)
+    }
+    fn validate_workload_plan(
+        &self,
+        request: &CanonicalRequest,
+        plan: &WorkloadPlan,
+    ) -> Result<()> {
+        crate::preparation::validate_plan(request, plan, &self.model, self.program.id, &self.config)
+    }
+    fn reserve_execution_state(&mut self, prepared: &PreparedAdmission) -> Result<StateId> {
+        let state = self.state.reserve_incremental(
+            prepared.request.id,
+            StateKind::AttentionKv,
+            prepared.plan.reserved_tokens,
+        )?;
+        let result = self
+            .backend
+            .begin_resource(infer_spi::ResourceCommand::Reserve {
+                state,
+                capacity: prepared.plan.reserved_tokens,
+                readout: crate::stages::prefill::retained_readout(&prepared.request.workload),
+            })
+            .and_then(|mut ticket| {
+                match ticket.poll()? {
+                    Some(infer_spi::ResourceReply::Reserved) => {}
+                    Some(_) => {
+                        return Err(Error::invariant(
+                            "reservation acknowledgement type mismatch",
+                        ));
+                    }
+                    None => {
+                        self.resources_pending.insert(
+                            prepared.request.id,
+                            crate::resource::PendingResource {
+                                ticket: Some(ticket),
+                                phase: crate::resource::ResourcePhase::Reserve,
+                                started: self.now_us,
+                            },
+                        )?;
+                    }
+                }
+                Ok(())
+            });
+        if let Err(error) = result {
+            self.state.release(state)?;
+            return Err(error);
+        }
+        Ok(state)
+    }
+    fn retain_request_identity(&mut self, id: RequestId) {
+        self.seen_requests.insert(id);
+        if self.seen_requests.len() > self.config.history_capacity
+            && let Some(retired) = self.seen_requests.pop_first()
+        {
+            self.retired_request_floor = retired.get();
+        }
+    }
+    fn register_tenant(
+        &mut self,
+        request: &CanonicalRequest,
+        name: std::sync::Arc<str>,
+        plan: &WorkloadPlan,
+    ) -> Result<()> {
+        let floor = self.host.queues.virtual_time();
+        if let Some(tenant) = self.tenants.get_mut(request.qos.tenant.as_str()) {
+            tenant.virtual_finish = tenant.virtual_finish.max(floor);
+            tenant.owners += 1;
+            tenant.active += 1;
+            tenant.tokens += plan.reserved_tokens;
+            tenant.pages += plan.reserved_tokens.div_ceil(self.config.page_tokens);
+        } else {
+            self.tenants.insert(
+                name,
+                TenantService {
+                    owners: 1,
+                    active: 1,
+                    tokens: plan.reserved_tokens,
+                    pages: plan.reserved_tokens.div_ceil(self.config.page_tokens),
+                    weight: request.qos.weight,
+                    virtual_finish: floor,
+                },
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
+    fn execution_host_bytes(
+        &self,
+        prepared: &PreparedAdmission,
+        mut bytes: usize,
+    ) -> Result<usize> {
+        if let Some(recipe) = self.backend.state_recipe() {
+            recipe.visit(
+                prepared.plan.reserved_tokens,
+                crate::stages::prefill::retained_readout(&prepared.request.workload),
+                |region| {
+                    // Numerical readbacks and their row headers are already charged by retained_bytes.
+                    if region.region.memory == infer_ir::StateMemory::HostMirror
+                        && matches!(
+                            region.region.kind,
+                            infer_ir::StateRegionKind::Tokens
+                                | infer_ir::StateRegionKind::PageTable
+                                | infer_ir::StateRegionKind::BlockLeases
+                        )
+                    {
+                        bytes = usize::try_from(region.bytes)
+                            .ok()
+                            .and_then(|extra| bytes.checked_add(extra))
+                            .ok_or_else(|| {
+                                Error::invalid("physical state host mirrors exceed byte ABI")
+                            })?;
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(bytes)
+    }
+}

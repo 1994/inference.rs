@@ -1,0 +1,5 @@
+{
+  "max_batch": 4,
+  "token_budget": 2,
+  "history_capacity": 4096
+}

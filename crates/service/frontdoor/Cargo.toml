@@ -1,0 +1,29 @@
+[package]
+name = "infer-frontdoor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-models.workspace = true
+infer-runtime.workspace = true
+infer-observe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+
+[dev-dependencies]
+infer-workloads.workspace = true
+tower = {version="0.5",features=["util"]}
+infer-backend-reference.workspace = true
+infer-backend-host.workspace = true
+infer-kernel-api.workspace = true

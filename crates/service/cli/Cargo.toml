@@ -1,0 +1,37 @@
+[package]
+name = "infer-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-backends = ["infer-ir/test-backends", "dep:infer-backend-host", "dep:infer-backend-reference"]
+
+[dependencies]
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-runtime.workspace = true
+infer-backend-reference = { workspace = true, optional = true }
+infer-backend-host = { workspace = true, optional = true }
+infer-backend-metal.workspace = true
+infer-quality.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+infer-models.workspace = true
+infer-workloads.workspace = true
+infer-kernel-api.workspace = true
+infer-frontdoor.workspace = true
+infer-agent.workspace = true
+tokio.workspace = true
+mimalloc.workspace = true
+
+[[bin]]
+name = "infer"
+path = "src/main.rs"

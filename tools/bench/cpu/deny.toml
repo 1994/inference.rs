@@ -1,0 +1,39 @@
+# Standalone CPU measurement graph has no Metal/bitflags 1 dependency.
+[graph]
+all-features = true
+# Check both deployment platforms, including dependencies hidden on this host.
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 is a compile-time macro dependency of metal 0.29 and tokenizers 0.23.2; neither stable upstream provides a replacement. No vulnerability is reported. Remove this exception when both upstreams drop paste." },
+]
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+confidence-threshold = 0.95
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+multiple-versions-include-dev = true
+skip = [
+    { crate = "syn@2.0.119", reason = "tokenizers derive_builder still uses syn 2 while current serde and thiserror macros use syn 3; remove after upstream migration" },
+]
+
+[bans.workspace-dependencies]
+duplicates = "deny"
+include-path-dependencies = true
+# Checked by tools/check/policy.py; cargo-deny's source matching misidentifies
+# inherited registry dependencies when Cargo uses a source replacement mirror.
+unused = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

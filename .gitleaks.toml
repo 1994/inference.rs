@@ -1,0 +1,8 @@
+title = "Source credential gate"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated build products and local acceptance artifacts are not project sources"
+paths = ['(^|/)target/', '(^|/)artifacts/']

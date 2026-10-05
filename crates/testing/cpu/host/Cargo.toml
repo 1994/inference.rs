@@ -1,0 +1,26 @@
+[package]
+name = "infer-backend-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir = { workspace = true, features = ["test-backends"] }
+infer-spi.workspace = true
+infer-models.workspace = true
+infer-compiler.workspace = true
+infer-state.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+infer-runtime.workspace = true
+infer-kernel-api.workspace = true
+infer-quality.workspace = true
+infer-workloads.workspace = true

@@ -1,0 +1,35 @@
+{
+  "max_batch": 16,
+  "token_budget": 64,
+  "gpu_budget_us": 10000,
+  "scheduler": {
+    "prefill_chunk_tokens": 32,
+    "forward_chunk_tokens": 32,
+    "fair_quantum_tokens": 4,
+    "max_wait_us": 20000,
+    "urgent_budget_percent": 75,
+    "max_singleton_gpu_us": 1000000
+  },
+  "cost_model": {
+    "adaptive": true,
+    "max_profiles": 512,
+    "ewma_alpha_percent": 25,
+    "safety_margin_percent": 20
+  },
+  "admission": {
+    "reject_infeasible_slo": false,
+    "default_tenant": {
+      "max_active_requests": 64,
+      "max_reserved_tokens": 8192,
+      "max_state_pages": 512
+    },
+    "tenants": {
+      "interactive": {
+        "max_active_requests": 16,
+        "max_reserved_tokens": 4096,
+        "max_state_pages": 256,
+        "weight": 3
+      }
+    }
+  }
+}

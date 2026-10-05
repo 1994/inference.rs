@@ -1,0 +1,5 @@
+# Keep source line endings stable on Linux, macOS and Windows.
+* text=auto eol=lf
+
+# Tiny reference model weights are intentional binary test fixtures.
+*.safetensors binary

@@ -1,0 +1,118 @@
+//! Verification commands.
+#[cfg(any(target_os = "macos", feature = "test-backends"))]
+use super::host_quality;
+use super::{VerifyOptions, backend, print, read_json};
+#[cfg(feature = "test-backends")]
+use super::{examples, outputs, results, run_requests, selected_engine};
+use infer_core::{Error, Result};
+#[cfg(feature = "test-backends")]
+use infer_runtime::RuntimeConfig;
+
+pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Result<()> {
+    let VerifyOptions {
+        reference,
+        candidate,
+        atol,
+        rtol,
+        package,
+        golden,
+        device_memory_mib,
+    } = options;
+    if package.is_none()
+        && let (Some(a), Some(b)) = (&reference, &candidate)
+    {
+        let report = infer_quality::compare(
+            &read_json::<Vec<f32>>(a)?,
+            &read_json::<Vec<f32>>(b)?,
+            atol,
+            rtol,
+        )?;
+        print(&report)?;
+        return if report.passed {
+            Ok(())
+        } else {
+            Err(Error::invariant("verification failed"))
+        };
+    }
+    #[cfg(any(target_os = "macos", feature = "test-backends"))]
+    {
+        if let Some(package) = package {
+            let report = host_quality::verify_package(
+                &package,
+                golden
+                    .as_deref()
+                    .ok_or_else(|| Error::invariant("validated argument"))?,
+                device_memory_mib,
+                atol,
+                rtol,
+                backend_choice,
+            )?;
+            print(&report)?;
+            return if report["passed"] == true {
+                Ok(())
+            } else {
+                Err(Error::invariant("package golden verification failed"))
+            };
+        }
+        #[cfg(feature = "test-backends")]
+        {
+            verify_fixture(device_memory_mib, backend_choice)
+        }
+        #[cfg(not(feature = "test-backends"))]
+        {
+            Err(Error::invalid(
+                "device backend verification requires --package and --golden",
+            ))
+        }
+    }
+    #[cfg(not(any(target_os = "macos", feature = "test-backends")))]
+    {
+        let _ = (golden, device_memory_mib, backend_choice);
+        Err(Error::unsupported(
+            "GPU verification requires a supported device backend",
+        ))
+    }
+}
+#[cfg(feature = "test-backends")]
+pub(super) fn verify_fixture(
+    device_memory_mib: u64,
+    backend_choice: backend::Selection,
+) -> Result<()> {
+    let input = examples()?;
+    let ids = input.iter().map(|r| r.id).collect::<Vec<_>>();
+    let mut baseline = selected_engine(
+        RuntimeConfig {
+            max_batch: 1,
+            ..Default::default()
+        },
+        None,
+        None,
+        device_memory_mib,
+        backend_choice,
+    )?;
+    run_requests(&mut baseline, input.clone())?;
+    let mut candidate = selected_engine(
+        RuntimeConfig {
+            max_batch: 4,
+            token_budget: 2,
+            ..Default::default()
+        },
+        None,
+        None,
+        device_memory_mib,
+        backend_choice,
+    )?;
+    run_requests(&mut candidate, input)?;
+    let passed = outputs(&baseline, &ids)? == outputs(&candidate, &ids)?
+        && results(&baseline, &ids)?
+            .iter()
+            .chain(results(&candidate, &ids)?.iter())
+            .all(|r| r.measurement.successful);
+    print(
+        &serde_json::json!({"scope":"CPU fixture runtime invariance","batch_invariance":passed,"chunk_invariance":passed,"state_leaks":candidate.inspect().state.allocated_pages,"passed":passed}),
+    )?;
+    if !passed {
+        return Err(Error::invariant("runtime invariance failed"));
+    }
+    Ok(())
+}

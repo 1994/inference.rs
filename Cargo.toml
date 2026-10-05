@@ -1,0 +1,137 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/foundation/core",
+    "crates/foundation/ir",
+    "crates/foundation/spi",
+    "crates/backend/api",
+    "crates/backend/kernel-api",
+    "crates/backend/metal",
+    "crates/model/package",
+    "crates/model/compiler",
+    "crates/engine/state",
+    "crates/engine/scheduler",
+    "crates/engine/workloads",
+    "crates/engine/runtime",
+    "crates/diagnostics/observe",
+    "crates/diagnostics/quality",
+    "crates/service/frontdoor",
+    "crates/service/agent",
+    "crates/service/cli",
+    "crates/testing/cpu/host",
+    "crates/testing/cpu/reference",
+]
+
+default-members = [
+    "crates/foundation/core",
+    "crates/foundation/ir",
+    "crates/foundation/spi",
+    "crates/backend/api",
+    "crates/backend/kernel-api",
+    "crates/backend/metal",
+    "crates/model/package",
+    "crates/model/compiler",
+    "crates/engine/state",
+    "crates/engine/scheduler",
+    "crates/engine/workloads",
+    "crates/engine/runtime",
+    "crates/diagnostics/observe",
+    "crates/diagnostics/quality",
+    "crates/service/frontdoor",
+    "crates/service/agent",
+    "crates/service/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+rtrb = "0.4"
+ahash = "=0.8.12"
+sha2 = "0.10"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+futures-util = "0.3"
+mimalloc = { version = "0.1.52", default-features = false }
+
+# Foundation
+infer-core = { version = "=0.1.0", path = "crates/foundation/core" }
+infer-ir = { version = "=0.1.0", path = "crates/foundation/ir" }
+infer-spi = { version = "=0.1.0", path = "crates/foundation/spi" }
+
+# Device execution
+infer-gpu-api = { version = "=0.1.0", path = "crates/backend/api" }
+infer-kernel-api = { version = "=0.1.0", path = "crates/backend/kernel-api" }
+infer-backend-metal = { version = "=0.1.0", path = "crates/backend/metal" }
+
+# Model loading and compilation
+infer-models = { version = "=0.1.0", path = "crates/model/package" }
+infer-compiler = { version = "=0.1.0", path = "crates/model/compiler" }
+
+# Engine
+infer-state = { version = "=0.1.0", path = "crates/engine/state" }
+infer-scheduler = { version = "=0.1.0", path = "crates/engine/scheduler" }
+infer-workloads = { version = "=0.1.0", path = "crates/engine/workloads" }
+infer-runtime = { version = "=0.1.0", path = "crates/engine/runtime" }
+
+# Diagnostics
+infer-observe = { version = "=0.1.0", path = "crates/diagnostics/observe" }
+infer-quality = { version = "=0.1.0", path = "crates/diagnostics/quality" }
+
+# Services
+infer-frontdoor = { version = "=0.1.0", path = "crates/service/frontdoor" }
+infer-agent = { version = "=0.1.0", path = "crates/service/agent" }
+
+# Opt-in CPU references
+infer-backend-host = { version = "=0.1.0", path = "crates/testing/cpu/host" }
+infer-backend-reference = { version = "=0.1.0", path = "crates/testing/cpu/reference" }
+
+[workspace.lints.rust]
+warnings = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+unfulfilled_lint_expectations = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+invalid_codeblock_attributes = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+allow_attributes_without_reason = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+mem_forget = "deny"
+multiple_unsafe_ops_per_block = "deny"
+unused_result_ok = "deny"
+get_unwrap = "deny"
+rc_mutex = "deny"
+too_many_lines = "deny"
+cognitive_complexity = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,7 @@
+{"jsonrpc": "2.0", "id": 1, "method": "runtime.inspect"}
+{"jsonrpc": "2.0", "id": 2, "method": "runtime.submit", "params": {"id": 1, "model": 1, "input": {"Sequence": {"tokens": [1, 2, 3, 4, 5]}}, "workload": {"Generate": {"max_new_tokens": 8}}}}
+{"jsonrpc": "2.0", "id": 3, "method": "runtime.tick", "params": {"now_us": 0}}
+{"jsonrpc": "2.0", "id": 4, "method": "snapshot.capture", "params": {"now_us": 1}}
+{"jsonrpc": "2.0", "id": 5, "method": "runtime.explain", "params": {"request_id": 1}}
+{"jsonrpc": "2.0", "id": 6, "method": "kernel.sources"}
+{"jsonrpc": "2.0", "id": 7, "method": "events.drain"}

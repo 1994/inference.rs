@@ -1,0 +1,5 @@
+# CPU fixtures and test assertions may unwrap; production paths may not.
+msrv = "1.90"
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

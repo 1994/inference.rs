@@ -1,0 +1,51 @@
+# Rust build output, including the standalone CPU benchmark.
+target/
+
+# Generated reports, model downloads and local caches.
+/artifacts/
+.cache/
+.ruff_cache/
+/models/
+/weights/
+/checkpoints/
+/runs/
+/examples/qwen3.8-27b/*.safetensors
+/examples/qwen3.8-27b/*.bin
+
+# Python tooling and reference-export environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+/htmlcov/
+/coverage/
+*.profraw
+*.profdata
+
+# Local credentials; templates remain versioned.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.direnv/
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Temporary output. Cargo.lock, golden JSON and tiny model fixtures stay versioned.
+*.tmp
+*.bak
+*.orig
+*.rej

@@ -1,0 +1,30 @@
+[package]
+name = "infer-backend-metal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-models.workspace = true
+infer-compiler.workspace = true
+infer-state.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "=0.29.0"
+objc = "0.2"
+
+[dev-dependencies]
+infer-kernel-api.workspace = true
+infer-runtime.workspace = true
+infer-workloads.workspace = true
+infer-quality.workspace = true

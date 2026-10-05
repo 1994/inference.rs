@@ -1,0 +1,27 @@
+[package]
+name = "infer-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-gpu-api.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-compiler.workspace = true
+infer-kernel-api.workspace = true
+infer-state.workspace = true
+infer-scheduler.workspace = true
+infer-workloads.workspace = true
+infer-quality.workspace = true
+infer-observe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+infer-backend-reference.workspace = true

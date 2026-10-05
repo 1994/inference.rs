@@ -1,0 +1,253 @@
+//! Construction responsibilities.
+use super::{Engine, RuntimeConfig};
+use infer_core::{Error, ErrorCode, IdAllocator, ProgramId, Result, event::event_ring};
+use infer_ir::{ModelIr, PrecisionPlan};
+use infer_kernel_api::KernelRegistry;
+use infer_quality::ProgressGuard;
+use infer_scheduler::{CalibratedCosts, CostAwarePolicy, ResourceAdmission};
+use infer_spi::{BackendProvider, SchedulingPolicy, WorkloadProvider};
+use infer_state::SequenceStateManager;
+use infer_workloads::NativeWorkloads;
+use std::{collections::BTreeSet, collections::VecDeque};
+
+impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
+    ///
+    /// # Errors
+    /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
+    pub fn new(
+        backend: B,
+        model: ModelIr,
+        precision: PrecisionPlan,
+        registry: &KernelRegistry,
+        config: RuntimeConfig,
+    ) -> Result<Self> {
+        Self::with_policy(backend, model, precision, registry, config, CostAwarePolicy)
+    }
+}
+
+impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
+    ///
+    /// # Errors
+    /// Returns a validation, unsupported, or capacity error if configuration, model compilation, or backend initialization fails.
+    pub fn with_policy(
+        backend: B,
+        model: ModelIr,
+        precision: PrecisionPlan,
+        registry: &KernelRegistry,
+        config: RuntimeConfig,
+        policy: P,
+    ) -> Result<Self> {
+        let placement = config.cpu.placement.scheduler.clone();
+        placement.scope(|| Self::initialize(backend, model, precision, registry, config, policy))
+    }
+    fn initialize(
+        backend: B,
+        model: ModelIr,
+        precision: PrecisionPlan,
+        registry: &KernelRegistry,
+        config: RuntimeConfig,
+        policy: P,
+    ) -> Result<Self> {
+        config.validate()?;
+        let program = infer_compiler::compile(
+            ProgramId::new(1)?,
+            infer_compiler::lower(&model, precision)?,
+            registry,
+            &backend.capabilities(),
+            config.workspace_bytes,
+        )?;
+        backend.validate_program(&model, &program)?;
+        let state = SequenceStateManager::with_capacity(
+            config.state_pages,
+            config.page_tokens,
+            config.max_requests,
+        )?;
+        let guard = ProgressGuard::new(config.progress_limit)?;
+        let (events, event_reader) = event_ring(config.event_capacity);
+        let costs = CalibratedCosts::new(
+            format!("{}:{}", backend.identity(), program.id),
+            config.cost_model.clone(),
+        )?;
+        let admission_policy = ResourceAdmission::new(config.admission.clone())?;
+        let observations = crate::observation::Observations::new(config.history_capacity)?;
+        let host = crate::cpu::storage::HostStorage::new(
+            &config,
+            program.id,
+            program.backend,
+            model.vocab_size,
+        )?;
+        let mut planning_workspace = P::Workspace::default();
+        policy.reserve_workspace(
+            &mut planning_workspace,
+            config.candidate_limit.min(config.max_requests),
+            config.max_batch,
+        )?;
+        let tenants = infer_core::map::BoundedMap::new(config.max_requests)?;
+        let resources_pending = crate::resource::ResourceWaiters::new(config.max_requests)?;
+        let output_owners = infer_core::map::BoundedMap::new(config.max_requests)?;
+        let history_capacity = config.history_capacity;
+        Ok(Self {
+            backend,
+            policy,
+            planning_workspace,
+            host,
+            output_worker: None,
+            output_pending: crate::pipeline::completion::cpu::OutputFlights::default(),
+            output_owners,
+            workloads: Box::new(NativeWorkloads),
+            costs: Box::new(costs),
+            admission_policy: Box::new(admission_policy),
+            pending_cost_observations: VecDeque::with_capacity(config.history_capacity),
+            replaying: false,
+            preemption_focus: None,
+            model,
+            program,
+            config,
+            state,
+            resource_epoch: 0,
+            backend_resource_epoch: 0,
+            resources_pending,
+            seen_requests: BTreeSet::new(),
+            retired_request_floor: 0,
+            tenants,
+            ids: IdAllocator::default(),
+            inflight: None,
+            global_progress_epoch: 0,
+            now_us: 0,
+            guard,
+            events,
+            event_reader: Some(event_reader),
+            decisions: VecDeque::with_capacity(history_capacity),
+            actions: VecDeque::with_capacity(history_capacity),
+            dropped_actions: 0,
+            diagnostic_snapshot: None,
+            fault: None,
+            observations,
+        })
+    }
+    ///
+    /// # Errors
+    /// Returns a conflict error if provider installation is attempted after requests or replay actions have been recorded.
+    pub fn with_workloads(
+        mut self,
+        provider: impl WorkloadProvider + Send + Sync + 'static,
+    ) -> Result<Self> {
+        if !self.host.requests.is_empty() || !self.actions.is_empty() {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "providers must be installed before admission",
+            ));
+        }
+        self.workloads = Box::new(provider);
+        Ok(self)
+    }
+}
+
+impl<B: BackendProvider + Send + 'static, P: SchedulingPolicy> Engine<B, P>
+where
+    B::Ticket: Send,
+{
+    /// Move device execution to a dedicated submission owner before service admission.
+    /// # Errors
+    /// Rejects active requests/tickets or failure to start the device thread.
+    pub fn into_threaded(
+        mut self,
+        queue: usize,
+        timeout: std::time::Duration,
+    ) -> Result<Engine<crate::runner::ThreadedBackend<B>, P>> {
+        if self.inflight.is_some()
+            || !self.output_pending.is_empty()
+            || !self.resources_pending.is_empty()
+            || self.backend.pending_resource_releases()
+        {
+            return Err(Error::invalid(
+                "start runner at a quiescent resource boundary",
+            ));
+        }
+        let states: Vec<_> = self
+            .checkpoint_states()?
+            .into_iter()
+            .map(|state| state.0)
+            .collect();
+        self.config.resource_timeout_us = u64::try_from(timeout.as_micros())
+            .map_err(|_| Error::invalid("resource timeout overflow"))?;
+        self.config.validate()?;
+        self.collect_observations();
+        let store = std::mem::replace(
+            &mut self.observations.store,
+            infer_observe::ObservationStore::new(self.config.history_capacity)?,
+        );
+        let reader = self
+            .event_reader
+            .take()
+            .ok_or_else(|| Error::invariant("event reader already transferred"))?;
+        self.observations.collector = Some(crate::observation::collector::Collector::new(
+            reader,
+            store,
+            self.events.published(),
+            self.config
+                .history_capacity
+                .saturating_add(self.config.max_requests)
+                .min(8192),
+        )?);
+        let output_worker = crate::stages::worker::OutputWorker::placed(
+            &self.fork_workloads()?.into(),
+            self.config.max_batch.min(self.config.max_requests),
+            self.model.vocab_size,
+            &self.config.cpu.placement.output,
+        )?;
+        let backend = crate::runner::ThreadedBackend::with_states_placed(
+            self.backend,
+            self.model.clone(),
+            self.program.clone(),
+            crate::runner::RunnerConfig {
+                control_capacity: queue,
+                max_batch: self.config.max_batch,
+                max_states: self.config.max_requests,
+                batch_slots: 2,
+                poll_min_us: self.config.cpu.poll_min_us,
+                poll_max_us: self.config.cpu.poll_max_us,
+            },
+            &states,
+            &self.config.cpu.placement.device,
+        )?;
+        Ok(Engine {
+            backend,
+            policy: self.policy,
+            planning_workspace: self.planning_workspace,
+            host: self.host,
+            output_worker: Some(output_worker),
+            output_pending: self.output_pending,
+            output_owners: self.output_owners,
+            workloads: self.workloads,
+            costs: self.costs,
+            admission_policy: self.admission_policy,
+            pending_cost_observations: self.pending_cost_observations,
+            replaying: self.replaying,
+            preemption_focus: self.preemption_focus,
+            model: self.model,
+            program: self.program,
+            config: self.config,
+            state: self.state,
+            resources_pending: self.resources_pending,
+            resource_epoch: self.resource_epoch,
+            backend_resource_epoch: 0,
+            seen_requests: self.seen_requests,
+            retired_request_floor: self.retired_request_floor,
+            tenants: self.tenants,
+            ids: self.ids,
+            inflight: None,
+            global_progress_epoch: self.global_progress_epoch,
+            now_us: self.now_us,
+            guard: self.guard,
+            events: self.events,
+            event_reader: self.event_reader,
+            decisions: self.decisions,
+            actions: self.actions,
+            dropped_actions: self.dropped_actions,
+            diagnostic_snapshot: self.diagnostic_snapshot,
+            fault: self.fault,
+            observations: self.observations,
+        })
+    }
+}

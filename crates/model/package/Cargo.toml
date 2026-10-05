@@ -1,0 +1,21 @@
+[package]
+name = "infer-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-compiler.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+minijinja = { version = "2", features = ["json", "fuel"] }
+minijinja-contrib = { version = "2", features = ["pycompat"] }
