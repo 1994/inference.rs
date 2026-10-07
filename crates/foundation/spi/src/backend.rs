@@ -32,6 +32,10 @@ pub trait BackendProvider {
         false
     }
     fn capabilities(&self) -> DeviceCapabilities;
+    /// Speculative decode support, queried on hot paths where cloning capabilities would allocate.
+    fn speculation_capability(&self) -> infer_ir::SpeculationCapability {
+        infer_ir::SpeculationCapability::default()
+    }
     /// Whether cold control/resource calls can be accepted without waiting behind CPU encoding.
     fn control_ready(&self) -> bool {
         true
@@ -131,6 +135,11 @@ pub trait BackendProvider {
     /// # Errors
     /// Returns an unsupported or invalid-input error for incompatible backend, model, precision, kernels, or memory requirements.
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()>;
+    /// Return the model-provider graph bound to this backend, without rebuilding its topology.
+    /// # Errors
+    /// Rejects a model different from the one loaded by this backend.
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph>;
+
     ///
     /// # Errors
     /// Returns an invalid-input, conflict, or capacity error for duplicate state or insufficient device storage.

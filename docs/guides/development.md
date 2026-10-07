@@ -27,10 +27,11 @@ infer [--backend auto|metal|cuda|test-cpu] <command> [options]
 | 选项 | 默认值 | 说明 |
 |---|---:|---|
 | `--backend` | `auto` | `auto` 按 CUDA → Metal 选择，无可用 GPU 时报错 |
-| `--device-memory-mib` | 512 | 设备内存预算，别名 `--host-memory-mib` |
-| `--kv-cache-blocks` | 自动 | 物理 KV block 数 |
-| `--kv-page-tokens` | 自动 | 每个 KV block / 逻辑页的 token 数 |
-| `--prefill-chunk-tokens` | 自动 | 单次 GPU prefill 的最大 token 行数 |
+| `--gpu-memory-utilization` | 0.9 | 允许 engine 使用的显存比例（vLLM 语义，含权重） |
+| `--host-memory-mib` | 512 | 宿主内存后端的预算 |
+| `--num-gpu-blocks-override` | 自动 | 物理 KV block 数 |
+| `--block-size` | 自动 | 每个 KV block / 逻辑页的 token 数 |
+| `--max-num-batched-tokens` | 自动 | 单次 GPU prefill 的最大 token 行数 |
 | `--upload-staging-mib` | 自动 | 权重上传暂存上限，不计入驻留 |
 
 常用命令：
@@ -38,7 +39,7 @@ infer [--backend auto|metal|cuda|test-cpu] <command> [options]
 ```sh
 # 检查包内权重绑定
 target/release/infer inspect-package --package examples/qwen-hybrid-tiny \
-  --device-memory-mib 32768
+  --host-memory-mib 32768
 
 # 执行请求文件（Metal 示例）
 target/release/infer --backend metal run --package examples/qwen-hybrid-tiny \

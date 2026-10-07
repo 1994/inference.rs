@@ -1,6 +1,6 @@
 use infer_backend_host::{HostBackend, HostConfig, HostKernels};
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_workloads::ProjectionWorkloads;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ fn actual_projection_weights_match_torch_embedding_rank_and_typed_decisions() {
     let requests: Vec<CanonicalRequest> =
         serde_json::from_slice(include_bytes!("../../../../../examples/requests.json")).unwrap();
     for chunk in [1, 64] {
-        let mut package = QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+        let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
         let model = package.imported.model.clone();
         let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
         let provider =
@@ -33,7 +33,7 @@ fn actual_projection_weights_match_torch_embedding_rank_and_typed_decisions() {
             PrecisionPlan::f32(),
             &registry,
             RuntimeConfig {
-                token_budget: chunk,
+                max_num_batched_tokens: chunk,
                 ..Default::default()
             },
         )

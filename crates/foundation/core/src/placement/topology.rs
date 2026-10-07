@@ -3,6 +3,24 @@ use super::NumaPolicy;
 use super::ThreadPlacement;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+
+/// Byte length of a canonical PCI address (`domain:bus:slot.function`).
+const PCI_ADDRESS_LEN: usize = 12;
+/// Byte offset of the domain/bus separator in a canonical PCI address.
+const PCI_DOMAIN_SEPARATOR: usize = 4;
+/// Byte offset of the bus/slot separator in a canonical PCI address.
+const PCI_BUS_SEPARATOR: usize = 7;
+/// Byte offset of the slot field in a canonical PCI address.
+const PCI_SLOT_FIELD: usize = 8;
+/// Byte offset of the slot/function separator in a canonical PCI address.
+const PCI_FUNCTION_SEPARATOR: usize = 10;
+/// Byte offset of the function field in a canonical PCI address.
+const PCI_FUNCTION_FIELD: usize = 11;
+/// Highest PCI slot number representable by the 5-bit slot field.
+const PCI_MAX_SLOT: u8 = 31;
+/// Radix of the hexadecimal PCI slot field.
+const PCI_SLOT_RADIX: u32 = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CpuTopology {
     pub allowed_cpus: Vec<usize>,
@@ -37,8 +55,8 @@ pub fn parse_cpu_list(input: &str) -> Result<Vec<usize>> {
             .parse::<usize>()
             .map_err(|_| Error::invalid("invalid CPU list"))?;
         if first > last
-            || last >= 1_048_576
-            || cpus.len().saturating_add(last - first + 1) > 1_048_576
+            || last >= crate::constants::MAX_TOPOLOGY_CPUS
+            || cpus.len().saturating_add(last - first + 1) > crate::constants::MAX_TOPOLOGY_CPUS
         {
             return Err(Error::invalid("CPU list exceeds topology limits"));
         }
@@ -120,16 +138,22 @@ impl PlacementPair {
 }
 fn validate_pci(address: &str) -> Result<()> {
     let bytes = address.as_bytes();
-    if bytes.len() == 12
-        && bytes[4] == b':'
-        && bytes[7] == b':'
-        && bytes[10] == b'.'
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(i, b)| matches!(i, 4 | 7 | 10) || b.is_ascii_hexdigit())
-        && u8::from_str_radix(&address[8..10], 16).is_ok_and(|slot| slot <= 31)
-        && matches!(bytes[11], b'0'..=b'7')
+    if bytes.len() == PCI_ADDRESS_LEN
+        && bytes[PCI_DOMAIN_SEPARATOR] == b':'
+        && bytes[PCI_BUS_SEPARATOR] == b':'
+        && bytes[PCI_FUNCTION_SEPARATOR] == b'.'
+        && bytes.iter().enumerate().all(|(i, b)| {
+            matches!(
+                i,
+                PCI_DOMAIN_SEPARATOR | PCI_BUS_SEPARATOR | PCI_FUNCTION_SEPARATOR
+            ) || b.is_ascii_hexdigit()
+        })
+        && u8::from_str_radix(
+            &address[PCI_SLOT_FIELD..PCI_FUNCTION_SEPARATOR],
+            PCI_SLOT_RADIX,
+        )
+        .is_ok_and(|slot| slot <= PCI_MAX_SLOT)
+        && matches!(bytes[PCI_FUNCTION_FIELD], b'0'..=b'7')
     {
         Ok(())
     } else {

@@ -78,7 +78,7 @@ impl MetalBackend {
         step: &StepPlan,
         tasks: &[ExecutionTask],
     ) -> Result<MetalTicket> {
-        if tasks.len() > 64 {
+        if tasks.len() > crate::constants::MAX_TICKET_TASKS {
             return Err(Error::invalid(
                 "Metal batch exceeds ticket metadata capacity",
             ));

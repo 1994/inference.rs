@@ -276,7 +276,7 @@ try:
         "experiment.run",
         {
             "baseline": {},
-            "candidate": {"token_budget": 1, "max_batch": 1},
+            "candidate": {"max_num_batched_tokens": 1, "max_num_seqs": 1},
             "workload": {"requests": [request], "ttft_slo_us": 1000000, "tpot_slo_us": 100000},
             "constraints": {
                 "accuracy": {

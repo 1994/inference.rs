@@ -1,5 +1,12 @@
 //! Fixture responsibilities.
 use super::{LayerWeights, ReferenceModel};
+use crate::constants::{
+    FIXTURE_HIDDEN_SIZE, FIXTURE_INTERMEDIATE_SIZE, FIXTURE_KV_ELEMENTS_PER_HEAD,
+    FIXTURE_LAYER_COUNT, FIXTURE_MAX_SEQUENCE, FIXTURE_NORM_EPSILON, FIXTURE_ROPE_THETA,
+    FIXTURE_UNIFORM_CENTER, FIXTURE_VOCAB_SIZE, FIXTURE_WEIGHT_SCALE, SPLITMIX_FINAL_MIX_SHIFT,
+    SPLITMIX_GOLDEN_GAMMA, SPLITMIX_MIX_MULTIPLIER_A, SPLITMIX_MIX_MULTIPLIER_B,
+    SPLITMIX_MIX_SHIFT_A, SPLITMIX_MIX_SHIFT_B, SPLITMIX_OUTPUT_SHIFT, SPLITMIX_UNIFORM_BASE,
+};
 use infer_core::ModelId;
 use infer_ir::{
     BackboneKind, DType, FeedForward, Head, Mixer, Modality, ModelIr, PositionSpec, StateKind,
@@ -21,13 +28,18 @@ impl ReferenceModel {
         reason = "Separate multiply/add rounding preserves the numerical contract of the independent Torch golden and the scalar reference"
     )]
     pub fn fixture(id: ModelId, seed: u64) -> Self {
-        let (hidden, intermediate, vocab, layers) = (8, 16, 32, 2);
+        let (hidden, intermediate, vocab, layers) = (
+            FIXTURE_HIDDEN_SIZE,
+            FIXTURE_INTERMEDIATE_SIZE,
+            FIXTURE_VOCAB_SIZE,
+            FIXTURE_LAYER_COUNT,
+        );
         let ir = ModelIr {
             id,
             backbone: BackboneKind::Decoder,
             vocab_size: vocab,
             hidden_size: hidden,
-            max_sequence: 128,
+            max_sequence: FIXTURE_MAX_SEQUENCE,
             mixers: vec![
                 Mixer::Attention {
                     query_heads: 1,
@@ -41,12 +53,12 @@ impl ReferenceModel {
             ],
             feed_forward: FeedForward::Dense { intermediate },
             position: PositionSpec {
-                rope_theta: 10000.0,
+                rope_theta: FIXTURE_ROPE_THETA,
                 rotary_fraction: 1.0,
                 multimodal_sections: vec![],
                 interleaved: false,
             },
-            norm_epsilon: 1e-5,
+            norm_epsilon: FIXTURE_NORM_EPSILON,
             norm_weight_offset: 0.0,
             heads: vec![
                 Head::LanguageModel,
@@ -60,7 +72,7 @@ impl ReferenceModel {
                     layer,
                     kind: StateKind::AttentionKv,
                     dtype: DType::F32,
-                    elements: hidden * 2,
+                    elements: hidden * FIXTURE_KV_ELEMENTS_PER_HEAD,
                     per_token: true,
                 })
                 .collect(),
@@ -70,12 +82,14 @@ impl ReferenceModel {
         let mut weights = |len: usize| -> Vec<f32> {
             (0..len)
                 .map(|_| {
-                    rng = rng.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                    rng = rng.wrapping_add(SPLITMIX_GOLDEN_GAMMA);
                     let mut z = rng;
-                    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                    z ^= z >> 31;
-                    (((z >> 40) as f64 / (1u64 << 24) as f64) * 2.0 - 1.0) as f32 * 0.15
+                    z = (z ^ (z >> SPLITMIX_MIX_SHIFT_A)).wrapping_mul(SPLITMIX_MIX_MULTIPLIER_A);
+                    z = (z ^ (z >> SPLITMIX_MIX_SHIFT_B)).wrapping_mul(SPLITMIX_MIX_MULTIPLIER_B);
+                    z ^= z >> SPLITMIX_FINAL_MIX_SHIFT;
+                    let uniform =
+                        (z >> SPLITMIX_OUTPUT_SHIFT) as f64 / SPLITMIX_UNIFORM_BASE as f64;
+                    (uniform * 2.0 - FIXTURE_UNIFORM_CENTER) as f32 * FIXTURE_WEIGHT_SCALE
                 })
                 .collect()
         };

@@ -1,30 +1,36 @@
 //! HF packages, metadata preflight, bounded weight loading, and text assets.
 //! Device allocation and execution remain owned by independent backends.
-mod loader;
-mod package;
-mod quantized;
-#[cfg(test)]
-mod shards_tests;
+mod constants;
+mod input;
+mod providers;
+mod storage;
+pub use input::{image, mrope, prompt, vision};
 mod workload;
-pub use workload::{ProjectionCatalog, ProjectionWorkload};
-mod qwen;
-mod safetensors;
-mod text;
-pub use loader::{
+/// Canonical provider import result, re-exported for package consumers.
+pub use infer_spi::ImportedModel;
+pub use input::image::{ImageProcessor, PreprocessedImage, RgbImage};
+pub use input::prompt::{
+    ExpandedPrompt, PreparedPrompt, PromptImage, RawImage, VisualPlacement, expand_placeholders,
+    image_token_counts, place_visual_embeddings, placeholders, prepare, require_encoder,
+    visual_tokens,
+};
+pub use input::text::{ChatMessage, ChatOptions, TextAssets};
+pub use providers::qwen::{QwenProvider, VisionConfig};
+pub use providers::registry::{ModelRegistry, default_registry};
+pub use storage::index::SafetensorsIndex;
+pub use storage::loader::{
     LoadOptions, LoadedWeights, TensorLoadPlan, WeightLoadPlan, WeightStorage, WeightTarget,
     load_weights,
 };
-pub use package::{PackageManifest, QwenPackage, WeightBinding, package_path};
-pub use quantized::{DeviceWeight, QuantizedPackage, WeightEncoding, WeightSource};
-pub use qwen::{ImportedQwen, QwenProvider, VisionConfig};
-pub use safetensors::{
+pub use storage::memory::{MemoryEstimate, memory_estimate};
+pub use storage::package::{
+    ModelPackage, PackageManifest, QwenPackage, WeightBinding, package_path,
+};
+pub use storage::quantized::{DeviceWeight, QuantizedPackage, WeightEncoding, WeightSource};
+pub use storage::safetensors::{
     HostTensor, SafetensorsFile, TensorDtype, TensorHeader, convert_float_bytes, write_safetensors,
 };
-pub use text::{ChatMessage, ChatOptions, TextAssets};
-mod index;
-mod memory;
-pub use index::SafetensorsIndex;
-pub use memory::{MemoryEstimate, memory_estimate};
+pub use workload::{ProjectionCatalog, ProjectionWorkload};
 
 mod generation;
 pub use generation::{GenerationDefaults, ResolvedGeneration, SamplingOverrides};

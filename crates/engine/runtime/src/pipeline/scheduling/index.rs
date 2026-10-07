@@ -2,6 +2,9 @@
 use infer_core::{Error, ErrorCode, RequestId, Result};
 use infer_ir::{CostEstimate, CostQuery, ExecutionRole, ReadyWork};
 
+/// Inline capacity reserved for a placeholder tenant identity.
+const PLACEHOLDER_TENANT_CAPACITY: usize = 256;
+
 pub struct ReadyIndex {
     pub rows: Vec<Option<ReadyWork>>,
     pub versions: Vec<u64>,
@@ -98,7 +101,7 @@ fn placeholder(query: CostQuery) -> ReadyWork {
         state: infer_core::StateId::ONE,
         role: ExecutionRole::Prefill,
         remaining_tokens: 0,
-        tenant: String::with_capacity(256),
+        tenant: String::with_capacity(PLACEHOLDER_TENANT_CAPACITY),
         weight: 1,
         deadline_us: None,
         virtual_finish: 0,

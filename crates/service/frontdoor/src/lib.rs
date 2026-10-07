@@ -1,5 +1,6 @@
 //! Bounded engine service with asynchronous CPU workers and HTTP adapters.
 mod actor;
+mod constants;
 pub mod cpu;
 mod http;
 mod ingress;

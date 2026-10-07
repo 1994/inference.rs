@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "microbenchmark": "benchmarks/capabilities/cuda-async-metadata.json",
+  "resident_checks": {
+    "source": "artifacts/cuda-async-resident.log",
+    "sha256": "d2f6472c6d414acb79ca94d59ea586b5ab3861a0f997827c65b1a2af375294e4",
+    "passed_cases": 63,
+    "hardware": "artifacts/cuda-async-resident-hardware.jsonl"
+  },
+  "actual_model": [
+    {
+      "source": "artifacts/cuda-async-provider-f32.json",
+      "sha256": "785b5942b8efafaec8b24353c9e40466be76f1abde9b6d6e15c350cf11c94c4c",
+      "hardware": "artifacts/cuda-async-provider-f32-hardware.jsonl",
+      "passed": true,
+      "text": "391",
+      "decode": null,
+      "fp8_kv": false
+    },
+    {
+      "source": "artifacts/cuda-async-provider-fp8.json",
+      "sha256": "c828fc0602fcb6f0a4ba293ff910c9c0758a7aac460a526856c3d7e85e93c0fc",
+      "hardware": "artifacts/cuda-async-provider-fp8-hardware.jsonl",
+      "passed": true,
+      "text": "391",
+      "decode": null,
+      "fp8_kv": true
+    },
+    {
+      "source": "artifacts/cuda-async-mtp2.json",
+      "sha256": "15f09f7a94320f6f97e384b58ecffeb6619ebc456427717aba10354f942ba3d7",
+      "hardware": "artifacts/cuda-async-mtp2-hardware.jsonl",
+      "passed": true,
+      "text": "391",
+      "decode": {
+        "accepted": 2,
+        "draft_state_restores": 2,
+        "draft_steps": 5,
+        "proposals": 3,
+        "rejected": 1,
+        "target_batches": 2,
+        "target_steps": 6,
+        "tokens": [
+          18,
+          24,
+          16,
+          248046
+        ]
+      },
+      "fp8_kv": "fp8-e4m3-static-scales"
+    }
+  ],
+  "limitations": [
+    "Functional checks, not dataset throughput or quality evaluation",
+    "cuTile D2H still synchronizes per requested tensor; true pinned async readout remains unimplemented"
+  ],
+  "binary_sha256": {
+    "cuda-resident-check": "fd6258dec9167365370e5fe54f675ecbf2027b9693326824ae59dacf0c103548",
+    "cuda-provider-check": "52c535178ded991bc825521cccf25d9cb8460796b1abb6d642f307bdc6c2e1d3",
+    "cuda-model-smoke": "1704dc9db6da72fdb2dfd64f13be07e558fdaca512e527911305307827c81d6f",
+    "infer": "82ad91a329c0b96f462ed856263a160270c9df61d9b6e1338a7d7e658d710f0f"
+  },
+  "service": {
+    "source": "artifacts/cuda-async-service.json",
+    "sha256": "05d133634548d39d2ffc98e4251809bc79bf84d7864332abccc84bdbe360d554",
+    "hardware": "artifacts/cuda-async-service-hardware.jsonl",
+    "passed": true,
+    "requests": 7,
+    "scope": "HTTP functional regression including default sampling and concurrent clients; not a throughput benchmark"
+  }
+}

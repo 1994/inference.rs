@@ -1,5 +1,6 @@
 //! Backend-independent inference orchestration and bounded CPU ownership.
 mod config;
+mod constants;
 mod cpu;
 mod engine;
 mod observation;

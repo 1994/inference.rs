@@ -44,6 +44,13 @@ pub struct AgentContext<B: AgentBackend> {
     pub(crate) experiments: VecDeque<ExperimentResult>,
     pub(crate) ids: IdAllocator,
     pub session: SessionId,
+    /// Requests a temporarily full device refused, kept until capacity frees.
+    ///
+    /// Rejection happens before the engine retains the request identity, so retrying the same
+    /// id is safe and the client is told the request was queued rather than failed.
+    pub(crate) pending: VecDeque<(infer_ir::CanonicalRequest, Option<u64>)>,
+    /// Queued submissions that waited past the budget and were dropped.
+    pub(crate) expired: Vec<infer_core::RequestId>,
 }
 
 impl<B: AgentBackend> AgentContext<B> {
@@ -58,6 +65,8 @@ impl<B: AgentBackend> AgentContext<B> {
             experiments: VecDeque::new(),
             ids: IdAllocator::default(),
             session: SessionId::ONE,
+            pending: VecDeque::new(),
+            expired: Vec::new(),
         }
     }
 
@@ -71,7 +80,7 @@ impl<B: AgentBackend> AgentContext<B> {
     }
 
     pub(crate) fn record(&mut self, record: CallRecord) {
-        if self.calls.len() == 256 {
+        if self.calls.len() == crate::constants::MAX_CALL_HISTORY {
             self.calls.pop_front();
             self.dropped_calls = self.dropped_calls.saturating_add(1);
         }

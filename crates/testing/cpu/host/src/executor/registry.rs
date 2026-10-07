@@ -3,6 +3,9 @@ use infer_core::KernelId;
 use infer_ir::{BackendKind, CapabilityRequirements, DType, Operation, PrecisionPlan};
 use infer_spi::{KernelProvider, KernelRegistration, SourceLocation};
 
+/// First non-zero kernel id handed to the host reference kernels.
+const HOST_KERNEL_ID_BASE: u64 = 1000;
+
 pub struct HostKernels;
 impl KernelProvider for HostKernels {
     fn kernels(&self) -> Vec<KernelRegistration> {
@@ -27,7 +30,7 @@ impl KernelProvider for HostKernels {
         .map(|(i, operation)| KernelRegistration {
             backend: BackendKind::TestCpu,
             id: KernelId::from_nonzero(
-                std::num::NonZeroU64::MIN.saturating_add((1000 + i as u64) - 1),
+                std::num::NonZeroU64::MIN.saturating_add((HOST_KERNEL_ID_BASE + i as u64) - 1),
             ),
             operation,
             precision: PrecisionPlan::f32(),

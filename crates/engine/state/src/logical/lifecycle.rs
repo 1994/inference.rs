@@ -32,7 +32,7 @@ impl SequenceStateManager {
             .ok_or_else(|| Error::new(ErrorCode::NotFound, "unknown sequence state"))?;
         if tokens < state.committed_tokens
             || tokens > state.capacity_tokens
-            || tokens > state.pages.len() * self.page_tokens
+            || tokens > state.pages.len() * self.block_size
         {
             return Err(Error::invariant("invalid state commit cursor"));
         }

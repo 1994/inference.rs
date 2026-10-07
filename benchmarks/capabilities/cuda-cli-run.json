@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "passed": true,
+  "source": "artifacts/cuda-cli-run-check2.json",
+  "sha256": "cef73f3382f1123cbd96efb85c7ad2ebf12dee80fad31f8e0959770a5d38569c",
+  "binary_sha256": "294858ba971dbbf797a46c20a88db79b9b3de9e7558e0e959d0f6fc0a90cd5b3",
+  "hardware": "artifacts/cuda-cli-run-check2-hardware.jsonl",
+  "results": [
+    {
+      "measurement": {
+        "e2e_us": 1758701,
+        "max_tpot_us": 16124,
+        "output_tokens": 4,
+        "successful": true,
+        "ttft_us": 1710925
+      },
+      "output": {
+        "Tokens": [
+          18,
+          24,
+          16,
+          248046
+        ]
+      },
+      "reason": "Eos",
+      "request": 1
+    }
+  ],
+  "clock": "monotonic wall clock starting before request submission",
+  "scope": "cold functional CLI run; includes request state/graph preparation, not steady-state throughput"
+}

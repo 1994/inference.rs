@@ -29,7 +29,7 @@ active 与 cache 可以共享同一块，容量按 unique block 统计；pinned 
 
 ## Metal 布局、COW 与 prefix
 
-- 每层 K/V plane 形状为 `[blocks, page_tokens, kv_width]`，sequence 用持久页表定位块；conv / delta / hidden / logits 为私有设备 buffer。attention 的 KV 写入与读取分 pass。
+- 每层 K/V plane 形状为 `[blocks, block_size, kv_width]`，sequence 用持久页表定位块；conv / delta / hidden / logits 为私有设备 buffer。attention 的 KV 写入与读取分 pass。
 - 写入共享尾页时用 GPU blit 复制各层 K/V，保留源页 pin，然后原子切换写入方页表。失败时恢复旧页表与新增 lease；host 侧发布顺序不能替代 GPU 复制依赖。
 - Prefix namespace 绑定精确 weights、backend、precision、layout 与 token hash-chain。只发布完成 GPU 边界的完整块，并保存对应 conv / delta / readout 状态；命中时共享 KV，并在 GPU 内恢复私有状态，普通路径不读回完整张量。最后 prompt token 需要重算以取得最终 logits。
 - 缓存受条数 / 字节与 LRU 约束。Full snapshot 可用于 compact Generate，compact snapshot 不支持 Full readout。取消与淘汰独立于活动引用，不能释放仍被 flight 或 CPU reader 使用的状态。

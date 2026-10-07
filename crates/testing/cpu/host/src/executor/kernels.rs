@@ -2,6 +2,11 @@ use infer_core::{Error, Result};
 use infer_ir::TensorOp;
 use infer_state::physical::PhysicalTensor;
 
+/// Above this magnitude `softplus(x)` returns `x` directly to avoid `exp` overflow.
+const SOFTPLUS_LINEAR_THRESHOLD: f32 = 20.0;
+/// Floor added to the query/key sum of squares before the reciprocal square root.
+const DELTA_NORM_EPSILON: f64 = 1e-6;
+
 pub fn sigmoid(x: f32) -> f32 {
     if x >= 0.0 {
         1.0 / (1.0 + (-x).exp())
@@ -14,7 +19,11 @@ fn silu(x: f32) -> f32 {
     x * sigmoid(x)
 }
 fn softplus(x: f32) -> f32 {
-    if x > 20.0 { x } else { x.exp().ln_1p() }
+    if x > SOFTPLUS_LINEAR_THRESHOLD {
+        x
+    } else {
+        x.exp().ln_1p()
+    }
 }
 #[expect(
     clippy::cast_possible_truncation,
@@ -355,9 +364,11 @@ fn delta(
         let q = &inputs[0][key_head * key_dim..(key_head + 1) * key_dim];
         let k = &inputs[0][key_size + key_head * key_dim..key_size + (key_head + 1) * key_dim];
         let v = &inputs[0][2 * key_size + head * value_dim..2 * key_size + (head + 1) * value_dim];
-        let qscale = (q.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() + 1e-6).sqrt()
+        let qscale = (q.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() + DELTA_NORM_EPSILON)
+            .sqrt()
             * (key_dim as f64).sqrt();
-        let kscale = (k.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() + 1e-6).sqrt();
+        let kscale =
+            (k.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() + DELTA_NORM_EPSILON).sqrt();
         let q: Vec<_> = q.iter().map(|v| f64::from(*v) / qscale).collect();
         let k: Vec<_> = k.iter().map(|v| f64::from(*v) / kscale).collect();
         let beta = f64::from(sigmoid(inputs[1][head]));

@@ -14,6 +14,7 @@ pub struct DecodeResult {
     pub rejected: usize,
     pub draft_state_restores: usize,
     pub target_steps: usize,
+    pub target_batches: usize,
     pub draft_steps: usize,
 }
 
@@ -68,8 +69,14 @@ pub fn decode(
         result.proposals += proposals.len();
         result.draft_steps += proposals.len();
         let mut replay = vec![(first, model.hidden.clone())];
-        logits = model.step(first, prompt.len() + result.tokens.len() - 1, true)?;
-        result.target_steps += 1;
+        let position = prompt.len() + result.tokens.len() - 1;
+        let mut steps = super::verification::TargetSteps::new(
+            model,
+            std::iter::once(first).chain(proposals.iter().map(|p| p.token)),
+            position,
+            &mut result,
+        )?;
+        logits = steps.next(model, first, position, &mut result)?;
         for proposal in proposals {
             let p = probabilities(
                 &logits,
@@ -94,8 +101,12 @@ pub fn decode(
                         break;
                     }
                     replay.push((token, model.hidden.clone()));
-                    logits = model.step(token, prompt.len() + result.tokens.len() - 1, true)?;
-                    result.target_steps += 1;
+                    logits = steps.next(
+                        model,
+                        token,
+                        prompt.len() + result.tokens.len() - 1,
+                        &mut result,
+                    )?;
                 }
                 Verification::Replaced(token) => {
                     result.rejected += 1;
@@ -104,7 +115,8 @@ pub fn decode(
                 }
             }
         }
-        draft.restore(checkpoint);
+        steps.finish(model)?;
+        draft.restore(checkpoint)?;
         result.draft_state_restores += 1;
         if result.tokens.last().is_some_and(|t| sampling.is_eos(*t)) || result.tokens.len() == limit
         {

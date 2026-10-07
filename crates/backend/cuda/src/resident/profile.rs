@@ -1,0 +1,305 @@
+//! Optional per-node CUDA event timing inside the captured width-32 prefill graphs and
+//! the shared slot decode graph.
+//!
+//! Set `INFER_CUDA_PREFILL_PROFILE` to a writable JSONL path: at capture time a
+//! timing-enabled event is recorded into the graph between consecutive nodes (with
+//! `CU_EVENT_RECORD_EXTERNAL` so the records stay queryable after replay), and every
+//! 32-lane prefill chunk or slot decode replay appends one JSON line of per-segment
+//! device times (per-op totals plus every segment). With the variable unset no events
+//! are created, no graph nodes change, and the runtime path is exactly the baseline.
+
+use crate::device::{CudaDevice, device_error};
+use cuda_core::{CudaContext, CudaEvent};
+use cutile::prelude::*;
+use infer_core::{Error, Result};
+use infer_ir::{TensorNode, TensorOp};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// Environment variable enabling in-graph prefill profiling; the value is the JSONL output path.
+const PROFILE_ENV: &str = "INFER_CUDA_PREFILL_PROFILE";
+
+/// One recorded graph node between two boundary events.
+struct Segment {
+    node: usize,
+    op: &'static str,
+    layer: Option<usize>,
+}
+
+/// Boundary events recorded into one captured graph: one per node plus a closing event.
+pub(super) struct GraphProfile {
+    context: Arc<CudaContext>,
+    segments: Vec<Segment>,
+    events: Vec<Arc<CudaEvent>>,
+}
+
+impl GraphProfile {
+    const fn new(context: Arc<CudaContext>) -> Self {
+        Self {
+            context,
+            segments: Vec::new(),
+            events: Vec::new(),
+        }
+    }
+
+    /// Record a timing event marking the start of `node`'s kernels in the captured graph.
+    pub(super) fn boundary(
+        &mut self,
+        scope: &Scope,
+        node: usize,
+        op: &TensorNode,
+    ) -> std::result::Result<(), DeviceError> {
+        self.mark(scope)?;
+        self.segments.push(Segment {
+            node,
+            op: category(&op.op),
+            layer: op.layer,
+        });
+        Ok(())
+    }
+
+    /// Record the closing event after the last node.
+    pub(super) fn finish(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+        self.mark(scope)
+    }
+
+    fn mark(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+        let event = Arc::new(
+            self.context
+                .new_event(Some(cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT))
+                .map_err(DeviceError::Driver)?,
+        );
+        scope.record(RecordEvent(Arc::clone(&event)))?;
+        self.events.push(event);
+        Ok(())
+    }
+
+    /// Pairwise device times for every recorded node, aggregated per op category.
+    fn sample(&self, graph: &str, tokens: usize, position: usize) -> Result<serde_json::Value> {
+        let mut by_op: BTreeMap<&str, f64> = BTreeMap::new();
+        let mut segments = Vec::with_capacity(self.segments.len());
+        let mut total = 0f64;
+        for (index, segment) in self.segments.iter().enumerate() {
+            let (start, end) = self
+                .events
+                .get(index)
+                .zip(self.events.get(index + 1))
+                .ok_or_else(|| Error::invariant("profile event boundary"))?;
+            let ms = f64::from(start.elapsed_ms(end).map_err(device_error)?);
+            total += ms;
+            *by_op.entry(segment.op).or_default() += ms;
+            segments.push(serde_json::json!([
+                segment.node,
+                segment.op,
+                segment.layer,
+                ms
+            ]));
+        }
+        Ok(serde_json::json!({
+            "graph": graph,
+            "tokens": tokens,
+            "position": position,
+            "total_ms": total,
+            "by_op": by_op,
+            "segments": segments,
+        }))
+    }
+}
+
+/// Owns the boundary events of both width-32 prefill graphs; declared after them in
+/// `BatchGraph` so graph executables are destroyed before the events they record.
+pub(super) struct PrefillProfile {
+    path: std::path::PathBuf,
+    prefill: GraphProfile,
+    prefill_last: GraphProfile,
+}
+
+impl PrefillProfile {
+    /// Enabled when `INFER_CUDA_PREFILL_PROFILE` names a writable output path.
+    #[must_use]
+    pub(super) fn from_env(device: &CudaDevice) -> Option<Self> {
+        let path = std::env::var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
+        let context = CudaContext::new(device.stream.device().ordinal()).ok()?;
+        Some(Self {
+            path: std::path::PathBuf::from(path),
+            prefill: GraphProfile::new(Arc::clone(&context)),
+            prefill_last: GraphProfile::new(context),
+        })
+    }
+
+    /// The boundary set of the graph being captured: middle chunks or the logits chunk.
+    pub(super) const fn graph(&mut self, last: bool) -> &mut GraphProfile {
+        if last {
+            &mut self.prefill_last
+        } else {
+            &mut self.prefill
+        }
+    }
+
+    /// Append one JSONL record for the chunk whose graph replay just completed on the
+    /// stream. Best effort: a profiling failure never fails the request.
+    pub(super) fn report(&self, last: bool, tokens: usize, position: usize) {
+        let (graph, profile) = if last {
+            ("prefill_last", &self.prefill_last)
+        } else {
+            ("prefill", &self.prefill)
+        };
+        if let Err(error) = profile
+            .sample(graph, tokens, position)
+            .and_then(|line| append(&self.path, &line))
+        {
+            eprintln!("prefill profile write failed: {error}");
+        }
+    }
+}
+
+/// Owns the boundary events of the shared slot decode graph; declared after the graph
+/// in `SlotDecodeGraph` so the executable drops before the events it records.
+pub(super) struct SlotProfile {
+    path: std::path::PathBuf,
+    graph: GraphProfile,
+}
+
+impl SlotProfile {
+    /// Enabled when `INFER_CUDA_PREFILL_PROFILE` names a writable output path.
+    pub(super) fn from_env(device: &CudaDevice) -> Option<Self> {
+        let path = std::env::var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
+        let context = CudaContext::new(device.stream.device().ordinal()).ok()?;
+        Some(Self {
+            path: std::path::PathBuf::from(path),
+            graph: GraphProfile::new(context),
+        })
+    }
+
+    /// The boundary set of the slot decode graph being captured.
+    pub(super) const fn graph(&mut self) -> &mut GraphProfile {
+        &mut self.graph
+    }
+
+    /// Append one JSONL record for the slot decode replay that just completed on the
+    /// stream. Best effort: a profiling failure never fails the request.
+    pub(super) fn report(&self, name: &str, lanes: usize, position: usize) {
+        if let Err(error) = self
+            .graph
+            .sample(name, lanes, position)
+            .and_then(|line| append(&self.path, &line))
+        {
+            eprintln!("slot profile write failed: {error}");
+        }
+    }
+}
+
+fn append(path: &std::path::Path, line: &serde_json::Value) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| device_error(format!("prefill profile open: {error}")))?;
+    writeln!(file, "{line}")
+        .map_err(|error| device_error(format!("prefill profile write: {error}")))?;
+    Ok(())
+}
+
+/// Op category labels, matching the provider-check op census naming.
+const fn category(op: &TensorOp) -> &'static str {
+    match op {
+        TensorOp::Embedding => "embedding",
+        TensorOp::Linear => "linear",
+        TensorOp::Norm { .. } => "norm",
+        TensorOp::Split { .. } => "split",
+        TensorOp::Rope { .. } => "rope",
+        TensorOp::Attention { .. } => "attention",
+        TensorOp::Conv { .. } => "conv",
+        TensorOp::Delta { .. } => "delta",
+        TensorOp::GatedNorm { .. } => "gated_norm",
+        TensorOp::Silu => "silu",
+        TensorOp::Sigmoid => "sigmoid",
+        TensorOp::Multiply => "multiply",
+        TensorOp::Add => "add",
+    }
+}
+
+/// Graph node that records an external timing event into the captured stream.
+struct RecordEvent(Arc<CudaEvent>);
+
+#[expect(
+    unsafe_code,
+    reason = "Audited event record: the event is retained by the submission, the \
+              execution-context stream belongs to the context the event was created in, \
+              and CU_EVENT_RECORD_EXTERNAL keeps replayed records queryable from the host"
+)]
+impl DeviceOp for RecordEvent {
+    type Output = ();
+
+    unsafe fn execute(self, context: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+        context.retain(Arc::clone(&self.0))?;
+        // SAFETY: both handles are live RAII wrappers on the same device; the external
+        // flag is the documented way to keep capture-time event records observable.
+        let status = unsafe {
+            cuda_core::sys::cuEventRecordWithFlags(
+                self.0.cu_event(),
+                context.get_cuda_stream().cu_stream(),
+                cuda_core::sys::CUevent_record_flags_enum_CU_EVENT_RECORD_EXTERNAL,
+            )
+        };
+        if status != cuda_core::sys::cudaError_enum_CUDA_SUCCESS {
+            return Err(DeviceError::Internal(format!(
+                "profile event record CUDA status {status}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl GraphNode for RecordEvent {}
+
+impl IntoFuture for RecordEvent {
+    type Output = std::result::Result<(), DeviceError>;
+    type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
+            policy.next_stream()
+        }) {
+            Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
+            Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_labels_match_op_census_names() {
+        assert_eq!(category(&TensorOp::Linear), "linear");
+        assert_eq!(
+            category(&TensorOp::Norm {
+                epsilon: 0.0,
+                offset: 0.0,
+                head_dim: 1
+            }),
+            "norm"
+        );
+        assert_eq!(
+            category(&TensorOp::GatedNorm {
+                head_dim: 1,
+                epsilon: 0.0
+            }),
+            "gated_norm"
+        );
+        assert_eq!(category(&TensorOp::Silu), "silu");
+        assert_eq!(category(&TensorOp::Multiply), "multiply");
+        assert_eq!(category(&TensorOp::Add), "add");
+        assert_eq!(
+            category(&TensorOp::Split {
+                widths: vec![],
+                heads: 0
+            }),
+            "split"
+        );
+        assert_eq!(category(&TensorOp::Embedding), "embedding");
+    }
+}

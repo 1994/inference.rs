@@ -1,34 +1,59 @@
-.PHONY: check check-rust check-tools check-security check-metal check-cuda check-msrv check-cpu check-linux check-linux-numa clean-artifacts
+# Zig cross-platform builds. See docs/guides/packaging.md for artifacts and GPU acceptance.
+.DEFAULT_GOAL := help
+PYTHON ?= python3
+TARGET ?=
+CARGO_ZIGBUILD_VERSION := 0.23.4
+DIST_DIR ?= artifacts/packages
+PACKAGE_FILE ?=
+MODEL ?=
+GOLDEN ?=
 
-clean-artifacts:
-	python3 tools/check/clean-artifacts.py
+.PHONY: help build test package verify-package accept clean-artifacts
+help:
+	@echo 'Zig target pipelines (Linux/CUDA or macOS/Metal):'
+	@echo '  make build | test | package TARGET=<rust-target>[.<glibc>]'
+	@echo '  make package-linux-cuda | package-macos-metal TARGET=<target>'
+	@echo '  make setup-build  # install cargo-zigbuild; requires Zig'
+	@echo '  make verify-package PACKAGE_FILE=/path/to/archive.tar.gz'
+	@echo '  make accept PACKAGE_FILE=... MODEL=... GOLDEN=...'
+	@echo '  DIST_DIR=artifacts/packages overrides the artifact directory.'
+	@echo 'Quality gates: check, check-rust, check-tools, check-security,'
+	@echo '  check-cuda, check-metal, check-attention, check-msrv, check-cpu,'
+	@echo '  check-linux, check-linux-numa, check-package'
 
+build test package:
+	$(PYTHON) tools/package/package.py $@ --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
+
+# Recursive Make expansion is deliberately avoided: each package action sequences
+# target checks -> Zig release -> archive -> integrity/native smoke -> publication.
+define platform_targets
+.PHONY: build-$(1) test-$(1) package-$(1)
+build-$(1) test-$(1) package-$(1):
+	$$(PYTHON) tools/package/package.py $$(word 1,$$(subst -, ,$$@)) --platform $(1) --target "$$(TARGET)" --out "$$(DIST_DIR)"
+endef
+$(eval $(call platform_targets,linux-cuda))
+$(eval $(call platform_targets,macos-metal))
+
+verify-package:
+	$(PYTHON) tools/package/package.py verify --archive "$(PACKAGE_FILE)"
+
+accept:
+	$(PYTHON) tools/package/package.py accept --archive "$(PACKAGE_FILE)" --model "$(MODEL)" --golden "$(GOLDEN)"
+
+.PHONY: check check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa check-package
 check:
 	./tools/check/gate.sh all
 
-check-rust:
-	./tools/check/gate.sh rust
+check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa:
+	./tools/check/gate.sh $(patsubst check-%,%,$@)
 
-check-tools:
-	./tools/check/gate.sh tools
+check-package:
+	$(PYTHON) -m unittest discover -s tools/package -p 'test_*.py'
 
-check-security:
-	./tools/check/gate.sh security
+clean-artifacts:
+	$(PYTHON) tools/check/clean-artifacts.py
 
-check-cuda:
-	./tools/check/gate.sh cuda
-
-check-metal:
-	./tools/check/gate.sh metal
-
-check-msrv:
-	./tools/check/gate.sh msrv
-
-check-cpu:
-	./tools/check/gate.sh cpu
-
-check-linux:
-	./tools/check/gate.sh linux
-
-check-linux-numa:
-	./tools/check/gate.sh linux-numa
+.PHONY: setup-build
+setup-build:
+	cargo install --locked cargo-zigbuild --version $(CARGO_ZIGBUILD_VERSION)
+	"$${CARGO_ZIGBUILD_ZIG_PATH:-zig}" version

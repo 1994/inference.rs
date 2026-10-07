@@ -4,6 +4,49 @@ use infer_ir::{AdmissionConfig, CostModelConfig, SchedulerConfig};
 use infer_scheduler::{CalibratedCosts, ResourceAdmission};
 use serde::{Deserialize, Serialize};
 
+/// Default admission slots retained for queued requests.
+const DEFAULT_MAX_REQUESTS: usize = 256;
+/// Default number of scheduler candidates scanned per admission pass.
+const DEFAULT_CANDIDATE_LIMIT: usize = 256;
+/// Default request-unit budget for one submission.
+const DEFAULT_MAX_REQUEST_UNITS: usize = 256;
+/// Default prompt window accepted per request, in tokens.
+const DEFAULT_MAX_INPUT_TOKENS: usize = 65536;
+/// Default number of KV state pages pinned by the runtime.
+const DEFAULT_STATE_PAGES: usize = 4096;
+/// Default number of KV tokens addressed by one state page.
+const DEFAULT_PAGE_TOKENS: usize = 16;
+/// Default number of completion cells published in one batch.
+const DEFAULT_MAX_BATCH: usize = 16;
+/// Default decode token budget charged to one scheduling round.
+const DEFAULT_TOKEN_BUDGET: usize = 64;
+/// Default GPU compute budget per scheduling round, in microseconds.
+const DEFAULT_GPU_BUDGET_US: u64 = 10_000;
+/// Default workspace reservation, in bytes (1 MiB).
+const DEFAULT_WORKSPACE_BYTES: u64 = 1 << 20;
+/// Default number of in-flight program progress records retained.
+const DEFAULT_PROGRESS_LIMIT: usize = 3;
+/// Default submission timeout, in microseconds.
+const DEFAULT_SUBMISSION_TIMEOUT_US: u64 = 30_000_000;
+/// Default backend resource-operation timeout, in microseconds.
+const DEFAULT_RESOURCE_TIMEOUT_US: u64 = 250_000;
+/// Default client output timeout, in microseconds.
+const DEFAULT_OUTPUT_TIMEOUT_US: u64 = 5_000_000;
+/// Default bound on time a request may wait in the queue, in microseconds.
+const DEFAULT_MAX_QUEUE_WAIT_US: u64 = 30_000_000;
+/// Default number of decision/history records retained for replay.
+const DEFAULT_HISTORY_CAPACITY: usize = 4096;
+/// Default token budget retained for replay history.
+const DEFAULT_MAX_HISTORY_TOKENS: usize = 1 << 20;
+/// Default byte budget retained for replay history (16 MiB).
+const DEFAULT_MAX_HISTORY_BYTES: usize = 16 << 20;
+/// Default number of event records retained for observation.
+const DEFAULT_EVENT_CAPACITY: usize = 8192;
+/// Default host transfer budget per scheduling round, in microseconds.
+const DEFAULT_TRANSFER_BUDGET_US: u64 = 10_000;
+/// Default backend encoder budget per scheduling round, in microseconds.
+const DEFAULT_ENCODER_BUDGET_US: u64 = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RuntimeConfig {
@@ -12,10 +55,10 @@ pub struct RuntimeConfig {
     pub candidate_limit: usize,
     pub max_request_units: usize,
     pub max_input_tokens: usize,
-    pub state_pages: usize,
-    pub page_tokens: usize,
-    pub max_batch: usize,
-    pub token_budget: usize,
+    pub num_gpu_blocks: usize,
+    pub block_size: usize,
+    pub max_num_seqs: usize,
+    pub max_num_batched_tokens: usize,
     pub gpu_budget_us: u64,
     pub workspace_bytes: u64,
     pub cost_per_token_us: u64,
@@ -37,32 +80,32 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_requests: 256,
+            max_requests: DEFAULT_MAX_REQUESTS,
             cpu: crate::CpuRuntimeConfig::default(),
-            candidate_limit: 256,
-            max_request_units: 256,
-            max_input_tokens: 65536,
-            state_pages: 4096,
-            page_tokens: 16,
-            max_batch: 16,
-            token_budget: 64,
-            gpu_budget_us: 10000,
-            workspace_bytes: 1 << 20,
+            candidate_limit: DEFAULT_CANDIDATE_LIMIT,
+            max_request_units: DEFAULT_MAX_REQUEST_UNITS,
+            max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
+            num_gpu_blocks: DEFAULT_STATE_PAGES,
+            block_size: DEFAULT_PAGE_TOKENS,
+            max_num_seqs: DEFAULT_MAX_BATCH,
+            max_num_batched_tokens: DEFAULT_TOKEN_BUDGET,
+            gpu_budget_us: DEFAULT_GPU_BUDGET_US,
+            workspace_bytes: DEFAULT_WORKSPACE_BYTES,
             cost_per_token_us: 1,
-            progress_limit: 3,
-            submission_timeout_us: 30_000_000,
-            resource_timeout_us: 250_000,
-            output_timeout_us: 5_000_000,
-            max_queue_wait_us: 30_000_000,
-            history_capacity: 4096,
-            max_history_tokens: 1 << 20,
-            max_history_bytes: 16 << 20,
-            event_capacity: 8192,
+            progress_limit: DEFAULT_PROGRESS_LIMIT,
+            submission_timeout_us: DEFAULT_SUBMISSION_TIMEOUT_US,
+            resource_timeout_us: DEFAULT_RESOURCE_TIMEOUT_US,
+            output_timeout_us: DEFAULT_OUTPUT_TIMEOUT_US,
+            max_queue_wait_us: DEFAULT_MAX_QUEUE_WAIT_US,
+            history_capacity: DEFAULT_HISTORY_CAPACITY,
+            max_history_tokens: DEFAULT_MAX_HISTORY_TOKENS,
+            max_history_bytes: DEFAULT_MAX_HISTORY_BYTES,
+            event_capacity: DEFAULT_EVENT_CAPACITY,
             scheduler: SchedulerConfig::default(),
             cost_model: CostModelConfig::default(),
             admission: AdmissionConfig::default(),
-            transfer_budget_us: 10_000,
-            encoder_budget_us: 10_000,
+            transfer_budget_us: DEFAULT_TRANSFER_BUDGET_US,
+            encoder_budget_us: DEFAULT_ENCODER_BUDGET_US,
         }
     }
 }
@@ -71,7 +114,9 @@ impl RuntimeConfig {
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {
-        if self.event_capacity > 1_048_576 || self.history_capacity > 1_048_576 {
+        if self.event_capacity > crate::constants::MAX_BOUNDED_CAPACITY
+            || self.history_capacity > crate::constants::MAX_BOUNDED_CAPACITY
+        {
             return Err(Error::invalid(
                 "event/history capacities must not exceed 1048576 records",
             ));
@@ -81,10 +126,10 @@ impl RuntimeConfig {
             self.candidate_limit,
             self.max_request_units,
             self.max_input_tokens,
-            self.state_pages,
-            self.page_tokens,
-            self.max_batch,
-            self.token_budget,
+            self.num_gpu_blocks,
+            self.block_size,
+            self.max_num_seqs,
+            self.max_num_batched_tokens,
             self.progress_limit,
             self.history_capacity,
             self.max_history_tokens,
@@ -103,7 +148,7 @@ impl RuntimeConfig {
                 "runtime capacities/timeouts must be positive",
             ));
         }
-        if self.max_batch > 64 {
+        if self.max_num_seqs > infer_gpu_api::MAX_SUBMISSION_BATCH {
             return Err(Error::invalid("runtime batch exceeds 64 completion cells"));
         }
         if self.cost_per_token_us > self.scheduler.max_singleton_gpu_us {

@@ -8,7 +8,12 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 GROUPS = {"foundation", "backend", "model", "engine", "diagnostics", "service", "testing"}
 SERVICE = {"infer-frontdoor", "infer-agent", "infer-cli"}
-BACKENDS = {"infer-backend-metal", "infer-backend-cuda", "infer-backend-host", "infer-backend-reference"}
+BACKENDS = {
+    "infer-backend-metal",
+    "infer-backend-cuda",
+    "infer-backend-host",
+    "infer-backend-reference",
+}
 
 
 def require(condition, message):
@@ -21,6 +26,48 @@ def dependency_tables(manifest):
         yield manifest.get(section, {})
     for target in manifest.get("target", {}).values():
         yield from dependency_tables(target)
+
+
+def check_ownership(member, dependencies):
+    """Production dependencies must preserve model, compiler and scheduler ownership."""
+    internal = {name for name in dependencies if name.startswith("infer-")}
+    foundation = {"infer-core", "infer-ir", "infer-spi"}
+    contracts = {"infer-gpu-api", "infer-kernel-api"}
+    if member.startswith("crates/foundation/") or member in {
+        "crates/model/recipes",
+        "crates/engine/state",
+        "crates/engine/scheduler",
+        "crates/backend/api",
+        "crates/backend/kernel-api",
+    }:
+        require(
+            not internal - foundation,
+            f"{member}: keep contracts and state independent of implementations",
+        )
+    if member == "crates/model/compiler":
+        require(
+            not internal - foundation - contracts,
+            f"{member}: compile supplied IR; do not construct model recipes",
+        )
+    if member == "crates/model/package":
+        require(
+            not internal - foundation - {"infer-model-recipes"},
+            f"{member}: model providers must not depend on compilation or execution",
+        )
+    if member == "crates/engine/runtime":
+        require(
+            not internal & {"infer-models", "infer-model-recipes"},
+            f"{member}: orchestrate the bound graph; do not import model recipes",
+        )
+
+
+def production_dependencies(manifest):
+    dependencies = set(manifest.get("dependencies", {})) | set(
+        manifest.get("build-dependencies", {})
+    )
+    for target in manifest.get("target", {}).values():
+        dependencies.update(production_dependencies(target))
+    return dependencies
 
 
 def check_crates():
@@ -39,6 +86,7 @@ def check_crates():
         if parts[1] == "testing":
             require(parts[2] == "cpu", f"{member}: CPU reference backends belong in testing/cpu")
         manifest = tomllib.loads((directory / "Cargo.toml").read_text())
+        check_ownership(member, production_dependencies(manifest))
         dependencies = set()
         for table in dependency_tables(manifest):
             dependencies.update(table)

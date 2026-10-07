@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "passed": true,
+  "source": "artifacts/cuda-pinned-readback.log",
+  "sha256": "ef656ee4dc06e52e199ea2b6d9dac10795993b25daaecc0624f3292230730a1f",
+  "hardware": "artifacts/cuda-pinned-readback-hardware.jsonl",
+  "binary_sha256": "a44de661672b947709698fd3a710c4d84b187fca7a9392523a5828e650ac9892",
+  "runs": [
+    {
+      "device": "NVIDIA GeForce RTX 5090",
+      "iterations_per_round": 100,
+      "legacy_wall_us": [
+        326.08033,
+        319.89450000000005,
+        323.05403,
+        324.66767,
+        323.56120000000004,
+        323.19933000000003
+      ],
+      "pinned_wall_us": [
+        162.19306999999998,
+        160.53469,
+        160.42425,
+        160.69070000000002,
+        161.12499999999997,
+        160.02306000000002
+      ],
+      "rows": 33,
+      "scope": "33 graph D2D copies plus selected output D2H, including host Vec materialization; rows=33 is prefill Full, rows=1 is logits only; not model throughput",
+      "legacy_median_us": 323.380265,
+      "pinned_median_us": 160.61269500000003,
+      "reduction_percent": 50.333179731917156
+    },
+    {
+      "device": "NVIDIA GeForce RTX 5090",
+      "iterations_per_round": 100,
+      "legacy_wall_us": [
+        116.21708999999998,
+        110.7712,
+        110.88438000000001,
+        110.07794,
+        109.86618999999999,
+        109.45013999999999
+      ],
+      "pinned_wall_us": [
+        100.74391,
+        101.16947,
+        99.66556,
+        98.71148,
+        99.0132,
+        97.26530000000001
+      ],
+      "rows": 1,
+      "scope": "33 graph D2D copies plus selected output D2H, including host Vec materialization; rows=33 is prefill Full, rows=1 is logits only; not model throughput",
+      "legacy_median_us": 110.42456999999999,
+      "pinned_median_us": 99.33938,
+      "reduction_percent": 10.0386988149467
+    }
+  ],
+  "checks": [
+    "changed-source ordering and exact copied values",
+    "optional readouts",
+    "pinned buffer reuse",
+    "64 MiB admission bound",
+    "mismatched stream rejection",
+    "poisoned owner rejection"
+  ],
+  "limits": [
+    "No driver fault injection",
+    "Microbenchmark includes graph D2D copy work and CPU Vec materialization; not inference throughput"
+  ]
+}

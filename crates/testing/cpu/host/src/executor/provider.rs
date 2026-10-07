@@ -26,7 +26,7 @@ impl BackendProvider for HostBackend {
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         let used = self
             .weight_bytes()
-            .checked_add(self.graph.scratch_elements as u64 * 4)
+            .checked_add(self.graph.scratch_elements as u64 * crate::constants::F32_BYTES_U64)
             .and_then(|n| n.checked_add(self.inspect().reserved_bytes))
             .and_then(|n| n.checked_add(self.config.prefix_cache_bytes))
             .and_then(|n| n.checked_add(self.config.probe_bytes))
@@ -49,6 +49,12 @@ impl BackendProvider for HostBackend {
         Ok(self.provider_reuse_prefix(id, tokens, maximum))
     }
 
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        if model != &self.model {
+            return Err(Error::invalid("execution graph model mismatch"));
+        }
+        Ok(self.graph.clone())
+    }
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         self.provider_validate_program(model, program)
     }

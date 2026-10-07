@@ -22,7 +22,8 @@ impl ProbeCapture<'_> {
                 buffer,
                 sequence.tokens.len() * self.model.mixers.len() * self.model.hidden_size,
             )?;
-            let sample_bytes = self.model.hidden_size as u64 * 4 + size_of::<LayerProbe>() as u64;
+            let sample_bytes = self.model.hidden_size as u64 * crate::constants::F32_BYTES_U64
+                + size_of::<LayerProbe>() as u64;
             let capacity = self.config.probe_bytes / sample_bytes;
             if capacity > 0 {
                 for position in start..sequence.tokens.len() {

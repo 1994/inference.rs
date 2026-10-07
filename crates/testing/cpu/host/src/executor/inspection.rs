@@ -23,8 +23,10 @@ impl HostBackend {
                         .values()
                         .map(PhysicalTensor::allocated_bytes)
                         .sum::<usize>() as u64
-                        + s.hidden.len() as u64 * self.model.hidden_size as u64 * 4
-                        + s.logits.len() as u64 * 4
+                        + s.hidden.len() as u64
+                            * self.model.hidden_size as u64
+                            * crate::constants::F32_BYTES_U64
+                        + s.logits.len() as u64 * crate::constants::F32_BYTES_U64
                 })
                 .sum(),
             tokens_executed: self.tokens_executed,
@@ -60,7 +62,7 @@ impl HostBackend {
         }
         let used = self
             .weight_bytes()
-            .checked_add(self.graph.scratch_elements as u64 * 4)
+            .checked_add(self.graph.scratch_elements as u64 * crate::constants::F32_BYTES_U64)
             .and_then(|n| n.checked_add(self.config.prefix_cache_bytes))
             .and_then(|n| n.checked_add(bytes));
         if used.is_none_or(|n| n > self.config.memory_bytes) {

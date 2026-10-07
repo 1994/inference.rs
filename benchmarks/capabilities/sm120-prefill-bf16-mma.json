@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "target": "sm_120",
+  "cutile": "0.4.0",
+  "cuda": "13.4",
+  "tile": [
+    32,
+    64,
+    64
+  ],
+  "math": "BF16 operands, F32 accumulation; FP8/NVFP4 weights decoded in tile",
+  "numerical_check": "artifacts/resident-prefill32-multik-check.log",
+  "sass_source": "artifacts/prefill32-disassembly/index.json",
+  "kernels": [
+    {
+      "functions": [
+        "nvfp4_entry"
+      ],
+      "sha256": "2f68f7e824906973d85d2be8dc45446dddc4b044c2f1a7ff031cdd1fbfaa7696",
+      "mma_opcodes": [
+        "HMMA.16816.F32.BF16"
+      ],
+      "optimization_level": 3
+    },
+    {
+      "functions": [
+        "fp8_entry"
+      ],
+      "sha256": "44cd365c6fba90577d6875a3a65b42f356bbef8d03eec54be1804efe90f639f1",
+      "mma_opcodes": [
+        "HMMA.16816.F32.BF16"
+      ],
+      "optimization_level": 3
+    },
+    {
+      "functions": [
+        "dense_entry"
+      ],
+      "sha256": "01eb5e32b52f921601edbdc2048d504119646f3536d71cdedfae62f1413af3ae",
+      "mma_opcodes": [
+        "HMMA.16816.F32.BF16"
+      ],
+      "optimization_level": 3
+    }
+  ],
+  "limitations": [
+    "Hardware proof for small projection tests, not an end-to-end throughput result",
+    "Does not use native FP4 MMA; native FP4 capability is recorded separately",
+    "H200 has not been tested"
+  ],
+  "numerical_check_sha256": "8a20ea96c09490b3070978d1b31bb465e09b4c6543e7acd1070fa60bef359a9a",
+  "test_geometries": [
+    [
+      65,
+      48
+    ],
+    [
+      97,
+      80
+    ]
+  ],
+  "test_prompt_lengths": [
+    32,
+    17
+  ],
+  "real_model_smoke": "artifacts/resident-prefill32-tail-smoke.json",
+  "real_model_smoke_sha256": "cf9f7dbb04e79e342608677794087c88b7b9f2f995615d3414fda6ed38f04387",
+  "real_model_input_tokens": 49,
+  "real_model_output": "391"
+}

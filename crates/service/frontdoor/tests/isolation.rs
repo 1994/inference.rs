@@ -50,6 +50,9 @@ impl BackendProvider for Gated {
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(model, program)
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)?;
         self.owned.fetch_add(1, Ordering::AcqRel);

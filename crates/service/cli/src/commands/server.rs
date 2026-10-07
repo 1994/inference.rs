@@ -1,22 +1,30 @@
 //! Server commands.
 use super::{ServeOptions, axum_serve, backend, config, selected_engine};
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_core::ErrorCode;
 use infer_core::{Error, Result};
 
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Result<()> {
     let ServeOptions {
         listen,
         config: config_path,
         package,
-        device_memory_mib,
+        host_memory_mib,
     } = options;
     let engine = selected_engine(
         config(config_path.as_deref())?,
         None,
         package.as_deref(),
-        device_memory_mib,
+        host_memory_mib,
         backend_choice,
     )?;
     let assets = package

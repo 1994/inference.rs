@@ -51,7 +51,7 @@ pub struct KvCacheInspection {
     /// Pages retained by submitted device copies until their completion fence.
     #[serde(default)]
     pub pinned_blocks: usize,
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub total_blocks: usize,
     pub free_blocks: usize,
     pub active_blocks: usize,

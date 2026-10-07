@@ -5,11 +5,19 @@ pub const LATENCY_BOUNDS_US: [u64; 16] = [
     10, 50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
     1_000_000, 5_000_000,
 ];
+/// Finite latency buckets of [`LATENCY_BOUNDS_US`] plus the overflow bucket.
+pub const LATENCY_BUCKET_COUNT: usize = 17;
+/// Event-kind slots of [`EventKind::ALL`].
+pub const EVENT_KIND_COUNT: usize = EventKind::ALL.len();
+/// CPU pipeline stages of [`infer_core::event::CpuStage::LABELS`].
+pub const CPU_STAGE_COUNT: usize = infer_core::event::CpuStage::LABELS.len();
+/// Whole-percent scale of the requested percentile argument.
+const PERCENT_SCALE: u8 = 100;
 
 /// Non-cumulative bucket counts plus overflow; no allocations when recording.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatencyHistogram {
-    pub buckets: [u64; 17],
+    pub buckets: [u64; LATENCY_BUCKET_COUNT],
     pub count: u64,
     pub sum_us: u64,
     pub max_us: u64,
@@ -25,11 +33,13 @@ impl LatencyHistogram {
     /// The finite bucket upper bound, or actual maximum for the overflow bucket.
     #[must_use]
     pub fn percentile_upper_bound(&self, percentile: u8) -> Option<u64> {
-        if self.count == 0 || percentile == 0 || percentile > 100 {
+        if self.count == 0 || percentile == 0 || percentile > PERCENT_SCALE {
             return None;
         }
-        let rank =
-            u64::try_from((u128::from(self.count) * u128::from(percentile)).div_ceil(100)).ok()?;
+        let rank = u64::try_from(
+            (u128::from(self.count) * u128::from(percentile)).div_ceil(u128::from(PERCENT_SCALE)),
+        )
+        .ok()?;
         let mut count = 0_u64;
         for (index, bucket) in self.buckets.iter().enumerate() {
             count = count.saturating_add(*bucket);
@@ -44,7 +54,7 @@ impl LatencyHistogram {
 /// Always-on counters are updated before enqueueing; full trace rings cannot lose metrics.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeMetrics {
-    pub events: [u64; 26],
+    pub events: [u64; EVENT_KIND_COUNT],
     pub deferred_reasons: [u64; infer_ir::DeferReason::LABELS.len()],
     pub successful_requests: u64,
     pub failed_requests: u64,
@@ -53,8 +63,8 @@ pub struct RuntimeMetrics {
     pub ttft: LatencyHistogram,
     pub tpot: LatencyHistogram,
     pub cpu_execution: LatencyHistogram,
-    pub cpu_stages: [LatencyHistogram; 5],
-    pub cpu_stage_items: [u64; 5],
+    pub cpu_stages: [LatencyHistogram; CPU_STAGE_COUNT],
+    pub cpu_stage_items: [u64; CPU_STAGE_COUNT],
     pub gpu_execution: LatencyHistogram,
     pub cpu_output: LatencyHistogram,
     pub resource_preparation: LatencyHistogram,

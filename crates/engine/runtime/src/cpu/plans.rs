@@ -3,8 +3,11 @@ use infer_core::{DecisionId, Error, ErrorCode, ProgramId, Result, StepId};
 use infer_ir::{CostEstimate, ExecutionRole, StepPlan};
 use std::sync::Arc;
 
+/// Immutable step-metadata slots; a slot cannot be reused while a reader holds its `Arc`.
+const STEP_POOL_SLOTS: usize = 4;
+
 pub struct StepPool {
-    slots: [Arc<StepPlan>; 4],
+    slots: [Arc<StepPlan>; STEP_POOL_SLOTS],
 }
 impl StepPool {
     /// # Errors

@@ -1,7 +1,11 @@
 use super::mask::Mask;
 use crate::{Error, Result};
+
+/// Bits in the legacy `cpu_set_t` bitmap that seeds the affinity probe.
+const CPU_SETSIZE_BITS: usize = 1024;
+
 pub(super) fn current() -> Result<Mask> {
-    let mut bits = 1024;
+    let mut bits = CPU_SETSIZE_BITS;
     loop {
         let mut mask = Mask::new(bits)?;
         // SAFETY: The unsigned-long storage is suitably aligned and holds exactly bytes() writable bytes.
@@ -10,7 +14,8 @@ pub(super) fn current() -> Result<Mask> {
             return Ok(mask);
         }
         let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EINVAL) || bits >= 1_048_576 {
+        if error.raw_os_error() != Some(libc::EINVAL) || bits >= crate::constants::MAX_TOPOLOGY_CPUS
+        {
             return Err(Error::invalid(format!("read CPU affinity: {error}")));
         }
         bits *= 2;

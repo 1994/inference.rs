@@ -3,7 +3,7 @@ use infer_backend_metal::{MetalBackend, MetalConfig, MetalKernels};
 use infer_core::*;
 use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use infer_workloads::ProjectionWorkloads;
@@ -17,7 +17,7 @@ fn root() -> PathBuf {
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
 fn load(config: MetalConfig, runtime: RuntimeConfig) -> (Engine<MetalBackend>, KernelRegistry) {
-    let mut p = QwenPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
+    let mut p = ModelPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
     let backend = MetalBackend::from_package(&mut p, config).unwrap();
     let model = backend.model().clone();
     let mut kernels = KernelRegistry::default();
@@ -69,11 +69,11 @@ fn metal_generation_prefix_and_physical_checkpoint_preserve_official_trajectory(
     for chunk in [1, 3, 64] {
         let (mut engine, _) = load(
             MetalConfig {
-                page_tokens: 2,
+                block_size: 2,
                 ..Default::default()
             },
             RuntimeConfig {
-                token_budget: chunk,
+                max_num_batched_tokens: chunk,
                 ..Default::default()
             },
         );
@@ -159,7 +159,7 @@ fn metal_projection_readouts_match_independent_torch_for_four_workloads() {
         let (engine, _) = load(
             MetalConfig::default(),
             RuntimeConfig {
-                token_budget: chunk,
+                max_num_batched_tokens: chunk,
                 ..Default::default()
             },
         );
@@ -235,7 +235,7 @@ fn metal_cancel_waits_for_owned_completion_and_queued_state_can_release() {
     let (mut engine, _) = load(
         MetalConfig::default(),
         RuntimeConfig {
-            max_batch: 1,
+            max_num_seqs: 1,
             ..Default::default()
         },
     );
@@ -257,7 +257,7 @@ fn metal_physical_admission_failure_leaves_no_logical_or_device_state() {
     if !MetalBackend::available() {
         return;
     }
-    let mut package = QwenPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
+    let mut package = ModelPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
     let memory = package.manifest.host_f32_bytes + package.graph.scratch_elements as u64 * 4 + 4;
     let model = package.imported.model.clone();
     let weights = package.load_host_weights(1024 * 1024).unwrap();
@@ -328,6 +328,8 @@ fn metal_rejects_foreign_program_and_aliased_submission_before_mutating_state() 
             request: RequestId::new(id).unwrap(),
             state,
             tokens: vec![1].into(),
+
+            sampling: None,
         })
         .to_vec();
     assert!(backend.submit(&program, &step, tasks).is_err());
@@ -365,6 +367,8 @@ fn metal_completion_ticket_cannot_cross_executor_instances_with_same_step_id() {
         request,
         state,
         tokens: vec![1].into(),
+
+        sampling: None,
     }];
     let a = first.backend_mut();
     let b = second.backend_mut();

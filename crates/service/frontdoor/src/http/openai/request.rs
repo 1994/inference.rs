@@ -1,6 +1,11 @@
 use infer_core::{Error, Result};
 use infer_models::ChatMessage;
 
+/// Maximum chat messages accepted in one generation request.
+const MAX_CHAT_MESSAGES: usize = 256;
+/// Default completion-token budget when a request omits an explicit limit.
+const DEFAULT_MAX_COMPLETION_TOKENS: usize = 16;
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GenerationRequest {
@@ -33,7 +38,7 @@ impl GenerationRequest {
                 ));
             }
             if self.messages.as_ref().is_some_and(|messages| {
-                messages.len() > 256
+                messages.len() > MAX_CHAT_MESSAGES
                     || messages
                         .iter()
                         .any(|m| !["system", "user", "assistant"].contains(&m.role.as_str()))
@@ -53,7 +58,10 @@ impl GenerationRequest {
         if self.max_tokens.is_some() && self.max_completion_tokens.is_some() {
             return Err(Error::invalid("provide only one token limit"));
         }
-        let tokens = self.max_completion_tokens.or(self.max_tokens).unwrap_or(16);
+        let tokens = self
+            .max_completion_tokens
+            .or(self.max_tokens)
+            .unwrap_or(DEFAULT_MAX_COMPLETION_TOKENS);
         if tokens == 0
             || self.n == Some(0)
             || self
@@ -83,11 +91,11 @@ impl GenerationRequest {
                 })
             })
             .and_then(|bytes| bytes.checked_add(self.prompt.as_ref().map_or(0, String::len)));
-        text.and_then(|n| n.checked_mul(16))
-            .and_then(|n| n.checked_add(4096))
+        text.and_then(|n| n.checked_mul(crate::constants::TEXT_STAGING_EXPANSION))
+            .and_then(|n| n.checked_add(crate::constants::TEXT_STAGING_OVERHEAD_BYTES))
             .and_then(|n| {
                 generated
-                    .checked_mul(4)
+                    .checked_mul(crate::constants::GENERATED_TOKEN_STAGING_BYTES)
                     .and_then(|tail| n.checked_add(tail))
             })
             .ok_or_else(|| Error::invalid("text preparation budget overflow"))

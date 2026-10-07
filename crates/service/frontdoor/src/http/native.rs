@@ -26,7 +26,9 @@ pub fn router(handle: RuntimeHandle) -> Router {
         .route("/native/v1/diagnostics", get(diagnostics))
         .route("/native/v1/timeline", get(timeline))
         .route("/native/v1/traces/otlp", get(otlp))
-        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(
+            crate::constants::MAX_REQUEST_BODY_BYTES,
+        ))
         .with_state(handle)
 }
 pub(super) fn trace_parent(headers: &HeaderMap) -> Option<infer_observe::trace::TraceContext> {

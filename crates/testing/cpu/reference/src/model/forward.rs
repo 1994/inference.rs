@@ -104,6 +104,10 @@ impl ReferenceModel {
                 "reference forward produced non-finite output",
             ));
         }
-        Ok(ModelOutput { logits, hidden })
+        Ok(ModelOutput {
+            logits,
+            hidden,
+            tokens: Vec::new(),
+        })
     }
 }

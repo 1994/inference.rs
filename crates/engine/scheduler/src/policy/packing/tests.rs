@@ -12,7 +12,7 @@ fn exhaustive(
     id: DecisionId,
     step: StepId,
 ) -> Result<SchedulingDecision> {
-    while builder.used_tokens < builder.resources.token_budget {
+    while builder.used_tokens < builder.resources.max_num_batched_tokens {
         let mut within: Option<Quantum> = None;
         let mut atomic: Option<Quantum> = None;
         for index in 0..builder.ready.len() {
@@ -53,7 +53,7 @@ fn exhaustive(
         }
     }
     let mut output =
-        infer_spi::DecisionStorage::new(builder.ready.len(), builder.resources.max_batch)?;
+        infer_spi::DecisionStorage::new(builder.ready.len(), builder.resources.max_num_seqs)?;
     builder.into_decision(id, step, &mut output)
 }
 struct NonlinearCosts;
@@ -94,7 +94,7 @@ fn items(random: &mut Random) -> Result<Vec<ReadyWork>> {
             let unit = CostEstimate {
                 gpu_us: random.next(80) as u64 + 1,
                 workspace_bytes: random.next(180) as u64,
-                state_pages: random.next(3),
+                num_gpu_blocks: random.next(3),
                 ..Default::default()
             };
             Ok(ReadyWork {
@@ -130,8 +130,8 @@ fn prioritized_packing_matches_exhaustive_search_with_nonlinear_costs() -> Resul
     for _ in 0..512 {
         let ready = items(&mut random)?;
         let resources = ResourceSnapshot {
-            max_batch: random.next(16) + 1,
-            token_budget: random.next(64) + 1,
+            max_num_seqs: random.next(16) + 1,
+            max_num_batched_tokens: random.next(64) + 1,
             gpu_budget_us: random.next(256) as u64 + 1,
             workspace_bytes: random.next(200) as u64,
             free_state_pages: random.next(8),
@@ -183,8 +183,8 @@ impl CostModelProvider for Counted {
 fn unchanged_minimum_queries_are_not_repeated_for_each_quantum() -> Result<()> {
     let ready = items(&mut Random(7))?;
     let resources = ResourceSnapshot {
-        max_batch: 32,
-        token_budget: 128,
+        max_num_seqs: 32,
+        max_num_batched_tokens: 128,
         gpu_budget_us: 10_000,
         workspace_bytes: 10_000,
         free_state_pages: 1024,
@@ -220,8 +220,8 @@ fn unchanged_minimum_queries_are_not_repeated_for_each_quantum() -> Result<()> {
 fn persistent_workspace_preserves_capacity_and_decision_evidence_across_steps() -> Result<()> {
     let ready = items(&mut Random(7))?;
     let resources = ResourceSnapshot {
-        max_batch: 32,
-        token_budget: 128,
+        max_num_seqs: 32,
+        max_num_batched_tokens: 128,
         gpu_budget_us: 10_000,
         workspace_bytes: 10_000,
         free_state_pages: 1024,

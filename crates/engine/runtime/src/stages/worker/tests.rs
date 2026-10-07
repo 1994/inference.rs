@@ -47,6 +47,8 @@ fn job(id: u64, projection: bool) -> Result<OutputJob> {
         output: ModelOutput {
             logits: vec![0.0, 2.0, 1.0],
             hidden: vec![vec![1.0, 2.0]],
+
+            tokens: Vec::new(),
         },
         shape: OutputShape {
             logits: 3,
@@ -95,7 +97,7 @@ fn one_batch_has_independent_completions_and_abandoned_tickets_retain_cpu_credit
         deadline(limit)?;
     }
     drop(other);
-    assert_eq!(sampled.token, Some(1));
+    assert_eq!(sampled.tokens.as_slice(), &[1]);
     assert!(blocked && retained);
     Ok(())
 }

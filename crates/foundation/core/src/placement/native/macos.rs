@@ -1,5 +1,15 @@
 use super::super::{PlacementReport, ThreadPlacement, ThreadQos};
 use crate::{Error, Result};
+
+/// Darwin `QOS_CLASS_UTILITY` class passed to `pthread_set_qos_class_self_np`.
+const QOS_CLASS_UTILITY: u32 = 0x11;
+/// Darwin `QOS_CLASS_USER_INITIATED` class passed to `pthread_set_qos_class_self_np`.
+const QOS_CLASS_USER_INITIATED: u32 = 0x19;
+/// Darwin `QOS_CLASS_USER_INTERACTIVE` class passed to `pthread_set_qos_class_self_np`.
+const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+/// Darwin thread-policy flavor selecting the thread affinity policy.
+const THREAD_AFFINITY_POLICY_FLAVOR: libc::thread_policy_flavor_t = 4;
+
 unsafe extern "C" {
     fn mach_thread_self() -> libc::mach_port_t;
     static mach_task_self_: libc::mach_port_t;
@@ -47,9 +57,9 @@ impl Guard {
             set_qos(
                 match placement.qos {
                     ThreadQos::Inherit => qos,
-                    ThreadQos::Utility => 0x11,
-                    ThreadQos::UserInitiated => 0x19,
-                    ThreadQos::UserInteractive => 0x21,
+                    ThreadQos::Utility => QOS_CLASS_UTILITY,
+                    ThreadQos::UserInitiated => QOS_CLASS_USER_INITIATED,
+                    ThreadQos::UserInteractive => QOS_CLASS_USER_INTERACTIVE,
                 },
                 0,
             )?;
@@ -109,7 +119,7 @@ fn affinity(tag: Option<i32>) -> Result<i32> {
     let read = unsafe {
         libc::thread_policy_get(
             thread,
-            4,
+            THREAD_AFFINITY_POLICY_FLAVOR,
             &raw mut old,
             &raw mut count,
             &raw mut default_policy,
@@ -120,7 +130,12 @@ fn affinity(tag: Option<i32>) -> Result<i32> {
     {
         // SAFETY: Valid thread send right and exactly one integer for the affinity policy ABI.
         unsafe {
-            libc::thread_policy_set(thread, 4, &raw mut tag, libc::THREAD_AFFINITY_POLICY_COUNT)
+            libc::thread_policy_set(
+                thread,
+                THREAD_AFFINITY_POLICY_FLAVOR,
+                &raw mut tag,
+                libc::THREAD_AFFINITY_POLICY_COUNT,
+            )
         }
     } else {
         read

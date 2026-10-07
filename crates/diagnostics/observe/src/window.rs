@@ -3,7 +3,10 @@ use crate::{EventQuery, ObservedEvent};
 use infer_core::{Error, RequestId, Result};
 use std::{collections::VecDeque, sync::Arc};
 
+/// Events per shared page; appending copies at most one page.
 const PAGE_EVENTS: usize = 128;
+/// Largest accepted per-response event budget.
+const MAX_QUERY_LIMIT: usize = 4096;
 #[derive(Clone, Default)]
 pub struct EventPages {
     pub pages: VecDeque<Arc<Vec<ObservedEvent>>>,
@@ -70,7 +73,7 @@ impl EventPages {
         ring_dropped: u64,
         history_evicted: u64,
     ) -> Result<EventQuery> {
-        if limit == 0 || limit > 4096 {
+        if limit == 0 || limit > MAX_QUERY_LIMIT {
             return Err(Error::invalid("event query limit must be 1 to 4096"));
         }
         let oldest = self

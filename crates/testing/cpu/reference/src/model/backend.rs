@@ -105,6 +105,12 @@ impl BackendProvider for ReferenceBackend {
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities::reference()
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        if model != &self.model.ir {
+            return Err(Error::invalid("reference graph model mismatch"));
+        }
+        infer_model_recipes::decoder::lower(model)
+    }
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         if model != &self.model.ir
             || program.precision != PrecisionPlan::f32()
@@ -115,7 +121,11 @@ impl BackendProvider for ReferenceBackend {
                 "reference backend/model/precision mismatch",
             ));
         }
-        let ir = infer_compiler::lower(model, program.precision.clone())?;
+        let ir = infer_compiler::lower(
+            model,
+            self.execution_graph(model)?,
+            program.precision.clone(),
+        )?;
         if program
             .operations
             .iter()

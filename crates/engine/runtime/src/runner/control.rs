@@ -134,6 +134,12 @@ where
     fn state_page_growth(&self, state: StateId) -> Result<Option<PageGrowth>> {
         Ok(self.shared.snapshot()?.growth.get(&state).copied())
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        if model != &self.model {
+            return Err(Error::invalid("execution graph model mismatch"));
+        }
+        Ok(self.program.dataflow.clone())
+    }
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         if model != &self.model || program != &*self.program {
             return Err(Error::invalid("device runner program mismatch"));

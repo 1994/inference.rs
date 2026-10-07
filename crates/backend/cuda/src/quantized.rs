@@ -53,8 +53,11 @@ impl CudaDevice {
     ) -> Result<Arc<Tensor<f32>>> {
         self.target().require_native_nvfp4()?;
         let (rows, columns) = shape(&x, &w, 2)?;
-        if columns % 16 != 0
-            || !matches_shape(scales.shape(), &[rows, columns / 16])
+        if columns % crate::constants::NVFP4_GROUP_SIZE != 0
+            || !matches_shape(
+                scales.shape(),
+                &[rows, columns / crate::constants::NVFP4_GROUP_SIZE],
+            )
             || !global_scale.is_finite()
             || global_scale <= 0.0
         {
@@ -67,7 +70,7 @@ impl CudaDevice {
                 tile.columns().to_string(),
                 columns.to_string(),
                 (tile.columns() / 2).to_string(),
-                (tile.columns() / 16).to_string(),
+                (tile.columns() / crate::constants::NVFP4_GROUP_SIZE).to_string(),
             ])
             .first()
             .unpartition()

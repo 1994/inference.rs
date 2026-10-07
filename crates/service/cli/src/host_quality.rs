@@ -10,6 +10,13 @@ use infer_spi::BackendProvider;
 use serde::Deserialize;
 use std::path::Path;
 
+/// Bytes per F32 hidden-state element in sampled layer-probe payloads.
+const F32_BYTES_U64: u64 = size_of::<f32>() as u64;
+/// Wall-clock budget for one golden prefill step on a device backend.
+const GOLDEN_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Leading token budgets exercised for golden trajectory invariance.
+const TRAJECTORY_CHUNK_TOKENS: [usize; 2] = [1, 3];
+
 #[derive(Deserialize)]
 struct Golden {
     prefixes: Vec<Prefix>,
@@ -30,14 +37,14 @@ pub fn verify_package(
     memory_mib: u64,
     atol: f64,
     rtol: f64,
-    choice: crate::backend::Selection,
+    choice: &crate::backend::Selection,
 ) -> Result<serde_json::Value> {
     let file = std::fs::File::open(golden_path).map_err(|e| Error::invalid(e.to_string()))?;
     if file
         .metadata()
         .map_err(|e| Error::invalid(e.to_string()))?
         .len()
-        > 64 * 1024 * 1024
+        > crate::constants::MAX_JSON_FILE_BYTES
     {
         return Err(Error::new(
             ErrorCode::Capacity,
@@ -56,12 +63,12 @@ pub fn verify_package(
         None,
         Some(package),
         memory_mib,
-        choice,
+        choice.clone(),
     )?;
     let model = engine.model().clone();
     let program = engine.program().clone();
     let backend = engine.backend_mut();
-    let sample_bytes = (model.hidden_size as u64 * 4 + size_of::<LayerProbe>() as u64)
+    let sample_bytes = (model.hidden_size as u64 * F32_BYTES_U64 + size_of::<LayerProbe>() as u64)
         .checked_mul(model.mixers.len() as u64)
         .and_then(|n| n.checked_mul(golden.prefixes.last()?.tokens.len() as u64))
         .ok_or_else(|| Error::invalid("probe size overflow"))?;
@@ -150,9 +157,11 @@ fn verify_prefixes(
                 request,
                 state,
                 tokens: prefix.tokens.clone().into(),
+
+                sampling: None,
             }],
         )?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + GOLDEN_STEP_TIMEOUT;
         let result = loop {
             if let Some(mut output) = backend.poll(&mut ticket)? {
                 break output.remove(0).output;
@@ -163,7 +172,7 @@ fn verify_prefixes(
                     "golden GPU completion timeout",
                 ));
             }
-            std::thread::sleep(std::time::Duration::from_micros(100));
+            std::thread::sleep(crate::constants::DEVICE_POLL_INTERVAL);
         };
         let logits = infer_quality::compare(&prefix.logits, &result.logits, atol, rtol)?;
         let expected: Vec<_> = prefix.hidden.iter().flatten().copied().collect();
@@ -201,20 +210,23 @@ fn verify_prefixes(
 fn verify_trajectories(
     package: &Path,
     memory_mib: u64,
-    choice: crate::backend::Selection,
+    choice: &crate::backend::Selection,
     model: &infer_ir::ModelIr,
     executed: &[u32],
     expected_tokens: &[u32],
 ) -> Result<(bool, Vec<serde_json::Value>)> {
     let mut passed = true;
     let mut trajectories = Vec::new();
-    for chunk in [1, 3, model.max_sequence] {
+    for chunk in TRAJECTORY_CHUNK_TOKENS
+        .into_iter()
+        .chain(std::iter::once(model.max_sequence))
+    {
         let config = RuntimeConfig {
-            token_budget: chunk,
+            max_num_batched_tokens: chunk,
             ..Default::default()
         };
         let mut candidate: Engine<SelectedBackend> =
-            selected_engine(config, None, Some(package), memory_mib, choice)?;
+            selected_engine(config, None, Some(package), memory_mib, choice.clone())?;
         let ids = [RequestId::new(1)?, RequestId::new(2)?];
         for id in ids {
             candidate.submit(CanonicalRequest {
@@ -233,7 +245,7 @@ fn verify_trajectories(
                 extensions: std::collections::BTreeMap::new(),
             })?;
         }
-        for now in 0..1_000_000 {
+        for now in 0..crate::constants::MAX_IDLE_TICKS {
             if candidate.is_idle() {
                 break;
             }
@@ -242,7 +254,7 @@ fn verify_trajectories(
             if candidate.inspect().inflight_step.is_some()
                 && candidate.program().backend.is_device()
             {
-                std::thread::sleep(std::time::Duration::from_micros(100));
+                std::thread::sleep(crate::constants::DEVICE_POLL_INTERVAL);
             }
         }
         if !candidate.is_idle() {

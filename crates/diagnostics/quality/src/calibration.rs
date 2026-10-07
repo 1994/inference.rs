@@ -2,6 +2,11 @@
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
+/// Maximum accepted calibration bin count, bounding the bucket index space.
+const MAX_BINS: usize = 10000;
+/// Tolerance for validating that a probability distribution sums to one.
+const PROBABILITY_SUM_TOLERANCE: f64 = 1e-5;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalibrationReport {
     pub brier: f64,
@@ -29,7 +34,10 @@ pub fn calibration(
     labels: &[usize],
     bins: usize,
 ) -> Result<CalibrationReport> {
-    if probabilities.is_empty() || probabilities.len() != labels.len() || bins == 0 || bins > 10000
+    if probabilities.is_empty()
+        || probabilities.len() != labels.len()
+        || bins == 0
+        || bins > MAX_BINS
     {
         return Err(Error::invalid("invalid calibration dataset"));
     }
@@ -41,7 +49,8 @@ pub fn calibration(
         if p.is_empty()
             || *label >= p.len()
             || p.iter().any(|x| !x.is_finite() || !(0.0..=1.0).contains(x))
-            || (p.iter().map(|x| f64::from(*x)).sum::<f64>() - 1.0).abs() > 1e-5
+            || (p.iter().map(|x| f64::from(*x)).sum::<f64>() - 1.0).abs()
+                > PROBABILITY_SUM_TOLERANCE
         {
             return Err(Error::invalid("invalid probability distribution/label"));
         }

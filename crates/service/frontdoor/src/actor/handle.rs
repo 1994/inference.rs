@@ -6,6 +6,19 @@ use infer_observe::{ObservationQuery, trace::TraceContext};
 use infer_runtime::{EngineOutput, RuntimeInspection};
 use std::{time::Duration, time::Instant};
 
+/// Capacity of the output channel carrying each accepted request's engine events.
+const OUTPUT_CHANNEL_CAPACITY: usize = 16;
+/// Staging budget reserved for a metrics observation response, in bytes.
+const METRICS_RESPONSE_BUDGET_BYTES: usize = 64 << 10;
+/// Staging budget reserved for a diagnostics observation response, in bytes.
+const DIAGNOSTICS_RESPONSE_BUDGET_BYTES: usize = 2 << 20;
+/// Staging bytes reserved per requested semantic event.
+const EVENT_RESPONSE_BYTES: usize = 1024;
+/// Fixed staging bytes reserved for an event query in addition to its per-event budget.
+const EVENTS_RESPONSE_BASE_BYTES: usize = 256 << 10;
+/// Seconds to wait for the actor to acknowledge shutdown.
+const SHUTDOWN_ACK_TIMEOUT_SECS: u64 = 5;
+
 impl RuntimeHandle {
     /// Allocate a process-local request identity shared by all clones of this handle.
     /// Explicit submissions advance the same counter; allocated identities are never reused.
@@ -143,7 +156,7 @@ impl RuntimeHandle {
             })
             .await?;
         pending.check()?;
-        let (output, receiver) = async_mpsc::channel(16);
+        let (output, receiver) = async_mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
         let (reply, response) = oneshot::channel();
         self.send(Command::Submit {
             request: Box::new(request),
@@ -180,11 +193,11 @@ impl RuntimeHandle {
     /// Returns a capacity, query-validation, or stopped-actor error.
     pub async fn observe(&self, query: ObservationQuery) -> Result<serde_json::Value> {
         let bytes = match query {
-            ObservationQuery::Metrics => 64 << 10,
-            ObservationQuery::Diagnostics => 2 << 20,
+            ObservationQuery::Metrics => METRICS_RESPONSE_BUDGET_BYTES,
+            ObservationQuery::Diagnostics => DIAGNOSTICS_RESPONSE_BUDGET_BYTES,
             ObservationQuery::Events { limit, .. } => limit
-                .checked_mul(1024)
-                .and_then(|bytes| bytes.checked_add(256 << 10))
+                .checked_mul(EVENT_RESPONSE_BYTES)
+                .and_then(|bytes| bytes.checked_add(EVENTS_RESPONSE_BASE_BYTES))
                 .ok_or_else(|| Error::invalid("observation response budget overflow"))?,
             _ => self.observation_bytes,
         };
@@ -206,7 +219,7 @@ impl RuntimeHandle {
     pub async fn shutdown(&self) -> Result<()> {
         let (reply, response) = oneshot::channel();
         self.send(Command::Stop { reply })?;
-        tokio::time::timeout(Duration::from_secs(5),response)
+        tokio::time::timeout(Duration::from_secs(SHUTDOWN_ACK_TIMEOUT_SECS),response)
             .await.map_err(|_|Error::new(ErrorCode::Backend,"shutdown acknowledgement timed out; in-flight resources remain owned by the actor"))?
             .map_err(|_| Error::new(ErrorCode::Backend, "engine actor stopped"))?
     }

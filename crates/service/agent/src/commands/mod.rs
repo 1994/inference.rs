@@ -74,7 +74,7 @@ pub fn registry<B: AgentBackend>() -> Result<CommandRegistry<AgentContext<B>>> {
 }
 
 fn discover<B: AgentBackend>(context: &mut AgentContext<B>, _: NoParams) -> Value {
-    json!({"protocol_version": PROTOCOL_VERSION,"commands":context.descriptors,"limits":{"frame_bytes":crate::transport::MAX_FRAME_BYTES,"batch_requests":64,"call_history":256,"experiment_history":16},"backend":context.engine.inspect().backend_kind})
+    json!({"protocol_version": PROTOCOL_VERSION,"commands":context.descriptors,"limits":{"frame_bytes":crate::transport::MAX_FRAME_BYTES,"batch_requests":crate::constants::MAX_BATCH_REQUESTS,"call_history":crate::constants::MAX_CALL_HISTORY,"experiment_history":crate::constants::MAX_EXPERIMENT_HISTORY},"backend":context.engine.inspect().backend_kind})
 }
 
 fn inspect<B: AgentBackend>(context: &mut AgentContext<B>, _: NoParams) -> Value {

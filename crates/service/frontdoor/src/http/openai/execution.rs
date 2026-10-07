@@ -111,9 +111,12 @@ async fn response(
     let assets = state.assets.clone();
     let text = state
         .delivery
-        .run(tokens.len().saturating_mul(8), move |_| {
-            assets.decode(&tokens, true)
-        })
+        .run(
+            tokens
+                .len()
+                .saturating_mul(crate::constants::TOKEN_STAGING_BYTES),
+            move |_| assets.decode(&tokens, true),
+        )
         .await?;
     let choice = if chat {
         json!({"index":0, "message":{"role":"assistant", "content":text, "refusal":null},

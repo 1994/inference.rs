@@ -1,5 +1,5 @@
 use super::GenerationDefaults;
-use crate::{package::read_bounded, package_path};
+use crate::{package_path, storage::package::read_bounded};
 use infer_core::{Error, Result};
 use infer_ir::Sampling;
 use std::{collections::BTreeMap, path::Path};
@@ -11,7 +11,10 @@ pub fn load(root: &Path) -> Result<GenerationDefaults> {
     let mut sources = BTreeMap::new();
     let card = root.join("README.md");
     let qwen38 = if card.exists() {
-        let bytes = read_bounded(&package_path(root, "README.md")?, 2 * 1024 * 1024)?;
+        let bytes = read_bounded(
+            &package_path(root, "README.md")?,
+            2 * crate::constants::MIB_U64,
+        )?;
         let card = String::from_utf8(bytes).map_err(|e| Error::invalid(e.to_string()))?;
         card.strip_prefix("---")
             .and_then(|s| s.split_once("---"))
@@ -103,6 +106,9 @@ fn json(root: &Path, name: &str) -> Result<serde_json::Value> {
     if !root.join(name).exists() {
         return Ok(serde_json::json!({}));
     }
-    let bytes = read_bounded(&package_path(root, name)?, 1024 * 1024)?;
+    let bytes = read_bounded(
+        &package_path(root, name)?,
+        crate::constants::CONFIG_MAX_BYTES,
+    )?;
     serde_json::from_slice(&bytes).map_err(|e| Error::invalid(e.to_string()))
 }

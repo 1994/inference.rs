@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 pub use snapshot::ObservationSnapshot;
+/// High half of the namespace carries the process id so separate processes cannot collide.
+const NAMESPACE_PROCESS_ID_SHIFT: u32 = 32;
+/// Largest event window an exporter may request from one observation query.
+const MAX_EVENT_QUERY_LIMIT: usize = 4096;
 static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(0);
 fn next_namespace(clock: u64) -> Result<u64> {
     let mut previous = NEXT_NAMESPACE.load(Ordering::Relaxed);
@@ -25,7 +29,9 @@ fn next_namespace(clock: u64) -> Result<u64> {
             Ordering::Relaxed,
             Ordering::Relaxed,
         ) {
-            Ok(_) => return Ok(next ^ (u64::from(std::process::id()) << 32)),
+            Ok(_) => {
+                return Ok(next ^ (u64::from(std::process::id()) << NAMESPACE_PROCESS_ID_SHIFT));
+            }
             Err(observed) => previous = observed,
         }
     }
@@ -74,7 +80,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         query: infer_observe::ObservationQuery,
     ) -> Result<ObservationSnapshot> {
         use infer_observe::ObservationQuery;
-        if matches!(query, ObservationQuery::Events { limit, .. } if limit == 0 || limit > 4096) {
+        if matches!(query, ObservationQuery::Events { limit, .. } if limit == 0 || limit > MAX_EVENT_QUERY_LIMIT)
+        {
             return Err(Error::invalid("event query limit must be 1 to 4096"));
         }
         self.collect_observations();

@@ -24,6 +24,9 @@ impl Backend {
                 .map(|_| ModelOutput {
                     logits: vec![1.0; vocabulary],
                     hidden: Vec::new(),
+                    // The output stage pushes decided tokens into this buffer, so it must
+                    // arrive with capacity and never grow on a hot path.
+                    tokens: Vec::with_capacity(8),
                 })
                 .collect(),
             batches: (0..4).map(|_| Vec::with_capacity(batch)).collect(),
@@ -39,6 +42,9 @@ impl BackendProvider for Backend {
     }
     fn capabilities(&self) -> DeviceCapabilities {
         infer_ir::testing::reference_capabilities()
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        infer_model_recipes::decoder::lower(model)
     }
     fn validate_program(&self, _: &ModelIr, _: &ExecutionProgram) -> Result<()> {
         Ok(())

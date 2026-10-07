@@ -7,6 +7,21 @@ use std::{
 };
 use tokio::sync::oneshot;
 
+/// CPU threads reserved for non-inference work when sizing the default worker pool.
+const DEFAULT_WORKER_RESERVE: usize = 7;
+/// Upper bound on the auto-sized default worker pool.
+const MAX_DEFAULT_WORKERS: usize = 32;
+/// Default staging byte budget for one CPU pool.
+const DEFAULT_MAX_STAGING_BYTES: usize = 64 << 20;
+/// Default per-lane CPU job timeout, in milliseconds.
+const DEFAULT_JOB_TIMEOUT_MS: u64 = 30_000;
+/// Default control-command acknowledgement timeout, in milliseconds.
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 5_000;
+/// Default device control timeout, in milliseconds.
+const DEFAULT_DEVICE_CONTROL_TIMEOUT_MS: u64 = 250;
+/// Maximum number of CPU workers accepted by configuration validation.
+const MAX_WORKERS: usize = 256;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CpuConfig {
@@ -22,16 +37,16 @@ impl Default for CpuConfig {
     fn default() -> Self {
         let workers = std::thread::available_parallelism()
             .map_or(2, std::num::NonZeroUsize::get)
-            .saturating_sub(7)
-            .clamp(1, 32);
+            .saturating_sub(DEFAULT_WORKER_RESERVE)
+            .clamp(1, MAX_DEFAULT_WORKERS);
         Self {
             placement: infer_core::placement::ThreadPlacement::default(),
             workers,
             max_jobs: workers * 2,
-            max_bytes: 64 << 20,
-            job_timeout_ms: 30_000,
-            command_timeout_ms: 5_000,
-            device_control_timeout_ms: 250,
+            max_bytes: DEFAULT_MAX_STAGING_BYTES,
+            job_timeout_ms: DEFAULT_JOB_TIMEOUT_MS,
+            command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
+            device_control_timeout_ms: DEFAULT_DEVICE_CONTROL_TIMEOUT_MS,
         }
     }
 }
@@ -40,7 +55,7 @@ impl CpuConfig {
     /// Rejects zero limits or unbounded/oversubscribed worker configuration.
     pub fn validate(&self) -> Result<()> {
         if self.workers == 0
-            || self.workers > 256
+            || self.workers > MAX_WORKERS
             || self.max_jobs < self.workers
             || self.max_bytes == 0
             || self.job_timeout_ms == 0

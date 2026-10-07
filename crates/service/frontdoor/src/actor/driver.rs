@@ -1,11 +1,17 @@
 //! Driver responsibilities.
-use super::{Command, RuntimeActor, mpsc};
+use super::{
+    Command, DEFERRED_QUEUE_CAPACITY, QUOTING_QUEUE_CAPACITY, RuntimeActor, STOP_WAITER_CAPACITY,
+    mpsc,
+};
 use infer_runtime::{Engine, EngineOutput};
 use infer_spi::BackendProvider;
 use std::{
     collections::BTreeMap, collections::VecDeque, sync::Arc, sync::atomic::AtomicBool,
     sync::atomic::Ordering, time::Duration, time::Instant,
 };
+
+/// Microseconds the idle actor parks before re-checking engine and queue state.
+const IDLE_PARK_TIMEOUT_MICROS: u64 = 250;
 
 impl<B: BackendProvider> RuntimeActor<B> {
     pub(super) fn new(
@@ -23,12 +29,12 @@ impl<B: BackendProvider> RuntimeActor<B> {
             receiver,
             control,
             stop,
-            deferred: VecDeque::with_capacity(256),
-            quoting: VecDeque::with_capacity(256),
+            deferred: VecDeque::with_capacity(DEFERRED_QUEUE_CAPACITY),
+            quoting: VecDeque::with_capacity(QUOTING_QUEUE_CAPACITY),
             subscribers: BTreeMap::new(),
             start: clock_started,
             stopping: false,
-            stop_replies: Vec::with_capacity(256),
+            stop_replies: Vec::with_capacity(STOP_WAITER_CAPACITY),
         }
     }
     pub(super) fn run(mut self) {
@@ -59,7 +65,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
             {
                 std::thread::park();
             } else {
-                std::thread::park_timeout(Duration::from_micros(250));
+                std::thread::park_timeout(Duration::from_micros(IDLE_PARK_TIMEOUT_MICROS));
             }
         }
         for reply in self.stop_replies {

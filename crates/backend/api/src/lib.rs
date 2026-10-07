@@ -1,5 +1,6 @@
 //! Backend-independent sealed batches, handle transport, and metadata ownership.
 mod batches;
+pub(crate) mod constants;
 pub use batches::{BatchArena, BatchLease};
 pub use rtrb::{Consumer, Producer, RingBuffer};
 

@@ -19,7 +19,7 @@ impl CompletedBatch {
     fn validate(step: &StepPlan, mut outputs: Vec<TaskOutput>) -> Result<Self> {
         outputs.sort_unstable_by_key(|output| output.request);
         if outputs.len() != step.work.len()
-            || outputs.len() > 64
+            || outputs.len() > infer_gpu_api::MAX_SUBMISSION_BATCH
             || outputs
                 .windows(2)
                 .any(|pair| pair[0].request == pair[1].request)
@@ -53,6 +53,8 @@ impl CompletedBatch {
             ModelOutput {
                 logits: Vec::new(),
                 hidden: Vec::new(),
+
+                tokens: Vec::new(),
             },
         ))
     }
@@ -275,6 +277,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         {
             self.backend.recycle_output(work.state, buffer)?;
         }
+        let decided = std::mem::take(&mut output.tokens);
         let r = self
             .host
             .requests
@@ -297,15 +300,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             return Ok(());
         }
         if let Workload::Generate { max_new_tokens } = r.request.workload {
-            self.complete_generation(
-                step,
-                work,
-                output
-                    .token
-                    .ok_or_else(|| Error::invariant("CPU sampler produced no token"))?,
-                max_new_tokens,
-                emitted,
-            )
+            if decided.is_empty() {
+                return Err(Error::invariant("generation step produced no token"));
+            }
+            self.complete_generation(step, work, decided.as_slice(), max_new_tokens, emitted)?;
         } else {
             if let Some(output) = output.output {
                 r.outputs.push(output);
@@ -331,50 +329,80 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     .ok_or_else(|| Error::invariant("CPU projection produced no output"))?;
                 emitted.push(self.finish(work.request, FinishReason::Completed, Some(output))?);
             }
-            Ok(())
         }
+        Ok(())
     }
+    /// Record every token this step decided. A speculative backend may return several, so the
+    /// terminal reason can be reached before the list ends; the tail is then discarded.
     fn complete_generation(
+        &mut self,
+        step: &StepPlan,
+        work: &PlannedWork,
+        tokens: &[u32],
+        max_new_tokens: usize,
+        emitted: &mut Vec<EngineOutput>,
+    ) -> Result<()> {
+        for token in tokens {
+            if self.append_generated(step, work, *token, max_new_tokens, emitted)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Append one decided token and report whether it finished the request.
+    fn append_generated(
         &mut self,
         step: &StepPlan,
         work: &PlannedWork,
         token: u32,
         max_new_tokens: usize,
         emitted: &mut Vec<EngineOutput>,
-    ) -> Result<()> {
-        let r = self
-            .host
-            .requests
-            .get_mut(work.request)
-            .ok_or_else(|| Error::invariant("known generation request"))?;
-        let index = r.generated.len();
-        let first_token = r.first_token_us.is_none();
-        let ttft = self.now_us - r.accepted_us;
-        let tpot = r.last_token_us.map(|last| self.now_us - last);
-        r.generated.push(token);
-        r.context.append()?;
-        if r.first_token_us.is_none() {
-            r.first_token_us = Some(self.now_us);
-        }
-        if let Some(last) = r.last_token_us {
-            r.max_tpot_us = Some(r.max_tpot_us.unwrap_or(0).max(self.now_us - last));
-        }
-        r.last_token_us = Some(self.now_us);
-        let reason = if r.request.sampling.is_eos(token) {
-            Some(FinishReason::Eos)
-        } else if r.generated.len() >= max_new_tokens {
-            Some(FinishReason::Length)
-        } else {
-            None
+    ) -> Result<bool> {
+        let (index, first_token, ttft, tpot, terminal) = {
+            let r = self
+                .host
+                .requests
+                .get_mut(work.request)
+                .ok_or_else(|| Error::invariant("known generation request"))?;
+            let index = r.generated.len();
+            let first_token = r.first_token_us.is_none();
+            let ttft = self.now_us - r.accepted_us;
+            let tpot = r.last_token_us.map(|last| self.now_us - last);
+            r.generated.push(token);
+            r.context.append()?;
+            if r.first_token_us.is_none() {
+                r.first_token_us = Some(self.now_us);
+            }
+            if let Some(last) = r.last_token_us {
+                r.max_tpot_us = Some(r.max_tpot_us.unwrap_or(0).max(self.now_us - last));
+            }
+            r.last_token_us = Some(self.now_us);
+            let terminal = if r.request.sampling.is_eos(token) {
+                Some(FinishReason::Eos)
+            } else if r.generated.len() >= max_new_tokens {
+                Some(FinishReason::Length)
+            } else {
+                None
+            };
+            (index, first_token, ttft, tpot, terminal)
         };
         emitted.push(EngineOutput::Token {
             request: work.request,
             token,
             index,
         });
-        let terminal_output = reason
-            .as_ref()
-            .map(|_| WorkloadOutput::Tokens(r.generated.clone()));
+        let terminal_output = if terminal.is_some() {
+            Some(WorkloadOutput::Tokens(
+                self.host
+                    .requests
+                    .get(work.request)
+                    .ok_or_else(|| Error::invariant("known generation request"))?
+                    .generated
+                    .clone(),
+            ))
+        } else {
+            None
+        };
         if first_token {
             self.event(
                 EventKind::FirstToken,
@@ -405,9 +433,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         );
         self.refresh_queue(work.request)?;
         self.progress(work.request)?;
-        if let Some(reason) = reason {
+        if let Some(reason) = terminal {
             emitted.push(self.finish(work.request, reason, terminal_output)?);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 }

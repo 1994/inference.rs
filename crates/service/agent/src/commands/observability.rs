@@ -15,7 +15,7 @@ impl Default for Events {
     fn default() -> Self {
         Self {
             after: 0,
-            limit: 256,
+            limit: crate::constants::DEFAULT_EVENT_LIMIT,
             request_id: None,
         }
     }
@@ -68,7 +68,7 @@ pub(super) fn register<B: AgentBackend>(
         "Query semantic history non-destructively with a cursor and explicit loss",
         CommandEffect::ReadOnly,
         object(
-            json!({"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":4096},"request_id":{"type":"integer","minimum":1}}),
+            json!({"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":crate::constants::MAX_EVENT_LIMIT},"request_id":{"type":"integer","minimum":1}}),
             &[],
         ),
         events,

@@ -5,6 +5,11 @@ use infer_ir::ExecutionProgram;
 use infer_spi::BackendProvider;
 use std::{sync::Arc, sync::atomic::Ordering, sync::mpsc, time::Duration};
 
+/// Control commands serviced before a pending compute submission is allowed to launch.
+const CONTROL_LAUNCH_QUANTUM: usize = 8;
+/// Abandoned states retired per maintenance pass before the drain loop yields.
+const ABANDONED_DRAIN_BATCH: usize = 8;
+
 pub(super) enum Job {
     Resource {
         command: infer_spi::ResourceCommand,
@@ -27,7 +32,7 @@ pub(super) struct Worker<B: BackendProvider> {
     flight: Option<Flight<B::Ticket>>,
     config: super::RunnerConfig,
     recycler: Option<infer_gpu_api::Consumer<super::Recycled>>,
-    snapshots: Option<[Arc<super::Snapshot>; 3]>,
+    snapshots: Option<[Arc<super::Snapshot>; super::SNAPSHOT_SLOTS]>,
     submissions: infer_gpu_api::Consumer<BatchLease>,
     completions: infer_gpu_api::Producer<BatchLease>,
 }
@@ -65,7 +70,9 @@ impl<B: BackendProvider> Worker<B> {
             return;
         };
         let mut error = None;
-        for _ in 0..self.config.max_batch * 4 + 8 {
+        for _ in 0..self.config.max_num_seqs * super::RECYCLED_ENTRIES_PER_BATCH
+            + super::RECYCLED_ENTRY_SLACK
+        {
             let Ok(buffer) = recycler.pop() else {
                 break;
             };
@@ -83,7 +90,10 @@ impl<B: BackendProvider> Worker<B> {
             self.fail(error);
         }
     }
-    pub fn with_snapshots(mut self, snapshots: [Arc<super::Snapshot>; 3]) -> Self {
+    pub fn with_snapshots(
+        mut self,
+        snapshots: [Arc<super::Snapshot>; super::SNAPSHOT_SLOTS],
+    ) -> Self {
         self.snapshots = Some(snapshots);
         self
     }
@@ -144,7 +154,7 @@ impl<B: BackendProvider> Worker<B> {
         }
     }
     fn collect_abandoned(&mut self) {
-        for _ in 0..8 {
+        for _ in 0..ABANDONED_DRAIN_BATCH {
             let Some(state) = self
                 .shared
                 .abandoned
@@ -242,7 +252,7 @@ impl<B: BackendProvider> Worker<B> {
             if self.flight.is_none() {
                 self.collect_abandoned();
                 // Resource traffic cannot starve an already published compute batch.
-                if controls >= 8 {
+                if controls >= CONTROL_LAUNCH_QUANTUM {
                     controls = 0;
                     if let Ok(handle) = self.submissions.pop() {
                         self.launch(handle);

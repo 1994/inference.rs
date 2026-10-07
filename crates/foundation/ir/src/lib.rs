@@ -24,7 +24,7 @@ pub use execution::{
 pub use hardware::{
     BackendKind, BackendRequirements, CapabilityRequirements, CudaRequirements, DeviceBackend,
     DeviceCapabilities, MetalCapabilities, MetalRequirements, NvidiaArchitecture,
-    NvidiaCapabilities,
+    NvidiaCapabilities, SpeculationCapability,
 };
 pub use model::{
     BackboneKind, FeedForward, Head, Mixer, ModelIr, PositionSpec, StateKind, StateRequirement,

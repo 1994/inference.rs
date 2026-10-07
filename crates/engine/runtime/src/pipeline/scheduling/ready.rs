@@ -49,7 +49,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             // Prefix/COW reference counts can change without mutating this request.
             row.cost_query.page_growth = self.backend.state_page_growth(row.state)?;
             row.cost_query.logical_growth = Some(PageGrowth {
-                page_tokens: self.config.page_tokens,
+                block_size: self.config.block_size,
                 allocated_pages: self.state.get(row.state)?.pages.len(),
                 bytes_per_page: 0,
                 cow_tail: false,
@@ -117,7 +117,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         let mut cost_query = self.base_query(role, 1, context);
         cost_query.page_growth = self.backend.state_page_growth(state)?;
         cost_query.logical_growth = Some(PageGrowth {
-            page_tokens: self.config.page_tokens,
+            block_size: self.config.block_size,
             allocated_pages: self.state.get(state)?.pages.len(),
             bytes_per_page: 0,
             cow_tail: false,

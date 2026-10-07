@@ -21,10 +21,25 @@ use metal::{Buffer, CommandBuffer};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, collections::VecDeque, sync::Arc, time::Instant};
 
+/// Default token rows in a layer-major prefill chunk.
+const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
+/// Default temporary upload staging budget (4 MiB).
+const DEFAULT_STAGING_BYTES: usize = 4 * crate::constants::MIB;
+/// Default device memory budget (512 MiB).
+const DEFAULT_MEMORY_BYTES: u64 = 512 * crate::constants::MIB_U64;
+/// Default tokens covered by one KV page.
+const DEFAULT_PAGE_TOKENS: usize = 16;
+/// Default op-trace ring capacity.
+const DEFAULT_TRACE_CAPACITY: usize = 8192;
+/// Default prefix-cache budget (16 MiB).
+const DEFAULT_PREFIX_CACHE_BYTES: u64 = 16 * crate::constants::MIB_U64;
+/// Cap on the automatically sized KV pool when no block count is configured.
+const MAX_AUTO_KV_BLOCKS: usize = 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalConfig {
     pub memory_bytes: u64,
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub trace_capacity: usize,
     pub prefix_cache_bytes: u64,
     pub probe_bytes: u64,
@@ -39,18 +54,18 @@ pub struct MetalConfig {
     pub upload_staging_bytes: usize,
 }
 const fn default_prefill_chunk() -> usize {
-    32
+    DEFAULT_PREFILL_CHUNK_TOKENS
 }
 const fn default_staging_bytes() -> usize {
-    4 * 1024 * 1024
+    DEFAULT_STAGING_BYTES
 }
 impl Default for MetalConfig {
     fn default() -> Self {
         Self {
-            memory_bytes: 512 * 1024 * 1024,
-            page_tokens: 16,
-            trace_capacity: 8192,
-            prefix_cache_bytes: 16 * 1024 * 1024,
+            memory_bytes: DEFAULT_MEMORY_BYTES,
+            block_size: DEFAULT_PAGE_TOKENS,
+            trace_capacity: DEFAULT_TRACE_CAPACITY,
+            prefix_cache_bytes: DEFAULT_PREFIX_CACHE_BYTES,
             probe_bytes: 0,
             kv_cache_blocks: None,
             prefill_chunk_tokens: default_prefill_chunk(),
@@ -113,7 +128,7 @@ struct Checkpoint {
     sequences: BTreeMap<StateId, SavedSequence>,
     tokens_executed: u64,
     prefix_hits: u64,
-    page_tokens: usize,
+    block_size: usize,
     pool_blocks: usize,
 }
 struct RestoredBlock {
@@ -187,7 +202,7 @@ pub struct MetalBackend {
 }
 fn bytes(n: usize) -> Result<u64> {
     (n as u64)
-        .checked_mul(4)
+        .checked_mul(crate::constants::F32_BYTES_U64)
         .ok_or_else(|| Error::invalid("Metal tensor size overflow"))
 }
 fn u32_size(n: usize) -> Result<u32> {
@@ -222,7 +237,7 @@ fn allocate_kv(
         ) {
             sum.checked_add(bytes(
                 config
-                    .page_tokens
+                    .block_size
                     .checked_mul(spec.shape[1])
                     .and_then(|n| n.checked_mul(2))
                     .ok_or_else(|| Error::invalid("KV block shape overflow"))?,
@@ -240,7 +255,7 @@ fn allocate_kv(
     let max_blocks = remaining.checked_div(kv_block_bytes).unwrap_or(0);
     let blocks = config
         .kv_cache_blocks
-        .unwrap_or_else(|| (max_blocks / 2).min(1024) as usize);
+        .unwrap_or_else(|| (max_blocks / 2).min(MAX_AUTO_KV_BLOCKS) as usize);
     if blocks as u64 > max_blocks || blocks >= u32::MAX as usize {
         return Err(Error::new(
             ErrorCode::Capacity,
@@ -257,7 +272,7 @@ fn allocate_kv(
             }
         ) {
             let elements = blocks
-                .checked_mul(config.page_tokens)
+                .checked_mul(config.block_size)
                 .and_then(|n| n.checked_mul(spec.shape[1]))
                 .and_then(|n| n.checked_mul(2))
                 .ok_or_else(|| Error::invalid("KV pool shape overflow"))?;

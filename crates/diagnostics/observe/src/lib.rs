@@ -1,4 +1,5 @@
 //! Fixed-storage recording and bounded cold-path semantic observation/export.
+mod constants;
 mod diagnostic;
 pub mod export;
 mod metrics;

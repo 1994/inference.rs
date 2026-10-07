@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "device": "NVIDIA GeForce RTX 5090",
+  "cuda": "13.4",
+  "cutile": "0.4.0",
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "protocol": {
+    "dataset": "ModelScope GSM8K test / ShareGPT, 4 each",
+    "manifest_sha256": "0a0e13e53bf1696d4679c69f9c696db3c1b559cd8afa731dc8d9434ae33e96cb",
+    "concurrency": 1,
+    "max_new_tokens": 128,
+    "thinking": false,
+    "temperature": 0,
+    "presence_penalty": 0,
+    "warmup_requests": 1,
+    "exclude_load_and_warmup": true,
+    "exclude_eos": true
+  },
+  "results": [
+    {
+      "source": "artifacts/modelscope-rust-resident-v2-mtp0.json",
+      "sha256": "e308f6b723d08daf4815186d05767ac1b9b48bd6d031c05a9c957abc8e109fb2",
+      "framework": "rust-resident",
+      "mtp": 0,
+      "prefill_batch": null,
+      "output_tokens": 820,
+      "seconds": 18.1902836,
+      "tokens_per_second": 45.07901130249558,
+      "prefill_seconds": 5.106276963,
+      "matching_rust_f32_sequences": 8
+    },
+    {
+      "source": "artifacts/modelscope-rust-prefill3-v2-mtp0.json",
+      "sha256": "75b2a879f9bf68637f2a0ee92c7b3b924354e11c88f25073eb8183def46877ad",
+      "framework": "rust-resident",
+      "mtp": 0,
+      "prefill_batch": 3,
+      "output_tokens": 820,
+      "seconds": 17.27150817,
+      "tokens_per_second": 47.477035122173696,
+      "prefill_seconds": 4.175812704,
+      "matching_rust_f32_sequences": 8
+    },
+    {
+      "source": "artifacts/modelscope-rust-prefill3-v2-mtp0-repeat2.json",
+      "sha256": "38afd373f65f32ac7ecf2429529c5e69c2d640d889ad077bd065b0e9822f2ee2",
+      "framework": "rust-resident",
+      "mtp": 0,
+      "prefill_batch": 3,
+      "output_tokens": 820,
+      "seconds": 17.241817718,
+      "tokens_per_second": 47.55879069200121,
+      "prefill_seconds": 4.158908446,
+      "matching_rust_f32_sequences": 8
+    },
+    {
+      "source": "artifacts/modelscope-rust-prefill3-v2-mtp0-repeat3.json",
+      "sha256": "d2376ede146e3a9037fdf4b367cd61658224a41ff8878fe7470deabf5ce36b32",
+      "framework": "rust-resident",
+      "mtp": 0,
+      "prefill_batch": 3,
+      "output_tokens": 820,
+      "seconds": 17.259543776,
+      "tokens_per_second": 47.509946418180455,
+      "prefill_seconds": 4.165085621,
+      "matching_rust_f32_sequences": 8
+    },
+    {
+      "source": "artifacts/modelscope-rust-prefill3-v2-mtp2.json",
+      "sha256": "ee63cada69696e67cece9f6fe7306185259cfbd4c235944e344364bd6ba47e9d",
+      "framework": "rust-resident",
+      "mtp": 2,
+      "prefill_batch": 3,
+      "output_tokens": 820,
+      "seconds": 18.502020008,
+      "tokens_per_second": 44.319485096516175,
+      "prefill_seconds": 4.36118917,
+      "matching_rust_f32_sequences": 8
+    },
+    {
+      "source": "artifacts/modelscope-vllm-safe-mtp0.json",
+      "sha256": "91b594cc8ded1d851b62d60835bf0982ea56692a6b8716ca4028a1beb59bb4a3",
+      "framework": "vllm",
+      "mtp": 0,
+      "prefill_batch": null,
+      "output_tokens": 821,
+      "seconds": 12.441237006001757,
+      "tokens_per_second": 65.99022264457648,
+      "prefill_seconds": null,
+      "matching_rust_f32_sequences": 1
+    },
+    {
+      "source": "artifacts/modelscope-vllm-safe-mtp2.json",
+      "sha256": "8b37d9c318f214a5e5df38daccefd350854f727adf48a0f2a217ca9f5170e494",
+      "framework": "vllm",
+      "mtp": 2,
+      "prefill_batch": null,
+      "output_tokens": 813,
+      "seconds": 6.306105176001438,
+      "tokens_per_second": 128.92268322671796,
+      "prefill_seconds": null,
+      "matching_rust_f32_sequences": 2
+    }
+  ],
+  "repeated_rust_mtp0": {
+    "repetitions": 3,
+    "minimum": 47.477035122173696,
+    "median": 47.509946418180455,
+    "maximum": 47.55879069200121
+  },
+  "limitations": [
+    "8-request pilot, not a complete dataset, accuracy evaluation or serving/SLO benchmark",
+    "Rust F32 activation/accumulation and default KV, weight-only quantization; vLLM FlashInfer NVFP4 GEMM and FP8 KV differ",
+    "MTP currently slower than MTP0; different vLLM outputs and counts prohibit equal-work speed claims",
+    "Telemetry is 1-second device-wide busy time, not occupancy, achieved bandwidth or Tensor Core counters",
+    "Only Rust prefill3 MTP0 was repeated three times; no confidence interval for other rows",
+    "H200 not measured"
+  ]
+}

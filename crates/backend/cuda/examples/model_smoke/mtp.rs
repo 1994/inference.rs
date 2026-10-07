@@ -4,14 +4,14 @@ use super::{
     weights::{Projection, floats},
 };
 use infer_core::{Error, Result, TensorId};
-use infer_ir::{Mixer, TensorOp};
+use infer_ir::TensorOp;
 use infer_models::QuantizedPackage;
 use infer_state::physical::PhysicalTensor;
 use std::{collections::BTreeMap, path::Path};
 
 pub struct Mtp {
     pub model: Model,
-    fc: Projection,
+    pub(super) fc: Projection,
     embedding_norm: Vec<f32>,
     hidden_norm: Vec<f32>,
 }
@@ -19,9 +19,19 @@ pub struct Mtp {
 impl Mtp {
     pub fn load(root: &Path, target: &Model, capacity: usize) -> Result<Self> {
         let mut package = QuantizedPackage::open(root, infer_core::ModelId::ONE)?;
-        if package.imported.mtp_layers != 1 {
+        // The diagnostic loads the head exactly as its provider declares it.
+        let plan = package
+            .imported
+            .speculation
+            .clone()
+            .ok_or_else(|| Error::unsupported("MTP draft head is not declared"))?;
+        if plan.layers != 1 {
             return Err(Error::unsupported("diagnostic supports one MTP layer"));
         }
+        let fusion = plan
+            .fusion
+            .as_ref()
+            .ok_or_else(|| Error::unsupported("MTP fusion projection is not declared"))?;
         let get = |name: &str| {
             package
                 .mtp
@@ -29,9 +39,9 @@ impl Mtp {
                 .cloned()
                 .ok_or_else(|| Error::invalid(format!("missing {name}")))
         };
-        let fc = get("mtp.fc.weight")?;
-        let embedding_norm = get("mtp.pre_fc_norm_embedding.weight")?;
-        let hidden_norm = get("mtp.pre_fc_norm_hidden.weight")?;
+        let fc = get(&format!("{}{}", plan.prefix, fusion.projection))?;
+        let embedding_norm = get(&format!("{}{}", plan.prefix, fusion.norms[0]))?;
+        let hidden_norm = get(&format!("{}{}", plan.prefix, fusion.norms[1]))?;
         let hidden = package.imported.model.hidden_size;
         if fc.shape != [hidden, hidden * 2]
             || embedding_norm.shape != [hidden]
@@ -42,24 +52,15 @@ impl Mtp {
         let fc = Projection::load(&target.device, &mut package, &fc)?;
         let embedding_norm = floats(&mut package, &embedding_norm.data)?;
         let hidden_norm = floats(&mut package, &hidden_norm.data)?;
-        let mut block = package.imported.model.clone();
-        block.mixers = vec![
-            block
-                .mixers
-                .iter()
-                .find(|m| matches!(m, Mixer::Attention { .. }))
-                .cloned()
-                .ok_or_else(|| Error::invalid("MTP attention configuration"))?,
-        ];
-        block.state.clear();
-        package.graph = infer_compiler::dataflow::lower(&block)?;
+        let (_, graph) = package.provider.draft_graph(&package.imported.model)?;
+        package.graph = graph;
         let mut bindings = BTreeMap::new();
         for spec in &package.graph.tensors {
             if let infer_ir::TensorStorage::Weight { slot } = &spec.storage {
                 let weight = if slot == "embed_tokens.weight" || slot == "lm_head.weight" {
                     package.weights.get(slot)
                 } else {
-                    package.mtp.get(&format!("mtp.{slot}"))
+                    package.mtp.get(&format!("{}{slot}", plan.prefix))
                 }
                 .ok_or_else(|| Error::invalid(format!("missing MTP binding {slot}")))?;
                 if weight.shape != spec.shape {
@@ -79,6 +80,28 @@ impl Mtp {
         })
     }
 
+    pub fn prepare_device_graph(&mut self, shared: &super::resident::Embeddings) -> Result<()> {
+        let mut norms = self.embedding_norm.clone();
+        norms.extend_from_slice(&self.hidden_norm);
+        let config = &self.model.package.imported.model;
+        let projection = self.fc.resident();
+        let (key, _, _) = infer_backend_cuda::tuning::projection_key(&projection)?;
+        let tiling = self
+            .model
+            .tuning
+            .get(&key)
+            .copied()
+            .unwrap_or(infer_backend_cuda::strategy::default_tiling()?);
+        let fusion = infer_backend_cuda::resident::FusionWeights {
+            projection,
+            tiling,
+            norms: self.model.device.upload(norms, &[2, config.hidden_size])?,
+            epsilon: config.norm_epsilon,
+            offset: config.norm_weight_offset,
+        };
+        super::resident::prepare(&mut self.model, Some(shared), Some(fusion))
+    }
+
     pub fn step(
         &mut self,
         token: u32,
@@ -86,6 +109,11 @@ impl Mtp {
         position: usize,
         logits: bool,
     ) -> Result<Vec<f32>> {
+        if self.model.resident.is_some() {
+            return self
+                .model
+                .forward(token, position, logits, Some(previous_hidden.to_vec()));
+        }
         let source = self
             .model
             .embeddings
@@ -113,11 +141,28 @@ impl Mtp {
         self.model.forward(token, position, logits, Some(fused))
     }
 
-    pub fn checkpoint(&self) -> BTreeMap<TensorId, PhysicalTensor> {
-        self.model.state.clone()
+    pub fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            host: self.model.state.clone(),
+            device_position: self
+                .model
+                .resident
+                .as_ref()
+                .map(infer_backend_cuda::resident::DeviceProgram::position),
+        }
     }
 
-    pub fn restore(&mut self, state: BTreeMap<TensorId, PhysicalTensor>) {
-        self.model.state = state;
+    pub fn restore(&mut self, state: Checkpoint) -> Result<()> {
+        if let (Some(program), Some(position)) = (&mut self.model.resident, state.device_position) {
+            program.rewind_attention(position)?;
+        }
+        self.model.state = state.host;
+        Ok(())
     }
+}
+
+#[derive(Clone)]
+pub struct Checkpoint {
+    host: BTreeMap<TensorId, PhysicalTensor>,
+    device_position: Option<usize>,
 }

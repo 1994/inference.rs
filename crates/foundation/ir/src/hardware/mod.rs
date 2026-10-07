@@ -50,6 +50,18 @@ pub struct DeviceCapabilities {
     pub memory_bytes: u64,
     pub unified_memory: bool,
     pub profiling: bool,
+    /// Speculative decode support the backend can actually execute, so the engine never
+    /// discovers a limitation by falling back silently per step.
+    #[serde(default)]
+    pub speculation: SpeculationCapability,
+}
+/// Speculative decode support a backend reports to the engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeculationCapability {
+    /// Draft candidates the backend verifies per decode step; zero disables speculation.
+    pub draft_depth: usize,
+    /// Whether only greedy sampling is supported, because rejection needs residual sampling.
+    pub greedy_only: bool,
 }
 impl DeviceCapabilities {
     #[cfg(feature = "test-backends")]

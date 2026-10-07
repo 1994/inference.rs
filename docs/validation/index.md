@@ -2,6 +2,14 @@
 
 本页说明当前已验证的范围与复现方式。原始报告输出到 `artifacts/`，属于本机生成结果，不随仓库发布；结论只在对应的输入、硬件和构建模式下成立。
 
+## CUDA 真实模型
+
+[设备驻留图与 ModelScope pilot 实测](cuda-resident.md)记录 RTX 5090 的已验证能力、硬件采样和剩余限制。
+
+## 通用 Attention 与模型边界
+
+[通用 Attention 对照和模型执行图回归](attention.md)记录 Linux 重构验收、Candle FP16/BF16 基线及未放行的性能项。
+
 ## 自动门禁
 
 复现命令见[质量门禁](../guides/quality-gates.md)。本机（macOS arm64 / Apple M2 Pro，Rust 1.99.0）的运行情况：

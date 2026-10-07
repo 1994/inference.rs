@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 impl SequenceStateManager {
     #[must_use]
-    pub const fn page_tokens(&self) -> usize {
-        self.page_tokens
+    pub const fn block_size(&self) -> usize {
+        self.block_size
     }
     /// Constant-time page counters for scheduling; no reference-table scan.
     #[must_use]
@@ -51,7 +51,7 @@ impl SequenceStateManager {
                 .max()
                 .unwrap_or(0),
         )?;
-        if self.page_tokens == 0 || self.total_pages == 0 || self.pages.len() > self.total_pages {
+        if self.block_size == 0 || self.total_pages == 0 || self.pages.len() > self.total_pages {
             return Err(Error::invariant("invalid state capacity"));
         }
         if self.pages.capacity() != self.total_pages
@@ -73,8 +73,8 @@ impl SequenceStateManager {
             if !owners.insert(sequence.owner)
                 || sequence.capacity_tokens == 0
                 || sequence.committed_tokens > sequence.capacity_tokens
-                || sequence.pages.len() > sequence.capacity_tokens.div_ceil(self.page_tokens)
-                || sequence.committed_tokens > sequence.pages.len() * self.page_tokens
+                || sequence.pages.len() > sequence.capacity_tokens.div_ceil(self.block_size)
+                || sequence.committed_tokens > sequence.pages.len() * self.block_size
             {
                 return Err(Error::invariant("invalid sequence ownership/cursor"));
             }
@@ -90,7 +90,7 @@ impl SequenceStateManager {
         for (key, pages) in &self.prefixes {
             if !keys.insert(key)
                 || key.tokens.is_empty()
-                || key.tokens.len() != pages.len() * self.page_tokens
+                || key.tokens.len() != pages.len() * self.block_size
             {
                 return Err(Error::invariant("invalid prefix index"));
             }

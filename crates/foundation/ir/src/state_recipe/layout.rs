@@ -1,6 +1,10 @@
 use super::{StateExtent, StateLayout, StateMemory, StateRecipe, StateRegionLayout};
 use crate::OutputReadout;
 use infer_core::{Error, Result};
+
+/// Number of state memory classes whose byte offsets are accounted independently.
+const STATE_MEMORY_CLASSES: usize = 3;
+
 impl StateRecipe {
     /// # Errors
     /// Rejects capacities outside the compiled contract or overflowing sizes.
@@ -12,8 +16,8 @@ impl StateRecipe {
             host_bytes: 0,
             kv_block_bytes: 0,
             max_pages: capacity
-                .checked_div(self.page_tokens)
-                .map(|_| capacity.div_ceil(self.page_tokens))
+                .checked_div(self.block_size)
+                .map(|_| capacity.div_ceil(self.block_size))
                 .ok_or_else(|| Error::invalid("zero page size"))?,
         };
         self.visit(capacity, readout, |region| {
@@ -38,10 +42,10 @@ impl StateRecipe {
         readout: OutputReadout,
         mut visitor: impl FnMut(StateRegionLayout) -> Result<()>,
     ) -> Result<()> {
-        if capacity == 0 || capacity > self.max_tokens || self.page_tokens == 0 {
+        if capacity == 0 || capacity > self.max_tokens || self.block_size == 0 {
             return Err(Error::invalid("physical state capacity outside recipe"));
         }
-        let mut offsets = [0u64; 3];
+        let mut offsets = [0u64; STATE_MEMORY_CLASSES];
         for region in &self.regions {
             let elements = match region.extent {
                 StateExtent::Fixed(n) => Some(n),
@@ -53,7 +57,7 @@ impl StateRecipe {
                         Some(0)
                     }
                 }
-                StateExtent::Pages => Some(capacity.div_ceil(self.page_tokens)),
+                StateExtent::Pages => Some(capacity.div_ceil(self.block_size)),
                 StateExtent::Hidden(width) => if readout == OutputReadout::Full {
                     capacity
                 } else {

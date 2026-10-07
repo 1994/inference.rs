@@ -8,6 +8,9 @@ use infer_spi::WorkloadProvider;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
+/// Maximum bytes for one readout tensor read and for the accumulated readout package.
+const READOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Explicit installed readouts. No fabricated rank/decision score from an unrelated LM channel.
 #[derive(Clone)]
 pub struct ProjectionWorkloads {
@@ -37,11 +40,11 @@ impl ProjectionWorkloads {
             {
                 return Err(Error::invalid("unknown readout tensor"));
             }
-            let tensor = file.read_f32(&name, 64 * 1024 * 1024)?;
+            let tensor = file.read_f32(&name, READOUT_MAX_BYTES)?;
             bytes = bytes
-                .checked_add(tensor.data.len() as u64 * 4)
+                .checked_add(tensor.data.len() as u64 * crate::constants::F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("readout size overflow"))?;
-            if bytes > 64 * 1024 * 1024 {
+            if bytes > READOUT_MAX_BYTES {
                 return Err(Error::invalid("readout package exceeds 64 MiB"));
             }
             weights.insert(name, tensor);

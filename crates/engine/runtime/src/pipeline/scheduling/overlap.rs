@@ -94,7 +94,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             for row in prepared.ready.as_mut_slice() {
                 row.cost_query.page_growth = self.backend.state_page_growth(row.state)?;
                 row.cost_query.logical_growth = Some(infer_ir::PageGrowth {
-                    page_tokens: self.config.page_tokens,
+                    block_size: self.config.block_size,
                     allocated_pages: self.state.get(row.state)?.pages.len(),
                     bytes_per_page: 0,
                     cow_tail: false,

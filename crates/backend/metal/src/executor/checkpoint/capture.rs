@@ -14,7 +14,7 @@ impl MetalBackend {
         let count = self.hidden_elements(s.tokens.len(), s.readout)?;
         let data = MetalDevice::read_idle(
             buffer,
-            usize::try_from(buffer.length() / 4)
+            usize::try_from(buffer.length() / crate::constants::F32_BYTES_U64)
                 .map_err(|_| Error::invalid("hidden buffer exceeds address space"))?,
         )?;
         if s.pending_prefix
@@ -36,7 +36,7 @@ impl MetalBackend {
                     *id,
                     MetalDevice::read_idle(
                         b,
-                        usize::try_from(b.length() / 4)
+                        usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
                             .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                     )?,
                 ))
@@ -60,14 +60,14 @@ impl MetalBackend {
                     .ok_or_else(|| Error::invariant("KV pool missing"))?;
                 let pool = MetalDevice::read_idle(
                     buffer,
-                    usize::try_from(buffer.length() / 4)
+                    usize::try_from(buffer.length() / crate::constants::F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
-                let plane = self.kv.capacity() * self.config.page_tokens * width;
+                let plane = self.kv.capacity() * self.config.block_size * width;
                 for row in 0..s.tokens.len() {
-                    let physical = s.blocks[row / self.config.page_tokens].index as usize
-                        * self.config.page_tokens
-                        + row % self.config.page_tokens;
+                    let physical = s.blocks[row / self.config.block_size].index as usize
+                        * self.config.block_size
+                        + row % self.config.block_size;
                     data[row * width..(row + 1) * width]
                         .copy_from_slice(&pool[physical * width..(physical + 1) * width]);
                     data[s.capacity * width + row * width..s.capacity * width + (row + 1) * width]
@@ -118,7 +118,7 @@ impl MetalBackend {
                 .collect::<Result<_>>()?,
             tokens_executed: self.tokens_executed,
             prefix_hits: self.prefix_hits,
-            page_tokens: self.config.page_tokens,
+            block_size: self.config.block_size,
             pool_blocks: self.kv.capacity(),
         };
         Ok(Some(

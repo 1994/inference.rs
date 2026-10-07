@@ -1,7 +1,12 @@
 pub mod decode;
 pub mod mtp;
 pub mod options;
+pub mod prefill;
+mod resident;
+mod resident_mlp;
 pub mod suite;
+pub mod tuning;
+mod verification;
 mod weights;
 use infer_backend_cuda::device::CudaDevice;
 use infer_core::{Error, Result, TensorId};
@@ -11,7 +16,49 @@ use infer_state::physical::{PagedRows, PhysicalTensor};
 use std::{collections::BTreeMap, path::Path};
 use weights::Projection;
 
+pub fn prepare_graphs(
+    model: &mut Model,
+    draft: Option<&mut mtp::Mtp>,
+    options: &options::Options,
+) -> Result<()> {
+    if let Some(path) = &options.tuning {
+        model.tuning = tuning::load(path, model)?;
+    }
+    if options.device_graph {
+        model.fp8_kv = options.fp8_kv;
+        model.batch_verify = options.mtp > 0 && !options.sequential_verify;
+        model.verify_width = if options.mtp > 0 && !options.sequential_verify {
+            options.mtp + 1
+        } else {
+            0
+        };
+        model.prefill_width = options.prefill_batch;
+        if options.prefill_batch == 3 {
+            model.verify_width = model.verify_width.max(3);
+        }
+        resident::prepare(model, None, None)?;
+        if let Some(draft) = draft {
+            draft.model.tuning.clone_from(&model.tuning);
+            draft.prepare_device_graph(&model.device_embeddings)?;
+        }
+    } else if options.mlp_graph {
+        model.prepare_mlp_graphs(options.mlp_pdl)?;
+        if let Some(draft) = draft {
+            draft.model.prepare_mlp_graphs(options.mlp_pdl)?;
+        }
+    }
+    Ok(())
+}
+
 pub struct Model {
+    resident: Option<infer_backend_cuda::resident::DeviceProgram>,
+    device_embeddings: resident::Embeddings,
+    capacity: usize,
+    fp8_kv: bool,
+    verify_width: usize,
+    prefill_width: usize,
+    batch_verify: bool,
+    tuning: BTreeMap<String, infer_backend_cuda::strategy::LinearTiling>,
     pub package: QuantizedPackage,
     pub device: CudaDevice,
     projections: BTreeMap<TensorId, Projection>,
@@ -21,6 +68,7 @@ pub struct Model {
     elements: BTreeMap<TensorId, usize>,
     pub hidden: Vec<f32>,
     kv_offset: usize,
+    mlps: BTreeMap<infer_core::OpId, resident_mlp::ResidentMlp>,
 }
 
 impl Model {
@@ -38,10 +86,19 @@ impl Model {
         shared: Option<&Self>,
     ) -> Result<Self> {
         let mut model = Self {
+            resident: None,
+            device_embeddings: BTreeMap::new(),
+            capacity,
+            tuning: BTreeMap::new(),
+            fp8_kv: false,
+            verify_width: 0,
+            prefill_width: 1,
+            batch_verify: false,
             package,
             device: shared.map_or_else(|| CudaDevice::new(0), |model| Ok(model.device.clone()))?,
             hidden: vec![],
             kv_offset: 0,
+            mlps: BTreeMap::new(),
             projections: BTreeMap::new(),
             constants: BTreeMap::new(),
             embeddings: BTreeMap::new(),
@@ -115,6 +172,12 @@ impl Model {
         self.forward(token, position, read_logits, None)
     }
 
+    pub fn prepare_mlp_graphs(&mut self, pdl: bool) -> Result<()> {
+        self.mlps = resident_mlp::prepare(self, pdl)?;
+        eprintln!("prepared {} resident MLP graphs", self.mlps.len());
+        Ok(())
+    }
+
     fn projection(&self, name: &str) -> Result<&Projection> {
         let id = self
             .package
@@ -136,11 +199,46 @@ impl Model {
         token: u32,
         position: usize,
         read_logits: bool,
+        embedding: Option<Vec<f32>>,
+    ) -> Result<Vec<f32>> {
+        if let Some(program) = &mut self.resident {
+            let kv_position = position
+                .checked_sub(self.kv_offset)
+                .ok_or_else(|| Error::invalid("MTP KV offset"))?;
+            let (hidden, logits) = program.step(
+                token,
+                position,
+                kv_position,
+                embedding.as_deref(),
+                read_logits,
+            )?;
+            self.hidden = hidden;
+            return Ok(logits);
+        }
+        self.forward_diagnostic(token, position, read_logits, embedding)
+    }
+
+    fn forward_diagnostic(
+        &mut self,
+        token: u32,
+        position: usize,
+        read_logits: bool,
         mut embedding: Option<Vec<f32>>,
     ) -> Result<Vec<f32>> {
         let mut buffers: BTreeMap<TensorId, Vec<f32>> = BTreeMap::new();
         let nodes = self.package.graph.nodes.clone();
+        let mut skip = 0;
         for node in &nodes {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            if let Some(mlp) = self.mlps.get_mut(&node.id) {
+                let output = mlp.graph.apply(&buffers[&mlp.input])?;
+                buffers.insert(mlp.output, output);
+                skip = 6;
+                continue;
+            }
             if !read_logits
                 && self
                     .package

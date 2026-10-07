@@ -37,7 +37,7 @@ pub fn run() -> Result<Measurement> {
     let mut physical =
         infer_state::kv::KvCacheManager::<NoPrefix>::new(infer_state::kv::KvCacheConfig {
             namespace: vec![1],
-            page_tokens: 16,
+            block_size: 16,
             blocks: 256,
             bytes_per_block: 64,
             prefix_bytes: 0,

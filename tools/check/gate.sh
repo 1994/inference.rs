@@ -4,6 +4,10 @@ set -eu
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 
 rust_checks() {
+    python3 -m unittest discover -s tools/package -p 'test_*.py'
+    python3 -m unittest discover -s tools/attention -p 'test_attention_gate.py'
+    cargo fmt --manifest-path tools/bench/attention/Cargo.toml --check
+    python3 -m unittest discover -s tools/check -p 'test_layout.py'
     python3 tools/check/layout.py
     python3 tools/check/policy.py
     cargo fmt --all --check
@@ -116,5 +120,6 @@ case "${1:-all}" in
     msrv) msrv_checks ;;
     linux) linux_checks ;;
     linux-numa) linux_numa_checks ;;
-    *) echo "usage: $0 [all|rust|tools|security|metal|cuda|cpu|msrv|linux|linux-numa]" >&2; exit 2 ;;
+    attention) bash tools/bench/safe-run.sh --memory-gib 16 bash tools/bench/attention.sh ;;
+    *) echo "usage: $0 [all|rust|tools|security|metal|cuda|cpu|msrv|linux|linux-numa|attention]" >&2; exit 2 ;;
 esac

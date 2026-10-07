@@ -1,5 +1,6 @@
 [package]
 name = "infer-cli"
+build = "../../../build.rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +11,11 @@ workspace = true
 
 [features]
 default = []
+cuda = ["dep:infer-backend-cuda", "infer-backend-cuda/cuda"]
 test-backends = ["infer-ir/test-backends", "dep:infer-backend-host", "dep:infer-backend-reference"]
 
 [dependencies]
+infer-backend-cuda = { workspace = true, optional = true }
 infer-core.workspace = true
 infer-ir.workspace = true
 infer-spi.workspace = true

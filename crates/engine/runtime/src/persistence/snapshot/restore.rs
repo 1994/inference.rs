@@ -168,7 +168,7 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
             &record.request,
             &record.plan,
             &self.model,
-            self.config.page_tokens,
+            self.config.block_size,
         )?;
         let byte_credit = self.host.bytes.reserve(bytes)?;
         record.generated.attach_byte_credit(byte_credit.clone());

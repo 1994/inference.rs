@@ -34,9 +34,9 @@ impl From<Error> for RpcError {
     fn from(error: Error) -> Self {
         Self {
             code: if error.code == ErrorCode::InvalidInput {
-                -32602
+                crate::constants::JSONRPC_INVALID_PARAMS
             } else {
-                -32000
+                crate::constants::JSONRPC_SERVER_ERROR
             },
             message: error.message,
             data: Some(json!({"code": error.code})),
@@ -49,7 +49,10 @@ impl RpcRequest {
     /// Returns Invalid Request for malformed envelopes; params remain command input.
     pub fn parse(value: Value) -> Result<Self, RpcError> {
         let Value::Object(mut object) = value else {
-            return Err(RpcError::new(-32600, "invalid JSON-RPC request"));
+            return Err(RpcError::new(
+                crate::constants::JSONRPC_INVALID_REQUEST,
+                "invalid JSON-RPC request",
+            ));
         };
         let version = object.remove("jsonrpc");
         let method = object.remove("method");
@@ -60,10 +63,16 @@ impl RpcRequest {
                 .as_ref()
                 .is_some_and(|id| !id.is_null() && !id.is_string() && !id.is_number())
         {
-            return Err(RpcError::new(-32600, "invalid JSON-RPC request"));
+            return Err(RpcError::new(
+                crate::constants::JSONRPC_INVALID_REQUEST,
+                "invalid JSON-RPC request",
+            ));
         }
         let Some(Value::String(method)) = method else {
-            return Err(RpcError::new(-32600, "invalid JSON-RPC method"));
+            return Err(RpcError::new(
+                crate::constants::JSONRPC_INVALID_REQUEST,
+                "invalid JSON-RPC method",
+            ));
         };
         Ok(Self {
             id,

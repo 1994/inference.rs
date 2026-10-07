@@ -1,4 +1,7 @@
-use crate::{DType, hardware::DeviceBackend, hardware::DeviceCapabilities};
+use crate::{
+    DType,
+    hardware::{DeviceBackend, DeviceCapabilities, SpeculationCapability},
+};
 use infer_core::DeviceId;
 
 #[must_use]
@@ -10,5 +13,6 @@ pub fn reference_capabilities() -> DeviceCapabilities {
         memory_bytes: 0,
         unified_memory: true,
         profiling: false,
+        speculation: SpeculationCapability::default(),
     }
 }

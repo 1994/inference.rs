@@ -127,8 +127,8 @@ impl Cycle {
             completions,
             fenced,
             resources: ResourceSnapshot {
-                max_batch: batch,
-                token_budget: batch,
+                max_num_seqs: batch,
+                max_num_batched_tokens: batch,
                 gpu_budget_us: 10000,
                 workspace_bytes: 1 << 20,
                 free_state_pages: usize::MAX,
@@ -202,6 +202,7 @@ impl Cycle {
                         - 1,
                     token: 1,
                 },
+                sampling: Some(infer_ir::Sampling::default()),
             });
         }
         self.queue.dispatch(step.id, &self.members)?;

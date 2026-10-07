@@ -1,5 +1,6 @@
 //! Admission, measured batch costs and pure slack/WFQ micro scheduling.
 mod admission;
+pub(crate) mod constants;
 mod cost;
 mod policy;
 pub use admission::ResourceAdmission;

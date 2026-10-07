@@ -10,13 +10,17 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
         .metadata()
         .map_err(|e| Error::invalid(e.to_string()))?
         .len()
-        > 64 * 1024 * 1024
+        > crate::constants::MAX_JSON_FILE_BYTES
     {
         return Err(Error::new(ErrorCode::Capacity, "input JSON exceeds 64 MiB"));
     }
     serde_json::from_reader(file).map_err(|e| Error::invalid(format!("{}: {e}", path.display())))
 }
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let file = std::fs::File::create(path).map_err(|e| Error::invalid(e.to_string()))?;
     serde_json::to_writer_pretty(file, value).map_err(|e| Error::invalid(e.to_string()))

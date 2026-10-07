@@ -1,0 +1,23 @@
+//! Fixed device activations and captured, model-independent tensor operations.
+pub(crate) mod arena;
+mod batch;
+pub use batch::BatchOutput;
+mod attention;
+mod batch_projection;
+mod capture;
+mod capture_attention;
+mod capture_state;
+mod fp8_cache;
+mod kernels;
+mod linear_batch;
+mod metadata;
+mod prefill_gemm;
+mod prefill_projection;
+mod profile;
+mod program;
+mod recurrent;
+pub(crate) mod slot_batch;
+mod slot_verify;
+mod validation;
+pub use arena::ActivationArena;
+pub use program::{DeviceProgram, FusionWeights, ProgramWeights};

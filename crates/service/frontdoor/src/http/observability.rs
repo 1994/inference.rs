@@ -4,6 +4,9 @@ use axum::{Json, extract::Query, extract::State, response::IntoResponse, respons
 use infer_core::{Error, RequestId};
 use infer_observe::ObservationQuery;
 
+/// Default semantic-event count returned when an event query omits `limit`.
+const DEFAULT_EVENT_LIMIT: usize = 256;
+
 #[derive(serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct EventParams {
@@ -15,7 +18,7 @@ impl Default for EventParams {
     fn default() -> Self {
         Self {
             after: 0,
-            limit: 256,
+            limit: DEFAULT_EVENT_LIMIT,
             request: None,
         }
     }

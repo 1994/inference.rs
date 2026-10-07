@@ -40,11 +40,11 @@ class Agent:
             str(args.test_binary.resolve()) if backend == "test-cpu" else binary,
             "--backend",
             backend,
-            "--kv-page-tokens",
+            "--block-size",
             "2",
         ]
         if blocks is not None:
-            command += ["--kv-cache-blocks", str(blocks)]
+            command += ["--num-gpu-blocks-override", str(blocks)]
         command += ["agent", "--package", "examples/qwen-hybrid-tiny"]
         self.process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
@@ -131,7 +131,7 @@ try:
     summary = {
         "backend": "metal",
         "blocks": 5,
-        "page_tokens": 2,
+        "block_size": 2,
         "output_parity": True,
         "preemptions": cache["preemptions"],
         "checkpoint_during_preemption": True,

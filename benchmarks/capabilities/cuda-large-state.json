@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "runs": [
+    {
+      "source": "artifacts/cuda-large-state-f32.json",
+      "sha256": "f90babfcb2529e0aff8f934640cfa7803cd9886c99925c84139088a575bd378b",
+      "hardware": "artifacts/cuda-large-state-f32-hardware.jsonl",
+      "sampled_gpu_peak_mib": 25789.0,
+      "passed": true,
+      "fp8_kv": false,
+      "large_capacity": {
+        "admission_bytes": 4795621376,
+        "capacity": 8320,
+        "physical_capacity": 16384,
+        "scope": "large allocation and short-prefix correctness; not an 8k-token benchmark",
+        "short_prefix_logits_match": true
+      }
+    },
+    {
+      "source": "artifacts/cuda-large-state-fp8.json",
+      "sha256": "2cf89df8c078c58ff81a2188503c4fea68c34474bb60916e38994c1ed8495d70",
+      "hardware": "artifacts/cuda-large-state-fp8-hardware.jsonl",
+      "sampled_gpu_peak_mib": 24255.0,
+      "passed": true,
+      "fp8_kv": true,
+      "large_capacity": {
+        "admission_bytes": 3185008640,
+        "capacity": 8320,
+        "physical_capacity": 16384,
+        "scope": "large allocation and short-prefix correctness; not an 8k-token benchmark",
+        "short_prefix_logits_match": true
+      }
+    }
+  ],
+  "scope": "large capacity allocation and short-prefix logits; not full 8k prefill, quality or throughput"
+}

@@ -93,8 +93,8 @@ fn experiment_plan() -> ExperimentPlan {
     ExperimentPlan {
         baseline: RuntimeConfig::default(),
         candidate: RuntimeConfig {
-            token_budget: 1,
-            max_batch: 1,
+            max_num_batched_tokens: 1,
+            max_num_seqs: 1,
             ..RuntimeConfig::default()
         },
         workload: BenchmarkPlan {

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "source": "artifacts/cuda-state-pool-service.json",
+  "sha256": "4b043cf36e25fe6443ce7a2c682dcbd81437ea203317edd50b0381f376e2037c",
+  "binary_sha256": "05f6668e2a5ae14cbd86de337c9d58b47f092dd54870b303e7698e9a139cfbe6",
+  "hardware": "artifacts/cuda-state-pool-service-hardware.jsonl",
+  "passed": true,
+  "sequential_request_wall_ms": [
+    1922.4026579977362,
+    148.48245099710766,
+    148.95991799858166,
+    148.37781400274253
+  ],
+  "texts": [
+    "391",
+    "391",
+    "391",
+    "391",
+    "391",
+    "391"
+  ],
+  "scope": "same-process short HTTP functional check, first request includes initial execution preparation; not a cache-toggle A/B or vLLM baseline",
+  "final_regression": {
+    "source": "artifacts/cuda-state-pool-final-service.json",
+    "sha256": "ffc268fe10138706b1584d329e29d6f9a943074029af46da838ced4c8887865d",
+    "hardware": "artifacts/cuda-state-pool-final-service-hardware.jsonl",
+    "passed": true,
+    "sequential_request_wall_ms": [
+      1822.274625999853,
+      157.3900040020817,
+      148.54565099813044,
+      148.37144600460306
+    ],
+    "scope": "regression after state allocation budget and deallocator barrier changes; seven HTTP requests"
+  }
+}

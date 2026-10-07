@@ -26,6 +26,9 @@ impl BackendProvider for Backpressure {
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)
     }

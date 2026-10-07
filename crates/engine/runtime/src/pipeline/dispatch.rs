@@ -76,6 +76,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 request: work.request,
                 state: work.state,
                 tokens,
+                // Only a backend that reports speculation can decide tokens itself.
+                sampling: (work.role == ExecutionRole::Decode
+                    && self.backend.speculation_capability().draft_depth > 0)
+                    .then(|| record.request.sampling.clone()),
             });
         }
         Ok(())

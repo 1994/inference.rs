@@ -2,13 +2,18 @@ use super::{MetalBackend, MetalConfig, MetalDevice, allocate_kv, bytes};
 use infer_core::{Error, ErrorCode, Result, TensorId};
 use infer_ir::{DataflowGraph, ModelIr, TensorStorage};
 use infer_models::{
-    HostTensor, LoadOptions, QwenPackage, TensorDtype, TensorLoadPlan, WeightLoadPlan,
+    HostTensor, LoadOptions, ModelPackage, TensorDtype, TensorLoadPlan, WeightLoadPlan,
     WeightStorage, WeightTarget, load_weights,
 };
 use infer_state::{kv::KvCacheConfig, kv::KvCacheManager};
 use metal::Buffer;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, collections::VecDeque, sync::Arc, time::Instant};
+
+/// Largest weight-upload chunk streamed into a staging buffer.
+const MAX_UPLOAD_CHUNK_BYTES: usize = 4 * crate::constants::MIB;
+/// Capacity of the backend resource pool, sized for admission fan-out.
+const RESOURCE_POOL_CAPACITY: usize = 260;
 
 pub(super) struct ResidentWeights {
     pub buffers: BTreeMap<TensorId, Buffer>,
@@ -57,7 +62,7 @@ fn retained_bytes(graph: &DataflowGraph, weights: u64, config: &MetalConfig) -> 
         .into_iter()
         .try_fold(
             weights
-                .checked_add(4)
+                .checked_add(crate::constants::F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("Metal retained size overflow"))?,
             |n, elements| {
                 n.checked_add(bytes(elements)?)
@@ -75,10 +80,10 @@ fn preflight(
         super::u32_size(spec.elements()?)?;
     }
     if config.memory_bytes == 0
-        || config.page_tokens == 0
+        || config.block_size == 0
         || config.trace_capacity == 0
         || config.prefill_chunk_tokens == 0
-        || config.upload_staging_bytes < 4
+        || config.upload_staging_bytes < crate::constants::F32_BYTES
     {
         return Err(Error::invalid("invalid Metal load/execution configuration"));
     }
@@ -106,14 +111,14 @@ fn preflight(
     }
     Ok(())
 }
-fn identity(model: &ModelIr, payload: &str, page_tokens: usize) -> Result<String> {
+fn identity(model: &ModelIr, payload: &str, block_size: usize) -> Result<String> {
     let mut digest = Sha256::new();
     digest.update(include_bytes!("../kernels.metal"));
     digest.update(b"fast-math=false;compute=f32;native-weights;layer-major-v1");
     digest.update(serde_json::to_vec(model).map_err(|e| Error::invalid(e.to_string()))?);
     digest.update(payload.as_bytes());
     Ok(format!(
-        "metal-paged-dataflow-v3:{:x}:page{page_tokens}",
+        "metal-paged-dataflow-v3:{:x}:page{block_size}",
         digest.finalize()
     ))
 }
@@ -122,7 +127,7 @@ impl MetalBackend {
     /// Stream source-precision weights directly into resident device buffers.
     /// # Errors
     /// Returns metadata, budget, shader, payload, or upload errors before publishing a backend.
-    pub fn from_package(package: &mut QwenPackage, config: MetalConfig) -> Result<Self> {
+    pub fn from_package(package: &mut ModelPackage, config: MetalConfig) -> Result<Self> {
         package.validate_weight_bindings()?;
         let model = package.imported.model.clone();
         let graph = package.graph.clone();
@@ -132,7 +137,7 @@ impl MetalBackend {
             storage: WeightStorage::Native,
             resident_budget_bytes: config.memory_bytes,
             staging_budget_bytes: config.upload_staging_bytes,
-            chunk_bytes: config.upload_staging_bytes.min(4 * 1024 * 1024),
+            chunk_bytes: config.upload_staging_bytes.min(MAX_UPLOAD_CHUNK_BYTES),
         };
         let loaded = load_weights(package, &mut Upload(&gpu), options)?;
         let slots: BTreeMap<_, _> = graph
@@ -157,7 +162,7 @@ impl MetalBackend {
             .into_iter()
             .map(|(slot, buffer)| (slots[slot.as_str()], buffer))
             .collect();
-        let identity = identity(&model, &loaded.payload_fingerprint, config.page_tokens)?;
+        let identity = identity(&model, &loaded.payload_fingerprint, config.block_size)?;
         Self::assemble(
             model,
             graph,
@@ -180,7 +185,7 @@ impl MetalBackend {
         weights: BTreeMap<String, HostTensor>,
         config: MetalConfig,
     ) -> Result<Self> {
-        let graph = infer_compiler::dataflow::lower(&model)?;
+        let graph = infer_model_recipes::decoder::lower(&model)?;
         let gpu = objc::rc::autoreleasepool(MetalDevice::open)?;
         let resident = graph
             .tensors
@@ -228,24 +233,24 @@ impl MetalBackend {
         }
         let kv_manager = KvCacheManager::new(KvCacheConfig {
             namespace: weights.identity.as_bytes().to_vec(),
-            page_tokens: config.page_tokens,
+            block_size: config.block_size,
             blocks: kv.blocks,
             bytes_per_block: kv.block_bytes,
             prefix_bytes: config.prefix_cache_bytes,
-            max_prefixes: 4096,
+            max_prefixes: crate::constants::MAX_PREFIX_ENTRIES,
         })?;
         let dummy = gpu.zeros(1)?;
         let state_recipe = infer_ir::StateRecipe::compile(
             &model,
             &graph,
-            config.page_tokens,
-            4,
+            config.block_size,
+            crate::constants::F32_BYTES,
             config.probe_bytes > 0,
             size_of::<infer_state::blocks::BlockLease>(),
         )?;
         let mut backend = Self {
             owner: Arc::new(()),
-            resources: infer_spi::ResourcePool::new(260)?,
+            resources: infer_spi::ResourcePool::new(RESOURCE_POOL_CAPACITY)?,
             gpu,
             model,
             graph,
@@ -263,8 +268,10 @@ impl MetalBackend {
             busy: None,
             inflight_states: vec![],
             inflight_pins: vec![],
-            ticket_work: Vec::with_capacity(64),
-            completion_pool: (0..4).map(|_| Vec::with_capacity(64)).collect(),
+            ticket_work: Vec::with_capacity(crate::constants::MAX_TICKET_TASKS),
+            completion_pool: (0..crate::constants::COMPLETION_POOL_SIZE)
+                .map(|_| Vec::with_capacity(crate::constants::MAX_TICKET_TASKS))
+                .collect(),
             tokens_executed: 0,
             prefix_hits: 0,
             kv: kv_manager,
@@ -302,7 +309,7 @@ fn upload_host(
     let mut formats = BTreeMap::new();
     let mut tensors = Vec::new();
     let mut resident_bytes = 0u64;
-    let chunk_elements = config.upload_staging_bytes / 4;
+    let chunk_elements = config.upload_staging_bytes / crate::constants::F32_BYTES;
     let mut staging_bytes = 0;
     for spec in &graph.tensors {
         let TensorStorage::Weight { slot } = &spec.storage else {
@@ -326,7 +333,11 @@ fn upload_host(
         for (at, chunk) in tensor.data.chunks(chunk_elements).enumerate() {
             let input: Vec<_> = chunk.iter().flat_map(|v| v.to_le_bytes()).collect();
             digest.update(&input);
-            MetalDevice::write_bytes_idle(&buffer, (at * chunk_elements * 4) as u64, &input)?;
+            MetalDevice::write_bytes_idle(
+                &buffer,
+                (at * chunk_elements * crate::constants::F32_BYTES) as u64,
+                &input,
+            )?;
             staging_bytes = staging_bytes.max(input.len());
         }
         resident_bytes += plan.bytes;
@@ -340,14 +351,14 @@ fn upload_host(
     let identity = identity(
         model,
         &format!("{:x}", digest.finalize()),
-        config.page_tokens,
+        config.block_size,
     )?;
     let plan = WeightLoadPlan {
         tensors,
         source_bytes: resident_bytes,
         resident_bytes,
         staging_bytes,
-        chunk_bytes: chunk_elements * 4,
+        chunk_bytes: chunk_elements * crate::constants::F32_BYTES,
     };
     Ok(ResidentWeights {
         buffers,

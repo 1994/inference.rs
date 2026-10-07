@@ -10,7 +10,7 @@ impl SequenceStateManager {
     pub fn cache_prefix(&mut self, id: StateId, key: PrefixKey) -> Result<()> {
         let state = self.get(id)?;
         if key.tokens.is_empty()
-            || !key.tokens.len().is_multiple_of(self.page_tokens)
+            || !key.tokens.len().is_multiple_of(self.block_size)
             || key.tokens.len() > state.committed_tokens
         {
             return Err(Error::invalid("prefix must contain committed full pages"));
@@ -18,7 +18,7 @@ impl SequenceStateManager {
         if self.prefixes.iter().any(|(k, _)| k == &key) {
             return Ok(());
         }
-        let pages = state.pages[..key.tokens.len() / self.page_tokens].to_vec();
+        let pages = state.pages[..key.tokens.len() / self.block_size].to_vec();
         for page in &pages {
             let p = self
                 .pages

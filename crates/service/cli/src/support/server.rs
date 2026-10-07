@@ -1,8 +1,16 @@
 //! Server CLI support.
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_core::Result;
 
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub async fn axum_serve(
     listener: tokio::net::TcpListener,
     handle: infer_frontdoor::RuntimeHandle,

@@ -1,6 +1,6 @@
 use infer_backend_host::{HostBackend, HostConfig, HostKernels};
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use serde::Deserialize;
@@ -32,7 +32,7 @@ fn load_package(name: &str) -> (HostBackend, KernelRegistry, Golden) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../examples")
         .join(name);
-    let mut package = QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+    let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
     let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
     let mut registry = KernelRegistry::default();
     registry.register(&HostKernels).unwrap();
@@ -57,7 +57,12 @@ fn check_prefixes(package: &str) {
     let model = backend.model().clone();
     let program = infer_compiler::compile(
         ProgramId::new(1).unwrap(),
-        infer_compiler::lower(&model, PrecisionPlan::f32()).unwrap(),
+        infer_compiler::lower(
+            &model,
+            infer_model_recipes::decoder::lower(&model).unwrap(),
+            PrecisionPlan::f32(),
+        )
+        .unwrap(),
         &registry,
         &backend.capabilities(),
         1 << 20,
@@ -90,6 +95,8 @@ fn check_prefixes(package: &str) {
                     request,
                     state,
                     tokens: prefix.tokens.clone().into(),
+
+                    sampling: None,
                 }],
             )
             .unwrap();
@@ -166,7 +173,7 @@ fn generation_matches_official_cached_greedy_and_chunk_invariance() {
             PrecisionPlan::f32(),
             &registry,
             RuntimeConfig {
-                token_budget: chunk,
+                max_num_batched_tokens: chunk,
                 ..Default::default()
             },
         )
@@ -244,7 +251,7 @@ fn hybrid_execution_checkpoint_restores_mid_generation() {
 #[test]
 fn prefix_reuse_restores_hybrid_state_and_does_not_recompute_cached_tokens() {
     let (backend, registry, golden) = load();
-    let mut package = QwenPackage::open(
+    let mut package = ModelPackage::open(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../examples/qwen-hybrid-tiny"),
         ModelId::new(1).unwrap(),
     )
@@ -255,7 +262,7 @@ fn prefix_reuse_restores_hybrid_state_and_does_not_recompute_cached_tokens() {
         model.clone(),
         weights,
         HostConfig {
-            page_tokens: 2,
+            block_size: 2,
             ..Default::default()
         },
     )
@@ -298,7 +305,7 @@ fn prefix_reuse_restores_hybrid_state_and_does_not_recompute_cached_tokens() {
 #[test]
 fn physical_admission_failure_is_atomic_and_cancel_releases_hybrid_tensors() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../examples/qwen-hybrid-tiny");
-    let mut package = QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+    let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
     let memory = package.manifest.host_f32_bytes + package.graph.scratch_elements as u64 * 4;
     let model = package.imported.model.clone();
     let weights = package.load_host_weights(1024 * 1024).unwrap();

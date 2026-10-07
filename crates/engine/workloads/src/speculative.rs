@@ -1,6 +1,9 @@
 //! Exact speculative rejection sampling over the effective, filtered distributions.
 use infer_core::{Error, Result};
 
+/// Absolute tolerance accepted when checking that a distribution sums to one.
+const NORMALIZATION_TOLERANCE: f64 = 1e-8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verification {
     Accepted(u32),
@@ -59,7 +62,7 @@ pub fn verify_draft(
     }
     for distribution in [p, q] {
         if distribution.iter().any(|w| !w.is_finite() || *w < 0.0)
-            || (distribution.iter().sum::<f64>() - 1.0).abs() > 1e-8
+            || (distribution.iter().sum::<f64>() - 1.0).abs() > NORMALIZATION_TOLERANCE
         {
             return Err(Error::invalid(
                 "speculative distributions must be normalized",

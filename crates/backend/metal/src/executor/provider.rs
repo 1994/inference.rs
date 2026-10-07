@@ -38,6 +38,7 @@ impl BackendProvider for MetalBackend {
             memory_bytes: self.config.memory_bytes,
             unified_memory: true,
             profiling: true,
+            speculation: infer_ir::SpeculationCapability::default(),
         }
     }
     fn state_recipe(&self) -> Option<&infer_ir::StateRecipe> {
@@ -101,9 +102,15 @@ impl BackendProvider for MetalBackend {
         }
         let (_, ns) = crate::device::command_timing(&ticket.command);
         (ns > 0).then_some(ExecutionTiming {
-            elapsed_us: ns.div_ceil(1000),
+            elapsed_us: ns.div_ceil(crate::constants::NANOS_PER_MICROSECOND),
             source: TimingSource::MetalGpu,
         })
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        if model != &self.model {
+            return Err(Error::invalid("execution graph model mismatch"));
+        }
+        Ok(self.graph.clone())
     }
     fn validate_program(&self, model: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.provider_validate_program(model, p)
@@ -168,7 +175,7 @@ impl BackendProvider for MetalBackend {
     }
     fn recycle_batch(&mut self, mut outputs: Vec<TaskOutput>) -> Result<()> {
         outputs.clear();
-        if self.completion_pool.len() < 4 {
+        if self.completion_pool.len() < crate::constants::COMPLETION_POOL_SIZE {
             self.completion_pool.push(outputs);
         }
         Ok(())

@@ -5,6 +5,37 @@ use infer_core::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, collections::VecDeque, sync::Arc};
 
+/// Largest accepted event-retention capacity of an observation store.
+const MAX_OBSERVATION_CAPACITY: usize = 1_048_576;
+/// Retained diagnostics before the oldest is evicted.
+const DIAGNOSTIC_RING_CAPACITY: usize = 256;
+/// Wire code reported for a length-limited completion.
+const FINISH_CODE_LENGTH: u64 = 0;
+/// Wire code reported for an end-of-sequence completion.
+const FINISH_CODE_EOS: u64 = 1;
+/// Wire code reported for a completed request.
+const FINISH_CODE_COMPLETED: u64 = 2;
+/// Wire code reported for a cancelled request.
+const FINISH_CODE_CANCELLED: u64 = 3;
+/// Wire code reported for a deadline-exceeded request.
+const FINISH_CODE_DEADLINE: u64 = 4;
+/// Wire code reported for a failed request.
+const FINISH_CODE_FAILED: u64 = 5;
+/// Wire code reported for an invalid-input error.
+const ERROR_CODE_INVALID_INPUT: u64 = 1;
+/// Wire code reported for an unsupported operation.
+const ERROR_CODE_UNSUPPORTED: u64 = 2;
+/// Wire code reported for an exhausted capacity.
+const ERROR_CODE_CAPACITY: u64 = 3;
+/// Wire code reported for a missing resource.
+const ERROR_CODE_NOT_FOUND: u64 = 4;
+/// Wire code reported for a conflicting request.
+const ERROR_CODE_CONFLICT: u64 = 5;
+/// Wire code reported for a violated invariant.
+const ERROR_CODE_INVARIANT: u64 = 6;
+/// Wire code reported for a backend failure.
+const ERROR_CODE_BACKEND: u64 = 7;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservedEvent {
     pub sequence: u64,
@@ -37,7 +68,7 @@ impl ObservationStore {
     /// # Errors
     /// Returns invalid input for an empty or excessively large retention capacity.
     pub fn new(capacity: usize) -> Result<Self> {
-        if capacity == 0 || capacity > 1_048_576 {
+        if capacity == 0 || capacity > MAX_OBSERVATION_CAPACITY {
             return Err(Error::invalid("observation capacity must be 1 to 1048576"));
         }
         Ok(Self {
@@ -45,7 +76,7 @@ impl ObservationStore {
                 next_sequence: 1,
                 ..Default::default()
             },
-            diagnostics: Arc::new(VecDeque::with_capacity(256)),
+            diagnostics: Arc::new(VecDeque::with_capacity(DIAGNOSTIC_RING_CAPACITY)),
             requests: BTreeMap::new(),
             capacity,
             next_diagnostic: 1,
@@ -90,7 +121,7 @@ impl ObservationStore {
     pub fn diagnostic(&mut self, mut diagnostic: Diagnostic) {
         diagnostic.sequence = self.next_diagnostic;
         self.next_diagnostic = self.next_diagnostic.saturating_add(1);
-        if self.diagnostics.len() == 256 {
+        if self.diagnostics.len() == DIAGNOSTIC_RING_CAPACITY {
             Arc::make_mut(&mut self.diagnostics).pop_front();
             self.diagnostics_evicted = self.diagnostics_evicted.saturating_add(1);
         }
@@ -153,25 +184,25 @@ impl ObservationStore {
 #[must_use]
 pub const fn finish_code(reason: &infer_core::FinishReason) -> u64 {
     match reason {
-        infer_core::FinishReason::Length => 0,
-        infer_core::FinishReason::Eos => 1,
-        infer_core::FinishReason::Completed => 2,
-        infer_core::FinishReason::Cancelled => 3,
-        infer_core::FinishReason::Deadline => 4,
-        infer_core::FinishReason::Failed(_) => 5,
+        infer_core::FinishReason::Length => FINISH_CODE_LENGTH,
+        infer_core::FinishReason::Eos => FINISH_CODE_EOS,
+        infer_core::FinishReason::Completed => FINISH_CODE_COMPLETED,
+        infer_core::FinishReason::Cancelled => FINISH_CODE_CANCELLED,
+        infer_core::FinishReason::Deadline => FINISH_CODE_DEADLINE,
+        infer_core::FinishReason::Failed(_) => FINISH_CODE_FAILED,
     }
 }
 
 #[must_use]
 pub const fn error_code(code: infer_core::ErrorCode) -> u64 {
     match code {
-        infer_core::ErrorCode::InvalidInput => 1,
-        infer_core::ErrorCode::Unsupported => 2,
-        infer_core::ErrorCode::Capacity => 3,
-        infer_core::ErrorCode::NotFound => 4,
-        infer_core::ErrorCode::Conflict => 5,
-        infer_core::ErrorCode::Invariant => 6,
-        infer_core::ErrorCode::Backend => 7,
+        infer_core::ErrorCode::InvalidInput => ERROR_CODE_INVALID_INPUT,
+        infer_core::ErrorCode::Unsupported => ERROR_CODE_UNSUPPORTED,
+        infer_core::ErrorCode::Capacity => ERROR_CODE_CAPACITY,
+        infer_core::ErrorCode::NotFound => ERROR_CODE_NOT_FOUND,
+        infer_core::ErrorCode::Conflict => ERROR_CODE_CONFLICT,
+        infer_core::ErrorCode::Invariant => ERROR_CODE_INVARIANT,
+        infer_core::ErrorCode::Backend => ERROR_CODE_BACKEND,
     }
 }
 

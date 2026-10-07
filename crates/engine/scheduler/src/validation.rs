@@ -120,7 +120,7 @@ pub fn any_feasible(
         let c = costs.estimate(&[item.cost_query])?;
         if c.gpu_us <= r.scheduler.max_singleton_gpu_us
             && c.workspace_bytes <= r.workspace_bytes
-            && c.state_pages <= r.free_state_pages
+            && c.num_gpu_blocks <= r.free_state_pages
             && c.logical_pages <= r.free_logical_pages
             && c.state_bytes <= r.free_state_bytes
             && c.transfer_us <= r.transfer_budget_us
@@ -167,7 +167,7 @@ fn validate_prepared_step(
 ) -> Result<()> {
     if step.work.is_empty()
         || step.work.len() > scratch.queries.capacity()
-        || step.work.len() > r.max_batch
+        || step.work.len() > r.max_num_seqs
         || step.program != program
         || step.graph.is_some()
     {
@@ -209,13 +209,13 @@ fn validate_prepared_step(
         && tokens == 1
         && predicted.gpu_us <= r.scheduler.max_singleton_gpu_us
         && predicted.gpu_us > r.gpu_budget_us;
-    if tokens > r.token_budget
+    if tokens > r.max_num_batched_tokens
         || step.role != expected_role
         || step.cost != predicted
         || (step.quantum_overrun && !allowed_overrun)
         || (predicted.gpu_us > r.gpu_budget_us && !allowed_overrun)
         || predicted.workspace_bytes > r.workspace_bytes
-        || predicted.state_pages > r.free_state_pages
+        || predicted.num_gpu_blocks > r.free_state_pages
         || predicted.logical_pages > r.free_logical_pages
         || predicted.state_bytes > r.free_state_bytes
         || predicted.transfer_us > r.transfer_budget_us
@@ -237,7 +237,7 @@ pub fn validate_decision(
     program: infer_core::ProgramId,
     costs: &dyn CostModelProvider,
 ) -> Result<()> {
-    let mut scratch = ValidationScratch::new(ready.len(), resources.max_batch)?;
+    let mut scratch = ValidationScratch::new(ready.len(), resources.max_num_seqs)?;
     validate_decision_reusing(decision, ready, resources, program, costs, &mut scratch)
 }
 /// # Errors

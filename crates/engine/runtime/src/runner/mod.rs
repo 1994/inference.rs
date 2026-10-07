@@ -13,11 +13,22 @@ use std::{
 };
 use worker::{Job, Worker};
 
+/// Recycled readback entries reserved for each batch cell.
+const RECYCLED_ENTRIES_PER_BATCH: usize = 4;
+/// Extra recycled readback entries reserved for traffic already in flight.
+const RECYCLED_ENTRY_SLACK: usize = 8;
+/// Immutable device snapshots published to readers between owner refreshes.
+const SNAPSHOT_SLOTS: usize = 3;
+/// Resource cells reserved beyond queued control commands and tracked states.
+const RESOURCE_POOL_SLACK: usize = 4;
+/// Smallest state ledger accepted by the default runner configuration.
+const MIN_TRACKED_STATES: usize = 256;
+
 /// CPU submission limits are frozen independently of the backend's device architecture.
 #[derive(Debug, Clone, Copy)]
 pub struct RunnerConfig {
     pub control_capacity: usize,
-    pub max_batch: usize,
+    pub max_num_seqs: usize,
     pub max_states: usize,
     pub batch_slots: usize,
     pub poll_min_us: u64,
@@ -29,14 +40,14 @@ impl RunnerConfig {
     pub fn validate(self) -> Result<()> {
         if self.control_capacity == 0
             || self.max_states == 0
-            || self.max_states > 1_048_576
-            || self.max_batch == 0
-            || self.max_batch > 64
+            || self.max_states > crate::constants::MAX_BOUNDED_CAPACITY
+            || self.max_num_seqs == 0
+            || self.max_num_seqs > infer_gpu_api::MAX_SUBMISSION_BATCH
             || self.batch_slots < 2
-            || self.batch_slots > 64
+            || self.batch_slots > infer_gpu_api::MAX_SUBMISSION_BATCH
             || self.poll_min_us == 0
             || self.poll_max_us < self.poll_min_us
-            || self.poll_max_us > 1_000_000
+            || self.poll_max_us > crate::constants::MAX_POLL_INTERVAL_US
         {
             return Err(Error::invalid("invalid CPU device owner limits"));
         }
@@ -177,8 +188,8 @@ where
             program,
             RunnerConfig {
                 control_capacity: queue,
-                max_batch: 64,
-                max_states: queue.max(256),
+                max_num_seqs: infer_gpu_api::MAX_SUBMISSION_BATCH,
+                max_states: queue.max(MIN_TRACKED_STATES),
                 batch_slots: 2,
                 poll_min_us: cpu.poll_min_us,
                 poll_max_us: cpu.poll_max_us,
@@ -257,7 +268,7 @@ where
             flight_abandoned: AtomicBool::new(false),
             batches: Arc::new(infer_gpu_api::BatchArena::new(
                 config.batch_slots,
-                config.max_batch,
+                config.max_num_seqs,
             )?),
             device_thread: std::sync::OnceLock::new(),
             snapshot: Mutex::new(snapshot),
@@ -270,7 +281,9 @@ where
         let (jobs, receiver) = mpsc::sync_channel(config.control_capacity);
         let (submissions, submit_rx) = infer_gpu_api::RingBuffer::new(config.batch_slots);
         let (complete_tx, completions) = infer_gpu_api::RingBuffer::new(config.batch_slots);
-        let (recycled, recycled_rx) = infer_gpu_api::RingBuffer::new(config.max_batch * 4 + 8);
+        let (recycled, recycled_rx) = infer_gpu_api::RingBuffer::new(
+            config.max_num_seqs * RECYCLED_ENTRIES_PER_BATCH + RECYCLED_ENTRY_SLACK,
+        );
         let program = Arc::new(program);
         let runner = Self {
             recipe: backend.state_recipe().cloned(),
@@ -279,7 +292,7 @@ where
                 config
                     .control_capacity
                     .checked_add(config.max_states)
-                    .and_then(|n| n.checked_add(4))
+                    .and_then(|n| n.checked_add(RESOURCE_POOL_SLACK))
                     .ok_or_else(|| Error::invalid("resource pool dimensions overflow"))?,
             )?,
             marker: std::marker::PhantomData,

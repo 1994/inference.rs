@@ -1,0 +1,233 @@
+//! Regression test for the vision attention kernel.
+//!
+//! The kernel streams keys in 32-token blocks and keeps its softmax state across blocks. A
+//! single-block sequence cannot fail there, so the fixtures below deliberately span two and four
+//! blocks, one of them partially masked. The device result is compared against an independent
+//! host implementation in F32. Both streaming state and operand precision are checked: the
+//! multi-layer tower amplifies errors from simply rounding every MMA input to BF16.
+use super::program::{AttentionMode, attention_kernel};
+use crate::device::CudaDevice;
+use infer_core::{Error, Result};
+
+/// Heads in the fixture: enough to prove the column-block arithmetic, small enough to stay fast.
+const HEADS: usize = 2;
+/// Padded half-head width; the real head is twice this.
+const HALF: usize = 32;
+/// Padded head width.
+const WIDTH: usize = HALF * 2;
+/// Relative tolerance between the device result and the host oracle.
+const TOLERANCE: f32 = 1e-4;
+
+/// Deterministic pseudo-random fixture values, so the test needs no assets.
+fn pseudo_random(count: usize, seed: u64) -> Vec<f32> {
+    let mut state = seed;
+    (0..count)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let unit = f32::from(u16::try_from(state >> 48).unwrap_or(0)) / 65_536.0;
+            2.0f32.mul_add(unit, -1.0)
+        })
+        .collect()
+}
+
+/// `RoPE` tables in the layout the kernel reads: both halves carry the same cosine and sine.
+fn rope_tables(tokens: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut cosines = vec![1.0f32; tokens * WIDTH];
+    let mut sines = vec![0.0f32; tokens * WIDTH];
+    for token in 0..tokens {
+        for lane in 0..HALF {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "Fixture indices are tiny exact integers"
+            )]
+            let angle = (token as f32 + 1.0) * 0.017 * (lane as f32 + 1.0);
+            for half in 0..2 {
+                cosines[token * WIDTH + half * HALF + lane] = angle.cos();
+                sines[token * WIDTH + half * HALF + lane] = angle.sin();
+            }
+        }
+    }
+    (cosines, sines)
+}
+
+/// Index of one lane in the padded `[tokens, heads, 2, half]` layout.
+fn slot(token: usize, head: usize, half: usize, lane: usize) -> usize {
+    ((token * HEADS + head) * WIDTH) + half * HALF + lane
+}
+
+/// Host oracle: `RoPE` per half-head, full-head scores, non-causal softmax, weighted values.
+///
+/// No device tiling, operand decomposition or online rescaling is reproduced here.
+fn oracle(
+    query: &[f32],
+    key: &[f32],
+    value: &[f32],
+    cosines: &[f32],
+    sines: &[f32],
+    tokens: usize,
+    frame_tokens: usize,
+) -> Result<Vec<f32>> {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "Fixture widths are tiny exact integers"
+    )]
+    let scale = 1.0 / (WIDTH as f32).sqrt();
+    let mut output = vec![0.0f32; tokens * HEADS * WIDTH];
+    for head in 0..HEADS {
+        let rotated = |source: &[f32], token: usize, half: usize, lane: usize| -> (f32, f32) {
+            let lo = source[slot(token, head, 0, lane)];
+            let hi = source[slot(token, head, 1, lane)];
+            let cosine = cosines[token * WIDTH + half * HALF + lane];
+            let sine = sines[token * WIDTH + half * HALF + lane];
+            (
+                lo.mul_add(cosine, -(hi * sine)),
+                hi.mul_add(cosine, lo * sine),
+            )
+        };
+        for token in 0..tokens {
+            let mut scores = vec![0.0f32; tokens];
+            for (other, score) in scores.iter_mut().enumerate() {
+                if token / frame_tokens != other / frame_tokens {
+                    *score = f32::NEG_INFINITY;
+                    continue;
+                }
+                let mut dot = 0.0f32;
+                for lane in 0..HALF {
+                    let (q_lo, q_hi) = rotated(query, token, 0, lane);
+                    let (k_lo, k_hi) = rotated(key, other, 0, lane);
+                    dot = q_lo.mul_add(k_lo, q_hi.mul_add(k_hi, dot));
+                }
+                *score = dot * scale;
+            }
+            let maximum = scores.iter().copied().fold(f32::MIN, f32::max);
+            let probabilities: Vec<f32> =
+                scores.iter().map(|score| (score - maximum).exp()).collect();
+            let total: f32 = probabilities.iter().sum();
+            if total <= 0.0 {
+                return Err(Error::invariant("oracle softmax collapsed"));
+            }
+            for half in 0..2 {
+                for lane in 0..HALF {
+                    let mut numerator = 0.0f32;
+                    for (other, weight) in probabilities.iter().enumerate() {
+                        numerator = weight.mul_add(value[slot(other, head, half, lane)], numerator);
+                    }
+                    output[slot(token, head, half, lane)] = numerator / total;
+                }
+            }
+        }
+    }
+    Ok(output)
+}
+
+/// Maximum difference relative to the oracle's own scale.
+fn deviation(actual: &[f32], expected: &[f32]) -> Result<f32> {
+    if actual.len() != expected.len() {
+        return Err(Error::invalid("attention outputs differ in shape"));
+    }
+    let mut worst = 0f32;
+    for (left, right) in actual.iter().zip(expected.iter()) {
+        if !left.is_finite() || !right.is_finite() {
+            return Err(Error::invariant("attention contains nonfinite values"));
+        }
+        worst = worst.max((left - right).abs());
+    }
+    let scale = expected
+        .iter()
+        .fold(0f32, |scale, value| scale.max(value.abs()));
+    Ok(if scale > 0.0 { worst / scale } else { worst })
+}
+
+#[test]
+fn attention_comparison_rejects_nonfinite_and_wrong_shapes() {
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(deviation(&[invalid], &[0.0]).is_err());
+        assert!(deviation(&[0.0], &[invalid]).is_err());
+    }
+    assert!(deviation(&[0.0], &[]).is_err());
+}
+
+#[test]
+fn attention_comparison_handles_zero_reference_without_division() -> Result<()> {
+    assert_eq!(deviation(&[0.0, 0.0], &[0.0, 0.0])?, 0.0);
+    assert_eq!(deviation(&[0.25, 0.0], &[0.0, 0.0])?, 0.25);
+    Ok(())
+}
+
+/// Every streaming form must agree with the host oracle at one, two and four key blocks.
+#[test]
+#[ignore = "requires an NVIDIA GPU; run under tools/bench/safe-run.sh"]
+fn attention_matches_the_host_oracle_across_key_blocks() -> Result<()> {
+    let device = CudaDevice::new(0)?;
+    // 100 tokens span four blocks, the last of them partially masked; 32 and 64 are exact.
+    for tokens in [32usize, 33, 64, 65, 100] {
+        let query = pseudo_random(tokens * HEADS * WIDTH, 0x51ed_2701 + tokens as u64);
+        let key = pseudo_random(tokens * HEADS * WIDTH, 0x9e37_79b9 + tokens as u64);
+        let value = pseudo_random(tokens * HEADS * WIDTH, 0x85eb_ca6b + tokens as u64);
+        let (cosines, sines) = rope_tables(tokens);
+        for frame_tokens in [tokens, 16] {
+            let expected = oracle(&query, &key, &value, &cosines, &sines, tokens, frame_tokens)?;
+            for tiles in [[32, 32, 0], [64, 64, 0]] {
+                for mode in [AttentionMode::Online, AttentionMode::Exact] {
+                    let actual = attention_kernel(
+                        &device,
+                        &query,
+                        &key,
+                        &value,
+                        &cosines,
+                        &sines,
+                        tokens,
+                        HEADS,
+                        HALF,
+                        mode,
+                        frame_tokens,
+                        WIDTH,
+                        tiles,
+                        false,
+                    )?;
+                    let error = deviation(&actual, &expected)?;
+                    assert!(
+                        error <= TOLERANCE,
+                        "{mode:?} deviates by {error} at {tokens} tokens"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Cancellation exposes input bits that would disappear in a single BF16 conversion.
+#[test]
+#[ignore = "requires an NVIDIA GPU; run under tools/bench/safe-run.sh"]
+fn projection_preserves_sub_bf16_residuals() -> Result<()> {
+    use cutile::half::bf16;
+    let device = CudaDevice::new(0)?;
+    let rows = 33;
+    let weights: Vec<bf16> = (0..WIDTH * WIDTH)
+        .map(|index| bf16::from_f32(if index % 2 == 0 { 1.0 } else { -1.0 }))
+        .collect();
+    let weight = device.upload(weights, &[WIDTH, WIDTH])?;
+    let bias = device.upload(vec![bf16::ZERO; WIDTH], &[WIDTH])?;
+    let input: Vec<f32> = (0..rows * WIDTH)
+        .map(|index| {
+            if index % 2 == 0 {
+                1.0 + 1.0 / 1024.0
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    let actual = super::program::project_with(&device, &weight, &bias, &input, rows, WIDTH)?;
+    // 32 pairs, each contributing exactly 1/1024. Naive BF16 would return zero.
+    assert_eq!(actual.len(), rows * WIDTH);
+    for value in actual {
+        assert!(
+            (value - 0.03125).abs() < 1e-6,
+            "projection lost residual: {value}"
+        );
+    }
+    Ok(())
+}

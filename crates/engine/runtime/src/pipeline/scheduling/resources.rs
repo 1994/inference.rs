@@ -14,8 +14,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     pub(crate) fn resources(&self) -> Result<ResourceSnapshot> {
         Ok(ResourceSnapshot {
-            max_batch: self.config.max_batch,
-            token_budget: self.config.token_budget,
+            max_num_seqs: self.config.max_num_seqs,
+            max_num_batched_tokens: self.config.max_num_batched_tokens,
             gpu_budget_us: self.config.gpu_budget_us,
             workspace_bytes: self.config.workspace_bytes,
             free_state_pages: self

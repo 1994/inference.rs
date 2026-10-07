@@ -3,6 +3,9 @@ use infer_core::{Error, ModelId, RequestId, Result, SessionId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Longest accepted `QoS` tenant identifier, in bytes.
+const MAX_TENANT_ID_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RequestInput {
     Sequence {
@@ -85,7 +88,10 @@ impl CanonicalRequest {
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {
-        if self.qos.tenant.is_empty() || self.qos.tenant.len() > 256 || self.qos.weight == 0 {
+        if self.qos.tenant.is_empty()
+            || self.qos.tenant.len() > MAX_TENANT_ID_BYTES
+            || self.qos.weight == 0
+        {
             return Err(Error::invalid("tenant and positive weight required"));
         }
         if self.qos.ttft_slo_us == Some(0)

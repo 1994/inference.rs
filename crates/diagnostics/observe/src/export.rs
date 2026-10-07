@@ -177,7 +177,7 @@ fn histogram_lines(
         cumulative = cumulative.saturating_add(histogram.buckets[index]);
         lines.push(format!(
             "{name}_bucket{{backend=\"{backend}\",le=\"{}\"}} {cumulative}",
-            *bound as f64 / 1e6
+            *bound as f64 / crate::constants::MICROSECONDS_PER_SECOND
         ));
     }
     lines.push(format!(
@@ -186,7 +186,7 @@ fn histogram_lines(
     ));
     lines.push(format!(
         "{name}_sum{{backend=\"{backend}\"}} {}",
-        histogram.sum_us as f64 / 1e6
+        histogram.sum_us as f64 / crate::constants::MICROSECONDS_PER_SECOND
     ));
     lines.push(format!(
         "{name}_count{{backend=\"{backend}\"}} {}",

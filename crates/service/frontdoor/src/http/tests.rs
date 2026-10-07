@@ -141,7 +141,7 @@ async fn native_text_uses_package_assets_and_incremental_hybrid_weights() {
     use infer_backend_host::{HostBackend, HostConfig, HostKernels};
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = infer_models::QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+    let mut package = infer_models::ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
     let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
     let model = backend.model().clone();
     let assets =
@@ -312,6 +312,9 @@ impl BackendProvider for HeldBackend {
     }
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(model, program)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
+        self.inner.execution_graph(model)
     }
     fn submit(
         &mut self,

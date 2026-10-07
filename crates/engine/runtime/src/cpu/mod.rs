@@ -6,6 +6,39 @@ use crate::RuntimeConfig;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
+/// Default number of maintenance items drained per owner iteration.
+const DEFAULT_MAINTENANCE_ITEMS: usize = 64;
+/// Default number of host tokens retained by the sampling pools.
+const DEFAULT_HOST_TOKENS: usize = 1 << 22;
+/// Default host byte budget for CPU-owned pools (256 MiB).
+const DEFAULT_HOST_BYTES: usize = 256 << 20;
+/// Default window in which deferred work is ranked urgent, in microseconds.
+const DEFAULT_URGENCY_WINDOW_US: u64 = 10_000;
+/// Default minimum poll interval for the CPU owner, in microseconds.
+const DEFAULT_POLL_MIN_US: u64 = 25;
+/// Default maximum poll interval for the CPU owner, in microseconds.
+const DEFAULT_POLL_MAX_US: u64 = 1000;
+/// Number of synchronous/asynchronous sampling workspaces retained per vocabulary entry.
+const SAMPLING_WORKSPACES: usize = 3;
+/// Bytes of one retained token score (`f32`).
+const TOKEN_SCORE_BYTES: usize = size_of::<f32>();
+/// Conservative number of cost-query copies retained per planned work item.
+const COST_QUERY_COPIES_PER_WORK: usize = 3;
+/// Fixed slack reserved beyond the history record's deferred-work table, in bytes.
+const HISTORY_RECORD_OVERHEAD_BYTES: usize = 512;
+/// Conservative per-request bookkeeping bytes in the fixed CPU budget.
+const REQUEST_TABLE_BYTES: usize = 8192;
+/// Conservative per-batch completion bytes in the fixed CPU budget.
+const BATCH_TABLE_BYTES: usize = 4096;
+/// Conservative bytes retained per event slot in the fixed CPU budget.
+const EVENT_SLOT_BYTES: usize = 128;
+/// Fixed overhead retained beyond one ready-work record, in bytes.
+const READY_WORK_OVERHEAD_BYTES: usize = 256;
+/// Conservative bytes retained per tracked KV state page.
+const STATE_PAGE_BYTES: usize = 256;
+/// Conservative bytes retained per cost-model profile.
+const COST_PROFILE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CpuRuntimeConfig {
@@ -21,12 +54,12 @@ impl Default for CpuRuntimeConfig {
     fn default() -> Self {
         Self {
             placement: OwnerPlacement::default(),
-            maintenance_items: 64,
-            host_tokens: 1 << 22,
-            host_bytes: 256 << 20,
-            urgency_window_us: 10_000,
-            poll_min_us: 25,
-            poll_max_us: 1000,
+            maintenance_items: DEFAULT_MAINTENANCE_ITEMS,
+            host_tokens: DEFAULT_HOST_TOKENS,
+            host_bytes: DEFAULT_HOST_BYTES,
+            urgency_window_us: DEFAULT_URGENCY_WINDOW_US,
+            poll_min_us: DEFAULT_POLL_MIN_US,
+            poll_max_us: DEFAULT_POLL_MAX_US,
         }
     }
 }
@@ -48,12 +81,12 @@ impl CpuRuntimeConfig {
     pub fn fixed_bytes_for(&self, runtime: &RuntimeConfig, vocabulary: usize) -> Result<usize> {
         let fixed = self.fixed_bytes(runtime)?;
         let total = vocabulary
-            .checked_mul(3 * (size_of::<(usize, f32)>() + size_of::<f64>()))
+            .checked_mul(SAMPLING_WORKSPACES * (size_of::<(usize, f32)>() + size_of::<f64>()))
             .and_then(|sampling| fixed.checked_add(sampling))
             .ok_or_else(|| Error::invalid("CPU sampling storage overflow"))?;
         if self
             .host_tokens
-            .checked_mul(4)
+            .checked_mul(TOKEN_SCORE_BYTES)
             .and_then(|tokens| total.checked_add(tokens))
             .is_none_or(|bytes| bytes > self.host_bytes)
         {
@@ -72,15 +105,15 @@ impl CpuRuntimeConfig {
             || self.host_bytes == 0
             || self.poll_min_us == 0
             || self.poll_max_us < self.poll_min_us
-            || self.poll_max_us > 1_000_000
+            || self.poll_max_us > crate::constants::MAX_POLL_INTERVAL_US
         {
             return Err(Error::invalid("invalid CPU owner budgets"));
         }
         let batch_record = size_of::<infer_ir::PlannedWork>()
             + size_of::<infer_ir::SelectionEvidence>()
-            + 3 * size_of::<infer_ir::CostQuery>();
+            + COST_QUERY_COPIES_PER_WORK * size_of::<infer_ir::CostQuery>();
         let history_record = runtime
-            .max_batch
+            .max_num_seqs
             .checked_mul(batch_record)
             .and_then(|bytes| {
                 runtime
@@ -89,21 +122,21 @@ impl CpuRuntimeConfig {
                     .checked_mul(size_of::<infer_ir::DeferredWork>())
                     .and_then(|deferred| bytes.checked_add(deferred))
             })
-            .and_then(|bytes| bytes.checked_add(512))
+            .and_then(|bytes| bytes.checked_add(HISTORY_RECORD_OVERHEAD_BYTES))
             .ok_or_else(|| Error::invalid("CPU history record size overflow"))?;
         let mut fixed = 0usize;
         for (count, bytes) in [
-            (runtime.max_requests, 8192),
-            (runtime.max_batch, 4096),
-            (runtime.event_capacity, 128),
+            (runtime.max_requests, REQUEST_TABLE_BYTES),
+            (runtime.max_num_seqs, BATCH_TABLE_BYTES),
+            (runtime.event_capacity, EVENT_SLOT_BYTES),
             (runtime.history_capacity, history_record),
             (1, runtime.max_history_bytes),
             (
                 runtime.candidate_limit.min(runtime.max_requests),
-                size_of::<infer_ir::ReadyWork>() + 256,
+                size_of::<infer_ir::ReadyWork>() + READY_WORK_OVERHEAD_BYTES,
             ),
-            (runtime.state_pages, 256),
-            (runtime.cost_model.max_profiles, 256),
+            (runtime.num_gpu_blocks, STATE_PAGE_BYTES),
+            (runtime.cost_model.max_profiles, COST_PROFILE_BYTES),
         ] {
             fixed = count
                 .checked_mul(bytes)

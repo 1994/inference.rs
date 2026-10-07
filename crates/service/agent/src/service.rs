@@ -46,10 +46,13 @@ impl<B: AgentBackend> AgentService<B> {
     #[must_use]
     pub fn handle(&mut self, value: Value) -> Option<Value> {
         if let Value::Array(batch) = value {
-            if batch.is_empty() || batch.len() > 64 {
+            if batch.is_empty() || batch.len() > crate::constants::MAX_BATCH_REQUESTS {
                 return Some(error_response(
                     Value::Null,
-                    &RpcError::new(-32600, "batch requires 1 to 64 requests"),
+                    &RpcError::new(
+                        crate::constants::JSONRPC_INVALID_REQUEST,
+                        "batch requires 1 to 64 requests",
+                    ),
                 ));
             }
             let responses: Vec<_> = batch
@@ -68,12 +71,20 @@ impl<B: AgentBackend> AgentService<B> {
         };
         let start = Instant::now();
         let outcome = if !request.params.is_object() && !request.params.is_array() {
-            Err(RpcError::new(-32602, "params must be an object or array"))
+            Err(RpcError::new(
+                crate::constants::JSONRPC_INVALID_PARAMS,
+                "params must be an object or array",
+            ))
         } else {
             self.registry
                 .dispatch(&mut self.context, &request.method, request.params)
                 .map_or_else(
-                    || Err(RpcError::new(-32601, "method not found")),
+                    || {
+                        Err(RpcError::new(
+                            crate::constants::JSONRPC_METHOD_NOT_FOUND,
+                            "method not found",
+                        ))
+                    },
                     |r| r.map_err(RpcError::from),
                 )
         };
@@ -88,7 +99,11 @@ impl<B: AgentBackend> AgentService<B> {
         });
         self.context.record(CallRecord {
             sequence: self.context.call_sequence,
-            method: request.method.chars().take(128).collect(),
+            method: request
+                .method
+                .chars()
+                .take(crate::constants::MAX_RECORDED_METHOD_CHARS)
+                .collect(),
             error,
             rpc_error: outcome.as_ref().err().map(|error| error.code),
             elapsed_us: u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX),

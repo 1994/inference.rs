@@ -1,0 +1,37 @@
+{
+  "async_scalar_wall_us": [
+    7.441075,
+    7.303025,
+    7.37417,
+    7.451944999999999,
+    7.16739,
+    7.13409
+  ],
+  "device": "NVIDIA GeForce RTX 5090",
+  "iterations_per_round": 200,
+  "legacy_wall_us": [
+    12.62771,
+    12.450714999999997,
+    12.442665,
+    12.297155,
+    12.273774999999999,
+    12.42386
+  ],
+  "scope": "metadata update plus empty copy graph and final sync; not model throughput",
+  "schema": 1,
+  "passed": true,
+  "source": "artifacts/cuda-async-metadata-bits.log",
+  "sha256": "db53d448417aa012245fb717f43518402426f33dc07da8d376000bd12b069386",
+  "hardware": "artifacts/cuda-async-metadata-bits-hardware.jsonl",
+  "binary_sha256": "8055a1c193843e32089f99f25f49713acc80efca047abaa5be6e1a5e0a26271a",
+  "legacy_median_us": 12.4332625,
+  "async_median_us": 7.3385975000000006,
+  "median_reduction_percent": 40.976091351726865,
+  "rejected_integer_scalar_experiment": {
+    "sources": [
+      "artifacts/cuda-async-metadata.log",
+      "artifacts/cuda-async-metadata-repeat.log"
+    ],
+    "reason": "cuTile 0.4 auto DivHint specialization causes cold per-value-family stalls; final implementation passes bit patterns through float scalar ABI and bitcasts without arithmetic"
+  }
+}

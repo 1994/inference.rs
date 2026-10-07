@@ -33,7 +33,7 @@ impl MetalBackend {
         let mut outputs = self
             .completion_pool
             .pop()
-            .unwrap_or_else(|| Vec::with_capacity(64));
+            .unwrap_or_else(|| Vec::with_capacity(crate::constants::MAX_TICKET_TASKS));
         for (task, start) in t.tasks.iter().zip(&t.starts) {
             let s = self
                 .sequences
@@ -48,6 +48,8 @@ impl MetalBackend {
                 } else {
                     Vec::new()
                 },
+
+                tokens: Vec::new(),
             });
             let rows = if task.readout == infer_ir::OutputReadout::Full {
                 s.tokens.len()

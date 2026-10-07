@@ -2,8 +2,13 @@
 mod arguments;
 mod backend;
 mod commands;
+mod constants;
 mod dispatch;
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 mod host_quality;
 mod support;
 

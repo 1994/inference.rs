@@ -1,33 +1,61 @@
 //! Measurement commands.
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use super::{
     BenchmarkOptions, ProfileOptions, backend, config, example, results, run_to_idle,
     selected_engine, write_json,
 };
 use super::{CompareOptions, print, read_json};
 use infer_core::{Error, Result};
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_ir::{RequestInput, Workload};
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_runtime::{ReplayAction, RuntimeConfig};
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use std::time::Instant;
 
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+/// Maximum request count one benchmark run admits.
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
+const MAX_BENCHMARK_REQUESTS: usize = 256;
+
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn profile(options: ProfileOptions, backend_choice: backend::Selection) -> Result<()> {
     let ProfileOptions {
         journal,
         output,
         config: config_path,
         package,
-        device_memory_mib,
+        host_memory_mib,
     } = options;
     let actions: Vec<ReplayAction> = read_json(&journal)?;
     let mut engine = selected_engine(
         config(config_path.as_deref())?,
         None,
         package.as_deref(),
-        device_memory_mib,
+        host_memory_mib,
         backend_choice,
     )?;
     let mut events = Vec::new();
@@ -51,7 +79,11 @@ pub fn profile(options: ProfileOptions, backend_choice: backend::Selection) -> R
 
     Ok(())
 }
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn benchmark(options: BenchmarkOptions, backend_choice: backend::Selection) -> Result<()> {
     let BenchmarkOptions {
         requests,
@@ -61,17 +93,17 @@ pub fn benchmark(options: BenchmarkOptions, backend_choice: backend::Selection) 
         tpot_slo_us,
         output,
         package,
-        device_memory_mib,
+        host_memory_mib,
     } = options;
     let mut engine = selected_engine(
         RuntimeConfig::default(),
         None,
         package.as_deref(),
-        device_memory_mib,
+        host_memory_mib,
         backend_choice,
     )?;
     if requests == 0
-        || requests > 256
+        || requests > MAX_BENCHMARK_REQUESTS
         || input_tokens == 0
         || input_tokens
             .checked_add(output_tokens)
@@ -104,7 +136,7 @@ pub fn benchmark(options: BenchmarkOptions, backend_choice: backend::Selection) 
         ids.push(request.id);
         engine.submit(request)?;
     }
-    for _ in 0..1_000_000 {
+    for _ in 0..crate::constants::MAX_IDLE_TICKS {
         if engine.is_idle() {
             break;
         }

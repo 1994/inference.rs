@@ -42,7 +42,9 @@ pub fn router_with_text(
         Router::new()
             .route("/native/v1/text", post(text_infer))
             .merge(super::openai::routes())
-            .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(
+                crate::constants::MAX_REQUEST_BODY_BYTES,
+            ))
             .with_state(state),
     )
 }
@@ -59,8 +61,8 @@ pub(super) fn text_preparation_bytes(request: &NativeTextRequest) -> Result<usiz
         )
         .ok_or_else(|| Error::invalid("text preparation size overflow"))?;
     bytes
-        .checked_mul(16)
-        .and_then(|n| n.checked_add(4096))
+        .checked_mul(crate::constants::TEXT_STAGING_EXPANSION)
+        .and_then(|n| n.checked_add(crate::constants::TEXT_STAGING_OVERHEAD_BYTES))
         .ok_or_else(|| Error::invalid("text staging size overflow"))
 }
 
@@ -86,10 +88,12 @@ pub(super) async fn text_infer(
                     overrides.enable_thinking = Some(options.enable_thinking);
                 }
                 let resolved = assets.generation.resolve(&overrides)?;
-                let options = request.options.unwrap_or(infer_models::ChatOptions {
-                    enable_thinking: resolved.enable_thinking,
-                    ..Default::default()
-                });
+                let options = request
+                    .options
+                    .unwrap_or_else(|| infer_models::ChatOptions {
+                        enable_thinking: resolved.enable_thinking,
+                        ..Default::default()
+                    });
                 let tokens = match (request.prompt, request.messages) {
                     (Some(prompt), None) => assets.encode(&prompt, true)?,
                     (None, Some(messages)) => assets.encode_chat(&messages, &options)?,
@@ -119,9 +123,12 @@ pub(super) async fn text_infer(
                     let tokens = tokens.clone();
                     state
                         .delivery
-                        .run(tokens.len().saturating_mul(8), move |_| {
-                            assets.decode(&tokens, true)
-                        })
+                        .run(
+                            tokens
+                                .len()
+                                .saturating_mul(crate::constants::TOKEN_STAGING_BYTES),
+                            move |_| assets.decode(&tokens, true),
+                        )
                         .await?
                 }),
                 _ => None,

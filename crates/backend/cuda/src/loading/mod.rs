@@ -1,0 +1,333 @@
+//! Native model loading independent of diagnostic runners and CPU reference execution.
+mod kv_scales;
+mod weights;
+pub use kv_scales::load as load_kv_scales;
+mod bindings;
+mod budget;
+use crate::{
+    device::CudaDevice,
+    resident::{DeviceProgram, ProgramWeights},
+    tuning::TuningReport,
+};
+use infer_core::{Error, ModelId, Result};
+use infer_ir::{DataflowGraph, ModelIr};
+use infer_models::QuantizedPackage;
+use std::path::Path;
+pub use weights::{Projection, floats};
+
+/// Load-time execution policy; each request receives independent mutable device state.
+#[derive(Debug, Clone)]
+pub struct LoadOptions {
+    pub prefill_width: usize,
+    pub verification_width: usize,
+    pub fp8_kv: bool,
+    pub mtp_depth: usize,
+    /// Measure GEMV tiles for geometries the local or shipped tables do not cover. On by default:
+    /// tile size is a property of the machine, so the first load measures and caches its winners
+    /// instead of asking the operator to choose them.
+    pub autotune: bool,
+}
+impl Default for LoadOptions {
+    fn default() -> Self {
+        Self {
+            prefill_width: 1,
+            verification_width: 0,
+            fp8_kv: false,
+            mtp_depth: 0,
+            autotune: true,
+        }
+    }
+}
+impl LoadOptions {
+    fn validate(&self) -> Result<()> {
+        if ![
+            1,
+            crate::constants::FUSED_VERIFY_LANES,
+            crate::constants::PREFILL_LANES,
+        ]
+        .contains(&self.prefill_width)
+            || self.verification_width > crate::constants::MAX_VERIFICATION_WIDTH
+            || self.verification_width == 1
+            || (self.prefill_width == crate::constants::FUSED_VERIFY_LANES
+                && ![0, crate::constants::FUSED_VERIFY_LANES].contains(&self.verification_width))
+        {
+            return Err(Error::invalid("CUDA model prefill/verification widths"));
+        }
+        if self.mtp_depth > crate::constants::MAX_MTP_DEPTH {
+            return Err(Error::invalid("CUDA MTP draft depth"));
+        }
+        Ok(())
+    }
+}
+
+/// Immutable draft graph and weights for MTP speculation.
+struct Draft {
+    graph: DataflowGraph,
+    weights: ProgramWeights,
+}
+
+/// Immutable shared model resources. CUDA graphs retain weights independently of this factory.
+/// Mutable Conv/GDN/KV and activations are allocated separately for each request.
+pub struct LoadedModel {
+    device: CudaDevice,
+    profile: crate::device::DeviceProfile,
+    model: ModelIr,
+    graph: DataflowGraph,
+    weights: ProgramWeights,
+    draft: Option<Draft>,
+    vision: Option<LoadedVision>,
+    imported: infer_spi::ImportedModel,
+    mtp_depth: usize,
+    tuning: TuningReport,
+    requirements: infer_ir::CapabilityRequirements,
+}
+
+/// Vision tower bound alongside the text model.
+///
+/// Encoding runs the real kernels; a family without an image encoder simply has no `LoadedVision`,
+/// so a caller holding one can never silently skip encoding.
+pub struct LoadedVision {
+    weights: crate::vision::VisionWeights,
+    encoder: infer_spi::ModalityEncoder,
+}
+
+impl LoadedVision {
+    /// Bind the declared encoder, or nothing when the family has no image modality.
+    /// # Errors
+    /// Rejects declared encoders whose weights or geometry are unusable.
+    fn bind(device: &CudaDevice, package: &mut QuantizedPackage) -> Result<Option<Self>> {
+        let declared = package
+            .imported
+            .modalities
+            .iter()
+            .find(|plan| plan.modality == infer_ir::Modality::Image)
+            .and_then(|plan| plan.encoder.clone());
+        let Some(encoder) = declared else {
+            return Ok(None);
+        };
+        let weights = crate::vision::VisionWeights::load(device, package, &encoder)?;
+        Ok(Some(Self { weights, encoder }))
+    }
+
+    /// Declared geometry of the bound tower.
+    #[must_use]
+    pub const fn encoder(&self) -> &infer_spi::ModalityEncoder {
+        &self.encoder
+    }
+
+    /// Encode one preprocessed image into `merged_tokens × text_hidden` embeddings.
+    /// # Errors
+    /// Rejects a patch grid that disagrees with the pixel buffer or failed CUDA execution.
+    pub fn encode(
+        &self,
+        device: &CudaDevice,
+        image: &infer_models::PromptImage,
+    ) -> Result<Vec<f32>> {
+        let (temporal, height, width) = image.grid;
+        let patches = temporal
+            .checked_mul(height)
+            .and_then(|value| value.checked_mul(width))
+            .ok_or_else(|| Error::invalid("image patch grid overflow"))?;
+        if patches == 0 {
+            return Err(Error::invalid("image patch grid is empty"));
+        }
+        let width = crate::vision::patch_width(&self.encoder)?;
+        if image.pixels.len() != patches * width {
+            return Err(Error::invalid("image pixels do not match the patch grid"));
+        }
+        // The position contribution is a host-side gather of the learned table, then the tower
+        // consumes patch embeddings and the merger folds each merge group back into text width.
+        let taps = infer_models::vision::position_taps(image.grid, &self.encoder)?;
+        let positions = infer_models::vision::gather_positions(
+            self.weights.position_table(),
+            &self.encoder,
+            &taps,
+        )?;
+        let embedded = crate::vision::patch_embed(
+            device,
+            &self.encoder,
+            &self.weights,
+            &image.pixels,
+            &positions,
+            patches,
+        )?;
+        let hidden = crate::vision::tower(
+            device,
+            &self.weights,
+            &self.encoder,
+            &embedded,
+            image.grid,
+            patches,
+        )?;
+        crate::vision::merger(device, &self.weights, &self.encoder, &hidden, patches)
+    }
+}
+
+impl LoadedModel {
+    /// # Errors
+    /// Rejects unsupported formats, invalid policies, budgets or CUDA loading errors.
+    pub fn open(
+        device: CudaDevice,
+        root: impl AsRef<Path>,
+        id: ModelId,
+        mut options: LoadOptions,
+    ) -> Result<Self> {
+        // Speculation verifies candidates with the fused multi-lane graph; enable it on demand.
+        if options.mtp_depth > 0 && options.verification_width == 0 {
+            options.verification_width = crate::constants::FUSED_VERIFY_LANES;
+        }
+        options.validate()?;
+        // Query hardware once: the profile keys machine-local tuning artifacts and derives the
+        // device budget policy, so no per-model or per-board table needs maintaining here.
+        let profile = device.profile()?.clone();
+        let mut package = QuantizedPackage::open(root, id)?;
+        let mtp_depth = options.mtp_depth;
+        let (weights, draft, tuning) = bindings::load(&device, &profile, &mut package, &options)?;
+        let requirements = package.imported.requirements.clone();
+        let vision = LoadedVision::bind(&device, &mut package)?;
+        let imported = package.imported.clone();
+        Ok(Self {
+            device,
+            profile,
+            model: package.imported.model,
+            graph: package.graph,
+            weights,
+            draft,
+            vision,
+            imported,
+            mtp_depth,
+            tuning,
+            requirements,
+        })
+    }
+    /// Provider-imported description of this model, including its modalities.
+    #[must_use]
+    pub const fn imported(&self) -> &infer_spi::ImportedModel {
+        &self.imported
+    }
+
+    /// Bound vision tower, absent for text-only families.
+    #[must_use]
+    pub const fn vision(&self) -> Option<&LoadedVision> {
+        self.vision.as_ref()
+    }
+    /// Device capabilities this model's provider declared as required.
+    #[must_use]
+    pub const fn requirements(&self) -> &infer_ir::CapabilityRequirements {
+        &self.requirements
+    }
+    /// Speculative draft depth configured at load time; zero disables speculation.
+    #[must_use]
+    pub const fn mtp_depth(&self) -> usize {
+        self.mtp_depth
+    }
+    /// Automatic tiling decisions from this load: what was measured, and what fell back.
+    #[must_use]
+    pub const fn tuning(&self) -> &TuningReport {
+        &self.tuning
+    }
+    #[must_use]
+    pub const fn model(&self) -> &ModelIr {
+        &self.model
+    }
+    #[must_use]
+    pub const fn graph(&self) -> &DataflowGraph {
+        &self.graph
+    }
+    #[must_use]
+    pub const fn profile(&self) -> &crate::device::DeviceProfile {
+        &self.profile
+    }
+    #[must_use]
+    pub const fn device(&self) -> &CudaDevice {
+        &self.device
+    }
+    /// # Errors
+    /// Rejects invalid capacity, exceeded state budgets or CUDA graph capture failures.
+    pub fn sequence(&self, capacity: usize) -> Result<DeviceProgram> {
+        DeviceProgram::new(
+            &self.device,
+            &self.graph,
+            &self.weights,
+            capacity,
+            self.model.hidden_size,
+            self.model.vocab_size,
+        )
+    }
+    /// # Errors
+    /// Rejects invalid capacity, missing draft configuration or capture failures.
+    pub fn draft(&self, capacity: usize) -> Result<Option<DeviceProgram>> {
+        let Some(draft) = &self.draft else {
+            return Ok(None);
+        };
+        DeviceProgram::new(
+            &self.device,
+            &draft.graph,
+            &draft.weights,
+            capacity,
+            self.model.hidden_size,
+            self.model.vocab_size,
+        )
+        .map(Some)
+    }
+
+    /// Continuous-batching slot pool over the target weights: `width` slots of `capacity`
+    /// tokens each, plus one shared graph captured against them. With a draft loaded the
+    /// graph is the pooled speculation graph of `mtp_depth + 1` candidate lanes per slot.
+    /// # Errors
+    /// Rejects invalid geometry, exceeded device budgets or CUDA capture failures.
+    pub(crate) fn slot_pool(
+        &self,
+        width: usize,
+        capacity: usize,
+    ) -> Result<crate::resident::slot_batch::SlotPool> {
+        crate::resident::slot_batch::SlotPool::new(
+            &self.device,
+            &self.graph,
+            &self.weights,
+            width,
+            capacity,
+            self.model.hidden_size,
+            (
+                self.model.vocab_size,
+                if self.mtp_depth == 0 {
+                    0
+                } else {
+                    self.mtp_depth + 1
+                },
+            ),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn mtp_depth_bounds_are_validated() {
+        assert!(
+            LoadOptions {
+                mtp_depth: 0,
+                ..LoadOptions::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            LoadOptions {
+                mtp_depth: crate::constants::MAX_MTP_DEPTH,
+                ..LoadOptions::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            LoadOptions {
+                mtp_depth: crate::constants::MAX_MTP_DEPTH + 1,
+                ..LoadOptions::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}

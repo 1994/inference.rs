@@ -7,6 +7,15 @@ use infer_ir::{
 use infer_spi::{BatchCostSummary, CostModelProvider};
 use serde::{Deserialize, Serialize};
 
+/// Largest accepted `CostModelConfig::max_profiles` calibration table size.
+const MAX_PROFILE_CAPACITY: usize = 4096;
+/// Largest accepted `CostModelConfig::safety_margin_percent`.
+const MAX_SAFETY_MARGIN_PERCENT: u32 = 200;
+/// Manhattan radius, in log2 token/context/batch buckets, searched for a nearby profile.
+const NEIGHBOR_RADIUS: i32 = 3;
+/// Largest accepted serialized cost-calibration checkpoint, in bytes.
+const MAX_CHECKPOINT_BYTES: usize = 4 * 1024 * 1024;
+
 mod summary;
 pub use summary::update_summary;
 
@@ -53,16 +62,16 @@ pub fn aggregate(work: &[CostQuery]) -> Result<CostEstimate> {
             )
             .ok_or_else(|| Error::invalid("execution cost overflow"))?;
         cost.workspace_bytes = cost.workspace_bytes.max(q.workspace_bytes);
-        cost.state_pages = cost
-            .state_pages
-            .checked_add(q.state_pages)
+        cost.num_gpu_blocks = cost
+            .num_gpu_blocks
+            .checked_add(q.num_gpu_blocks)
             .ok_or_else(|| Error::invalid("state cost overflow"))?;
         if let Some(growth) = q.page_growth {
             let n = growth
                 .required_pages(q.context_tokens)
                 .ok_or_else(|| Error::invalid("invalid physical page growth"))?;
-            cost.state_pages = cost
-                .state_pages
+            cost.num_gpu_blocks = cost
+                .num_gpu_blocks
                 .checked_add(n)
                 .ok_or_else(|| Error::invalid("page growth overflow"))?;
             cost.state_bytes = cost
@@ -161,10 +170,10 @@ impl CalibratedCosts {
     pub fn new(binding: String, config: CostModelConfig) -> Result<Self> {
         if binding.is_empty()
             || config.max_profiles == 0
-            || config.max_profiles > 4096
+            || config.max_profiles > MAX_PROFILE_CAPACITY
             || config.ewma_alpha_percent == 0
-            || config.ewma_alpha_percent > 100
-            || config.safety_margin_percent > 200
+            || config.ewma_alpha_percent > crate::constants::PERCENT
+            || config.safety_margin_percent > MAX_SAFETY_MARGIN_PERCENT
         {
             return Err(Error::invalid("invalid cost calibration configuration"));
         }
@@ -175,7 +184,7 @@ impl CalibratedCosts {
                 binding,
                 config,
                 profiles: vec![],
-                ratio_ppm: 1_000_000,
+                ratio_ppm: crate::constants::PARTS_PER_MILLION,
                 observations: 0,
                 evictions: 0,
                 last_source: None,
@@ -186,7 +195,10 @@ impl CalibratedCosts {
     fn calibrated(&self, mut cost: CostEstimate, key: Shape) -> Result<CostEstimate> {
         let candidate = self.profiles.get(&key).or_else(|| self.nearest(key));
         let predicted = candidate.map_or_else(
-            || (u128::from(cost.gpu_us) * u128::from(self.state.ratio_ppm)).div_ceil(1_000_000),
+            || {
+                (u128::from(cost.gpu_us) * u128::from(self.state.ratio_ppm))
+                    .div_ceil(u128::from(crate::constants::PARTS_PER_MILLION))
+            },
             |p| {
                 (u128::from(cost.gpu_us) * u128::from(p.mean_us))
                     .div_ceil(u128::from(p.reference_us))
@@ -194,9 +206,12 @@ impl CalibratedCosts {
         );
         cost.gpu_us = u64::try_from(
             predicted
-                .checked_mul(100 + u128::from(self.state.config.safety_margin_percent))
+                .checked_mul(
+                    u128::from(crate::constants::PERCENT)
+                        + u128::from(self.state.config.safety_margin_percent),
+                )
                 .ok_or_else(|| Error::invalid("calibrated execution cost overflow"))?
-                .div_ceil(100),
+                .div_ceil(u128::from(crate::constants::PERCENT)),
         )
         .map_err(|_| Error::invalid("calibrated execution cost overflow"))?
         .max(1);
@@ -204,11 +219,11 @@ impl CalibratedCosts {
     }
     fn nearest(&self, key: Shape) -> Option<&Profile> {
         let mut best: Option<(u32, &Profile)> = None;
-        for dx in -3i32..=3 {
-            for dy in -3i32..=3 {
-                for dz in -3i32..=3 {
+        for dx in -NEIGHBOR_RADIUS..=NEIGHBOR_RADIUS {
+            for dy in -NEIGHBOR_RADIUS..=NEIGHBOR_RADIUS {
+                for dz in -NEIGHBOR_RADIUS..=NEIGHBOR_RADIUS {
                     let distance = dx.unsigned_abs() + dy.unsigned_abs() + dz.unsigned_abs();
-                    if distance > 3 {
+                    if distance > NEIGHBOR_RADIUS.unsigned_abs() {
                         continue;
                     }
                     let Some((tokens, context, batch)) = key
@@ -240,8 +255,12 @@ impl CalibratedCosts {
     }
     fn blend(&self, old: u64, new: u64) -> u64 {
         let alpha = u128::from(self.state.config.ewma_alpha_percent);
-        u64::try_from((u128::from(old) * (100 - alpha) + u128::from(new) * alpha).div_ceil(100))
-            .unwrap_or(u64::MAX)
+        u64::try_from(
+            (u128::from(old) * (u128::from(crate::constants::PERCENT) - alpha)
+                + u128::from(new) * alpha)
+                .div_ceil(u128::from(crate::constants::PERCENT)),
+        )
+        .unwrap_or(u64::MAX)
     }
 }
 impl CostModelProvider for CalibratedCosts {
@@ -285,9 +304,11 @@ impl CostModelProvider for CalibratedCosts {
             .observations
             .checked_add(1)
             .ok_or_else(|| Error::invalid("cost observation counter overflow"))?;
-        let ratio =
-            u64::try_from((u128::from(elapsed) * 1_000_000).div_ceil(u128::from(reference)))
-                .unwrap_or(u64::MAX);
+        let ratio = u64::try_from(
+            (u128::from(elapsed) * u128::from(crate::constants::PARTS_PER_MILLION))
+                .div_ceil(u128::from(reference)),
+        )
+        .unwrap_or(u64::MAX);
         self.state.ratio_ppm = if self.state.observations == 0 {
             ratio
         } else {
@@ -337,7 +358,7 @@ impl CostModelProvider for CalibratedCosts {
     }
     fn restore_state(&mut self, data: Option<&[u8]>) -> Result<()> {
         let data = data.ok_or_else(|| Error::invalid("cost calibration checkpoint required"))?;
-        if data.len() > 4 * 1024 * 1024 {
+        if data.len() > MAX_CHECKPOINT_BYTES {
             return Err(Error::invalid("cost checkpoint exceeds budget"));
         }
         let saved: Calibration =

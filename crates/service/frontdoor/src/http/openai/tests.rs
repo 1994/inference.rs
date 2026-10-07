@@ -13,7 +13,7 @@ use crate::{RuntimeHandle, router_with_text};
 fn fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = infer_models::QwenPackage::open(&root, ModelId::ONE).unwrap();
+    let mut package = infer_models::ModelPackage::open(&root, ModelId::ONE).unwrap();
     let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
     let model = backend.model().clone();
     let assets = Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());

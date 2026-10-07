@@ -115,7 +115,7 @@ impl OutputTicket {
         Some(result)
     }
     pub const fn pending(&self, index: usize) -> bool {
-        index < 64 && self.pending & (1_u64 << index) != 0
+        index < infer_gpu_api::MAX_SUBMISSION_BATCH && self.pending & (1_u64 << index) != 0
     }
     pub const fn done(&self) -> bool {
         self.pending == 0
@@ -155,7 +155,7 @@ impl OutputWorker {
         vocabulary: usize,
         placement: &infer_core::placement::ThreadPlacement,
     ) -> Result<Self> {
-        if batch == 0 || batch > 64 {
+        if batch == 0 || batch > infer_gpu_api::MAX_SUBMISSION_BATCH {
             return Err(Error::invalid("output batch must fit completion bitset"));
         }
         let shared = Arc::new(Shared {

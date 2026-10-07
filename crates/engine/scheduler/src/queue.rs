@@ -8,6 +8,9 @@ use infer_core::{Error, ErrorCode, RequestId, Result, StepId, map::BoundedMap};
 use infer_ir::ExecutionRole;
 use serde::{Deserialize, Serialize};
 
+/// Number of dispatchable execution phases (prefill, decode, forward) counted by the queue.
+const PHASE_COUNT: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum BlockedOn {
     Memory,
@@ -102,7 +105,7 @@ pub struct RequestQueue {
     wait_expiry: Index<(u64, RequestId)>,
     waiters: Index<(BlockedOn, u64, RequestId)>,
     flights: Index<(StepId, RequestId)>,
-    phases: [usize; 3],
+    phases: [usize; PHASE_COUNT],
     running: usize,
     cancelling: usize,
 }
@@ -132,7 +135,7 @@ impl RequestQueue {
             hard_expiry: Index::new(capacity, (0, RequestId::ONE))?,
             wait_expiry: Index::new(capacity, (0, RequestId::ONE))?,
             waiters: Index::new(capacity, (BlockedOn::Memory, 0, RequestId::ONE))?,
-            phases: [0; 3],
+            phases: [0; PHASE_COUNT],
             running: 0,
             cancelling: 0,
         })

@@ -26,7 +26,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         record: bool,
     ) -> Result<()> {
         if observation.work.is_empty()
-            || observation.work.len() > self.config.max_batch
+            || observation.work.len() > self.config.max_num_seqs
             || observation.work.iter().any(|q| {
                 q.program != self.program.id
                     || q.backend != self.program.backend

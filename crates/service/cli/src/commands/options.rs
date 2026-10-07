@@ -9,8 +9,8 @@ pub struct ServeOptions {
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
 }
 #[derive(clap::Args)]
 pub struct RunOptions {
@@ -22,8 +22,8 @@ pub struct RunOptions {
     pub model: Option<PathBuf>,
     #[arg(long, conflicts_with = "model")]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
     #[arg(long)]
     pub op_trace: Option<PathBuf>,
     #[arg(long)]
@@ -47,16 +47,16 @@ pub struct VerifyOptions {
     pub reference: Option<PathBuf>,
     #[arg(long, requires = "reference")]
     pub candidate: Option<PathBuf>,
-    #[arg(long, default_value_t = 1e-5)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_ATOL)]
     pub atol: f64,
-    #[arg(long, default_value_t = 1e-5)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_RTOL)]
     pub rtol: f64,
     #[arg(long, conflicts_with = "reference", requires = "golden")]
     pub package: Option<PathBuf>,
     #[arg(long, requires = "package")]
     pub golden: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
 }
 #[derive(clap::Args)]
 pub struct ReplayOptions {
@@ -74,8 +74,8 @@ pub struct ReplayOptions {
     pub model: Option<PathBuf>,
     #[arg(long, conflicts_with = "model")]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
 }
 #[derive(clap::Args)]
 pub struct ProfileOptions {
@@ -87,27 +87,27 @@ pub struct ProfileOptions {
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
 }
 #[derive(clap::Args)]
 pub struct BenchmarkOptions {
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_BENCHMARK_REQUESTS)]
     pub requests: usize,
-    #[arg(long, default_value_t = 16)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_BENCHMARK_INPUT_TOKENS)]
     pub input_tokens: usize,
-    #[arg(long, default_value_t = 16)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_BENCHMARK_OUTPUT_TOKENS)]
     pub output_tokens: usize,
-    #[arg(long, default_value_t = 1_000_000)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_TTFT_SLO_US)]
     pub ttft_slo_us: u64,
-    #[arg(long, default_value_t = 100_000)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_TPOT_SLO_US)]
     pub tpot_slo_us: u64,
     #[arg(long)]
     pub output: Option<PathBuf>,
     #[arg(long)]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
 }
 #[derive(clap::Args)]
 pub struct CompareOptions {
@@ -117,7 +117,7 @@ pub struct CompareOptions {
     pub candidate: PathBuf,
     #[arg(long)]
     pub correctness_passed: bool,
-    #[arg(long, default_value_t = 0.05)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_P99_REGRESSION)]
     pub max_p99_regression: f64,
 }
 #[derive(clap::Args)]
@@ -126,19 +126,19 @@ pub struct InspectModelOptions {
     pub config: PathBuf,
     #[arg(long)]
     pub index: Option<PathBuf>,
-    #[arg(long, default_value_t = 4096)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_CONTEXT_TOKENS)]
     pub context_tokens: usize,
     #[arg(long, default_value_t = 1)]
     pub sequences: usize,
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_DEVICE_MEMORY_GIB)]
     pub device_memory_gib: u64,
 }
 #[derive(clap::Args)]
 pub struct AgentOptions {
     #[arg(long)]
     pub package: Option<PathBuf>,
-    #[arg(long, alias = "host-memory-mib", default_value_t = 512)]
-    pub device_memory_mib: u64,
+    #[arg(long, default_value_t = 0)]
+    pub host_memory_mib: u64,
     #[arg(long, default_value_t = 0)]
     pub probe_memory_mib: u64,
 }
@@ -148,8 +148,8 @@ pub struct InspectPackageOptions {
     pub package: PathBuf,
     /// Fail inspection when resident weights exceed this optional budget.
     #[arg(long)]
-    pub device_memory_mib: Option<u64>,
-    #[arg(long, default_value_t = 4)]
+    pub host_memory_mib: Option<u64>,
+    #[arg(long, default_value_t = crate::constants::DEFAULT_STAGING_MIB)]
     pub staging_memory_mib: usize,
     /// Inspect expanded F32 storage instead of the source storage format.
     #[arg(long)]

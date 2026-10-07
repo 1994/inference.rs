@@ -79,7 +79,7 @@ pub fn recompute_plan_into(
         .find(|item| item.request == focus)
         .ok_or_else(|| Error::invariant("preemption focus is not ready"))?;
     let cost = costs.estimate(&[item.cost_query])?;
-    let memory_blocked = cost.state_pages > resources.free_state_pages
+    let memory_blocked = cost.num_gpu_blocks > resources.free_state_pages
         || cost.logical_pages > resources.free_logical_pages
         || cost.state_bytes > resources.free_state_bytes;
     let execution_blocked = [

@@ -17,10 +17,21 @@ use observation::HostObservations;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, collections::VecDeque, time::Instant};
 
+/// One mebibyte in bytes, for readable budget expressions.
+const MIB: u64 = 1024 * 1024;
+/// Default host memory budget in bytes (512 MiB).
+const DEFAULT_MEMORY_BYTES: u64 = 512 * MIB;
+/// Default number of tokens stored in one paged row block.
+const DEFAULT_PAGE_TOKENS: usize = 16;
+/// Default number of operation traces retained before the oldest is dropped.
+const DEFAULT_TRACE_CAPACITY: usize = 8192;
+/// Default prefix-cache budget in bytes (16 MiB).
+const DEFAULT_PREFIX_CACHE_BYTES: u64 = 16 * MIB;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
     pub memory_bytes: u64,
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub trace_capacity: usize,
     pub prefix_cache_bytes: u64,
     pub probe_bytes: u64,
@@ -28,10 +39,10 @@ pub struct HostConfig {
 impl Default for HostConfig {
     fn default() -> Self {
         Self {
-            memory_bytes: 512 * 1024 * 1024,
-            page_tokens: 16,
-            trace_capacity: 8192,
-            prefix_cache_bytes: 16 * 1024 * 1024,
+            memory_bytes: DEFAULT_MEMORY_BYTES,
+            block_size: DEFAULT_PAGE_TOKENS,
+            trace_capacity: DEFAULT_TRACE_CAPACITY,
+            prefix_cache_bytes: DEFAULT_PREFIX_CACHE_BYTES,
             probe_bytes: 0,
         }
     }
@@ -86,16 +97,17 @@ impl Sequence {
             } else {
                 vec![]
             },
+            tokens: Vec::new(),
         }
     }
 }
 fn publish_prefix(
     prefixes: &mut PrefixCache<Sequence>,
     sequence: &Sequence,
-    page_tokens: usize,
+    block_size: usize,
     cache_bytes: u64,
 ) -> Result<()> {
-    if sequence.tokens.len().is_multiple_of(page_tokens) && cache_bytes > 0 {
+    if sequence.tokens.len().is_multiple_of(block_size) && cache_bytes > 0 {
         let bytes = sequence_bytes(sequence);
         if !prefixes.contains(&sequence.tokens) {
             prefixes.insert(sequence.tokens.clone(), sequence.clone(), bytes)?;
@@ -116,10 +128,10 @@ fn sequence_bytes(sequence: &Sequence) -> u64 {
         + sequence
             .hidden
             .iter()
-            .map(|r| r.len() as u64 * 4)
+            .map(|r| r.len() as u64 * crate::constants::F32_BYTES_U64)
             .sum::<u64>()
-        + sequence.tokens.len() as u64 * 4
-        + sequence.logits.len() as u64 * 4
+        + sequence.tokens.len() as u64 * crate::constants::TOKEN_BYTES_U64
+        + sequence.logits.len() as u64 * crate::constants::F32_BYTES_U64
 }
 
 fn validate_checkpoint_tensors(sequence: &Sequence, expected: &Sequence) -> Result<()> {

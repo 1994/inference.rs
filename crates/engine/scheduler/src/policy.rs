@@ -7,6 +7,11 @@ use infer_ir::{
 };
 use infer_spi::{CostModelProvider, SchedulingPolicy};
 
+/// Largest accepted `SchedulerConfig::fair_quantum_tokens`.
+const MAX_FAIR_QUANTUM_TOKENS: usize = 128;
+/// Largest accepted `SchedulerConfig::max_planning_probes`.
+const MAX_PLANNING_PROBES: usize = 65_536;
+
 mod packing;
 pub use packing::PackingWorkspace;
 #[derive(Debug, Clone, Default)]
@@ -18,12 +23,12 @@ pub fn validate_scheduler(c: &SchedulerConfig) -> Result<()> {
     if c.prefill_chunk_tokens == 0
         || c.forward_chunk_tokens == 0
         || c.fair_quantum_tokens == 0
-        || c.fair_quantum_tokens > 128
+        || c.fair_quantum_tokens > MAX_FAIR_QUANTUM_TOKENS
         || c.max_wait_us == 0
-        || c.urgent_budget_percent > 100
+        || c.urgent_budget_percent > crate::constants::PERCENT
         || c.max_singleton_gpu_us == 0
         || c.max_planning_probes == 0
-        || c.max_planning_probes > 65536
+        || c.max_planning_probes > MAX_PLANNING_PROBES
     {
         return Err(Error::invalid("invalid micro scheduler configuration"));
     }
@@ -42,10 +47,10 @@ const fn hard_limit(cost: CostEstimate, r: &ResourceSnapshot) -> Option<(DeferRe
             cost.logical_pages as u64,
             r.free_logical_pages as u64,
         ))
-    } else if cost.state_pages > r.free_state_pages {
+    } else if cost.num_gpu_blocks > r.free_state_pages {
         Some((
             DeferReason::StateCapacity,
-            cost.state_pages as u64,
+            cost.num_gpu_blocks as u64,
             r.free_state_pages as u64,
         ))
     } else if cost.state_bytes > r.free_state_bytes {
@@ -103,7 +108,11 @@ pub fn service_charge(us: u64, weight: u32) -> u64 {
     if weight == 0 {
         return u64::MAX;
     }
-    u64::try_from((u128::from(us) * 1_000_000).div_ceil(u128::from(weight))).unwrap_or(u64::MAX)
+    u64::try_from(
+        (u128::from(us) * u128::from(crate::constants::PARTS_PER_MILLION))
+            .div_ceil(u128::from(weight)),
+    )
+    .unwrap_or(u64::MAX)
 }
 #[derive(Clone, Copy)]
 struct Priority {
@@ -185,7 +194,7 @@ fn priority(
     let wait = now.saturating_sub(item.last_service_us);
     let slack = slack(item, now);
     let urgent = slack.is_some_and(|s| s <= i64::try_from(r.gpu_budget_us).unwrap_or(i64::MAX))
-        && (u128::from(urgent_used) * 100)
+        && (u128::from(urgent_used) * u128::from(crate::constants::PERCENT))
             < u128::from(r.gpu_budget_us) * u128::from(r.scheduler.urgent_budget_percent);
     let (class, reason) = if wait >= r.scheduler.max_wait_us {
         (0, SelectionReason::Aging)

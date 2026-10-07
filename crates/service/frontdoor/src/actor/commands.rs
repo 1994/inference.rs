@@ -1,19 +1,22 @@
 //! Commands responsibilities.
-use super::{Command, RuntimeActor};
+use super::{Command, DEFERRED_QUEUE_CAPACITY, RuntimeActor, STOP_WAITER_CAPACITY};
 use infer_core::{Error, ErrorCode};
 use infer_runtime::EngineOutput;
 use infer_spi::BackendProvider;
 use std::sync::mpsc::TryRecvError;
 
+/// Maximum commands drained from one lane per scheduling pass.
+const COMMAND_DRAIN_BATCH: usize = 64;
+
 impl<B: BackendProvider> RuntimeActor<B> {
     pub(super) fn receive_commands(&mut self, generated: &mut Vec<EngineOutput>) {
-        for _ in 0..64 {
+        for _ in 0..COMMAND_DRAIN_BATCH {
             match self.control.try_recv() {
                 Ok(command) => self.handle_command(command, generated),
                 Err(_) => break,
             }
         }
-        for _ in 0..64 {
+        for _ in 0..COMMAND_DRAIN_BATCH {
             let command = self
                 .deferred
                 .pop_front()
@@ -24,7 +27,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
             self.handle_command(command, generated);
         }
         // Move at most one bounded ingress batch out of the bulk lane; control remains independent.
-        while self.deferred.len() < 256 {
+        while self.deferred.len() < DEFERRED_QUEUE_CAPACITY {
             match self.receiver.try_recv() {
                 Ok(command) => self.deferred.push_back(command),
                 Err(TryRecvError::Disconnected) => {
@@ -117,7 +120,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
             }
             Command::Stop { reply } => {
                 self.stopping = true;
-                if self.stop_replies.len() == 256 {
+                if self.stop_replies.len() == STOP_WAITER_CAPACITY {
                     let _ = reply.send(Err(Error::new(
                         ErrorCode::Capacity,
                         "shutdown waiter capacity exhausted",

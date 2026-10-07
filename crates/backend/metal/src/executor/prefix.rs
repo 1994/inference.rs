@@ -15,7 +15,7 @@ impl MetalBackend {
                     b,
                     &s.tensors[id],
                     0,
-                    usize::try_from(b.length() / 4)
+                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
             }
@@ -40,7 +40,7 @@ impl MetalBackend {
         remaining_bytes: u64,
     ) -> Result<Option<CachedPrefix>> {
         if self.config.prefix_cache_bytes == 0
-            || !tokens.len().is_multiple_of(self.config.page_tokens)
+            || !tokens.len().is_multiple_of(self.config.block_size)
             || self.kv.contains_prefix_where(tokens, |cache| {
                 s.readout != infer_ir::OutputReadout::Full
                     || cache.readout == infer_ir::OutputReadout::Full
@@ -56,7 +56,7 @@ impl MetalBackend {
                 .ok_or_else(|| Error::invalid("prefix snapshot overflow"))?;
         }
         size = size
-            .checked_add(self.kv_block_bytes * (tokens.len() / self.config.page_tokens) as u64)
+            .checked_add(self.kv_block_bytes * (tokens.len() / self.config.block_size) as u64)
             .ok_or_else(|| Error::invalid("prefix snapshot overflow"))?;
         if size > remaining_bytes {
             return Ok(None);
@@ -66,7 +66,7 @@ impl MetalBackend {
             .iter()
             .map(|(id, b)| {
                 let snapshot = self.gpu.zeros(
-                    usize::try_from(b.length() / 4)
+                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
                 MetalDevice::copy(
@@ -74,7 +74,7 @@ impl MetalBackend {
                     b,
                     &snapshot,
                     0,
-                    usize::try_from(b.length() / 4)
+                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
                 Ok((*id, snapshot))
@@ -87,7 +87,7 @@ impl MetalBackend {
         Ok(Some(CachedPrefix {
             readout: s.readout,
             tokens: tokens.to_vec(),
-            blocks: s.blocks[..tokens.len() / self.config.page_tokens].to_vec(),
+            blocks: s.blocks[..tokens.len() / self.config.block_size].to_vec(),
             tensors,
             hidden,
             logits,

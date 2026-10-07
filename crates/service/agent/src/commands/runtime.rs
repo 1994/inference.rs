@@ -1,6 +1,7 @@
 use super::{NoParams, add, object};
+use crate::constants::QUEUE_WAIT_US;
 use crate::{AgentBackend, AgentContext, registry::CommandEffect, registry::CommandRegistry};
-use infer_core::{RequestId, Result};
+use infer_core::{ErrorCode, RequestId, Result};
 use infer_ir::CanonicalRequest;
 use infer_runtime::ReplayAction;
 use serde::Deserialize;
@@ -119,17 +120,58 @@ fn inspect<B: AgentBackend>(context: &mut AgentContext<B>, _: NoParams) -> Value
     json!(context.engine.inspect())
 }
 fn query<B: AgentBackend>(context: &mut AgentContext<B>, _: NoParams) -> Value {
-    json!({"program":context.engine.program(),"requests":context.engine.request_records().collect::<Vec<_>>()})
+    json!({
+        "program": context.engine.program(),
+        "requests": context.engine.request_records().collect::<Vec<_>>(),
+        "pending": context.pending.iter().map(|(r, _)| r.id).collect::<Vec<_>>(),
+        "expired": context.expired,
+    })
 }
 fn submit<B: AgentBackend>(
     context: &mut AgentContext<B>,
     request: CanonicalRequest,
 ) -> Result<Value> {
-    context.engine.submit(request)?;
-    Ok(json!({"accepted":true}))
+    match context.engine.submit(request.clone()) {
+        Ok(()) => Ok(json!({"accepted":true})),
+        // A full device is a transient condition: queue instead of failing the request.
+        Err(error) if error.code == ErrorCode::Capacity => {
+            context.pending.push_back((request, None));
+            Ok(json!({"accepted":true,"queued":true}))
+        }
+        Err(error) => Err(error),
+    }
 }
 fn tick<B: AgentBackend>(context: &mut AgentContext<B>, params: TickParams) -> Result<Value> {
+    // Drain queued submissions first, but keep the tick reply shape unchanged for clients.
+    let expired = retry_pending(context, params.now_us)?;
+    context.expired.extend(expired);
     Ok(json!(context.engine.tick(params.now_us)?))
+}
+
+/// Retry queued submissions; drop the ones that waited past the configured budget.
+fn retry_pending<B: AgentBackend>(
+    context: &mut AgentContext<B>,
+    now_us: u64,
+) -> Result<Vec<RequestId>> {
+    let mut expired = Vec::new();
+    let mut kept: std::collections::VecDeque<(CanonicalRequest, Option<u64>)> =
+        std::collections::VecDeque::new();
+    while let Some((request, queued_at)) = context.pending.pop_front() {
+        let deadline = queued_at.unwrap_or(now_us);
+        if now_us.saturating_sub(deadline) > QUEUE_WAIT_US {
+            expired.push(request.id);
+            continue;
+        }
+        match context.engine.submit(request.clone()) {
+            Ok(()) => {}
+            Err(error) if error.code == ErrorCode::Capacity => {
+                kept.push_back((request, Some(deadline)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    context.pending = kept;
+    Ok(expired)
 }
 fn cancel<B: AgentBackend>(context: &mut AgentContext<B>, params: RequestParams) -> Result<Value> {
     Ok(json!(context.engine.cancel(params.request_id)?))

@@ -1,14 +1,15 @@
 # 实现状态
 
-Linux / NVIDIA CUDA 是首要生产目标：cuTile Rust 投影算子已在 RTX 5090 上验证并有 A/B 性能基线，完整执行器仍待接入；Metal 已有本机 GPU 执行。目标见[技术方案](technical-plan.md)，测量范围见[验证记录](../validation/index.md)。本文随代码更新。
+Linux / NVIDIA CUDA 是首要生产目标：cuTile Rust 整步设备图已在 RTX 5090 上运行真实 27B 模型，包含 GPU 辅助算子、MTP 批量验证与可选 FP8 KV，库级共享权重/独立请求加载入口及同步 BackendProvider / Engine 调度已通过真实模型验证，CLI/HTTP 服务、有界状态/图复用也已通过真实模型与双请求验收；Metal 已有本机 GPU 执行。目标见[技术方案](technical-plan.md)，测量范围见[验证记录](../validation/index.md)。本文随代码更新。
 
 ## 已实现
 
 | 模块 | 能力 |
 |---|---|
-| Foundation / SPI | typed owner/generation、arena/credit、有界事件；请求/模型/设备/执行 IR 与 15 类扩展接口 |
-| Package / Compiler | HF config/index、Safetensors payload/binding、分块 WeightLoadPlan、tokenizer/template；decoder/hybrid 编译与 shape/lifetime/scratch/kernel 选择 |
+| Foundation / SPI | typed owner/generation、arena/credit、有界事件；请求/模型/设备/执行 IR 与 15 类扩展接口；`ModelProvider` 以一份 `ImportedModel`（IR + 能力需求 + 精度策略 + 草稿头 + 模态）描述整个家族 |
+| Package / Compiler | HF config/index、Safetensors payload/binding、分块 WeightLoadPlan、tokenizer/template；模型 provider 注册表按 `architectures`/`model_type` 解析并拒绝重复认领；decoder/hybrid 编译与 shape/lifetime/scratch/kernel 选择 |
 | Backend | CUDA/Metal 分组能力；Metal F32/BF16/F16 权重、F32 计算与状态、分块 prefill、增量 decode、真实 completion 与 profile；CPU 对照仅在显式测试 feature 下可用 |
+| 多模态 / 图像 | Qwen3.5-VL 视觉塔全部由 cuTile kernel 实现（patch embed、轴向 RoPE、按图 packed 非因果 attention 与在线 softmax、tanh/erf GELU、merger）；`LoadedModel` 绑定视觉权重并把嵌入对齐到文本 hidden；smart-resize/归一化/merge 块序预处理与占位符展开、嵌入合并已接入请求路径；不支持的能力显式报错 |
 | State | 逻辑页事务、物理 StateRecipe、KvCacheManager、固定 BlockPool、prefix LRU/refcount/generation、tail COW/pin/rollback、checkpoint |
 | Scheduler | tenant/lifecycle 多队列、ReadyDelta/K 窗口、常驻 workspace、slack/WFQ/aging、混合 packing、多维预算、bounded cost probe/EWMA、独立校验与证据 |
 | Runtime | scheduler/device owner、共享增量输入、BatchArena/SPSC、两阶段确认、N+1 planning、异步 resource/output、取消/超时/隔离/排空、重算抢占、quiescent checkpoint/replay |
@@ -21,13 +22,13 @@ Linux / NVIDIA CUDA 是首要生产目标：cuTile Rust 投影算子已在 RTX 5
 
 | 范围 | 缺口 |
 |---|---|
-| NVIDIA / 目标模型 | CUDA driver 与 kernel、pinned transfer、stream/graph、量化，以及完整 Qwen3.8-27B / 5090 的正确性、profiling 与 SLO goodput |
+| NVIDIA / 目标模型 | 服务内 MTP、异步设备提交、prefill 辅助算子批量化/大型 GEMM 流水、设备采样、完整质量评估、CUPTI profiling、SLO goodput 与 H200 实测；5090 单流数据集对照见 [CUDA 报告](../validation/cuda-resident.md) |
 | CPU 性能 | 全线程与 native driver 分配 profile；生产 P99 与吞吐达标；物理 growth snapshot 的全状态刷新成本、非线性成本下的大 batch 尾延迟 |
 | Linux 放置 | Linux 原生与 NUMA 硬件运行证据；真实引擎 pool 驻留、迁核与性能影响（Mac 交叉编译仅证明可编译） |
 | 状态所有权 | 物理分配/淘汰决策统一到 scheduler ledger；异构状态组、分层 offload、远程 transfer |
 | Pipeline / PD | 多 compute flight 的 hazard/fence 验收、多 GPU、远程 prefill/decode 分离与传输协议 |
-| 模型与 feature | MoE、多模态/encoder、任务专项 head 与质量、其他精度、speculation、grammar/tool/LoRA |
-| 扩展与制品 | 完整 provider 组合、动态 C ABI/WASM loader、Python/AOT 集成、正式签名 bundle |
+| 模型与 feature | MoE、视频/音频 encoder、任务专项 head 与质量、其他精度、speculation、grammar/tool/LoRA；图像视觉塔已实现，但多模态请求尚未接入 Engine/Scheduler 调度路径（现由 `cuda-multimodal-generate` 示例驱动 resident 程序），图像 MRoPE 三轴位置、decode delta 与旧 rope_scaling 导入已接通；视觉精度、RGB8 定点预处理和 attention 分块/SDPA 对比已完成，2B 从本仓库预处理到生成的 16/16 tokens（含 EOS）与官方 F32 完全一致，验收范围为关闭 DeepStack 的共享路径，详见 [CUDA README](../../crates/backend/cuda/README.md) |
+| 扩展与制品 | 从独立 crate 组合模型 provider、动态 C ABI/WASM loader、Python/AOT 集成、正式签名 bundle |
 | 服务集成 | 完整 OpenAI 协议（SSE、stop、tools、批量输入等）/Responses/gRPC、身份认证与生产配额、分布式 routing 与 state transfer adapter |
 | 观测与 Agent | CUPTI/counter、网络 exporter、自动根因与失败最小化、代码制品实验、重复测量与置信区间、远程 adapter 与持久实验仓库 |
 

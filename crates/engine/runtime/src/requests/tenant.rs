@@ -33,12 +33,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     .ok_or_else(|| Error::invariant("tenant token audit overflow"))?;
                 usage.pages = usage
                     .pages
-                    .checked_add(
-                        record
-                            .plan
-                            .reserved_tokens
-                            .div_ceil(self.config.page_tokens),
-                    )
+                    .checked_add(record.plan.reserved_tokens.div_ceil(self.config.block_size))
                     .ok_or_else(|| Error::invariant("tenant page audit overflow"))?;
             }
         }

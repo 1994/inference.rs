@@ -6,6 +6,15 @@ use std::{
     sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc,
 };
 
+/// Bounded command channel depth for snapshot and diagnostic commands.
+const COMMAND_CHANNEL_CAPACITY: usize = 258;
+/// Events drained per collector iteration before other work is serviced.
+const EVENT_DRAIN_QUANTUM: u64 = 128;
+/// Metadata commands drained per collector iteration before events are drained.
+const METADATA_DRAIN_QUANTUM: u64 = 64;
+/// Commands serviced per collector iteration before parking.
+const COMMAND_DRAIN_QUANTUM: usize = 64;
+
 pub struct CollectedSnapshot {
     pub window: ObservationWindow,
     pub parents: BTreeMap<u64, TraceContext>,
@@ -85,7 +94,7 @@ impl Collector {
             parents: AtomicUsize::new(0),
             parent_capacity,
         });
-        let (commands, receiver) = mpsc::sync_channel(258);
+        let (commands, receiver) = mpsc::sync_channel(COMMAND_CHANNEL_CAPACITY);
         let (metadata, metadata_receiver) = mpsc::sync_channel(parent_capacity * 2);
         let worker = shared.clone();
         let thread = std::thread::Builder::new()
@@ -309,12 +318,15 @@ impl CollectionState {
         shared: &Shared,
     ) {
         loop {
-            self.drain(self.drained.saturating_add(128));
+            self.drain(self.drained.saturating_add(EVENT_DRAIN_QUANTUM));
             let metadata_before = self.metadata_done;
-            self.metadata(metadata, self.metadata_done.saturating_add(64));
+            self.metadata(
+                metadata,
+                self.metadata_done.saturating_add(METADATA_DRAIN_QUANTUM),
+            );
             let metadata_progress = self.metadata_done != metadata_before;
             let mut commands = 0;
-            while commands < 64 {
+            while commands < COMMAND_DRAIN_QUANTUM {
                 let Ok(command) = receiver.try_recv() else {
                     break;
                 };

@@ -1,5 +1,6 @@
 //! Stable identities, lifecycle, bounded storage and allocation-free semantic events.
 pub mod arena;
+pub(crate) mod constants;
 pub mod credits;
 mod error;
 pub mod event;

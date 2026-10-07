@@ -82,7 +82,7 @@ fn malformed_header_bounds_duplicates_and_nonfinite_payload_are_rejected() {
 #[test]
 fn host_package_binds_payload_and_respects_budget() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+    let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
     assert!(
         package
             .manifest
@@ -116,7 +116,7 @@ fn qwen38_required_bindings_exist_in_pinned_official_index() {
         "../../../../examples/qwen3.8-27b/model.safetensors.index.json"
     ))
     .unwrap();
-    let graph = infer_compiler::dataflow::lower(&model).unwrap();
+    let graph = infer_model_recipes::decoder::lower(&model).unwrap();
     let expected: BTreeMap<_, _> = graph
         .tensors
         .iter()

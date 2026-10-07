@@ -41,8 +41,8 @@ impl WeightTarget for Target {
         Ok(())
     }
 }
-fn package() -> Result<QwenPackage> {
-    QwenPackage::open(
+fn package() -> Result<ModelPackage> {
+    ModelPackage::open(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny"),
         ModelId::ONE,
     )
@@ -145,7 +145,7 @@ fn changed_binding_metadata_is_rejected_before_target_allocation() -> Result<()>
     Ok(())
 }
 
-fn mixed_package() -> std::result::Result<QwenPackage, Box<dyn std::error::Error>> {
+fn mixed_package() -> std::result::Result<ModelPackage, Box<dyn std::error::Error>> {
     use std::collections::BTreeMap;
     let root = std::env::temp_dir().join(format!("infer-mixed-loader-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
@@ -178,7 +178,7 @@ fn mixed_package() -> std::result::Result<QwenPackage, Box<dyn std::error::Error
     bytes.extend(header);
     bytes.extend(payload);
     std::fs::write(root.join("model.safetensors"), bytes)?;
-    Ok(QwenPackage::open(root, ModelId::ONE)?)
+    Ok(ModelPackage::open(root, ModelId::ONE)?)
 }
 #[test]
 fn f32_upload_conversion_accounts_for_both_live_chunks()
@@ -217,5 +217,40 @@ fn f32_upload_conversion_accounts_for_both_live_chunks()
         assert_eq!(tensor.data, expected);
     }
     std::fs::remove_dir_all(p.root)?;
+    Ok(())
+}
+
+#[test]
+fn mapped_chunks_borrow_the_payload_and_enforce_bounds() -> Result<()> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen-hybrid-tiny/model.safetensors");
+    let mut file = SafetensorsFile::open(path)?;
+    let name = file
+        .tensors
+        .keys()
+        .next()
+        .ok_or_else(|| Error::invariant("fixture tensor missing"))?
+        .clone();
+    let expected = file.read_bytes(&name, u64::MAX)?;
+    let base = file.bytes(&name, u64::MAX)?.as_ptr();
+    let mut visited = 0usize;
+    file.visit_float_chunks(&name, 13, |offset, chunk| {
+        let offset = usize::try_from(offset).map_err(|_| Error::invalid("test offset"))?;
+        assert_eq!(chunk.as_ptr(), base.wrapping_add(offset));
+        assert_eq!(chunk, &expected[offset..offset + chunk.len()]);
+        visited += chunk.len();
+        Ok(())
+    })?;
+    assert_eq!(visited, expected.len());
+    assert_eq!(
+        file.bytes(&name, 0).err().map(|e| e.code),
+        Some(ErrorCode::Capacity)
+    );
+    assert!(file.bytes("missing tensor", u64::MAX).is_err());
+    file.tensors
+        .get_mut(&name)
+        .ok_or_else(|| Error::invariant("fixture tensor missing"))?
+        .data_offsets = [u64::MAX - 4, u64::MAX];
+    assert!(file.bytes(&name, u64::MAX).is_err());
     Ok(())
 }

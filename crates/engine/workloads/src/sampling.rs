@@ -2,6 +2,27 @@
 use infer_core::{Error, Result};
 use infer_ir::Sampling;
 
+/// Odd multiplier that mixes the request id into the seeded random state.
+const SEED_MIX_MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
+/// First avalanche multiplier applied to the mixed random state.
+const AVALANCHE_MULTIPLIER_A: u64 = 0xbf58_476d_1ce4_e5b9;
+/// Right shift applied before `AVALANCHE_MULTIPLIER_A`.
+const AVALANCHE_SHIFT_A: u32 = 30;
+/// Second avalanche multiplier applied to the mixed random state.
+const AVALANCHE_MULTIPLIER_B: u64 = 0x94d0_49bb_1331_11eb;
+/// Right shift applied before `AVALANCHE_MULTIPLIER_B`.
+const AVALANCHE_SHIFT_B: u32 = 27;
+/// Final xor-shift that folds the high random bits into the low bits.
+const AVALANCHE_SHIFT_C: u32 = 31;
+/// Number of mantissa bits kept when scaling the random state to the unit interval.
+const F64_MANTISSA_BITS: u32 = 53;
+/// Low random bits discarded so the kept mantissa bits align with an F64 mantissa.
+const F64_MANTISSA_DROP_BITS: u32 = 11;
+/// `seen` bit that requests the repetition penalty for a history token.
+const REPETITION_PENALTY_FLAG: u8 = 1;
+/// `seen` bit that requests the presence penalty for an already-generated token.
+const PRESENCE_PENALTY_FLAG: u8 = 2;
+
 #[derive(Default)]
 pub struct SamplingWorkspace {
     candidates: Vec<(usize, f32)>,
@@ -116,12 +137,12 @@ fn token(index: usize) -> Result<u32> {
 )]
 fn random(seed: u64, request: u64, position: usize) -> f64 {
     let mut x = seed
-        .wrapping_add(request.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+        .wrapping_add(request.wrapping_mul(SEED_MIX_MULTIPLIER))
         .wrapping_add(position as u64);
-    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^= x >> 31;
-    (x >> 11) as f64 / (1_u64 << 53) as f64
+    x = (x ^ (x >> AVALANCHE_SHIFT_A)).wrapping_mul(AVALANCHE_MULTIPLIER_A);
+    x = (x ^ (x >> AVALANCHE_SHIFT_B)).wrapping_mul(AVALANCHE_MULTIPLIER_B);
+    x ^= x >> AVALANCHE_SHIFT_C;
+    (x >> F64_MANTISSA_DROP_BITS) as f64 / (1_u64 << F64_MANTISSA_BITS) as f64
 }
 #[expect(
     clippy::cast_possible_truncation,
@@ -159,7 +180,13 @@ fn penalties(
     }
     scratch.seen.resize(scratch.candidates.len(), 0);
     scratch.seen.fill(0);
-    for (tokens, flag) in [(history.prompt, 1), (history.generated, 3)] {
+    for (tokens, flag) in [
+        (history.prompt, REPETITION_PENALTY_FLAG),
+        (
+            history.generated,
+            REPETITION_PENALTY_FLAG | PRESENCE_PENALTY_FLAG,
+        ),
+    ] {
         for token in tokens {
             let index =
                 usize::try_from(*token).map_err(|_| Error::invalid("history token overflow"))?;
@@ -171,14 +198,14 @@ fn penalties(
         }
     }
     for ((_, logit), seen) in scratch.candidates.iter_mut().zip(&scratch.seen) {
-        if seen & 1 != 0 {
+        if seen & REPETITION_PENALTY_FLAG != 0 {
             *logit = if *logit < 0.0 {
                 *logit * sampling.repetition_penalty
             } else {
                 *logit / sampling.repetition_penalty
             };
         }
-        if seen & 2 != 0 {
+        if seen & PRESENCE_PENALTY_FLAG != 0 {
             *logit -= sampling.presence_penalty;
         }
     }

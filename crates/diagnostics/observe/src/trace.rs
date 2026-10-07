@@ -14,24 +14,26 @@ pub struct TraceContext {
 impl TraceContext {
     #[must_use]
     pub fn valid(&self) -> bool {
-        valid_hex(&self.trace_id, 32) && valid_hex(&self.parent_span_id, 16)
+        valid_hex(&self.trace_id, crate::constants::TRACE_ID_HEX_LEN)
+            && valid_hex(&self.parent_span_id, crate::constants::SPAN_ID_HEX_LEN)
     }
     /// # Errors
     /// Returns invalid input for malformed W3C version-00 traceparent identifiers.
     pub fn parse(parent: &str) -> Result<Self> {
         let parts: Vec<_> = parent.split('-').collect();
-        if parts.len() != 4
+        if parts.len() != crate::constants::TRACEPARENT_FIELDS
             || parts[0] != "00"
-            || !valid_hex(parts[1], 32)
-            || !valid_hex(parts[2], 16)
-            || parts[3].len() != 2
+            || !valid_hex(parts[1], crate::constants::TRACE_ID_HEX_LEN)
+            || !valid_hex(parts[2], crate::constants::SPAN_ID_HEX_LEN)
+            || parts[3].len() != crate::constants::TRACEPARENT_FLAGS_HEX_LEN
             || !parts[3]
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err(Error::invalid("invalid version-00 traceparent"));
         }
-        let flags = u8::from_str_radix(parts[3], 16).map_err(|e| Error::invalid(e.to_string()))?;
+        let flags = u8::from_str_radix(parts[3], crate::constants::HEX_RADIX)
+            .map_err(|e| Error::invalid(e.to_string()))?;
         Ok(Self {
             trace_id: parts[1].into(),
             parent_span_id: parts[2].into(),
@@ -113,7 +115,7 @@ pub fn otlp(
             );
         }
         if let Some(span) = spans.get_mut(&event.object_id) {
-            span.events.push(json!({"name":event.kind.label(),"timeUnixNano":unix_origin_us.saturating_add(event.timestamp_us).saturating_mul(1000).to_string(),"attributes":[{"key":"infer.object_id","value":{"stringValue":event.object_id.to_string()}},{"key":"infer.correlation_id","value":{"stringValue":event.correlation_id.to_string()}}]}));
+            span.events.push(json!({"name":event.kind.label(),"timeUnixNano":unix_origin_us.saturating_add(event.timestamp_us).saturating_mul(crate::constants::NANOS_PER_MICROSECOND).to_string(),"attributes":[{"key":"infer.object_id","value":{"stringValue":event.object_id.to_string()}},{"key":"infer.correlation_id","value":{"stringValue":event.correlation_id.to_string()}}]}));
             if event.kind == EventKind::Finished {
                 span.end = Some(event.timestamp_us);
                 span.failed = event.arg0 > 2;
@@ -124,7 +126,7 @@ pub fn otlp(
         let end=span.end?;
         let hash=format!("{:x}",Sha256::digest(format!("{namespace}:{id}")));
         let parent=parents.get(&id);
-        Some(json!({"traceId":parent.map_or_else(||hash[..32].to_string(),|p|p.trace_id.clone()),"spanId":&hash[32..48],"parentSpanId":parent.map_or("",|p|p.parent_span_id.as_str()),"flags":u32::from(parent.is_none_or(|p|p.sampled)),"name":"infer.request","kind":2,"startTimeUnixNano":unix_origin_us.saturating_add(span.start).saturating_mul(1000).to_string(),"endTimeUnixNano":unix_origin_us.saturating_add(end).saturating_mul(1000).to_string(),"attributes":[{"key":"infer.request_id","value":{"stringValue":id.to_string()}},{"key":"infer.clock","value":{"stringValue":"runtime_logical"}}],"events":span.events,"status":{"code":if span.failed {2}else{1}}}))
+        Some(json!({"traceId":parent.map_or_else(||hash[..crate::constants::TRACE_ID_HEX_LEN].to_string(),|p|p.trace_id.clone()),"spanId":&hash[crate::constants::TRACE_ID_HEX_LEN..crate::constants::TRACE_ID_HEX_LEN + crate::constants::SPAN_ID_HEX_LEN],"parentSpanId":parent.map_or("",|p|p.parent_span_id.as_str()),"flags":u32::from(parent.is_none_or(|p|p.sampled)),"name":"infer.request","kind":2,"startTimeUnixNano":unix_origin_us.saturating_add(span.start).saturating_mul(crate::constants::NANOS_PER_MICROSECOND).to_string(),"endTimeUnixNano":unix_origin_us.saturating_add(end).saturating_mul(crate::constants::NANOS_PER_MICROSECOND).to_string(),"attributes":[{"key":"infer.request_id","value":{"stringValue":id.to_string()}},{"key":"infer.clock","value":{"stringValue":"runtime_logical"}}],"events":span.events,"status":{"code":if span.failed {2}else{1}}}))
     }).collect();
     json!({"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"infer"}}]},"scopeSpans":[{"scope":{"name":"infer.runtime","version":"0.1.0"},"spans":spans}]}]})
 }

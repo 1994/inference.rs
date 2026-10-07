@@ -68,7 +68,8 @@ impl<'a> HostObservations<'a> {
             outputs: node.outputs.clone(),
             states: node.states.clone(),
         });
-        let sample_bytes = self.hidden_size as u64 * 4 + size_of::<LayerProbe>() as u64;
+        let sample_bytes = self.hidden_size as u64 * crate::constants::F32_BYTES_U64
+            + size_of::<LayerProbe>() as u64;
         let probe_capacity =
             usize::try_from(self.config.probe_bytes / sample_bytes).unwrap_or(usize::MAX);
         if probe_capacity > 0

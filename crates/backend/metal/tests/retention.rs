@@ -3,18 +3,18 @@ use infer_backend_metal::{MetalBackend, MetalConfig, MetalKernels};
 use infer_core::{Error, ModelId, RequestId, Result, StateId};
 use infer_ir::{CanonicalRequest, OutputReadout, Pooling, PrecisionPlan, Workload, WorkloadOutput};
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use std::{path::Path, time::Duration, time::Instant};
 
 fn backend(cache: u64) -> Result<MetalBackend> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = QwenPackage::open(root, ModelId::ONE)?;
+    let mut package = ModelPackage::open(root, ModelId::ONE)?;
     MetalBackend::from_package(
         &mut package,
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             kv_cache_blocks: Some(16),
             prefix_cache_bytes: cache,
             ..Default::default()

@@ -4,6 +4,34 @@ use infer_core::{ProgramId, RequestId, StepId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Default prefill chunk size in tokens when a scheduler is configured without overrides.
+const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
+/// Default decode/forward chunk size in tokens when a scheduler is configured without overrides.
+const DEFAULT_FORWARD_CHUNK_TOKENS: usize = 64;
+/// Default weighted-fair quantum in tokens granted to a ready request per turn.
+const DEFAULT_FAIR_QUANTUM_TOKENS: usize = 8;
+/// Default maximum time a request may wait before aging applies, in microseconds.
+const DEFAULT_MAX_WAIT_US: u64 = 20_000;
+/// Default share of the planning budget reserved for urgent-SLO requests, in percent.
+const DEFAULT_URGENT_BUDGET_PERCENT: u32 = 75;
+/// Default upper bound on a soft execution quantum for an otherwise feasible singleton token,
+/// in microseconds.
+const DEFAULT_MAX_SINGLETON_GPU_US: u64 = 1_000_000;
+/// Default number of deterministic packing trials attempted per scheduling decision.
+const DEFAULT_MAX_PLANNING_PROBES: usize = 4096;
+/// Default maximum number of retained cost profiles.
+const DEFAULT_MAX_PROFILES: usize = 512;
+/// Default EWMA alpha applied to new cost observations, in percent.
+const DEFAULT_EWMA_ALPHA_PERCENT: u32 = 25;
+/// Default safety margin added to predicted cost, in percent.
+const DEFAULT_SAFETY_MARGIN_PERCENT: u32 = 20;
+/// Default maximum concurrently active requests allowed for a tenant.
+const DEFAULT_MAX_ACTIVE_REQUESTS: usize = 256;
+/// Default maximum reserved tokens allowed for a tenant.
+const DEFAULT_MAX_RESERVED_TOKENS: usize = 65536;
+/// Default maximum state pages allowed for a tenant.
+const DEFAULT_MAX_STATE_PAGES: usize = 4096;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SchedulerConfig {
@@ -20,13 +48,13 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            prefill_chunk_tokens: 32,
-            forward_chunk_tokens: 64,
-            fair_quantum_tokens: 8,
-            max_wait_us: 20_000,
-            urgent_budget_percent: 75,
-            max_singleton_gpu_us: 1_000_000,
-            max_planning_probes: 4096,
+            prefill_chunk_tokens: DEFAULT_PREFILL_CHUNK_TOKENS,
+            forward_chunk_tokens: DEFAULT_FORWARD_CHUNK_TOKENS,
+            fair_quantum_tokens: DEFAULT_FAIR_QUANTUM_TOKENS,
+            max_wait_us: DEFAULT_MAX_WAIT_US,
+            urgent_budget_percent: DEFAULT_URGENT_BUDGET_PERCENT,
+            max_singleton_gpu_us: DEFAULT_MAX_SINGLETON_GPU_US,
+            max_planning_probes: DEFAULT_MAX_PLANNING_PROBES,
         }
     }
 }
@@ -41,7 +69,7 @@ pub struct CostQuery {
     pub fallback_per_token_us: u64,
     pub workspace_bytes: u64,
     /// Additional resources only: already-reserved KV must not be charged twice.
-    pub state_pages: usize,
+    pub num_gpu_blocks: usize,
     pub state_bytes: u64,
     pub transfer_us: u64,
     pub encoder_us: u64,
@@ -52,7 +80,7 @@ pub struct CostQuery {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageGrowth {
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub allocated_pages: usize,
     pub bytes_per_page: u64,
     pub cow_tail: bool,
@@ -60,9 +88,9 @@ pub struct PageGrowth {
 impl PageGrowth {
     #[must_use]
     pub fn required_pages(&self, end_tokens: usize) -> Option<usize> {
-        (self.page_tokens > 0).then(|| {
+        (self.block_size > 0).then(|| {
             end_tokens
-                .div_ceil(self.page_tokens)
+                .div_ceil(self.block_size)
                 .saturating_sub(self.allocated_pages)
                 .saturating_add(usize::from(self.cow_tail))
         })
@@ -86,7 +114,7 @@ impl CostQuery {
             context_tokens,
             fallback_per_token_us: unit.gpu_us,
             workspace_bytes: unit.workspace_bytes,
-            state_pages: unit.state_pages,
+            num_gpu_blocks: unit.num_gpu_blocks,
             state_bytes: unit.state_bytes,
             transfer_us: unit.transfer_us,
             encoder_us: unit.encoder_us,
@@ -136,9 +164,9 @@ impl Default for CostModelConfig {
     fn default() -> Self {
         Self {
             adaptive: true,
-            max_profiles: 512,
-            ewma_alpha_percent: 25,
-            safety_margin_percent: 20,
+            max_profiles: DEFAULT_MAX_PROFILES,
+            ewma_alpha_percent: DEFAULT_EWMA_ALPHA_PERCENT,
+            safety_margin_percent: DEFAULT_SAFETY_MARGIN_PERCENT,
         }
     }
 }
@@ -182,9 +210,9 @@ pub struct TenantQuota {
 impl Default for TenantQuota {
     fn default() -> Self {
         Self {
-            max_active_requests: 256,
-            max_reserved_tokens: 65536,
-            max_state_pages: 4096,
+            max_active_requests: DEFAULT_MAX_ACTIVE_REQUESTS,
+            max_reserved_tokens: DEFAULT_MAX_RESERVED_TOKENS,
+            max_state_pages: DEFAULT_MAX_STATE_PAGES,
             weight: None,
         }
     }

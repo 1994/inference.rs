@@ -5,23 +5,31 @@ use infer_core::{
 };
 use infer_ir::StateKind;
 
+/// Floor on the request capacity granted by `SequenceStateManager::new`, so small
+/// page pools still provision enough sequence/owner ledger slots for the scheduler.
+const MIN_REQUEST_CAPACITY: usize = 256;
+
 impl SequenceStateManager {
     ///
     /// # Errors
     /// Returns an invalid-input error for a zero state capacity or page size.
-    pub fn new(total_pages: usize, page_tokens: usize) -> Result<Self> {
-        Self::with_capacity(total_pages, page_tokens, total_pages.max(256))
+    pub fn new(total_pages: usize, block_size: usize) -> Result<Self> {
+        Self::with_capacity(
+            total_pages,
+            block_size,
+            total_pages.max(MIN_REQUEST_CAPACITY),
+        )
     }
     /// # Errors
     /// Rejects invalid dimensions or inability to allocate the fixed page and ownership ledgers.
-    pub fn with_capacity(total_pages: usize, page_tokens: usize, requests: usize) -> Result<Self> {
-        if total_pages == 0 || page_tokens == 0 {
+    pub fn with_capacity(total_pages: usize, block_size: usize, requests: usize) -> Result<Self> {
+        if total_pages == 0 || block_size == 0 {
             return Err(Error::invalid("state capacity/page size must be positive"));
         }
         Ok(Self {
             spare_tables: Vec::with_capacity(requests),
             total_pages,
-            page_tokens,
+            block_size,
             ids: IdAllocator::default(),
             pages: BoundedMap::new(total_pages)?,
             sequences: BoundedMap::new(requests)?,
@@ -43,7 +51,7 @@ impl SequenceStateManager {
             state
                 .pages
                 .try_reserve_exact(
-                    state.capacity_tokens.div_ceil(self.page_tokens) - state.pages.len(),
+                    state.capacity_tokens.div_ceil(self.block_size) - state.pages.len(),
                 )
                 .map_err(|e| Error::new(ErrorCode::Capacity, e.to_string()))?;
         }
@@ -68,7 +76,7 @@ impl SequenceStateManager {
                 "state owner pool exhausted",
             ));
         }
-        let required = capacity.div_ceil(self.page_tokens);
+        let required = capacity.div_ceil(self.block_size);
         let mut pages = self.spare_tables.pop().unwrap_or_default();
         pages
             .try_reserve_exact(required)
@@ -105,14 +113,14 @@ impl SequenceStateManager {
             }
             let state = self.get(id)?;
             if tokens > state.capacity_tokens
-                || state.pages.capacity() < tokens.div_ceil(self.page_tokens)
+                || state.pages.capacity() < tokens.div_ceil(self.block_size)
             {
                 return Err(Error::invalid("state growth exceeds prepared capacity"));
             }
             total = total
                 .checked_add(
                     tokens
-                        .div_ceil(self.page_tokens)
+                        .div_ceil(self.block_size)
                         .saturating_sub(state.pages.len()),
                 )
                 .ok_or_else(|| Error::invalid("logical page growth overflow"))?;
@@ -133,7 +141,7 @@ impl SequenceStateManager {
                 .get_mut(&id)
                 .ok_or_else(|| Error::invariant("validated state missing"))?;
             let count = tokens
-                .div_ceil(self.page_tokens)
+                .div_ceil(self.block_size)
                 .saturating_sub(state.pages.len());
             for raw in range.by_ref().take(count) {
                 let page = StatePageId::new(raw)?;
@@ -175,7 +183,7 @@ impl SequenceStateManager {
                 "state owner pool exhausted",
             ));
         }
-        let count = tokens.div_ceil(self.page_tokens);
+        let count = tokens.div_ceil(self.block_size);
         let shared = prefix
             .and_then(|key| {
                 self.prefixes
@@ -228,7 +236,7 @@ impl SequenceStateManager {
                 },
             )?;
         }
-        let committed_tokens = shared.len() * self.page_tokens;
+        let committed_tokens = shared.len() * self.block_size;
         let mut pages = self.spare_tables.pop().unwrap_or_default();
         pages.extend(shared);
         pages.extend(fresh);

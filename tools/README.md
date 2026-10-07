@@ -24,3 +24,5 @@ make clean-artifacts                              # 实际删除
 ```
 
 清理会移除历史验收输出、调试日志与可重建的 golden Python 环境，但保留文档链接的证据及其 summary 日志、顶层模型文件与模型 / tokenizer 包。参考导出环境按样例说明重新创建；普通 Rust / Metal 验证直接使用已提交的 golden。
+
+`package/`：调用根 build.rs 契约与 cargo-zigbuild 的 Linux/CUDA、macOS/Metal 跨平台 release 编译、归档完整性校验和解压后验收，由根 Makefile 调用。

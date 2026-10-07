@@ -11,18 +11,27 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[arg(long, global = true, value_enum, default_value = "auto")]
     pub(super) backend: backend::BackendChoice,
-    /// Physical GPU KV block count; automatic when omitted.
+    /// Number of GPU blocks to use, overriding the profiled count; automatic when omitted.
     #[arg(long, global = true)]
-    pub(super) kv_cache_blocks: Option<usize>,
-    /// Tokens per KV block and logical state page.
+    pub(super) num_gpu_blocks_override: Option<usize>,
+    /// Token block size for contiguous chunks of tokens.
     #[arg(long, global = true)]
-    pub(super) kv_page_tokens: Option<usize>,
-    /// Maximum token rows per native GPU prefill chunk.
+    pub(super) block_size: Option<usize>,
+    /// Maximum number of tokens batched together per step.
     #[arg(long, global = true)]
-    pub(super) prefill_chunk_tokens: Option<usize>,
+    pub(super) max_num_batched_tokens: Option<usize>,
     /// Bounded temporary weight upload memory, independent of device residency.
     #[arg(long, global = true)]
     pub(super) upload_staging_mib: Option<usize>,
+    /// Keep the conservative built-in tile instead of measuring the best one per projection.
+    #[arg(long, global = true)]
+    pub(super) no_autotune: bool,
+    /// Draft tokens proposed per step by the MTP head; 0 disables speculation.
+    #[arg(long, global = true, default_value_t = 0)]
+    pub(super) num_speculative_tokens: usize,
+    /// Fraction of device memory the engine may use, as in vLLM (0 disables the cap).
+    #[arg(long, global = true, default_value_t = crate::constants::DEFAULT_GPU_MEMORY_UTILIZATION)]
+    pub(super) gpu_memory_utilization: f64,
     #[command(subcommand)]
     pub(super) command: Command,
 }

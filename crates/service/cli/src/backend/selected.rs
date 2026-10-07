@@ -2,7 +2,12 @@
 use super::metal;
 #[cfg(feature = "test-backends")]
 use super::testing;
-use super::{BackendChoice, Selection, cuda, metal_available, resolve};
+use super::{BackendChoice, Selection, cuda, cuda_available, metal_available, resolve};
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::{
+    executor::{CudaBackend, CudaTicket},
+    registry::CudaKernels,
+};
 #[cfg(feature = "test-backends")]
 use infer_backend_host::{HostBackend, HostKernels, HostTicket};
 #[cfg(target_os = "macos")]
@@ -17,7 +22,13 @@ use infer_ir::{
 use infer_kernel_api::KernelRegistry;
 use infer_spi::BackendProvider;
 
+/// Nanoseconds in one microsecond as `f64`, for Chrome trace timestamps in microseconds.
+#[cfg(feature = "test-backends")]
+const NANOS_PER_MICROSECOND_F64: f64 = 1000.0;
+
 pub enum SelectedBackend {
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    Cuda(Box<CudaBackend>),
     #[cfg(feature = "test-backends")]
     Reference(Box<ReferenceBackend>),
     #[cfg(feature = "test-backends")]
@@ -26,6 +37,8 @@ pub enum SelectedBackend {
     Metal(Box<MetalBackend>),
 }
 pub enum SelectedTicket {
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    Cuda(CudaTicket),
     #[cfg(feature = "test-backends")]
     Reference(ReferenceTicket),
     #[cfg(feature = "test-backends")]
@@ -35,6 +48,8 @@ pub enum SelectedTicket {
 }
 macro_rules! forward {
     ($s:expr,$method:ident $(,$arg:expr)*) => {match $s {
+        #[cfg(all(target_os = "linux", feature = "cuda"))]
+        Self::Cuda(b)=>b.$method($($arg),*),
         #[cfg(feature = "test-backends")]
         Self::Reference(b)=>b.$method($($arg),*),
         #[cfg(feature = "test-backends")]
@@ -52,6 +67,8 @@ impl SelectedBackend {
             Self::Host(b) => b.model(),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.model(),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(b) => b.model(),
         }
     }
     pub fn registry(&self) -> Result<KernelRegistry> {
@@ -63,6 +80,8 @@ impl SelectedBackend {
             Self::Host(_) => registry.register(&HostKernels)?,
             #[cfg(target_os = "macos")]
             Self::Metal(_) => registry.register(&MetalKernels)?,
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => registry.register(&CudaKernels)?,
         }
         Ok(registry)
     }
@@ -76,6 +95,10 @@ impl SelectedBackend {
             Self::Host(b) => Ok(Self::Host(Box::new(b.fresh()?))),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => Ok(Self::Metal(Box::new(b.fresh()?))),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => Err(Error::unsupported(
+                "CUDA diagnostic fork requires independent state admission; not yet installed",
+            )),
         }
     }
     #[cfg_attr(
@@ -83,6 +106,13 @@ impl SelectedBackend {
         expect(
             clippy::unnecessary_wraps,
             reason = "The shared interface supports the test reference executor, which has no per-operation execution statistics"
+        )
+    )]
+    #[cfg_attr(
+        all(target_os = "linux", feature = "cuda", not(feature = "test-backends")),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "The shared backend interface invokes non-const mutable Metal/host diagnostics in other builds"
         )
     )]
     pub fn execution_stats(&self) -> Option<ExecutionStats> {
@@ -93,6 +123,8 @@ impl SelectedBackend {
             Self::Host(b) => Some(b.inspect()),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => Some(b.inspect()),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => None,
         }
     }
     pub fn inspection(&self) -> serde_json::Value {
@@ -109,8 +141,19 @@ impl SelectedBackend {
             Self::Metal(b) => {
                 serde_json::json!({"kind":"metal-dataflow","device":b.device_name(),"state":b.inspect(),"capabilities":b.capabilities(),"weight_load":b.load_plan()})
             }
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(b) => {
+                serde_json::json!({"kind":"cuda-resident", "execution":"synchronous", "capabilities":b.capabilities(), "state_pool":b.pool_inspection()})
+            }
         }
     }
+    #[cfg_attr(
+        all(target_os = "linux", feature = "cuda", not(feature = "test-backends")),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "The shared backend interface invokes non-const mutable Metal/host diagnostics in other builds"
+        )
+    )]
     pub fn trace(&self) -> serde_json::Value {
         match self {
             #[cfg(feature = "test-backends")]
@@ -119,8 +162,18 @@ impl SelectedBackend {
             Self::Host(b) => serde_json::json!(b.traces()),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => serde_json::json!(b.traces()),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => serde_json::json!([]),
         }
     }
+    #[cfg_attr(
+        all(target_os = "linux", feature = "cuda", not(feature = "test-backends")),
+        expect(
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut,
+            reason = "The shared backend interface invokes non-const mutable Metal/host diagnostics in other builds"
+        )
+    )]
     pub fn drain_layer_probes(&mut self) -> Vec<LayerProbe> {
         match self {
             #[cfg(feature = "test-backends")]
@@ -129,8 +182,17 @@ impl SelectedBackend {
             Self::Host(b) => b.drain_layer_probes(),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.drain_layer_probes(),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => vec![],
         }
     }
+    #[cfg_attr(
+        all(target_os = "linux", feature = "cuda", not(feature = "test-backends")),
+        expect(
+            clippy::needless_pass_by_ref_mut,
+            reason = "The shared backend interface invokes non-const mutable Metal/host diagnostics in other builds"
+        )
+    )]
     pub fn enable_layer_probes(&mut self, bytes: u64) -> Result<()> {
         match self {
             #[cfg(feature = "test-backends")]
@@ -141,6 +203,14 @@ impl SelectedBackend {
             Self::Host(b) => b.enable_layer_probes(bytes),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.enable_layer_probes(bytes),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => {
+                if bytes == 0 {
+                    Ok(())
+                } else {
+                    Err(Error::unsupported("CUDA layer probes are not installed"))
+                }
+            }
         }
     }
     #[cfg_attr(
@@ -159,11 +229,15 @@ impl SelectedBackend {
             #[cfg(feature = "test-backends")]
             Self::Host(b) => {
                 serde_json::json!({"scope":"host dataflow wall-clock op timing","traceEvents":b.traces().iter().map(|t|serde_json::json!({
-                "name":format!("op:{} kernel:{}",t.op,t.kernel),"cat":"host_op","ph":"X","ts":t.timestamp_ns as f64/1000.0,
-                "dur":t.elapsed_ns as f64/1000.0,"pid":1,"tid":1,"args":t})).collect::<Vec<_>>(),"inspection":b.inspect()})
+                "name":format!("op:{} kernel:{}",t.op,t.kernel),"cat":"host_op","ph":"X","ts":t.timestamp_ns as f64/NANOS_PER_MICROSECOND_F64,
+                "dur":t.elapsed_ns as f64/NANOS_PER_MICROSECOND_F64,"pid":1,"tid":1,"args":t})).collect::<Vec<_>>(),"inspection":b.inspect()})
             }
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.profile(),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => {
+                serde_json::json!({"scope":"CUDA per-operation profiling unavailable", "traceEvents":[]})
+            }
         }
     }
 }
@@ -185,6 +259,8 @@ impl infer_agent::AgentBackend for SelectedBackend {
             Self::Host(b) => b.traces().iter().cloned().collect(),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.traces().iter().cloned().collect(),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => vec![],
         }
     }
     fn probes(&self) -> Vec<LayerProbe> {
@@ -195,6 +271,8 @@ impl infer_agent::AgentBackend for SelectedBackend {
             Self::Host(b) => b.layer_probes().iter().cloned().collect(),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => b.layer_probes().iter().cloned().collect(),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => vec![],
         }
     }
     fn trace_timing_scope(&self) -> &'static str {
@@ -205,6 +283,8 @@ impl infer_agent::AgentBackend for SelectedBackend {
             Self::Host(_) => "cpu_wall",
             #[cfg(target_os = "macos")]
             Self::Metal(_) => "cpu_encoding",
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(_) => "unavailable",
         }
     }
     fn profile(&self) -> serde_json::Value {
@@ -216,6 +296,12 @@ impl infer_agent::AgentBackend for SelectedBackend {
 }
 impl BackendProvider for SelectedBackend {
     type Ticket = SelectedTicket;
+    fn control_ready(&self) -> bool {
+        forward!(self, control_ready)
+    }
+    fn maintenance(&mut self) -> Result<()> {
+        forward!(self, maintenance)
+    }
     fn state_recipe(&self) -> Option<&infer_ir::StateRecipe> {
         forward!(self, state_recipe)
     }
@@ -240,6 +326,30 @@ impl BackendProvider for SelectedBackend {
     }
     fn capabilities(&self) -> DeviceCapabilities {
         forward!(self, capabilities)
+    }
+    /// Wrappers must forward every defaulted trait method: the trait's default silently
+    /// reports the conservative answer, which once disabled speculative decode unnoticed.
+    ///
+    /// `submit_shared`/`submit_shared_borrowed` are deliberately not implemented here: their
+    /// defaults route through this wrapper's own `submit`, which already wraps the ticket.
+    /// `launch_accepted` needs a per-variant ticket conversion, so it keeps the trait default.
+    fn requires_async_checkpoint(&self) -> bool {
+        forward!(self, requires_async_checkpoint)
+    }
+    fn pending_resource_releases(&self) -> bool {
+        forward!(self, pending_resource_releases)
+    }
+    fn resource_epoch(&self) -> u64 {
+        forward!(self, resource_epoch)
+    }
+    fn set_waker(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        forward!(self, set_waker, wake);
+    }
+
+    /// Delegated explicitly: the trait default reports no speculation, which would silently
+    /// disable the engine's speculative path even when the wrapped backend supports it.
+    fn speculation_capability(&self) -> infer_ir::SpeculationCapability {
+        forward!(self, speculation_capability)
     }
     fn state_reservation_bytes(&self, capacity: usize) -> Result<Option<u64>> {
         forward!(self, state_reservation_bytes, capacity)
@@ -296,12 +406,17 @@ impl BackendProvider for SelectedBackend {
             (Self::Host(b), SelectedTicket::Host(t)) => b.completion_timing(t),
             #[cfg(target_os = "macos")]
             (Self::Metal(b), SelectedTicket::Metal(t)) => b.completion_timing(t),
-            #[cfg(any(not(target_os = "macos"), feature = "test-backends"))]
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            (Self::Cuda(b), SelectedTicket::Cuda(t)) => b.completion_timing(t),
+            #[cfg(feature = "test-backends")]
             _ => None,
         }
     }
     fn supports_control_checkpoint(&self) -> bool {
         forward!(self, supports_control_checkpoint)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        forward!(self, execution_graph, model)
     }
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         forward!(self, validate_program, m, p)
@@ -345,6 +460,8 @@ impl BackendProvider for SelectedBackend {
             Self::Host(b) => Ok(SelectedTicket::Host(b.submit(p, s, t)?)),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => Ok(SelectedTicket::Metal(b.submit(p, s, t)?)),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(b) => Ok(SelectedTicket::Cuda(b.submit(p, s, t)?)),
         }
     }
     fn submit_borrowed(
@@ -360,6 +477,8 @@ impl BackendProvider for SelectedBackend {
             Self::Host(b) => Ok(SelectedTicket::Host(b.submit_borrowed(p, s, t)?)),
             #[cfg(target_os = "macos")]
             Self::Metal(b) => Ok(SelectedTicket::Metal(b.submit_borrowed(p, s, t)?)),
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(b) => Ok(SelectedTicket::Cuda(b.submit_borrowed(p, s, t)?)),
         }
     }
     fn poll(&mut self, t: &mut SelectedTicket) -> Result<Option<Vec<TaskOutput>>> {
@@ -370,7 +489,9 @@ impl BackendProvider for SelectedBackend {
             (Self::Host(b), SelectedTicket::Host(t)) => b.poll(t),
             #[cfg(target_os = "macos")]
             (Self::Metal(b), SelectedTicket::Metal(t)) => b.poll(t),
-            #[cfg(any(not(target_os = "macos"), feature = "test-backends"))]
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            (Self::Cuda(b), SelectedTicket::Cuda(t)) => b.poll(t),
+            #[cfg(feature = "test-backends")]
             _ => Err(Error::invariant("ticket/backend mismatch")),
         }
     }
@@ -378,16 +499,21 @@ impl BackendProvider for SelectedBackend {
 pub fn load(
     path: &std::path::Path,
     memory_mib: u64,
-    selection: Selection,
+    selection: &Selection,
 ) -> Result<SelectedBackend> {
-    let choice = resolve(selection.kind, false, metal_available())?;
-    let memory_bytes = memory_mib
-        .checked_mul(1024 * 1024)
-        .ok_or_else(|| Error::invalid("device budget overflow"))?;
+    let choice = resolve(selection.kind, cuda_available(), metal_available())?;
+    // Zero means "derive the budget from the device"; every backend resolves it locally.
+    let memory_bytes = if memory_mib == 0 {
+        0
+    } else {
+        memory_mib
+            .checked_mul(crate::constants::MIB_U64)
+            .ok_or_else(|| Error::invalid("device budget overflow"))?
+    };
     match choice {
         #[cfg(feature = "test-backends")]
         BackendChoice::TestCpu => testing::load(path, memory_bytes, selection),
-        BackendChoice::Cuda => cuda::load(),
+        BackendChoice::Cuda => cuda::load(path, memory_bytes, selection),
         #[cfg(target_os = "macos")]
         BackendChoice::Metal => metal::load(path, memory_bytes, selection),
         _ => Err(Error::unsupported(
@@ -408,13 +534,16 @@ mod readout_tests {
             .join("../../../examples/qwen-hybrid-tiny");
         let mut backend = metal::load(
             &root,
-            512 << 20,
-            Selection {
+            crate::constants::DEFAULT_HOST_MEMORY_MIB * crate::constants::MIB_U64,
+            &Selection {
                 kind: BackendChoice::Metal,
-                kv_cache_blocks: None,
-                page_tokens: None,
-                prefill_chunk_tokens: None,
+                num_gpu_blocks_override: None,
+                block_size: None,
+                max_num_batched_tokens: None,
                 upload_staging_mib: None,
+                num_speculative_tokens: 0,
+                gpu_memory_utilization: 0.0,
+                autotune: false,
             },
         )?;
         let capacity = backend.model_ir().max_sequence;
@@ -426,7 +555,7 @@ mod readout_tests {
             .ok_or_else(|| Error::invariant("missing compact budget"))?;
         assert_eq!(
             full - compact,
-            ((capacity - 1) * backend.model_ir().hidden_size * 4) as u64
+            ((capacity - 1) * backend.model_ir().hidden_size * size_of::<f32>()) as u64
         );
         backend.reserve_state_for(StateId::ONE, capacity, infer_ir::OutputReadout::Logits)?;
         assert_eq!(

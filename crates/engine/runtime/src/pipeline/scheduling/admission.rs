@@ -6,6 +6,9 @@ use infer_ir::{
 };
 use infer_spi::{AdmissionPolicy, BackendProvider, SchedulingPolicy};
 
+/// Deadline targets a request can carry: completion deadline, TTFT and TPOT.
+const MAX_DEADLINE_TARGETS: usize = 3;
+
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     /// Install a planning provider before any admission.
     /// # Errors
@@ -42,11 +45,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     ) -> Result<AdmissionDecision> {
         let generate = matches!(request.workload, Workload::Generate { .. });
         let peak_tokens = plan.reserved_tokens.saturating_sub(usize::from(generate));
-        if peak_tokens.div_ceil(self.config.page_tokens) > self.config.state_pages
+        if peak_tokens.div_ceil(self.config.block_size) > self.config.num_gpu_blocks
             || self
                 .backend
                 .kv_cache()
-                .is_some_and(|c| peak_tokens.div_ceil(c.page_tokens) > c.total_blocks)
+                .is_some_and(|c| peak_tokens.div_ceil(c.block_size) > c.total_blocks)
         {
             return Err(Error::new(
                 ErrorCode::Capacity,
@@ -66,7 +69,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 .gpu_us
                 .saturating_sub(self.now_us.saturating_sub(s.submitted_us))
         });
-        let mut targets = Vec::with_capacity(3);
+        let mut targets = Vec::with_capacity(MAX_DEADLINE_TARGETS);
         if let Some(deadline) = request.qos.deadline_us {
             targets.push((deadline, complete.saturating_add(blocking)));
         }
@@ -95,7 +98,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             tenant: &request.qos.tenant,
             weight: request.qos.weight,
             reserved_tokens: plan.reserved_tokens,
-            required_pages: plan.reserved_tokens.div_ceil(self.config.page_tokens),
+            required_pages: plan.reserved_tokens.div_ceil(self.config.block_size),
             initial_pages: 1,
             required_bytes: bytes,
             tenant_active: active,

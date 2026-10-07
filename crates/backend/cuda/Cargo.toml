@@ -18,6 +18,8 @@ infer-ir.workspace = true
 infer-models.workspace = true
 infer-spi.workspace = true
 infer-compiler.workspace = true
+infer-kernel-api.workspace = true
+infer-workloads.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -26,8 +28,8 @@ cutile = { version = "=0.4.0", optional = true }
 cuda-core = { version = "=0.4.0", optional = true }
 
 [dev-dependencies]
+infer-runtime.workspace = true
 clap.workspace = true
-infer-workloads.workspace = true
 infer-backend-host.workspace = true
 infer-state.workspace = true
 
@@ -41,4 +43,44 @@ required-features = ["cuda"]
 
 [[example]]
 name = "cuda-model-smoke"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-mlp-check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-mma-probe"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-resident-check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-nvfp4-conversion"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-vision-check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-loaded-vision-check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-multimodal-generate"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-parity-2b"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-loaded-model-check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda-provider-check"
 required-features = ["cuda"]

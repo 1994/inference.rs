@@ -10,6 +10,7 @@ fn metal_device() -> DeviceCapabilities {
         memory_bytes: 1024,
         unified_memory: true,
         profiling: true,
+        speculation: SpeculationCapability::default(),
     }
 }
 use infer_ir::*;

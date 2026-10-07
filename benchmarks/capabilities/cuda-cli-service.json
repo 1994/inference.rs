@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "passed": true,
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "source": "artifacts/cuda-service-check3.json",
+  "sha256": "1348591bad978ebfcab911027a3d4a0f31af4d4c712b0128722e05e9e64a1e1d",
+  "binary_sha256": "83140bad4c7d403ebcf00357dee90277460ebd55704bdfe80fa5c45bee22cca0",
+  "hardware": "artifacts/cuda-service-check3-hardware.jsonl",
+  "checks": [
+    "CUDA CLI selection",
+    "HTTP model discovery",
+    "greedy override",
+    "two concurrent HTTP requests",
+    "omitted sampling fields",
+    "graceful shutdown"
+  ],
+  "texts": [
+    "391",
+    "391",
+    "391"
+  ],
+  "host_peak_gib_approx": 4.8,
+  "job_swap_bytes": 0,
+  "scope": "functional acceptance; synchronous CUDA provider, not GPU continuous batching or performance baseline",
+  "mtp_service": false,
+  "device_sampling": false
+}

@@ -13,7 +13,7 @@ pub fn serve<B: AgentBackend>(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<()> {
-    let mut frame = Vec::with_capacity(4096);
+    let mut frame = Vec::with_capacity(crate::constants::INITIAL_FRAME_CAPACITY);
     loop {
         frame.clear();
         let mut oversized = false;
@@ -41,14 +41,17 @@ pub fn serve<B: AgentBackend>(
         let response = if oversized {
             Some(error_response(
                 Value::Null,
-                &RpcError::new(-32000, "agent frame exceeds 1 MiB"),
+                &RpcError::new(
+                    crate::constants::JSONRPC_SERVER_ERROR,
+                    "agent frame exceeds 1 MiB",
+                ),
             ))
         } else {
             match serde_json::from_slice(&frame) {
                 Ok(value) => service.handle(value),
                 Err(error) => Some(error_response(
                     Value::Null,
-                    &RpcError::new(-32700, error.to_string()),
+                    &RpcError::new(crate::constants::JSONRPC_PARSE_ERROR, error.to_string()),
                 )),
             }
         };

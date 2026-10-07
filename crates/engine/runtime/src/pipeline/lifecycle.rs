@@ -176,7 +176,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .ok_or_else(|| Error::invariant("tenant token count underflow"))?;
         tenant.pages = tenant
             .pages
-            .checked_sub(r.plan.reserved_tokens.div_ceil(self.config.page_tokens))
+            .checked_sub(r.plan.reserved_tokens.div_ceil(self.config.block_size))
             .ok_or_else(|| Error::invariant("tenant page count underflow"))?;
         r.state = None;
         r.status

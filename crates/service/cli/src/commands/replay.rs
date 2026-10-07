@@ -1,10 +1,18 @@
 //! Replay commands.
 use super::{ReplayOptions, backend, config, print, read_json, run_to_idle, selected_engine};
 use infer_core::{Error, Result};
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_runtime::{Engine, ReplayAction, RuntimeSnapshot};
 
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn replay(options: ReplayOptions, backend_choice: backend::Selection) -> Result<()> {
     let ReplayOptions {
         journal,
@@ -12,7 +20,7 @@ pub fn replay(options: ReplayOptions, backend_choice: backend::Selection) -> Res
         config: config_path,
         model,
         package,
-        device_memory_mib,
+        host_memory_mib,
     } = options;
     let mut engine = if let Some(path) = snapshot {
         let snapshot: RuntimeSnapshot = read_json(&path)?;
@@ -20,7 +28,7 @@ pub fn replay(options: ReplayOptions, backend_choice: backend::Selection) -> Res
             snapshot.config.clone(),
             model.as_deref(),
             package.as_deref(),
-            device_memory_mib,
+            host_memory_mib,
             backend_choice,
         )?;
         let registry = engine.backend().registry()?;
@@ -35,7 +43,7 @@ pub fn replay(options: ReplayOptions, backend_choice: backend::Selection) -> Res
             config(config_path.as_deref())?,
             model.as_deref(),
             package.as_deref(),
-            device_memory_mib,
+            host_memory_mib,
             backend_choice,
         )?;
         let actions: Vec<ReplayAction> = read_json(

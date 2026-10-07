@@ -13,10 +13,10 @@ Example (Python dependencies live in the external benchmark environment):
 artifacts/vllm-compare/bin/python tools/bench/prepare-modelscope.py \
   --gsm8k /tmp/gsm8k-test.parquet --sharegpt /tmp/sharegpt-zh.jsonl \
   --per-dataset 16 --max-chars 2000 --output artifacts/modelscope-suite.json
-target/release/examples/cuda-model-smoke /home/r/models/Qwen3.8-27B-NVFP4 unused 512 \
-  --dataset artifacts/modelscope-suite.json --mtp 0 --thinking false \
+bash tools/bench/safe-run.sh target/release/examples/cuda-model-smoke /home/r/models/Qwen3.8-27B-NVFP4 unused 512 \
+  --device-graph --prefill-batch 3 --dataset artifacts/modelscope-suite.json --mtp 0 --thinking false \
   --temperature 0 --presence-penalty 0 > artifacts/rust-suite.json
-artifacts/vllm-compare/bin/python tools/bench/vllm-dataset.py \
+bash tools/bench/safe-run.sh artifacts/vllm-compare/bin/python tools/bench/vllm-dataset.py \
   --input artifacts/rust-suite.json --output artifacts/vllm-suite.json --mtp 0
 python3 tools/bench/summarize-dataset.py artifacts/rust-suite.json \
   artifacts/vllm-suite.json --output artifacts/dataset-summary.json
@@ -37,11 +37,15 @@ Do not average individual request token/s. Different generated lengths and quant
 
 ## Current implementation limits
 
-The Rust runner is a diagnostic: GPU projections, Rust CPU auxiliary operations, weight-only quantization and sequential MTP verification. vLLM can use different activation quantization and optimized GPU execution. Results characterize these current implementations, not equal-precision kernel performance or an architectural limit of Rust/cuTile. ShareGPT throughput does not establish answer correctness; GSM8K accuracy needs answer extraction and sufficient generation budgets before quality claims.
+The Rust example runner with `--device-graph` executes projections, auxiliary operations and recurrent state on CUDA; sampling remains on the CPU. MTP uses batched verification with device prefix checkpoints; `--sequential-verify` selects the control. `--prefill-batch 3` uses fused GEMV and a dedicated prompt graph, not tensor-core GEMM. The experimental `--prefill-batch 32` path uses BF16 tensor-core GEMM with F32 accumulation and masked padding; record this different prompt precision explicitly. The default precision is F32 activations/KV with weight-only quantization; `--fp8-kv` opts into model-scaled target KV. Without `--device-graph`, the legacy diagnostic path still uses CPU auxiliary operations. vLLM can use different activation quantization and optimized GPU execution. Results characterize these current implementations, not equal-precision kernel performance or an architectural limit of Rust/cuTile. ShareGPT throughput does not establish answer correctness; GSM8K accuracy needs answer extraction and sufficient generation budgets before quality claims.
 
 ## Hardware telemetry
 
-Wrap every benchmark with `python3 tools/bench/hardware-monitor.py --output <new-telemetry.jsonl> -- <command>`. The wrapper samples once per second and serializes benchmark wrappers with a workspace lock. Output files must be new. The benchmark's stdout can be redirected to its own JSON report. Collect on the same GPU with the same monitor interval for all implementations.
+Wrap every benchmark with `bash tools/bench/safe-run.sh /usr/bin/python3 tools/bench/hardware-monitor.py --output <new-telemetry.jsonl> -- <command>`. The collector refuses execution without a verified cgroup memory ceiling. It samples once per second and rejects overlapping jobs instead of queuing them. Output files must be new. The benchmark's stdout can be redirected to its own JSON report. Collect on the same GPU with the same monitor interval for all implementations.
+
+The safety wrapper requires user systemd and cgroup v2, checks for 48 GiB available RAM at admission, sets `MemoryHigh=28G`, `MemoryMax=32G`, `MemorySwapMax=0`, `OOMPolicy=kill`, a 30-minute deadline, and whole-cgroup termination. The actual child checks the effective limits before executing the command. Compilation uses `MAX_JOBS=1`, `NVCC_THREADS=1`, `FLASHINFER_NVCC_THREADS=1`, `TORCHINDUCTOR_COMPILE_THREADS=1`, and `CARGO_BUILD_JOBS=1`. The monitor aborts when host available memory falls below 8 GiB. The printed unit name can be stopped with `systemctl --user stop <unit>`. These controls reduce host OOM risk; they do not bound device VRAM or memory consumed by unrelated applications. Do not bypass a failed limit check.
+
+On 2026-10-06 the original unbounded FlashInfer FP4 JIT launched 16 CUDA compilation processes and triggered global OOM, killing desktop applications. That interrupted run and the earlier overlapping GPU run are invalid performance samples. Warmup/JIT must complete under the protected wrapper before measurements; any cgroup OOM, memory throttling or timeout must be reported rather than silently retried with higher limits.
 
 Run `python3 tools/bench/summarize-hardware.py --report <report.json> --telemetry <telemetry.jsonl> --output <summary.json>` to select only the measured suite window and summarize:
 

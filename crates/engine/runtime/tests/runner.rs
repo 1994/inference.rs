@@ -33,6 +33,9 @@ impl BackendProvider for ReserveGate {
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(model, program)
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)?;
         self.owned.fetch_add(1, Ordering::AcqRel);
@@ -101,7 +104,7 @@ impl Fixture {
             PrecisionPlan::f32(),
             &registry,
             RuntimeConfig {
-                max_batch: 1,
+                max_num_seqs: 1,
                 ..RuntimeConfig::default()
             },
         )?
@@ -280,6 +283,8 @@ fn batch_metadata_is_shared_across_the_device_owner_handoff() -> Result<()> {
             request: infer_core::RequestId::ONE,
             state: StateId::ONE,
             tokens: vec![1, 2, 3].into(),
+
+            sampling: None,
         }],
     )?;
     while fixture.engine.backend_mut().poll(&mut ticket)?.is_none() {
@@ -333,6 +338,8 @@ fn dropped_compute_ticket_waits_for_fence_then_allows_next_submission() -> Resul
         request: infer_core::RequestId::ONE,
         state: StateId::ONE,
         tokens: vec![1, 2, 3].into(),
+
+        sampling: None,
     }];
     let ticket =
         fixture

@@ -140,7 +140,10 @@ impl<'a> BatchBuilder<'a> {
         scratch: &'a mut PackingWorkspace,
     ) -> Result<Self> {
         validate_scheduler(&resources.scheduler)?;
-        if resources.max_batch == 0 || resources.token_budget == 0 || resources.gpu_budget_us == 0 {
+        if resources.max_num_seqs == 0
+            || resources.max_num_batched_tokens == 0
+            || resources.gpu_budget_us == 0
+        {
             return Err(Error::invalid("positive scheduling budgets required"));
         }
         validate_ready(ready, resources, now, costs, scratch)?;
@@ -167,7 +170,7 @@ impl<'a> BatchBuilder<'a> {
     }
     pub(super) fn pack(self, id: DecisionId, step: StepId) -> Result<SchedulingDecision> {
         let mut output =
-            infer_spi::DecisionStorage::new(self.ready.len(), self.resources.max_batch)?;
+            infer_spi::DecisionStorage::new(self.ready.len(), self.resources.max_num_seqs)?;
         self.pack_into(id, step, &mut output)
     }
     pub(super) fn pack_into(
@@ -176,7 +179,7 @@ impl<'a> BatchBuilder<'a> {
         step: StepId,
         output: &mut infer_spi::DecisionStorage,
     ) -> Result<SchedulingDecision> {
-        let batch = self.resources.max_batch.min(self.ready.len());
+        let batch = self.resources.max_num_seqs.min(self.ready.len());
         if output.work.capacity() < batch
             || output.selected.capacity() < batch
             || output.deferred.capacity() < self.ready.len()
@@ -186,7 +189,7 @@ impl<'a> BatchBuilder<'a> {
                 "planner output exceeds reserved capacity",
             ));
         }
-        while self.used_tokens < self.resources.token_budget
+        while self.used_tokens < self.resources.max_num_batched_tokens
             && self.probes < self.resources.scheduler.max_planning_probes
         {
             let Some(quantum) = self.next_quantum()? else {
@@ -205,7 +208,7 @@ impl<'a> BatchBuilder<'a> {
         })
     }
     fn urgent_available(&self) -> bool {
-        u128::from(self.urgent_used) * 100
+        u128::from(self.urgent_used) * u128::from(crate::constants::PERCENT)
             < u128::from(self.resources.gpu_budget_us)
                 * u128::from(self.resources.scheduler.urgent_budget_percent)
     }
@@ -300,7 +303,7 @@ impl<'a> BatchBuilder<'a> {
             .is_some_and(|deadline| deadline <= self.now)
             || !self.compatible(item)
             || (progress.selected_slot.is_none()
-                && self.scratch.selections.len() >= self.resources.max_batch)
+                && self.scratch.selections.len() >= self.resources.max_num_seqs)
         {
             return None;
         }
@@ -314,7 +317,7 @@ impl<'a> BatchBuilder<'a> {
             .remaining_tokens
             .min(cap)
             .saturating_sub(progress.tokens)
-            .min(self.resources.token_budget - self.used_tokens)
+            .min(self.resources.max_num_batched_tokens - self.used_tokens)
             .min(self.resources.scheduler.fair_quantum_tokens);
         if quantum == 0 {
             return None;
@@ -506,14 +509,14 @@ impl<'a> BatchBuilder<'a> {
                 self.resources.scheduler.max_singleton_gpu_us,
             ));
         }
-        if self.scratch.selections.len() >= self.resources.max_batch {
+        if self.scratch.selections.len() >= self.resources.max_num_seqs {
             return Some((
                 DeferReason::BatchLimit,
                 self.scratch.selections.len() as u64 + 1,
-                self.resources.max_batch as u64,
+                self.resources.max_num_seqs as u64,
             ));
         }
-        if self.used_tokens >= self.resources.token_budget {
+        if self.used_tokens >= self.resources.max_num_batched_tokens {
             return Some((DeferReason::TokenBudget, 1, 0));
         }
         (self.probes >= self.resources.scheduler.max_planning_probes).then_some((

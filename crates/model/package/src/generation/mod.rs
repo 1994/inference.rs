@@ -7,6 +7,13 @@ use infer_ir::Sampling;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
+/// Qwen3.8 model-card temperature for non-thinking generation.
+const QWEN3_NON_THINKING_TEMPERATURE: f32 = 0.7;
+/// Qwen3.8 model-card top-p for non-thinking generation.
+const QWEN3_NON_THINKING_TOP_P: f32 = 0.8;
+/// Qwen3.8 model-card presence penalty for non-thinking generation.
+const QWEN3_NON_THINKING_PRESENCE_PENALTY: f32 = 1.5;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SamplingOverrides {
@@ -53,9 +60,9 @@ impl GenerationDefaults {
         let mut sources = self.sources.clone();
         let thinking = options.enable_thinking.unwrap_or(self.thinking);
         if self.qwen38 && !thinking {
-            sampling.temperature = 0.7;
-            sampling.top_p = 0.8;
-            sampling.presence_penalty = 1.5;
+            sampling.temperature = QWEN3_NON_THINKING_TEMPERATURE;
+            sampling.top_p = QWEN3_NON_THINKING_TOP_P;
+            sampling.presence_penalty = QWEN3_NON_THINKING_PRESENCE_PENALTY;
             for key in ["temperature", "top_p", "presence_penalty"] {
                 sources.insert(
                     key.into(),

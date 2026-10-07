@@ -120,12 +120,12 @@ fn finish<B: BackendProvider, P: SchedulingPolicy>(e: &mut Engine<B, P>, start: 
 #[test]
 fn all_workloads_are_batch_and_chunk_invariant_and_release_state() {
     let mut baseline = engine(RuntimeConfig {
-        max_batch: 1,
+        max_num_seqs: 1,
         ..Default::default()
     });
     let mut candidate = engine(RuntimeConfig {
-        max_batch: 4,
-        token_budget: 2,
+        max_num_seqs: 4,
+        max_num_batched_tokens: 2,
         ..Default::default()
     });
     for r in workloads() {
@@ -156,7 +156,7 @@ fn all_workloads_are_batch_and_chunk_invariant_and_release_state() {
 #[test]
 fn journal_replays_scheduler_decisions_and_outputs_exactly() {
     let mut original = engine(RuntimeConfig {
-        token_budget: 2,
+        max_num_batched_tokens: 2,
         ..Default::default()
     });
     for r in workloads() {
@@ -185,7 +185,7 @@ fn journal_replays_scheduler_decisions_and_outputs_exactly() {
 #[test]
 fn checkpoint_roundtrip_and_weight_mismatch_rejection() {
     let mut original = engine(RuntimeConfig {
-        token_budget: 2,
+        max_num_batched_tokens: 2,
         ..Default::default()
     });
     original
@@ -278,8 +278,8 @@ fn consumed_request_id_cannot_alias_a_new_request() {
 #[test]
 fn weighted_service_advances_heavier_tenant_without_starvation() {
     let mut e = engine(RuntimeConfig {
-        token_budget: 1,
-        max_batch: 1,
+        max_num_batched_tokens: 1,
+        max_num_seqs: 1,
         ..Default::default()
     });
     let mut a = request(
@@ -351,6 +351,9 @@ impl BackendProvider for FaultyBackend {
     }
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
+        self.inner.execution_graph(model)
     }
     fn submit(
         &mut self,
@@ -519,8 +522,8 @@ fn backend_timeout_is_diagnosed_without_recycling_inflight_state() {
 #[test]
 fn admission_failure_and_queued_cancellation_leave_no_leaks() {
     let mut e = engine(RuntimeConfig {
-        state_pages: 1,
-        page_tokens: 8,
+        num_gpu_blocks: 1,
+        block_size: 8,
         ..Default::default()
     });
     assert_eq!(
@@ -558,6 +561,9 @@ impl BackendProvider for DelayedBackend {
     }
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
+        self.inner.execution_graph(model)
     }
     fn submit(
         &mut self,

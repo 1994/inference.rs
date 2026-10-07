@@ -28,7 +28,7 @@ fn engine(requests: usize, batch: usize) -> Result<Engine<backend::Backend>> {
         &registry,
         RuntimeConfig {
             max_requests: requests,
-            max_batch: batch,
+            max_num_seqs: batch,
             candidate_limit: requests,
             history_capacity: 32,
             admission: infer_ir::AdmissionConfig {
@@ -39,8 +39,8 @@ fn engine(requests: usize, batch: usize) -> Result<Engine<backend::Backend>> {
                 },
                 ..infer_ir::AdmissionConfig::default()
             },
-            token_budget: batch * 64,
-            state_pages: requests * 2048,
+            max_num_batched_tokens: batch * 64,
+            num_gpu_blocks: requests * 2048,
             ..RuntimeConfig::default()
         },
     )
@@ -74,6 +74,7 @@ pub fn run(requests: usize, batch: usize) -> Result<Case> {
     let mut output = Vec::with_capacity(batch * 2);
     let mut prefill = Counts::default();
     let mut decode = Counts::default();
+    allocator::arm_trap();
     for tick in 1..=10000 {
         let generating = !engine.request(RequestId::ONE)?.generated.is_empty();
         let counts = measured(|| engine.tick_into(tick, &mut output))?;
@@ -138,16 +139,19 @@ pub fn run(requests: usize, batch: usize) -> Result<Case> {
         completion,
         cancellation,
     };
-    for counts in [
-        &case.prefill,
-        &case.decode,
-        &case.completion,
-        &case.cancellation,
+    for (phase, counts) in [
+        ("prefill", &case.prefill),
+        ("decode", &case.decode),
+        ("completion", &case.completion),
+        ("cancellation", &case.cancellation),
     ] {
         if counts.allocations != 0 || counts.reallocations != 0 || counts.deallocations != 0 {
             return Err(Error::invariant(format!(
-                "Engine CPU allocation gate failed for R={requests}, B={batch}: {} alloc, {} realloc, {} dealloc",
-                counts.allocations, counts.reallocations, counts.deallocations
+                "Engine CPU allocation gate failed in {phase} for R={requests}, B={batch}: {} alloc, {} realloc, {} dealloc\n{}",
+                counts.allocations,
+                counts.reallocations,
+                counts.deallocations,
+                allocator::trapped_stack().unwrap_or("no trapped stack")
             )));
         }
     }

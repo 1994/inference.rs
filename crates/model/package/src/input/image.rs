@@ -1,0 +1,472 @@
+//! Image preprocessing for the vision tower, following the Qwen2-VL family processor.
+//!
+//! The processor resizes with a bicubic kernel so both axes become multiples of
+//! `patch_size × merge_size` and the pixel count lands in `[min_pixels, max_pixels]`, then
+//! normalizes and lays the patches out in spatial-merge-block order with the flattened
+//! `[channel, temporal, patch, patch]` vector the patch-embed projection consumes.
+use infer_core::{Error, Result};
+
+/// Channels of the RGB images the processor accepts.
+const RGB_CHANNELS: usize = 3;
+/// Full scale of one 8-bit channel.
+const BYTE_SCALE: f64 = 255.0;
+/// Reciprocal of [`BYTE_SCALE`], the processor's rescale factor.
+const RESCALE: f32 = 1.0 / 255.0;
+/// Largest aspect ratio the reference processor accepts.
+const MAX_ASPECT_RATIO: usize = 200;
+/// Output pixel centres sit half a pixel past the integer grid.
+const HALF_PIXEL: f64 = 0.5;
+/// Keys bicubic kernel with `a = -0.5`, in the reference's polynomial form.
+const CUBIC_A: f64 = -0.5;
+const CUBIC_QUADRATIC: f64 = 2.0;
+const CUBIC_LINEAR: f64 = 3.0;
+const CUBIC_PIVOT: f64 = 5.0;
+const CUBIC_OFFSET: f64 = 8.0;
+const CUBIC_TAIL: f64 = 4.0;
+const CUBIC_NEAR_SPAN: f64 = 1.0;
+const CUBIC_FAR_SPAN: f64 = 2.0;
+
+/// Decoded source image in row-major RGB8.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbImage {
+    pub height: usize,
+    pub width: usize,
+    /// `height × width × 3` bytes, red first.
+    pub pixels: Vec<u8>,
+}
+
+/// Bicubic weight of `x` for the `a = -0.5` kernel used by the reference processor.
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "The kernel is written as the reference defines it; fused vs separate rounding is immaterial"
+)]
+fn cubic(x: f64) -> f64 {
+    let x = x.abs();
+    if x <= CUBIC_NEAR_SPAN {
+        ((CUBIC_A + CUBIC_QUADRATIC) * x - (CUBIC_A + CUBIC_LINEAR)).mul_add(x * x, 1.0)
+    } else if x < CUBIC_FAR_SPAN {
+        (((x - CUBIC_PIVOT) * x + CUBIC_OFFSET) * x - CUBIC_TAIL) * CUBIC_A
+    } else {
+        0.0
+    }
+}
+
+/// Processor geometry and normalization, read from a package preprocessor config.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageProcessor {
+    pub patch_size: usize,
+    pub temporal_patch_size: usize,
+    pub merge_size: usize,
+    /// Smallest accepted pixel count (`size.shortest_edge`).
+    pub min_pixels: usize,
+    /// Largest accepted pixel count (`size.longest_edge`).
+    pub max_pixels: usize,
+    pub mean: [f32; RGB_CHANNELS],
+    pub std: [f32; RGB_CHANNELS],
+    pub rescale: f32,
+}
+
+/// Patches of one image, already flattened for the patch-embed projection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreprocessedImage {
+    /// `patches × channels × temporal × patch × patch`, in spatial-merge-block order.
+    pub pixels: Vec<f32>,
+    /// `(temporal, height, width)` patch grid.
+    pub grid: (usize, usize, usize),
+}
+
+impl ImageProcessor {
+    /// Parse `preprocessor_config.json`.
+    /// # Errors
+    /// Rejects missing or inconsistent geometry and normalization fields.
+    pub fn from_json(config: &[u8]) -> Result<Self> {
+        let parsed: serde_json::Value =
+            serde_json::from_slice(config).map_err(|error| Error::invalid(error.to_string()))?;
+        let number = |value: &serde_json::Value, key: &str| -> Result<usize> {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| Error::invalid(format!("preprocessor config lacks {key}")))
+        };
+        let size = parsed
+            .get("size")
+            .ok_or_else(|| Error::invalid("preprocessor config lacks size"))?;
+        let triplet = |key: &str| -> Result<[f32; RGB_CHANNELS]> {
+            let values = parsed
+                .get(key)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| Error::invalid(format!("preprocessor config lacks {key}")))?;
+            let mut out = [0f32; RGB_CHANNELS];
+            for (slot, value) in out.iter_mut().zip(values) {
+                *slot = value
+                    .as_f64()
+                    .map(|value| {
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            reason = "Normalization constants are small exact values"
+                        )]
+                        let scaled = value as f32;
+                        scaled
+                    })
+                    .ok_or_else(|| Error::invalid(format!("preprocessor {key} entry")))?;
+            }
+            Ok(out)
+        };
+        let processor = Self {
+            patch_size: number(&parsed, "patch_size")?,
+            temporal_patch_size: number(&parsed, "temporal_patch_size")?,
+            merge_size: number(&parsed, "merge_size")?,
+            min_pixels: number(size, "shortest_edge")?,
+            max_pixels: number(size, "longest_edge")?,
+            mean: triplet("image_mean")?,
+            std: triplet("image_std")?,
+            rescale: RESCALE,
+        };
+        if processor.patch_size == 0
+            || processor.temporal_patch_size == 0
+            || processor.merge_size == 0
+            || processor.min_pixels > processor.max_pixels
+            || processor.std.contains(&0.0)
+        {
+            return Err(Error::invalid("invalid preprocessor configuration"));
+        }
+        Ok(processor)
+    }
+
+    /// Flattened width of one patch.
+    #[must_use]
+    pub const fn patch_width(&self) -> usize {
+        RGB_CHANNELS * self.temporal_patch_size * self.patch_size * self.patch_size
+    }
+
+    /// Resized dimensions of one image: both axes are `patch × merge` multiples and the pixel
+    /// count stays within the configured bounds, preserving the aspect ratio as closely as the
+    /// grid allows.
+    /// # Errors
+    /// Rejects degenerate dimensions or an extreme aspect ratio.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "Image pixel counts are far below the exact integer range of f64"
+    )]
+    pub fn smart_resize(&self, height: usize, width: usize) -> Result<(usize, usize)> {
+        let factor = self
+            .patch_size
+            .checked_mul(self.merge_size)
+            .ok_or_else(|| Error::invalid("resize factor overflow"))?;
+        if height == 0 || width == 0 {
+            return Err(Error::invalid("image dimensions must be nonzero"));
+        }
+        if height.max(width) > MAX_ASPECT_RATIO * height.min(width) {
+            return Err(Error::invalid("image aspect ratio exceeds 200"));
+        }
+        let (height, width, factor) = (height as f64, width as f64, factor as f64);
+        let mut resized_height = (height / factor).round_ties_even() * factor;
+        let mut resized_width = (width / factor).round_ties_even() * factor;
+        let snap = |height: f64, width: f64| (height as usize, width as usize);
+        if resized_height * resized_width > self.max_pixels as f64 {
+            let beta = ((height * width) / self.max_pixels as f64).sqrt();
+            resized_height = factor.max((height / beta / factor).floor() * factor);
+            resized_width = factor.max((width / beta / factor).floor() * factor);
+        } else if resized_height * resized_width < self.min_pixels as f64 {
+            let beta = (self.min_pixels as f64 / (height * width)).sqrt();
+            resized_height = (height * beta / factor).ceil() * factor;
+            resized_width = (width * beta / factor).ceil() * factor;
+        }
+        let (resized_height, resized_width) = snap(resized_height, resized_width);
+        if resized_height == 0 || resized_width == 0 {
+            return Err(Error::invalid("resized dimensions must be nonzero"));
+        }
+        Ok((resized_height, resized_width))
+    }
+
+    /// Preprocess one image into patch vectors.
+    /// # Errors
+    /// Rejects malformed image buffers or geometry that does not tile by the patch grid.
+    pub fn preprocess(&self, image: &RgbImage) -> Result<PreprocessedImage> {
+        let expected = image
+            .height
+            .checked_mul(image.width)
+            .and_then(|value| value.checked_mul(RGB_CHANNELS))
+            .ok_or_else(|| Error::invalid("image dimensions overflow"))?;
+        if image.pixels.len() != expected {
+            return Err(Error::invalid("image buffer does not match its dimensions"));
+        }
+        let (resized_height, resized_width) = self.smart_resize(image.height, image.width)?;
+        let resized = Self::resize(image, resized_height, resized_width);
+        let grid_h = resized_height / self.patch_size;
+        let grid_w = resized_width / self.patch_size;
+        let merge = self.merge_size;
+        if !grid_h.is_multiple_of(merge) || !grid_w.is_multiple_of(merge) {
+            return Err(Error::invalid(
+                "patch grid does not divide by the merge size",
+            ));
+        }
+        let mut pixels = Vec::with_capacity(grid_h * grid_w * self.patch_width());
+        for block_row in 0..grid_h / merge {
+            for block_col in 0..grid_w / merge {
+                for in_row in 0..merge {
+                    for in_col in 0..merge {
+                        let row = block_row * merge + in_row;
+                        let col = block_col * merge + in_col;
+                        for channel in 0..RGB_CHANNELS {
+                            // A still image repeats the same patch across the temporal taps.
+                            for _ in 0..self.temporal_patch_size {
+                                for patch_row in 0..self.patch_size {
+                                    for patch_col in 0..self.patch_size {
+                                        let y = row * self.patch_size + patch_row;
+                                        let x = col * self.patch_size + patch_col;
+                                        let value = resized
+                                            [(y * resized_width + x) * RGB_CHANNELS + channel];
+                                        pixels.push(
+                                            value.mul_add(self.rescale, -self.mean[channel])
+                                                / self.std[channel],
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(PreprocessedImage {
+            pixels,
+            grid: (1, grid_h, grid_w),
+        })
+    }
+
+    /// Separable bicubic resize of an RGB8 image into `height × width`, in `0..=255`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Resampled values are rounded into the 8-bit range before the narrowing cast"
+    )]
+    fn resize(image: &RgbImage, height: usize, width: usize) -> Vec<f32> {
+        let horizontal = resample_axis(image.width, width);
+        let vertical = resample_axis(image.height, height);
+        let mut intermediate = vec![0f32; image.height * width * RGB_CHANNELS];
+        for y in 0..image.height {
+            for x in 0..width {
+                let weights = &horizontal[x];
+                for channel in 0..RGB_CHANNELS {
+                    let mut value = 0f64;
+                    for &(tap, weight) in weights {
+                        let index = (y * image.width + tap) * RGB_CHANNELS + channel;
+                        value = weight.mul_add(f64::from(image.pixels[index]), value);
+                    }
+                    let rounded = value.round().clamp(0.0, BYTE_SCALE) as f32;
+                    intermediate[(y * width + x) * RGB_CHANNELS + channel] = rounded;
+                }
+            }
+        }
+        let mut output = vec![0f32; height * width * RGB_CHANNELS];
+        for y in 0..height {
+            let weights = &vertical[y];
+            for x in 0..width {
+                for channel in 0..RGB_CHANNELS {
+                    let mut value = 0f64;
+                    for &(tap, weight) in weights {
+                        value = weight.mul_add(
+                            f64::from(intermediate[(tap * width + x) * RGB_CHANNELS + channel]),
+                            value,
+                        );
+                    }
+                    let rounded = value.round().clamp(0.0, BYTE_SCALE) as f32;
+                    output[(y * width + x) * RGB_CHANNELS + channel] = rounded;
+                }
+            }
+        }
+        output
+    }
+}
+
+/// Normalized bicubic taps of every output position along one axis.
+///
+/// The downsampling support widens with the scale; border taps are truncated and renormalized.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Image axis lengths are far below the exact integer range of f64"
+)]
+fn resample_axis(source: usize, target: usize) -> Vec<Vec<(usize, f64)>> {
+    const COEFFICIENT_LIMIT: f64 = 32768.0;
+    const MAX_PRECISION: usize = 22;
+    let scale = source as f64 / target as f64;
+    let filter_scale = scale.max(1.0);
+    let support = CUBIC_FAR_SPAN * filter_scale;
+    let mut rows = Vec::with_capacity(target);
+    for position in 0..target {
+        let center = (position as f64 + HALF_PIXEL) * scale;
+        let start = (center - support + HALF_PIXEL).trunc().max(0.0);
+        let first = start as usize;
+        let last = (center + support + HALF_PIXEL).trunc().min(source as f64) as usize;
+        let mut taps = Vec::with_capacity(last - first);
+        let mut total = 0f64;
+        for tap in first..last {
+            let weight = cubic((tap as f64 + HALF_PIXEL - center) / filter_scale);
+            total += weight;
+            taps.push((tap, weight));
+        }
+        if total != 0.0 {
+            for (_, weight) in &mut taps {
+                *weight /= total;
+            }
+        }
+        rows.push(taps);
+    }
+    // Torchvision's CPU RGB8 path quantizes normalized taps to signed 16-bit
+    // coefficients, then rounds/clamps after each separable pass.
+    let maximum = rows.iter().flatten().map(|(_, w)| *w).fold(0.0, f64::max);
+    let mut denominator = 1.0;
+    for _ in 0..MAX_PRECISION {
+        if (maximum * denominator).mul_add(2.0, HALF_PIXEL).trunc() >= COEFFICIENT_LIMIT {
+            break;
+        }
+        denominator *= 2.0;
+    }
+    for (_, weight) in rows.iter_mut().flatten() {
+        *weight = (*weight * denominator).round() / denominator;
+    }
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn package_processor() -> Result<ImageProcessor> {
+        let Ok(path) = std::env::var("INFER_VISION_PACKAGE") else {
+            return Err(Error::invalid("package not configured"));
+        };
+        ImageProcessor::from_json(
+            &std::fs::read(std::path::Path::new(&path).join("preprocessor_config.json"))
+                .map_err(|error| Error::invalid(error.to_string()))?,
+        )
+    }
+
+    #[test]
+    fn smart_resize_matches_the_reference_grid() -> Result<()> {
+        let processor = ImageProcessor {
+            patch_size: 16,
+            temporal_patch_size: 2,
+            merge_size: 2,
+            min_pixels: 65_536,
+            max_pixels: 16_777_216,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+            rescale: RESCALE,
+        };
+        // 60x100 is below the pixel budget, so it upscales to the closest 32-multiple grid.
+        assert_eq!(processor.smart_resize(60, 100)?, (224, 352));
+        // Already on the grid and inside the budget: unchanged.
+        assert_eq!(processor.smart_resize(224, 352)?, (224, 352));
+        assert!(processor.smart_resize(0, 10).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rgb8_resize_matches_torchvision_antialiased_bicubic() {
+        let source = [
+            0, 30, 240, 60, 255, 90, 180, 10, 220, 40, 255, 75, 160, 0, 120,
+        ];
+        let image = RgbImage {
+            height: 3,
+            width: 5,
+            pixels: source.into_iter().flat_map(|v| [v; RGB_CHANNELS]).collect(),
+        };
+        // Independent torchvision CPU uint8 fixtures, including boundary overshoot and downsampling.
+        let up: [u8; 48] = [
+            0, 0, 27, 211, 212, 48, 173, 255, 12, 25, 67, 166, 172, 96, 161, 210, 54, 101, 153, 71,
+            88, 197, 136, 70, 128, 153, 163, 55, 64, 180, 106, 34, 224, 174, 96, 121, 105, 47, 75,
+            105, 255, 184, 64, 152, 124, 0, 60, 138,
+        ];
+        let down: [u8; 6] = [50, 134, 156, 168, 97, 82];
+        for (height, width, expected) in [(6, 8, up.as_slice()), (2, 3, down.as_slice())] {
+            let actual = ImageProcessor::resize(&image, height, width);
+            let expected: Vec<f32> = expected
+                .iter()
+                .flat_map(|v| [f32::from(*v); RGB_CHANNELS])
+                .collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn configuration_comes_from_the_package() {
+        let Ok(processor) = package_processor() else {
+            return;
+        };
+        assert_eq!(processor.patch_size, 16);
+        assert_eq!(processor.merge_size, 2);
+        assert_eq!(processor.temporal_patch_size, 2);
+        assert_eq!(processor.min_pixels, 65_536);
+        assert_eq!(processor.mean, [0.5; 3]);
+        assert_eq!(processor.patch_width(), 1536);
+    }
+
+    /// The pipeline must reproduce the reference processor's pixels.
+    ///
+    /// Skipped unless both the package and the image golden are provided.
+    #[test]
+    fn preprocessing_matches_the_reference_processor() -> Result<()> {
+        // RGB8 resize must match; only final F32 normalization rounding may differ.
+        const RESAMPLE_TOLERANCE: f32 = 1e-6;
+        let (Ok(package), Ok(golden)) = (
+            std::env::var("INFER_VISION_PACKAGE"),
+            std::env::var("INFER_VISION_IMAGE_GOLDEN"),
+        ) else {
+            return Ok(());
+        };
+        let processor = ImageProcessor::from_json(
+            &std::fs::read(std::path::Path::new(&package).join("preprocessor_config.json"))
+                .map_err(|error| Error::invalid(error.to_string()))?,
+        )?;
+        let mut file = crate::SafetensorsFile::open(&golden)?;
+        let expected = file.read_f32("pixel_values", 1 << 30)?;
+        let grid = file.read_bytes("image_grid_thw", 1 << 20)?;
+        let dimensions = file.read_bytes("image", 1 << 20)?;
+        let pixels = file.read_bytes("image_pixels", 1 << 30)?;
+        let grid: Vec<i64> = grid
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| i64::from_le_bytes(*chunk))
+            .collect();
+        let dimensions: Vec<i64> = dimensions
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| i64::from_le_bytes(*chunk))
+            .collect();
+        let image = RgbImage {
+            height: usize::try_from(dimensions[0]).map_err(|_| Error::invalid("golden height"))?,
+            width: usize::try_from(dimensions[1]).map_err(|_| Error::invalid("golden width"))?,
+            pixels,
+        };
+        let processed = processor.preprocess(&image)?;
+        let expected_grid = (
+            usize::try_from(grid[0]).map_err(|_| Error::invalid("golden grid"))?,
+            usize::try_from(grid[1]).map_err(|_| Error::invalid("golden grid"))?,
+            usize::try_from(grid[2]).map_err(|_| Error::invalid("golden grid"))?,
+        );
+        assert_eq!(processed.grid, expected_grid);
+        assert_eq!(processed.pixels.len(), expected.data.len());
+        let mut max_abs = 0f32;
+        let mut differing = 0usize;
+        for (value, gold) in processed.pixels.iter().zip(expected.data.iter()) {
+            let difference = (value - gold).abs();
+            if difference > 1e-6 {
+                differing += 1;
+            }
+            max_abs = max_abs.max(difference);
+        }
+        assert!(
+            max_abs <= RESAMPLE_TOLERANCE,
+            "preprocessing deviates by {max_abs} across {differing} values"
+        );
+        Ok(())
+    }
+}

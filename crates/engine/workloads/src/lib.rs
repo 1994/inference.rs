@@ -1,4 +1,5 @@
 //! Native planning and output semantics for four orthogonal workloads.
+mod constants;
 mod sampling;
 pub use sampling::{
     SamplingHistory, SamplingWorkspace, probabilities, sample, sample_reusing, sample_with_history,

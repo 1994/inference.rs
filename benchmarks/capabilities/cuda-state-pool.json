@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "scope": "bounded CUDA graph/state retention, exact logits and capacity checks, reservation wall time only",
+  "runs": [
+    {
+      "source": "artifacts/cuda-state-pool-f32.json",
+      "sha256": "754e859cf234e48e825114875a2871d799475b9cb63faff1af8d8c1162fcf666",
+      "fp8_kv": false,
+      "pool_budget_pressure": false,
+      "pool": {
+        "cached_reservation_us": [
+          533,
+          541,
+          543
+        ],
+        "inspection": {
+          "active_sequences": 0,
+          "cached_admission_bytes": 2656461056,
+          "cached_sequences": 1,
+          "sequence_allocations": 4,
+          "sequence_evictions": 3,
+          "sequence_reuses": 4
+        },
+        "passed": true,
+        "scope": "same-capacity graph/state preparation wall time; not inference throughput",
+        "uncached_reservation_us": 463798
+      },
+      "token_ids": [
+        18,
+        24,
+        16,
+        248046
+      ],
+      "passed": true
+    },
+    {
+      "source": "artifacts/cuda-state-pool-fp8.json",
+      "sha256": "1a2db8a41b80c618ddd3bdb11ac5bf568034bed819c487efee83f721f0c67ff7",
+      "fp8_kv": true,
+      "pool_budget_pressure": true,
+      "pool": {
+        "cached_reservation_us": [
+          496,
+          473,
+          486
+        ],
+        "inspection": {
+          "active_sequences": 0,
+          "cached_admission_bytes": 2650169600,
+          "cached_sequences": 1,
+          "sequence_allocations": 4,
+          "sequence_evictions": 3,
+          "sequence_reuses": 4
+        },
+        "passed": true,
+        "scope": "same-capacity graph/state preparation wall time; not inference throughput",
+        "uncached_reservation_us": 464554
+      },
+      "token_ids": [
+        18,
+        24,
+        16,
+        248046
+      ],
+      "passed": true
+    }
+  ]
+}

@@ -6,6 +6,9 @@ use infer_state::blocks::BlockLease;
 use metal::MTLCommandBufferStatus;
 use std::collections::BTreeMap;
 
+/// Serialized checkpoint bytes tolerated per byte of resident device memory.
+const CHECKPOINT_SIZE_LIMIT_FACTOR: u64 = 16;
+
 impl MetalBackend {
     pub(in crate::executor) fn restore_sequence(
         &mut self,
@@ -19,7 +22,7 @@ impl MetalBackend {
         for (at, old) in saved.blocks.iter().enumerate() {
             let payload = self.saved_page_payload(saved, &states, at);
             let tokens = saved.tokens
-                [..((at + 1) * self.config.page_tokens).min(saved.tokens.len())]
+                [..((at + 1) * self.config.block_size).min(saved.tokens.len())]
                 .to_vec();
             let lease = if let Some(existing) = shared.get(old) {
                 if existing.payload != payload || existing.tokens != tokens {
@@ -30,7 +33,7 @@ impl MetalBackend {
             } else {
                 let lease = self.kv.allocate(1)?[0];
                 for (id, data) in &payload {
-                    let n = self.config.page_tokens * self.specs[id].shape[1];
+                    let n = self.config.block_size * self.specs[id].shape[1];
                     let plane = self.kv.capacity() * n;
                     MetalDevice::write_idle(
                         &self.kv_buffers[id],
@@ -101,7 +104,12 @@ impl MetalBackend {
             ));
         }
         let data = data.ok_or_else(|| Error::invalid("Metal checkpoint required"))?;
-        if data.len() as u64 > self.config.memory_bytes.saturating_mul(16) {
+        if data.len() as u64
+            > self
+                .config
+                .memory_bytes
+                .saturating_mul(CHECKPOINT_SIZE_LIMIT_FACTOR)
+        {
             return Err(Error::new(
                 ErrorCode::Capacity,
                 "Metal checkpoint size exceeds budget",
@@ -110,7 +118,7 @@ impl MetalBackend {
         let saved: Checkpoint =
             serde_json::from_slice(data).map_err(|e| Error::invalid(e.to_string()))?;
         if saved.identity != self.identity
-            || saved.page_tokens != self.config.page_tokens
+            || saved.block_size != self.config.block_size
             || saved.pool_blocks >= u32::MAX as usize
             || saved
                 .sequences

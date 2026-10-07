@@ -21,7 +21,7 @@ impl KvPrefix for Prefix {
 fn manager(blocks: usize) -> Result<KvCacheManager<Prefix>> {
     KvCacheManager::new(KvCacheConfig {
         namespace: b"model-weights-layout-v1".to_vec(),
-        page_tokens: 2,
+        block_size: 2,
         blocks,
         bytes_per_block: 32,
         prefix_bytes: 128,

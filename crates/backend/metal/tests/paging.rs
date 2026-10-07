@@ -3,7 +3,7 @@ use infer_backend_metal::*;
 use infer_core::*;
 use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use std::{path::Path, path::PathBuf, time::Duration, time::Instant};
@@ -16,7 +16,7 @@ fn root() -> PathBuf {
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
 fn load(config: MetalConfig, runtime: RuntimeConfig) -> Engine<MetalBackend> {
-    let mut p = QwenPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
+    let mut p = ModelPackage::open(root(), ModelId::new(1).unwrap()).unwrap();
     let b = MetalBackend::from_package(&mut p, config).unwrap();
     let m = b.model().clone();
     let mut r = KernelRegistry::default();
@@ -71,7 +71,7 @@ fn real_metal_pages_grow_share_cached_blocks_and_preserve_hybrid_trajectory() {
     }
     let mut e = load(
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             kv_cache_blocks: Some(16),
             ..Default::default()
         },
@@ -122,13 +122,13 @@ fn bounded_pool_reclaims_cache_and_preempts_recomputably_without_losing_tokens()
         return;
     }
     let runtime = RuntimeConfig {
-        token_budget: 4,
-        max_batch: 2,
+        max_num_batched_tokens: 4,
+        max_num_seqs: 2,
         ..Default::default()
     };
     let mut e = load(
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             kv_cache_blocks: Some(5),
             prefix_cache_bytes: 0,
             ..Default::default()
@@ -146,7 +146,7 @@ fn bounded_pool_reclaims_cache_and_preempts_recomputably_without_losing_tokens()
     assert!(e.inspect().preemptions > 0);
     let mut baseline = load(
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             ..Default::default()
         },
         RuntimeConfig::default(),
@@ -185,7 +185,7 @@ fn bounded_pool_reclaims_cache_and_preempts_recomputably_without_losing_tokens()
     // A sequential cache-enabled run must evict unpinned blocks to make room.
     let mut cached = load(
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             kv_cache_blocks: Some(5),
             ..Default::default()
         },
@@ -235,6 +235,8 @@ fn execute(
                 request: rid,
                 state: sid,
                 tokens: tokens.into(),
+
+                sampling: None,
             }],
         )
         .unwrap();
@@ -254,7 +256,7 @@ fn device_copy_on_write_preserves_a_forked_partial_tail_and_recurrent_state() {
     }
     let mut e = load(
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             kv_cache_blocks: Some(16),
             prefix_cache_bytes: 0,
             ..Default::default()
@@ -286,7 +288,7 @@ fn checkpoint_restores_shared_pages_in_a_pool_smaller_than_the_sum_of_tables() {
         return;
     }
     let config = MetalConfig {
-        page_tokens: 2,
+        block_size: 2,
         kv_cache_blocks: Some(5),
         ..Default::default()
     };
@@ -354,14 +356,14 @@ fn checkpoint_during_recompute_preemption_preserves_progress_and_sampling() {
         return;
     }
     let config = MetalConfig {
-        page_tokens: 2,
+        block_size: 2,
         kv_cache_blocks: Some(5),
         prefix_cache_bytes: 0,
         ..Default::default()
     };
     let runtime = RuntimeConfig {
-        token_budget: 4,
-        max_batch: 2,
+        max_num_batched_tokens: 4,
+        max_num_seqs: 2,
         ..Default::default()
     };
     let mut e = load(config, runtime);

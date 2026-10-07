@@ -53,7 +53,7 @@ impl MetalBackend {
                 b,
                 &child.tensors[id],
                 0,
-                usize::try_from(b.length() / 4)
+                usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
                     .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
             )?;
         }
@@ -98,7 +98,7 @@ impl MetalBackend {
     pub(super) fn base_bytes(&self) -> Result<u64> {
         self.weights.values().try_fold(
             self.scratch_bytes
-                .checked_add(4)
+                .checked_add(crate::constants::F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("Metal base budget overflow"))?
                 .checked_add(self.config.prefix_cache_bytes.saturating_mul(2))
                 .and_then(|n| n.checked_add(self.kv_block_bytes * self.kv.capacity() as u64))
@@ -178,6 +178,8 @@ impl MetalBackend {
                 hidden: (0..rows)
                     .map(|_| vec![0.0; self.model.hidden_size])
                     .collect(),
+
+                tokens: Vec::new(),
             }),
             hidden_spares: Vec::with_capacity(rows),
             readout,
@@ -195,7 +197,7 @@ impl MetalBackend {
             } else {
                 None
             },
-            blocks: Vec::with_capacity(capacity.div_ceil(self.config.page_tokens)),
+            blocks: Vec::with_capacity(capacity.div_ceil(self.config.block_size)),
             page_table: self.gpu.upload_indices(&table_mirror)?,
             table_mirror,
             token_buffer: self.gpu.zeros(capacity)?,
@@ -236,7 +238,7 @@ impl MetalBackend {
         if let Some(copy) = self.kv.prepare_append(&mut s.blocks, s.tokens.len(), end)? {
             for (tensor, buffer) in &self.kv_buffers {
                 let width = self.specs[tensor].shape[1];
-                let n = self.config.page_tokens * width;
+                let n = self.config.block_size * width;
                 for base in [0, self.kv.capacity() * n] {
                     MetalDevice::copy_range(
                         command,

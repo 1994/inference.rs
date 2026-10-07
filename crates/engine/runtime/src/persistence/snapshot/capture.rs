@@ -7,7 +7,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub(crate) fn snapshot_for_diagnostic(&self) -> RuntimeSnapshot {
         RuntimeSnapshot {
             fault: self.fault.clone(),
-            schema_version: 6,
+            schema_version: crate::constants::SNAPSHOT_SCHEMA_VERSION,
             backend_identity: self.backend.identity().into(),
             policy_identity: self.policy.identity().into(),
             workload_identity: self.workloads.identity().into(),

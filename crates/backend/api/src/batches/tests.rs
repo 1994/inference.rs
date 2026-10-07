@@ -23,6 +23,8 @@ fn fixture() -> (Arc<StepPlan>, Vec<ExecutionTask>) {
         request: RequestId::ONE,
         state: StateId::ONE,
         tokens: vec![1, 2, 3].into(),
+
+        sampling: None,
     }];
     (step, tasks)
 }

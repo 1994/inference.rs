@@ -1,4 +1,10 @@
 use super::*;
+
+/// Arbitrary prefix token count sent through a pooled reply cell.
+const PREFIX_TOKEN_COUNT: usize = 8;
+/// Arbitrary reservation size in bytes sent through a pooled reply cell.
+const RESERVATION_BYTES: u64 = 24;
+
 #[test]
 fn fixed_reply_credit_survives_ticket_abandonment_until_responder_finishes() -> Result<()> {
     let pool = ResourcePool::new(1)?;
@@ -31,7 +37,7 @@ fn disconnected_or_unconsumed_acknowledgements_recycle_exactly_once() -> Result<
         drop(ticket);
         let (ticket, reply) = pool.channel()?;
         reply
-            .send(Ok(ResourceReply::Prefix(8)))
+            .send(Ok(ResourceReply::Prefix(PREFIX_TOKEN_COUNT)))
             .map_err(|_| Error::invariant("pooled receiver disappeared"))?;
         drop(ticket);
     }
@@ -53,11 +59,11 @@ fn acknowledgement_and_cancel_races_never_reuse_a_live_cell() -> Result<()> {
         let (mut ticket, reply) = pool.channel()?;
         assert!(ticket.poll()?.is_none());
         reply
-            .send(Ok(ResourceReply::ReservationBytes(Some(24))))
+            .send(Ok(ResourceReply::ReservationBytes(Some(RESERVATION_BYTES))))
             .map_err(|_| Error::invariant("pooled receiver disappeared"))?;
         assert!(matches!(
             ticket.poll()?,
-            Some(ResourceReply::ReservationBytes(Some(24)))
+            Some(ResourceReply::ReservationBytes(Some(RESERVATION_BYTES)))
         ));
     }
     Ok(())

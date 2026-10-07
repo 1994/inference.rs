@@ -6,6 +6,7 @@
 |---|---|
 | [开发与运行](guides/development.md) | 构建、CLI 命令、HTTP/SSE、checkpoint 与测量 |
 | [模型执行](guides/model-execution.md) | 模型包格式、权重加载、prefill / decode |
+| [新增模型](guides/adding-a-model.md) | ModelProvider 契约、注册表与接入步骤 |
 | [OpenAI 兼容接口](guides/openai-api.md) | `/v1` 路由、参数与错误约定 |
 | [Linux 与 CPU 放置](guides/linux.md) | cpuset / NUMA 配置与硬件门禁 |
 | [质量门禁](guides/quality-gates.md) | 检查项、工具版本与执行入口 |
@@ -28,6 +29,7 @@
 | 文档 | 内容 |
 |---|---|
 | [技术方案](design/technical-plan.md) | 总体目标、模块契约与验收标准 |
+| [性能路线](design/performance-plan.md) | 现状解剖、分阶段优化与对照 vLLM 的判定 |
 | [CPU Runtime 设计](design/cpu-runtime.md) | Owner、队列、内存与性能预算 |
 | [实现状态](design/status.md) | 已实现能力与剩余缺口 |
 | [NVIDIA 目标](design/nvidia-targets.md) | H200 / RTX 5090 的精度与优化策略 |

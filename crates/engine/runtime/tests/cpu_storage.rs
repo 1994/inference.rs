@@ -67,7 +67,7 @@ fn bounded_candidate_windows_cover_all_requests_without_full_ready_scan() -> Res
     let mut engine = engine(RuntimeConfig {
         max_requests: 32,
         candidate_limit: 4,
-        max_batch: 2,
+        max_num_seqs: 2,
         ..RuntimeConfig::default()
     })?;
     for id in 1..=32 {
@@ -177,7 +177,7 @@ fn replay_byte_budget_counts_decision_schema_even_with_a_short_prompt() -> Resul
 fn tiny_planning_budget_retains_fair_progress_and_does_not_isolate_engine() -> Result<()> {
     let mut engine = engine(RuntimeConfig {
         max_requests: 16,
-        max_batch: 8,
+        max_num_seqs: 8,
         candidate_limit: 8,
         scheduler: infer_ir::SchedulerConfig {
             max_planning_probes: 1,

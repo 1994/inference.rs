@@ -11,32 +11,46 @@ use infer_spi::KernelProvider;
 use infer_state::{physical::PagedRows, physical::PhysicalTensor};
 use std::{collections::BTreeMap, time::Instant};
 
+/// Bytes for one KV key element and its matching value element (two `f32` values).
+const KV_KEY_VALUE_BYTES: u128 = 2 * crate::constants::F32_BYTES_U128;
+
 impl HostBackend {
     pub fn drain_traces(&mut self) -> Vec<OpTrace> {
         self.traces.drain(..).collect()
     }
     pub(super) fn weight_bytes(&self) -> u64 {
-        self.weights.values().map(|w| w.data.len() as u64 * 4).sum()
+        self.weights
+            .values()
+            .map(|w| w.data.len() as u64 * crate::constants::F32_BYTES_U64)
+            .sum()
     }
     pub(super) fn required_state_bytes(&self, capacity: usize) -> Result<u64> {
         if capacity == 0 || capacity > self.model.max_sequence {
             return Err(Error::invalid("host state capacity"));
         }
-        let mut bytes = (capacity as u128) * (self.model.hidden_size as u128 * 4 + 4)
-            + self.model.vocab_size as u128 * 4;
+        let mut bytes = (capacity as u128)
+            * (self.model.hidden_size as u128 * crate::constants::F32_BYTES_U128
+                + crate::constants::TOKEN_BYTES_U128)
+            + self.model.vocab_size as u128 * crate::constants::F32_BYTES_U128;
         for spec in self.specs.values() {
             let TensorStorage::State { kind, .. } = &spec.storage else {
                 continue;
             };
             let add = match kind {
                 StateKind::AttentionKv => {
-                    capacity.div_ceil(self.config.page_tokens) as u128
-                        * self.config.page_tokens as u128
+                    capacity.div_ceil(self.config.block_size) as u128
+                        * self.config.block_size as u128
                         * spec.shape[1] as u128
-                        * 8
+                        * KV_KEY_VALUE_BYTES
                 }
-                StateKind::Conv => spec.shape[0] as u128 * (spec.shape[1] - 1) as u128 * 4,
-                StateKind::LinearAttention => spec.elements()? as u128 * 4,
+                StateKind::Conv => {
+                    spec.shape[0] as u128
+                        * (spec.shape[1] - 1) as u128
+                        * crate::constants::F32_BYTES_U128
+                }
+                StateKind::LinearAttention => {
+                    spec.elements()? as u128 * crate::constants::F32_BYTES_U128
+                }
                 _ => return Err(Error::unsupported("host state storage provider required")),
             };
             bytes = bytes
@@ -65,8 +79,8 @@ impl HostBackend {
                 StateKind::AttentionKv => {
                     let width = spec.shape[1];
                     PhysicalTensor::Kv {
-                        keys: PagedRows::new(width, self.config.page_tokens, capacity)?,
-                        values: PagedRows::new(width, self.config.page_tokens, capacity)?,
+                        keys: PagedRows::new(width, self.config.block_size, capacity)?,
+                        values: PagedRows::new(width, self.config.block_size, capacity)?,
                     }
                 }
                 StateKind::Conv => {
@@ -198,7 +212,7 @@ impl HostBackend {
             publish_prefix(
                 &mut self.prefixes,
                 sequence,
-                self.config.page_tokens,
+                self.config.block_size,
                 self.config.prefix_cache_bytes,
             )?;
         }
@@ -279,7 +293,7 @@ impl HostBackend {
         let required = self.required_state_bytes(capacity)?;
         let used = self
             .weight_bytes()
-            .checked_add(self.graph.scratch_elements as u64 * 4)
+            .checked_add(self.graph.scratch_elements as u64 * crate::constants::F32_BYTES_U64)
             .and_then(|n| n.checked_add(self.inspect().reserved_bytes))
             .and_then(|n| n.checked_add(self.config.prefix_cache_bytes))
             .and_then(|n| n.checked_add(self.config.probe_bytes))

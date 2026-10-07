@@ -26,8 +26,8 @@ pub struct AccuracyConstraints {
 impl Default for AccuracyConstraints {
     fn default() -> Self {
         Self {
-            atol: 1e-5,
-            rtol: 1e-5,
+            atol: crate::constants::DEFAULT_ACCURACY_ATOL,
+            rtol: crate::constants::DEFAULT_ACCURACY_RTOL,
             reference_outputs: None,
         }
     }
@@ -45,7 +45,7 @@ impl Default for ExperimentConstraints {
     fn default() -> Self {
         Self {
             accuracy: AccuracyConstraints::default(),
-            max_p99_regression: 0.05,
+            max_p99_regression: crate::constants::DEFAULT_MAX_P99_REGRESSION,
             min_goodput_ratio: 1.0,
             max_state_bytes: None,
         }
@@ -93,7 +93,7 @@ pub(crate) struct MeasuredRun {
 
 fn validate_workload(plan: &BenchmarkPlan) -> Result<()> {
     if plan.requests.is_empty()
-        || plan.requests.len() > 256
+        || plan.requests.len() > crate::constants::MAX_BENCHMARK_REQUESTS
         || plan.ttft_slo_us == 0
         || plan.tpot_slo_us == 0
     {
@@ -133,11 +133,11 @@ pub(crate) fn measure<B: AgentBackend>(
         .backend()
         .execution_stats()
         .map(|s| s.reserved_bytes.max(s.allocated_bytes));
-    for _ in 0..1_000_000 {
+    for _ in 0..crate::constants::MAX_BENCHMARK_TICKS {
         if measured.is_idle() {
             break;
         }
-        if start.elapsed().as_secs() >= 30 {
+        if start.elapsed().as_secs() >= crate::constants::BENCHMARK_TIMEOUT_SECS {
             return Err(Error::new(
                 ErrorCode::Capacity,
                 "isolated benchmark exceeded 30 second execution budget",
@@ -309,7 +309,7 @@ pub fn run<B: AgentBackend>(
         correctness,
         verdict,
     };
-    if context.experiments.len() == 16 {
+    if context.experiments.len() == crate::constants::MAX_EXPERIMENT_HISTORY {
         context.experiments.pop_front();
     }
     context.experiments.push_back(result.clone());

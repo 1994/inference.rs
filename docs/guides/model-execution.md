@@ -3,7 +3,7 @@
 ## 加载链
 
 ```text
-QwenPackage::open → WeightLoadPlan → load_weights / WeightTarget
+ModelPackage::open → WeightLoadPlan → load_weights / WeightTarget
     → backend assemble / compile → Engine admission / schedule
     → prefill chunks / incremental decode → workload postprocess
 ```
@@ -12,7 +12,7 @@ QwenPackage::open → WeightLoadPlan → load_weights / WeightTarget
 
 ```sh
 target/release/infer inspect-package --package /path/to/hf-package \
-  --device-memory-mib 32768
+  --gpu-memory-utilization 0.9
 target/release/infer inspect-package --package /path/to/hf-package --weights-f32
 ```
 
@@ -55,8 +55,24 @@ Decision 选项通过 HeadChannel 绑定投影通道。额外 embedding / rank /
 - 提交前校验全部 token / frontier / 页需求；失败时回滚页表与 lease，copy pin 保留到 GPU fence。事务细节见 [KV Manager](../architecture/kv-manager.md)。
 
 ```sh
-target/release/infer --backend metal --prefill-chunk-tokens 32 --upload-staging-mib 4 \
+target/release/infer --backend metal --max-num-batched-tokens 32 --upload-staging-mib 4 \
   run --package examples/qwen-hybrid-tiny --requests examples/requests.json
 ```
 
 `profile` 区分权重加载、chunk/scratch、GPU command 与 CPU op encoding 时间。数值验证范围见[验证记录](../validation/index.md)，生产 kernel 与完整模型缺口见[实现状态](../design/status.md)。
+
+### Memory-mapped weight loading
+
+Safetensors shards use read-only memory maps. Opening a package validates the
+bounded headers; payload pages are read on demand. Native chunk uploads borrow
+mapped bytes directly, and CUDA quantized loading uses borrowed tensor views
+before conversion into the device upload buffer. The owned `read_bytes` and
+`QuantizedPackage::read` APIs remain available for callers that need a copy.
+Staging budgets still conservatively count the input bytes as well as conversion
+buffers; mapped pages also contribute to host memory usage when touched.
+
+Keep weight files immutable while a package is open. Publish replacements by
+renaming new files, never by overwriting or truncating mapped files in place.
+Mapping removes explicit read buffers and copies, but does not eliminate disk
+I/O, numeric validation, format conversion, hashing, or host-to-device transfers.
+Measure full model readiness with cold and warm filesystem caches separately.

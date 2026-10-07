@@ -63,8 +63,8 @@ fn ready(count: usize, mixed: bool) -> Result<Vec<ReadyWork>> {
 fn run(count: usize, mixed: bool, quantum: usize) -> Result<()> {
     let items = ready(count, mixed)?;
     let resources = ResourceSnapshot {
-        max_batch: 32,
-        token_budget: 128,
+        max_num_seqs: 32,
+        max_num_batched_tokens: 128,
         gpu_budget_us: 1000,
         workspace_bytes: 1 << 20,
         free_state_pages: 4096,

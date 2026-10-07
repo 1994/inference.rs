@@ -3,14 +3,14 @@ use infer_ir::{OutputReadout, StateMemory};
 use infer_spi::BackendProvider;
 #[test]
 fn physical_recipe_matches_real_buffers_and_reset_keeps_allocations() -> Result<()> {
-    let mut package = infer_models::QwenPackage::open(
+    let mut package = infer_models::ModelPackage::open(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny"),
         infer_core::ModelId::ONE,
     )?;
     let mut backend = MetalBackend::from_package(
         &mut package,
         MetalConfig {
-            page_tokens: 2,
+            block_size: 2,
             prefix_cache_bytes: 0,
             probe_bytes: 1 << 20,
             ..MetalConfig::default()

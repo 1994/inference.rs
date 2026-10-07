@@ -16,11 +16,11 @@ impl ReferenceModel {
                 "reference fixture only supports dense FFN",
             ));
         };
-        if h > 256
-            || v > 65536
-            || intermediate > 1024
-            || self.ir.max_sequence > 4096
-            || self.ir.mixers.len() > 64
+        if h > crate::constants::REFERENCE_MAX_HIDDEN_SIZE
+            || v > crate::constants::REFERENCE_MAX_VOCAB_SIZE
+            || intermediate > crate::constants::REFERENCE_MAX_INTERMEDIATE_SIZE
+            || self.ir.max_sequence > crate::constants::REFERENCE_MAX_SEQUENCE_LENGTH
+            || self.ir.mixers.len() > crate::constants::REFERENCE_MAX_MIXER_COUNT
         {
             return Err(Error::unsupported(
                 "model exceeds bounded reference executor dimensions",

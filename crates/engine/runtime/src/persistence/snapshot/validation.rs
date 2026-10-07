@@ -14,7 +14,7 @@ impl RuntimeSnapshot {
         costs: &impl CostModelProvider,
         admission: &impl AdmissionPolicy,
     ) -> Result<()> {
-        if self.schema_version != 6 {
+        if self.schema_version != crate::constants::SNAPSHOT_SCHEMA_VERSION {
             return Err(Error::unsupported("snapshot schema version"));
         }
         if self.fault.is_some() {
@@ -66,8 +66,8 @@ impl RuntimeSnapshot {
                 "snapshot progress guard differs from configuration",
             ));
         }
-        if self.state.snapshot().total_pages != self.config.state_pages
-            || self.state.page_tokens() != self.config.page_tokens
+        if self.state.snapshot().total_pages != self.config.num_gpu_blocks
+            || self.state.block_size() != self.config.block_size
             || self.requests.len() > self.config.max_requests
             || self.decisions.len() > self.config.history_capacity
             || self.actions.len() > self.config.history_capacity

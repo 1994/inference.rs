@@ -224,7 +224,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             &prepared.request,
             &prepared.plan,
             &self.model,
-            self.config.page_tokens,
+            self.config.block_size,
         )?;
         let bytes = self.execution_host_bytes(&prepared, bytes)?;
         let byte_credit = self.host.bytes.reserve(bytes)?;
@@ -407,7 +407,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             tenant.owners += 1;
             tenant.active += 1;
             tenant.tokens += plan.reserved_tokens;
-            tenant.pages += plan.reserved_tokens.div_ceil(self.config.page_tokens);
+            tenant.pages += plan.reserved_tokens.div_ceil(self.config.block_size);
         } else {
             self.tenants.insert(
                 name,
@@ -415,7 +415,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     owners: 1,
                     active: 1,
                     tokens: plan.reserved_tokens,
-                    pages: plan.reserved_tokens.div_ceil(self.config.page_tokens),
+                    pages: plan.reserved_tokens.div_ceil(self.config.block_size),
                     weight: request.qos.weight,
                     virtual_finish: floor,
                 },

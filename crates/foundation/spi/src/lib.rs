@@ -26,7 +26,10 @@ pub use extensions::{
     SpeculationProvider,
 };
 pub use kernel::{KernelProvider, KernelRegistration, SourceLocation};
-pub use model::ModelProvider;
+pub use model::{
+    FusionPlan, HiddenActivation, ImportedModel, ModalityEncoder, ModalityPlan, ModelProvider,
+    PrecisionPolicy, SpeculationPlan,
+};
 pub use observer::Observer;
 pub use protocol::ProtocolAdapter;
 pub use provider::ProviderMetadata;

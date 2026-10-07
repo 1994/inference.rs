@@ -5,6 +5,15 @@ use infer_runtime::Engine;
 use infer_spi::BackendProvider;
 use std::{sync::Arc, sync::atomic::AtomicBool, time::Duration, time::Instant};
 
+/// Microseconds in one millisecond, for the device control timeout conversion.
+const MICROS_PER_MILLI: u64 = 1000;
+/// Depth of the device submission queue owned by the threaded engine backend.
+const ENGINE_SUBMISSION_QUEUE: usize = 32;
+/// Bound on the actor's bulk command channel.
+const COMMAND_CHANNEL_CAPACITY: usize = 256;
+/// Bound on the actor's control command channel.
+const CONTROL_CHANNEL_CAPACITY: usize = 64;
+
 impl RuntimeHandle {
     ///
     /// # Errors
@@ -13,7 +22,14 @@ impl RuntimeHandle {
     where
         B::Ticket: Send,
     {
-        Self::start_with_config(engine, crate::cpu::CpuConfig::default())
+        let config = crate::cpu::CpuConfig {
+            device_control_timeout_ms: engine
+                .config()
+                .resource_timeout_us
+                .div_ceil(MICROS_PER_MILLI),
+            ..crate::cpu::CpuConfig::default()
+        };
+        Self::start_with_config(engine, config)
     }
     /// # Errors
     /// Rejects invalid CPU limits, unforkable preparation providers or startup failures.
@@ -47,10 +63,12 @@ impl RuntimeHandle {
             "observe",
         )?;
         let observation_bytes = observation_bytes(engine.config())?;
-        let engine =
-            engine.into_threaded(32, Duration::from_millis(config.device_control_timeout_ms))?;
-        let (sender, receiver) = mpsc::sync_channel(256);
-        let (control, control_rx) = mpsc::sync_channel(64);
+        let engine = engine.into_threaded(
+            ENGINE_SUBMISSION_QUEUE,
+            Duration::from_millis(config.device_control_timeout_ms),
+        )?;
+        let (sender, receiver) = mpsc::sync_channel(COMMAND_CHANNEL_CAPACITY);
+        let (control, control_rx) = mpsc::sync_channel(CONTROL_CHANNEL_CAPACITY);
         let stop = Arc::new(AtomicBool::new(false));
         let actor_stop = stop.clone();
         let clock_started = Instant::now();

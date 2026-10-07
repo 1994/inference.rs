@@ -55,8 +55,8 @@ pub fn command_timing(command: &CommandBufferRef) -> (u64, u64) {
     // SAFETY: Same retained completed command and documented f64 return type.
     let end: f64 = unsafe { msg_send![command, GPUEndTime] };
     (
-        (start * 1e9).max(0.0) as u64,
-        ((end - start) * 1e9).max(0.0) as u64,
+        (start * crate::constants::NANOS_PER_SECOND).max(0.0) as u64,
+        ((end - start) * crate::constants::NANOS_PER_SECOND).max(0.0) as u64,
     )
 }
 #[derive(Clone)]
@@ -157,7 +157,7 @@ impl MetalDevice {
     pub fn upload(&self, data: &[f32]) -> Result<Buffer> {
         let bytes = data
             .len()
-            .checked_mul(4)
+            .checked_mul(crate::constants::F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal buffer size overflow"))?;
         if bytes == 0 || bytes as u64 > self.device.max_buffer_length() {
             return Err(Error::new(
@@ -174,7 +174,7 @@ impl MetalDevice {
     pub fn upload_indices(&self, data: &[u32]) -> Result<Buffer> {
         let bytes = data
             .len()
-            .checked_mul(4)
+            .checked_mul(crate::constants::F32_BYTES)
             .ok_or_else(|| Error::invalid("page table overflow"))?;
         if bytes == 0 || bytes as u64 > self.device.max_buffer_length() {
             return Err(Error::invalid("page table bounds"));
@@ -188,7 +188,7 @@ impl MetalDevice {
     pub fn write_idle(buffer: &BufferRef, offset: usize, values: &[f32]) -> Result<()> {
         if offset
             .checked_add(values.len())
-            .and_then(|n| n.checked_mul(4))
+            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
             .is_none_or(|n| n as u64 > buffer.length())
             || values.iter().any(|v| !v.is_finite())
         {
@@ -215,7 +215,7 @@ impl MetalDevice {
         if values
             .len()
             .checked_add(offset)
-            .and_then(|n| n.checked_mul(4))
+            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
             .is_none_or(|n| n as u64 > buffer.length())
         {
             return Err(Error::invalid("page table write bounds"));
@@ -242,7 +242,7 @@ impl MetalDevice {
         Ok(())
     }
     pub fn zeros(&self, n: usize) -> Result<Buffer> {
-        if n.checked_mul(4)
+        if n.checked_mul(crate::constants::F32_BYTES)
             .is_none_or(|bytes| bytes as u64 > self.device.max_buffer_length())
         {
             return Err(Error::new(
@@ -250,7 +250,7 @@ impl MetalDevice {
                 "Metal buffer exceeds device limit",
             ));
         }
-        let buffer = self.allocate_bytes(n.max(1) as u64 * 4)?;
+        let buffer = self.allocate_bytes(n.max(1) as u64 * crate::constants::F32_BYTES_U64)?;
         let length = usize::try_from(buffer.length())
             .map_err(|_| Error::invalid("allocation exceeds address space"))?;
         // SAFETY: This unpublished shared allocation is idle, retained, and valid for its full byte length.
@@ -266,7 +266,7 @@ impl MetalDevice {
     pub fn read_into_idle(buffer: &BufferRef, offset: usize, output: &mut [f32]) -> Result<()> {
         if offset
             .checked_add(output.len())
-            .and_then(|n| n.checked_mul(4))
+            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
             .is_none_or(|bytes| bytes as u64 > buffer.length())
         {
             return Err(Error::invalid("Metal readback bounds"));
@@ -283,7 +283,7 @@ impl MetalDevice {
     }
     /// Caller holds the executor's completion gate: no GPU writer may be active.
     pub fn read_idle(buffer: &BufferRef, n: usize) -> Result<Vec<f32>> {
-        if n.checked_mul(4)
+        if n.checked_mul(crate::constants::F32_BYTES)
             .is_none_or(|bytes| bytes as u64 > buffer.length())
         {
             return Err(Error::invalid("Metal readback bounds"));
@@ -307,8 +307,10 @@ impl MetalDevice {
     ) -> Result<()> {
         let tiled = name == "linear"
             && params.rows > 1
-            && self.pipelines["linear_prefill"].thread_execution_width() == 32
-            && self.pipelines["linear_prefill"].max_total_threads_per_threadgroup() >= 128;
+            && self.pipelines["linear_prefill"].thread_execution_width()
+                == crate::constants::TILED_PREFILL_SIMD_WIDTH
+            && self.pipelines["linear_prefill"].max_total_threads_per_threadgroup()
+                >= crate::constants::TILED_PREFILL_THREADGROUP;
         let pipeline = &self.pipelines[if tiled { "linear_prefill" } else { name }];
         let threads = if name == "linear" && !tiled {
             threads
@@ -322,7 +324,7 @@ impl MetalDevice {
         };
         let encoder = command.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
-        for index in 0..5 {
+        for index in 0..crate::constants::INPUT_BINDING_COUNT {
             encoder.set_buffer(
                 index as u64,
                 Some(
@@ -335,19 +337,27 @@ impl MetalDevice {
                 0,
             );
         }
-        encoder.set_buffer(5, Some(bindings.state), 0);
-        encoder.set_buffer(6, Some(bindings.output), 0);
-        encoder.set_buffer(8, Some(bindings.page_table), 0);
-        encoder.set_buffer(9, Some(bindings.tokens), 0);
-        encoder.set_bytes(7, size_of::<Params>() as u64, (&raw const params).cast());
+        encoder.set_buffer(crate::constants::STATE_BINDING, Some(bindings.state), 0);
+        encoder.set_buffer(crate::constants::OUTPUT_BINDING, Some(bindings.output), 0);
+        encoder.set_buffer(
+            crate::constants::PAGE_TABLE_BINDING,
+            Some(bindings.page_table),
+            0,
+        );
+        encoder.set_buffer(crate::constants::TOKEN_BINDING, Some(bindings.tokens), 0);
+        encoder.set_bytes(
+            crate::constants::PARAMS_BINDING,
+            size_of::<Params>() as u64,
+            (&raw const params).cast(),
+        );
         if tiled {
             encoder.dispatch_thread_groups(
                 MTLSize::new(
-                    u64::from(params.n).div_ceil(4),
-                    u64::from(params.rows).div_ceil(4),
+                    u64::from(params.n).div_ceil(crate::constants::TILED_PREFILL_TILE_COLUMNS),
+                    u64::from(params.rows).div_ceil(crate::constants::TILED_PREFILL_TILE_ROWS),
                     1,
                 ),
-                MTLSize::new(128, 1, 1),
+                MTLSize::new(crate::constants::TILED_PREFILL_THREADGROUP, 1, 1),
             );
         } else {
             encoder.dispatch_threads(
@@ -355,7 +365,7 @@ impl MetalDevice {
                 MTLSize::new(
                     (threads as u64)
                         .min(pipeline.max_total_threads_per_threadgroup())
-                        .clamp(1, 64),
+                        .clamp(1, crate::constants::MAX_DECODE_THREADGROUP),
                     1,
                     1,
                 ),
@@ -382,13 +392,13 @@ impl MetalDevice {
         count: usize,
     ) -> Result<()> {
         let bytes = count
-            .checked_mul(4)
+            .checked_mul(crate::constants::F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal copy overflow"))? as u64;
         let offset = offset
-            .checked_mul(4)
+            .checked_mul(crate::constants::F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal copy overflow"))? as u64;
         let source_offset = (source_offset as u64)
-            .checked_mul(4)
+            .checked_mul(crate::constants::F32_BYTES_U64)
             .ok_or_else(|| Error::invalid("copy source overflow"))?;
         if source_offset
             .checked_add(bytes)

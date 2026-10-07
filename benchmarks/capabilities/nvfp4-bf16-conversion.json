@@ -1,0 +1,29 @@
+{
+  "converted_bytes": 178257920,
+  "device": "NVIDIA GeForce RTX 5090",
+  "maximum_absolute_error_vs_bf16_f64_reference": 5.376664979905854e-08,
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "packed_bytes": 44564480,
+  "passed": true,
+  "projection": "layers.9.mlp.up_proj.weight",
+  "scope": "actual model weight conversion and BF16 GPU projection; not H200 execution or full model quality",
+  "shape": [
+    17408,
+    5120
+  ],
+  "target": "BlackwellSm120",
+  "schema": 1,
+  "date": "2026-10-06",
+  "source": "artifacts/hopper-weight-conversion-5090.json",
+  "source_sha256": "9b7d8dd06fbbba6f16e229956ba916930b699276bd1d41e7b36cc47e2e2c5917",
+  "hopper_hardware_tested": false,
+  "policy": {
+    "sm_90": "DecodedBf16",
+    "sm_120": "NativePacked"
+  },
+  "conversion_output_budget_bytes": 1073741824,
+  "resident_checks": "artifacts/resident-hopper-conversion-check.log",
+  "resident_checks_sha256": "41dc560a4c53aed6db3d8f17a0824559776f4d2bc7cbd48846d8d4c0aeb931f5",
+  "native_model_regression": "artifacts/hopper-policy-native-regression.json",
+  "native_model_regression_sha256": "e6f19d671824945efcefdd1c8ee22527b0901fed6c09087ca742776775efca81"
+}

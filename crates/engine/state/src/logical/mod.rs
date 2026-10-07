@@ -42,7 +42,7 @@ pub struct SequenceStateManager {
     #[serde(skip)]
     spare_tables: Vec<Vec<StatePageId>>,
     total_pages: usize,
-    page_tokens: usize,
+    block_size: usize,
     ids: IdAllocator,
     pages: BoundedMap<StatePageId, Page>,
     sequences: BoundedMap<StateId, SequenceState>,

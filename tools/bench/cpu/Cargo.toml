@@ -7,6 +7,7 @@ license = "Apache-2.0"
 publish = false
 [workspace]
 [dependencies]
+infer-model-recipes = { path = "../../../crates/model/recipes" }
 infer-backend-reference = { version = "=0.1.0", path = "../../../crates/testing/cpu/reference" }
 infer-kernel-api = { version = "=0.1.0", path = "../../../crates/backend/kernel-api" }
 infer-state = { version = "=0.1.0", path = "../../../crates/engine/state" }

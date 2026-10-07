@@ -10,11 +10,12 @@
 | `crates/foundation/ir` | `infer-ir` | 请求、模型、执行、设备能力、计划与共享输出 |
 | `crates/foundation/spi` | `infer-spi` | backend、state、调度、模型、workload、资源与扩展接口 |
 | `crates/backend/api` | `infer-gpu-api` | 设备描述、传输与批次槽协议 |
-| `crates/backend/kernel-api` | `infer-kernel-api` | kernel 注册与选择 |
+| `crates/backend/kernel-api` | `infer-kernel-api` | 通用算子描述（含 attention）、kernel 注册与能力选择 |
 | `crates/backend/metal` | `infer-backend-metal` | Metal 设备、加载、forward、提交、完成与物理状态 |
-| `crates/backend/cuda` | `infer-backend-cuda` | cuTile Rust 算子、量化参考、tile 策略与 5090 基线；非默认成员，完整执行器待接入 |
-| `crates/model/package` | `infer-models` | HF 包、索引、Safetensors、内存预检、tokenizer 与模板 |
-| `crates/model/compiler` | `infer-compiler` | IR 降低与 dataflow 编译 |
+| `crates/backend/cuda` | `infer-backend-cuda` | 原生 Rust/cuTile 算子、设备能力选择、融合与常驻图执行；非默认成员 |
+| `crates/model/package` | `infer-models` | HF 包、索引、Safetensors、内存预检、tokenizer 与模板；模型 provider 注册表（按架构解析） |
+| `crates/model/recipes` | `infer-model-recipes` | 可复用的模型执行配方，定义 decoder/hybrid 的算子连接、权重槽与状态读写 |
+| `crates/model/compiler` | `infer-compiler` | 接收模型提供的 dataflow，校验、规划生命周期并选择 kernel |
 | `crates/engine/state` | `infer-state` | 逻辑状态、块池、prefix cache、KV manager 与物理对照 |
 | `crates/engine/scheduler` | `infer-scheduler` | 多队列、调度策略、公平性、预算与成本校准 |
 | `crates/engine/workloads` | `infer-workloads` | 采样、embedding、rerank、decision 与 projection |
@@ -33,6 +34,23 @@
 
 - 队列与调度策略归 `scheduler`；runtime 的 `pipeline/scheduling` 只负责把请求、就绪视图和资源结果接到策略，不另建一套队列。
 - KV 的逻辑分配与所有权归 `state`；backend 负责设备内存与复制执行；runtime 负责资源票据与请求生命周期的协调。
+
+## 模型执行与设备实现的边界
+
+```text
+ModelProvider::import / graph / draft_graph
+  → ModelPackage / QuantizedPackage   配置、执行图与权重绑定
+  → backend loading                  绑定图中的权重与设备状态
+  → BackendProvider::execution_graph 返回已经绑定的模型图
+  → compiler::lower / compile        校验、生命周期和 kernel 注册选择
+  → backend execution                设备录制、融合、加速与执行
+```
+
+模型 provider 决定算子顺序、连接、位置编码以及 speculative draft 拓扑；可复用 `model/recipes`，也可以生成自己的 `DataflowGraph`。没有实现执行配方的 provider 明确返回 unsupported，不自动套用 decoder。compiler 不依赖模型包或配方；runtime 从 backend 获取加载时绑定的图，不从 `ModelIr` 重建拓扑。线程包装与 CLI backend 选择必须转发这份图。调度器只消费计划、预算、状态与完成信息，KV 逻辑生命周期归 state，设备分配和数据搬运归 backend。
+
+通用 attention 描述位于 `kernel-api/attention.rs`，不包含模型名、GPU 型号、cuTile 或 Candle 类型。CUDA 的 `attention` 目录提供计划和 kernel 实现，按维度、mask 和设备能力选择路径。模型里的 attention、MLP 等组合关系属于模型图；等价融合和具体加速策略属于后端。Candle 仅作为隔离性能基线，不进入生产 runtime。
+
+`ModelPackage` 是内部统一名称；`QwenPackage` 只保留为包 facade 的兼容别名。
 
 ## 推理调用链
 
@@ -54,6 +72,10 @@ prefill / decode 适配保留在 `runtime/src/stages`，runner 管理 backend �
 
 ## 模块内组织
 
+- `model/package/src/providers`：架构注册、配置解释、权重命名和模型配方入口。
+- `model/package/src/storage`：索引、Safetensors、权重绑定、量化存储、内存预检和有界加载。
+- `model/package/src/input`：文本、图像、位置与提示准备；生成参数单独归 `generation`。
+- `model/recipes/src/decoder.rs`：模型侧 decoder/hybrid 配方；不依赖 compiler、runtime 或后端。
 - `runtime/src/engine`：类型、构造、检查与不变量，不混入阶段执行。
 - `runtime/src/pipeline`：admission、scheduling、dispatch、completion、lifecycle。
 - `runtime/src/requests`：请求 record、冷热存储与 tenant 统计。
@@ -69,6 +91,6 @@ prefill / decode 适配保留在 `runtime/src/stages`，runner 管理 backend �
 
 `docs/guides` 放操作说明，`docs/architecture` 放当前实现，`docs/design` 放目标与差距，`docs/validation` 放测量范围，`docs/adr` 放架构决策。模型样例与测试资产归 `examples`，生成日志、报告与负载结果归 `artifacts`。
 
-`tools/check` 是统一门禁与架构规则，`tools/validation` 是服务与负载验证，`tools/fixtures` 是独立参考导出，`tools/bench/cpu` 是隔离的分配测量 crate。`Makefile` 与 CI 调用同一门禁入口。
+`tools/check` 是统一门禁与架构规则，`tools/validation` 是服务与负载验证，`tools/fixtures` 是独立参考导出，`tools/bench/cpu` 是隔离的分配测量 crate；`tools/attention` 保存独立正确性 oracle 和性能判定，`tools/bench/attention` 是隔离的 Candle 基线 crate。`Makefile` 与 CI 调用同一门禁入口。
 
-新增 crate 必须落在职责分组下，新增 backend 必须落在 `backend/<name>`，CPU 对照只能位于 `testing/cpu`。目录门禁校验分组、路径依赖、facade 大小、实现层反向依赖与文档链接；Rust 门禁继续校验公开 API、feature 隔离与全部 lint。
+新增 crate 必须落在职责分组下，新增 backend 必须落在 `backend/<name>`，CPU 对照只能位于 `testing/cpu`。目录门禁校验分组、路径依赖、facade 大小、实现层反向依赖与文档链接，并检查 target 条件依赖，禁止绕过模型/编译器/调度边界；Rust 门禁继续校验公开 API、feature 隔离与全部 lint。

@@ -3,7 +3,7 @@ use infer_backend_metal::{MetalBackend, MetalConfig, MetalKernels};
 use infer_core::*;
 use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
-use infer_models::QwenPackage;
+use infer_models::ModelPackage;
 use infer_spi::BackendProvider;
 use std::{path::Path, time::Duration, time::Instant};
 
@@ -19,7 +19,7 @@ fn actual_metal_gpu_matches_official_layer_hidden_logits_for_both_hybrid_configs
             .join(name);
         let golden: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("golden.json")).unwrap()).unwrap();
-        let mut package = QwenPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+        let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
         let mut backend = MetalBackend::from_package(&mut package, MetalConfig::default()).unwrap();
         backend.enable_layer_probes(1024 * 1024).unwrap();
         let model = backend.model().clone();
@@ -27,7 +27,12 @@ fn actual_metal_gpu_matches_official_layer_hidden_logits_for_both_hybrid_configs
         registry.register(&MetalKernels).unwrap();
         let program = infer_compiler::compile(
             ProgramId::new(1).unwrap(),
-            infer_compiler::lower(&model, PrecisionPlan::f32()).unwrap(),
+            infer_compiler::lower(
+                &model,
+                infer_model_recipes::decoder::lower(&model).unwrap(),
+                PrecisionPlan::f32(),
+            )
+            .unwrap(),
             &registry,
             &backend.capabilities(),
             1 << 20,
@@ -84,6 +89,8 @@ fn check_prefix(
             request,
             state,
             tokens: tokens.into(),
+
+            sampling: None,
         }],
     )?;
     let deadline = Instant::now() + Duration::from_secs(10);

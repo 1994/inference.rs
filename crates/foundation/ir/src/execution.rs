@@ -2,6 +2,29 @@ use crate::{CapabilityRequirements, PrecisionPlan};
 use infer_core::{DecisionId, KernelId, ModelId, OpId, ProgramId, RequestId, StateId, StepId};
 use serde::{Deserialize, Serialize};
 
+/// Stable event code for `DeferReason::BatchLimit`.
+const DEFER_CODE_BATCH_LIMIT: u32 = 3;
+/// Stable event code for `DeferReason::IncompatibleProgram`.
+const DEFER_CODE_INCOMPATIBLE_PROGRAM: u32 = 4;
+/// Stable event code for `DeferReason::Deadline`.
+const DEFER_CODE_DEADLINE: u32 = 5;
+/// Stable event code for `DeferReason::StateCapacity`.
+const DEFER_CODE_STATE_CAPACITY: u32 = 6;
+/// Stable event code for `DeferReason::TransferBudget`.
+const DEFER_CODE_TRANSFER_BUDGET: u32 = 7;
+/// Stable event code for `DeferReason::EncoderBudget`.
+const DEFER_CODE_ENCODER_BUDGET: u32 = 8;
+/// Stable event code for `DeferReason::ChunkLimit`.
+const DEFER_CODE_CHUNK_LIMIT: u32 = 9;
+/// Stable event code for `DeferReason::AtomicCostLimit`.
+const DEFER_CODE_ATOMIC_COST_LIMIT: u32 = 10;
+/// Stable event code for `DeferReason::PreemptionFocus`.
+const DEFER_CODE_PREEMPTION_FOCUS: u32 = 11;
+/// Stable event code for `DeferReason::Preparation`.
+const DEFER_CODE_PREPARATION: u32 = 12;
+/// Stable event code for `DeferReason::PlanningBudget`.
+const DEFER_CODE_PLANNING_BUDGET: u32 = 13;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Operation {
     TokenEmbedding,
@@ -76,7 +99,7 @@ pub struct GraphVariant {
 pub struct CostEstimate {
     pub gpu_us: u64,
     pub workspace_bytes: u64,
-    pub state_pages: usize,
+    pub num_gpu_blocks: usize,
     #[serde(default)]
     pub logical_pages: usize,
     #[serde(default)]
@@ -141,7 +164,7 @@ pub enum DeferReason {
 }
 impl DeferReason {
     pub const LABELS: [&'static str; 14] = [
-        "token_budget",
+        "max_num_batched_tokens",
         "gpu_budget",
         "workspace",
         "batch_limit",
@@ -162,17 +185,17 @@ impl DeferReason {
             Self::TokenBudget => 0,
             Self::GpuBudget => 1,
             Self::Workspace => 2,
-            Self::BatchLimit => 3,
-            Self::IncompatibleProgram => 4,
-            Self::Deadline => 5,
-            Self::StateCapacity => 6,
-            Self::TransferBudget => 7,
-            Self::EncoderBudget => 8,
-            Self::ChunkLimit => 9,
-            Self::AtomicCostLimit => 10,
-            Self::PreemptionFocus { .. } => 11,
-            Self::Preparation => 12,
-            Self::PlanningBudget => 13,
+            Self::BatchLimit => DEFER_CODE_BATCH_LIMIT,
+            Self::IncompatibleProgram => DEFER_CODE_INCOMPATIBLE_PROGRAM,
+            Self::Deadline => DEFER_CODE_DEADLINE,
+            Self::StateCapacity => DEFER_CODE_STATE_CAPACITY,
+            Self::TransferBudget => DEFER_CODE_TRANSFER_BUDGET,
+            Self::EncoderBudget => DEFER_CODE_ENCODER_BUDGET,
+            Self::ChunkLimit => DEFER_CODE_CHUNK_LIMIT,
+            Self::AtomicCostLimit => DEFER_CODE_ATOMIC_COST_LIMIT,
+            Self::PreemptionFocus { .. } => DEFER_CODE_PREEMPTION_FOCUS,
+            Self::Preparation => DEFER_CODE_PREPARATION,
+            Self::PlanningBudget => DEFER_CODE_PLANNING_BUDGET,
         }
     }
 }
@@ -204,8 +227,8 @@ pub struct SchedulingDecision {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceSnapshot {
-    pub max_batch: usize,
-    pub token_budget: usize,
+    pub max_num_seqs: usize,
+    pub max_num_batched_tokens: usize,
     pub gpu_budget_us: u64,
     pub workspace_bytes: u64,
     pub free_state_pages: usize,
@@ -221,11 +244,17 @@ pub struct ExecutionTask {
     pub request: RequestId,
     pub state: StateId,
     pub tokens: crate::ExecutionInput,
+    /// Sampling parameters for backends that decide tokens themselves (speculative decode);
+    /// `None` leaves sampling to the engine output stage.
+    pub sampling: Option<crate::Sampling>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelOutput {
     pub logits: Vec<f32>,
     pub hidden: Vec<Vec<f32>>,
+    /// Tokens the backend already decided for this step; empty when the engine samples.
+    #[serde(default)]
+    pub tokens: Vec<u32>,
 }
 #[derive(Debug, Clone)]
 pub struct TaskOutput {

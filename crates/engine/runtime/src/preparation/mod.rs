@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 pub use memory::request_bytes;
 
+/// Fixed retained overhead beyond token, page and projection storage.
+const RETAINED_OVERHEAD_BYTES: usize = 4096;
+
 pub struct PreparedRequest {
     pub(crate) request: Arc<CanonicalRequest>,
     pub(crate) plan: WorkloadPlan,
@@ -149,17 +152,17 @@ pub fn retained_bytes(
     request: &CanonicalRequest,
     plan: &WorkloadPlan,
     model: &ModelIr,
-    page_tokens: usize,
+    block_size: usize,
 ) -> Result<usize> {
     let tokens = retained_tokens(plan, generation_capacity(request))?;
     let mut total = tokens
         .checked_mul(size_of::<u32>())
-        .and_then(|bytes| bytes.checked_add(4096))
+        .and_then(|bytes| bytes.checked_add(RETAINED_OVERHEAD_BYTES))
         .and_then(|bytes| bytes.checked_add(request_bytes(request)))
         .and_then(|bytes| bytes.checked_add(memory::projection_bytes(request)))
         .and_then(|bytes| {
             plan.reserved_tokens
-                .div_ceil(page_tokens)
+                .div_ceil(block_size)
                 .checked_mul(size_of::<infer_core::StatePageId>())
                 .and_then(|pages| bytes.checked_add(pages))
         })

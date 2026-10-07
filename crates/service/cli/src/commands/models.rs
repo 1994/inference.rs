@@ -1,7 +1,13 @@
 //! Models commands.
 use super::{InspectModelOptions, InspectPackageOptions, TokenizeOptions, print, read_json};
 use infer_core::{Error, ModelId, Result};
-use infer_models::{QwenProvider, SafetensorsIndex, memory_estimate};
+use infer_models::{ModelPackage, SafetensorsIndex, default_registry, memory_estimate};
+
+/// Conservative expansion factor from native weight storage to F32, applied to the staging
+/// budget so an expanded weight chunk still fits its staging allocation.
+const F32_EXPANSION_FACTOR: usize = 3;
+/// Maximum weight bytes read into staging per load chunk.
+const MAX_WEIGHT_CHUNK_BYTES: usize = 4 * crate::constants::MIB;
 
 pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
     let InspectModelOptions {
@@ -12,7 +18,8 @@ pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
         device_memory_gib,
     } = options;
     let bytes = std::fs::read(config).map_err(|e| Error::invalid(e.to_string()))?;
-    let model = QwenProvider.import_manifest(ModelId::new(1)?, &bytes)?;
+    let provider = default_registry().resolve(&bytes)?;
+    let model = provider.import(ModelId::new(1)?, &bytes)?;
     let index: Option<SafetensorsIndex> = index
         .map(|p| {
             std::fs::read(p)
@@ -21,7 +28,7 @@ pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
         })
         .transpose()?;
     let bytes = device_memory_gib
-        .checked_mul(1 << 30)
+        .checked_mul(crate::constants::GIB_U64)
         .ok_or_else(|| Error::invalid("device memory overflow"))?;
     let memory = index
         .as_ref()
@@ -31,7 +38,7 @@ pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
                 i.weight_bytes()?,
                 context_tokens,
                 sequences,
-                1 << 30,
+                crate::constants::GIB_U64,
                 bytes,
             )
         })
@@ -43,18 +50,18 @@ pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
     Ok(())
 }
 pub fn inspect_package(options: InspectPackageOptions) -> Result<()> {
-    let package = infer_models::QwenPackage::open(options.package, ModelId::new(1)?)?;
+    let package = ModelPackage::open(options.package, ModelId::new(1)?)?;
     let budget = options
-        .device_memory_mib
+        .host_memory_mib
         .map(|n| {
-            n.checked_mul(1024 * 1024)
+            n.checked_mul(crate::constants::MIB_U64)
                 .ok_or_else(|| Error::invalid("weight memory budget overflow"))
         })
         .transpose()?
         .unwrap_or(u64::MAX);
     let staging = options
         .staging_memory_mib
-        .checked_mul(1024 * 1024)
+        .checked_mul(crate::constants::MIB)
         .ok_or_else(|| Error::invalid("weight staging budget overflow"))?;
     let plan = infer_models::WeightLoadPlan::build(
         &package,
@@ -66,7 +73,13 @@ pub fn inspect_package(options: InspectPackageOptions) -> Result<()> {
             },
             resident_budget_bytes: budget,
             staging_budget_bytes: staging,
-            chunk_bytes: (staging / if options.weights_f32 { 3 } else { 1 }).min(4 * 1024 * 1024),
+            chunk_bytes: (staging
+                / if options.weights_f32 {
+                    F32_EXPANSION_FACTOR
+                } else {
+                    1
+                })
+            .min(MAX_WEIGHT_CHUNK_BYTES),
         },
     )?;
     print(
@@ -84,7 +97,8 @@ pub fn tokenize(options: TokenizeOptions) -> Result<()> {
     } = options;
     let config_bytes =
         std::fs::read(package.join("config.json")).map_err(|e| Error::invalid(e.to_string()))?;
-    let model = QwenProvider.import_manifest(ModelId::new(1)?, &config_bytes)?;
+    let provider = default_registry().resolve(&config_bytes)?;
+    let model = provider.import(ModelId::new(1)?, &config_bytes)?;
     let assets = infer_models::TextAssets::open(package, model.model.max_sequence)?;
     let (rendered, tokens) = if let Some(text) = text {
         (text.clone(), assets.encode(&text, true)?)

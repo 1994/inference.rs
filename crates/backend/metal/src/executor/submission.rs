@@ -78,9 +78,9 @@ impl MetalBackend {
                 let end = chunk.end;
                 dispatches += self.encode_chunk(command, program, step, task, chunk)?;
                 let s = &self.sequences[&task.state];
-                if end.is_multiple_of(self.config.page_tokens)
+                if end.is_multiple_of(self.config.block_size)
                     && pending_bytes < self.config.prefix_cache_bytes
-                    && pending_cache.len() < 4096
+                    && pending_cache.len() < crate::constants::MAX_PREFIX_ENTRIES
                     && let Some(cached) = self.cache_boundary(
                         command,
                         s,
@@ -109,7 +109,7 @@ mod tests {
     use infer_core::*;
     use infer_ir::*;
     use infer_kernel_api::KernelRegistry;
-    use infer_models::QwenPackage;
+    use infer_models::ModelPackage;
     use infer_spi::BackendProvider;
     use std::{
         path::Path,
@@ -144,12 +144,12 @@ mod tests {
             return Ok(());
         }
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-        let mut package = QwenPackage::open(root, ModelId::ONE)?;
+        let mut package = ModelPackage::open(root, ModelId::ONE)?;
         let mut backend = MetalBackend::from_package(
             &mut package,
             MetalConfig {
                 prefix_cache_bytes: 0,
-                page_tokens: 2,
+                block_size: 2,
                 probe_bytes: 1 << 20,
                 ..Default::default()
             },
@@ -158,7 +158,11 @@ mod tests {
         kernels.register(&MetalKernels)?;
         let program = infer_compiler::compile(
             ProgramId::ONE,
-            infer_compiler::lower(backend.model(), PrecisionPlan::f32())?,
+            infer_compiler::lower(
+                backend.model(),
+                backend.execution_graph(backend.model())?,
+                PrecisionPlan::f32(),
+            )?,
             &kernels,
             &backend.capabilities(),
             1 << 20,
@@ -171,6 +175,8 @@ mod tests {
                 request: RequestId::ONE,
                 state: StateId::ONE,
                 tokens: vec![1, 2, 3].into(),
+
+                sampling: None,
             }],
         )?;
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -194,11 +200,15 @@ mod tests {
                 request: RequestId::ONE,
                 state: StateId::ONE,
                 tokens: vec![1, 2, 3, 5].into(),
+
+                sampling: None,
             },
             ExecutionTask {
                 request: RequestId::new(2)?,
                 state: second,
                 tokens: vec![1, 2, 3, 8].into(),
+
+                sampling: None,
             },
         ];
         let error = backend
@@ -225,6 +235,8 @@ mod tests {
                 request: RequestId::new(2)?,
                 state: second,
                 tokens: vec![1, 2, 3, 8].into(),
+
+                sampling: None,
             }],
         )?;
         assert_eq!(backend.inflight_pins.len(), 1);

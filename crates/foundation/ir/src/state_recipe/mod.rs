@@ -53,7 +53,7 @@ pub struct StateRegion {
 /// Weights and per-batch activation scratch are deliberately separate program resources.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateRecipe {
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub max_tokens: usize,
     pub regions: Vec<StateRegion>,
 }

@@ -1,5 +1,6 @@
 //! Transport-independent, typed control commands for inference diagnostics and experiments.
 mod commands;
+mod constants;
 mod context;
 pub mod experiment;
 pub mod graph;

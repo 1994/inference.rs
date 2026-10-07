@@ -1,4 +1,4 @@
-"""Check lint inheritance, exceptions, and deployment feature isolation."""
+"""Check lint inheritance, exceptions, deployment feature isolation, and magic numbers."""
 
 import re
 import subprocess
@@ -31,11 +31,12 @@ def check_manifests():
         config.get("cognitive-complexity-threshold", 25) <= 25,
         "Cognitive complexity limit must stay at 25 or below",
     )
-    benchmark = tomllib.loads((ROOT / "tools/bench/cpu/Cargo.toml").read_text())
-    require(
-        benchmark["lints"] == WORKSPACE["lints"],
-        "CPU allocator harness must keep all strict lint gates",
-    )
+    for name in ("cpu", "attention"):
+        benchmark = tomllib.loads((ROOT / f"tools/bench/{name}/Cargo.toml").read_text())
+        require(
+            benchmark["lints"] == WORKSPACE["lints"],
+            f"{name} harness must keep all strict lint gates",
+        )
     inherited = set()
     for member in WORKSPACE["members"]:
         manifest = tomllib.loads((ROOT / member / "Cargo.toml").read_text())
@@ -90,7 +91,11 @@ def check_exceptions():
         "clippy::too_many_lines",
         "clippy::cognitive_complexity",
     }
-    paths = [*(ROOT / "crates").rglob("*.rs"), *(ROOT / "tools/bench/cpu/src").rglob("*.rs")]
+    paths = [
+        *(ROOT / "crates").rglob("*.rs"),
+        *(ROOT / "tools/bench/cpu/src").rglob("*.rs"),
+        *(ROOT / "tools/bench/attention/src").rglob("*.rs"),
+    ]
     for path in paths:
         for attribute in pattern.finditer(path.read_text()):
             text = attribute[1]
@@ -105,18 +110,163 @@ def check_exceptions():
                 require(
                     path
                     in (
+                        ROOT / "crates/model/package/src/storage/safetensors.rs",
                         ROOT / "crates/backend/metal/src/device.rs",
                         ROOT / "crates/backend/cuda/src/device.rs",
+                        ROOT / "tools/bench/attention/src/device.rs",
+                        ROOT / "crates/backend/cuda/src/device/readback.rs",
+                        ROOT / "crates/backend/cuda/src/mlp/pdl.rs",
+                        ROOT / "crates/backend/cuda/src/mlp/pdl_consumers.rs",
+                        ROOT / "crates/backend/cuda/src/resident/arena.rs",
+                        ROOT / "crates/backend/cuda/src/resident/profile.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",
                         ROOT / "tools/bench/cpu/src/main.rs",
                     ),
-                    f"{path}: unsafe code belongs only at audited device or measurement boundaries",
+                    f"{path}: unsafe code belongs only at audited device, "
+                    "file mapping or measurement boundaries",
                 )
     deny = tomllib.loads((ROOT / "deny.toml").read_text())
     for exception in deny["advisories"].get("ignore", []) + deny["bans"].get("skip", []):
         require(
             isinstance(exception, dict) and exception.get("reason"), "Explain dependency exceptions"
         )
+
+
+MAGIC_NUMBER = re.compile(
+    r"(?<![\w\[])(?<![\w\)\]]\.)(?:0x[0-9a-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?"
+    r"(?:[eE][+-]?\d+)?)(?:f32|f64|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)?"
+)
+MAGIC_ARRAY_HEAD = re.compile(
+    r"\[\s*(0x[0-9a-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)"
+    r"(?:f32|f64|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)?\b"
+)
+MAGIC_WHITELIST = {"0", "1", "2", "0.0", "1.0", "2.0"}
+MAGIC_LITERAL_OPENERS = set("([{=,:;!&|+-*/<>")
+MAGIC_SUFFIX = re.compile(r"(?:f32|f64|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)$")
+MAGIC_CONST_ITEM = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+(?!fn\b)[A-Za-z_]")
+MAGIC_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
+MAGIC_CHAR = re.compile(r"b?'(?:\\.|[^'\\])'")
+MAGIC_TEST_PARTS = {"tests", "examples", "benches"}
+STRATEGY_SOURCE = ROOT / "crates/backend/cuda/src/strategy.rs"
+HARDWARE_BRANCH = re.compile(r"NVIDIA|GeForce|RTX|\bsm_\d|(?:bf16|fp8-channel|nvfp4):\d+x\d+")
+
+
+def magic_number_base(token):
+    return MAGIC_SUFFIX.sub("", token).replace("_", "")
+
+
+def magic_masked_lines(lines):
+    """Blank out test/DSL blocks and block comments before scanning a file."""
+    masked = list(lines)
+    index = 0
+    while index < len(lines):
+        if "#[cfg(test)]" in lines[index] or "#[cutile::module]" in lines[index]:
+            depth = 0
+            started = False
+            end = index
+            while end < len(lines):
+                for char in lines[end]:
+                    if char == "{":
+                        depth += 1
+                        started = True
+                    elif char == "}":
+                        depth -= 1
+                masked[end] = ""
+                if started and depth == 0:
+                    break
+                if not started and "{" not in lines[end] and ";" in lines[end]:
+                    break
+                end += 1
+            index = end + 1
+        else:
+            index += 1
+    in_block_comment = False
+    for lineno, line in enumerate(masked):
+        if in_block_comment:
+            end = line.find("*/")
+            if end < 0:
+                masked[lineno] = ""
+                continue
+            line = masked[lineno] = line[end + 2 :]
+            in_block_comment = False
+        start = line.find("/*")
+        if start >= 0 and "*/" not in line[start + 2 :]:
+            in_block_comment = True
+            masked[lineno] = line[:start]
+    return masked
+
+
+def magic_number_lines(path):
+    """Yield production-code lines with tests, DSL modules, and const items blanked out."""
+    lines = magic_masked_lines(path.read_text().splitlines())
+    in_const = False
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            continue
+        if MAGIC_CONST_ITEM.match(stripped):
+            in_const = True
+        if in_const:
+            if stripped.endswith(";"):
+                in_const = False
+            continue
+        code = line.split("//", 1)[0]
+        yield lineno, MAGIC_CHAR.sub("''", MAGIC_STRING.sub('""', code)), stripped
+
+
+def magic_number_files():
+    """Production Rust sources under every workspace crate's `src` directory."""
+    for path in sorted((ROOT / "crates").rglob("*.rs")):
+        relative = path.relative_to(ROOT)
+        if "src" not in relative.parts:
+            continue
+        name = path.name
+        if name == "tests.rs" or name.endswith(("_tests.rs", "_check.rs")):
+            continue
+        if MAGIC_TEST_PARTS.intersection(relative.parts):
+            continue
+        yield path
+
+
+def magic_number_violations(relative, lineno, code, stripped):
+    """Yield the magic-number violations found on one production source line."""
+    for match in MAGIC_NUMBER.finditer(code):
+        if magic_number_base(match[0]) not in MAGIC_WHITELIST:
+            yield f"{relative}:{lineno}: {match[0]} in `{stripped[:80]}`"
+    for match in MAGIC_ARRAY_HEAD.finditer(code):
+        if magic_number_base(match[1]) in MAGIC_WHITELIST:
+            continue
+        before = code[: match.start()].rstrip()
+        if before and before[-1] not in MAGIC_LITERAL_OPENERS:
+            continue
+        yield f"{relative}:{lineno}: {match[1]} in `{stripped[:80]}`"
+
+
+def check_magic_numbers():
+    """Production Rust code must name its numeric literals."""
+    violations = []
+    for path in magic_number_files():
+        relative = path.relative_to(ROOT)
+        for lineno, code, stripped in magic_number_lines(path):
+            violations.extend(magic_number_violations(relative, lineno, code, stripped))
+    require(
+        not violations,
+        "Name numeric literals instead of writing magic numbers:\n" + "\n".join(violations),
+    )
+
+
+def check_strategy_neutrality():
+    """Tile choice is a measurement, so no policy may branch on a device name or model shape."""
+    lines = magic_masked_lines(STRATEGY_SOURCE.read_text().splitlines())
+    for lineno, line in enumerate(lines, 1):
+        code = line.split("//", 1)[0]
+        require(
+            HARDWARE_BRANCH.search(code) is None,
+            f"{STRATEGY_SOURCE.relative_to(ROOT)}:{lineno}: record this tile in the tuning table "
+            "or measure it with autotune instead of branching on hardware or a model shape: "
+            f"`{line.strip()[:80]}`",
+        )
+    print("Strategy: tile selection stays independent of device names and model shapes")
 
 
 def check_production_dependencies():
@@ -147,5 +297,10 @@ def check_production_dependencies():
 if __name__ == "__main__":
     check_manifests()
     check_exceptions()
+    check_magic_numbers()
+    check_strategy_neutrality()
     check_production_dependencies()
-    print("Lint inheritance, exception policy, and GPU-only dependency checks passed")
+    print(
+        "Lint inheritance, exception, magic number, strategy neutrality, and "
+        "GPU-only dependency checks passed"
+    )

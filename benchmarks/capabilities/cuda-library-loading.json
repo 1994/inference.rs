@@ -1,0 +1,21 @@
+{
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "nodes": 1155,
+  "passed": true,
+  "prefill_width": 32,
+  "requests": 2,
+  "scope": "library-only loading, shared weight lifetime, independent state and greedy decode; not production BackendProvider acceptance",
+  "text": "391",
+  "token_ids": [
+    18,
+    24,
+    16,
+    248046
+  ],
+  "schema": 1,
+  "date": "2026-10-06",
+  "source": "artifacts/cuda-library-model-check.json",
+  "sha256": "7955dd3974e42660a92584c8e03a8db565c9d034396f3038de5249da0db29052",
+  "mtp_fp8_regression": "artifacts/cuda-loading-mtp-regression.json",
+  "production_backend_provider_complete": false
+}

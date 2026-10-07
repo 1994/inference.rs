@@ -4,6 +4,9 @@ use ahash::RandomState;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{borrow::Borrow, hash::Hash};
 
+/// Largest fixed lookup capacity accepted by [`BoundedMap::new`].
+const MAX_MAP_CAPACITY: usize = 1_048_576;
+
 #[derive(Clone, Debug)]
 struct Bucket<K, V> {
     hash: u64,
@@ -22,7 +25,7 @@ impl<K: Eq + Hash, V> BoundedMap<K, V> {
     /// # Errors
     /// Rejects invalid capacity or failure to allocate fixed lookup slots.
     pub fn new(capacity: usize) -> Result<Self> {
-        if capacity == 0 || capacity > 1_048_576 {
+        if capacity == 0 || capacity > MAX_MAP_CAPACITY {
             return Err(Error::invalid("invalid fixed map capacity"));
         }
         let slots = capacity

@@ -7,7 +7,7 @@ use metal::Buffer;
 use std::{ops::Range, time::Instant};
 
 pub(super) struct ForwardNode {
-    inputs: [Buffer; 5],
+    inputs: [Buffer; crate::constants::INPUT_BINDING_COUNT],
     outputs: Vec<OutputDispatch>,
     state: Option<infer_core::TensorId>,
     params: Params,
@@ -35,7 +35,7 @@ impl MetalBackend {
         let logits = chunk.end == task.tokens.len()
             && task.tokens.readout() != infer_ir::OutputReadout::None
             || self.config.prefix_cache_bytes > 0
-                && chunk.end.is_multiple_of(self.config.page_tokens);
+                && chunk.end.is_multiple_of(self.config.block_size);
         let mut dispatches = 0;
         for ((node, prepared), compiled) in self
             .graph
@@ -99,7 +99,9 @@ impl MetalBackend {
             .nodes
             .iter()
             .map(|node| {
-                if node.inputs.len() > 5 || node.states.len() > 1 {
+                if node.inputs.len() > crate::constants::INPUT_BINDING_COUNT
+                    || node.states.len() > 1
+                {
                     return Err(Error::unsupported("Metal forward binding capacity"));
                 }
                 let head = self
@@ -300,9 +302,8 @@ impl MetalBackend {
         let next = if self.config.prefix_cache_bytes == 0 {
             maximum
         } else {
-            maximum.min(
-                start.saturating_add(self.config.page_tokens - start % self.config.page_tokens),
-            )
+            maximum
+                .min(start.saturating_add(self.config.block_size - start % self.config.block_size))
         };
         start..next
     }
@@ -343,7 +344,7 @@ impl MetalBackend {
                 head_dim,
                 window,
             } => {
-                p.e = u32_size(self.config.page_tokens)?;
+                p.e = u32_size(self.config.block_size)?;
                 p.f = u32_size(self.kv.capacity())?;
                 p.a = u32_size(*query_heads)?;
                 p.b = u32_size(*kv_heads)?;

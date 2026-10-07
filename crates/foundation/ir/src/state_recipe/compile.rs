@@ -2,6 +2,12 @@ use super::{StateExtent, StateMemory, StateRecipe, StateRegion, StateRegionKind,
 use crate::{DataflowGraph, ModelIr, StateKind, TensorStorage};
 use infer_core::{Error, Result};
 
+/// Region slots reserved beyond per-tensor regions when pre-allocating the region list;
+/// a capacity hint only.
+const AUXILIARY_REGION_RESERVE: usize = 9;
+/// Bytes per token id or page id in the auxiliary token and page-table state regions.
+const ID_ELEMENT_BYTES: usize = size_of::<u32>();
+
 impl StateRecipe {
     /// Compile the backend's actual storage width, which can differ from graph compute precision.
     /// # Errors
@@ -9,16 +15,16 @@ impl StateRecipe {
     pub fn compile(
         model: &ModelIr,
         graph: &DataflowGraph,
-        page_tokens: usize,
+        block_size: usize,
         element_bytes: usize,
         probes: bool,
         lease_bytes: usize,
     ) -> Result<Self> {
-        if page_tokens == 0 || element_bytes == 0 || model.max_sequence == 0 {
+        if block_size == 0 || element_bytes == 0 || model.max_sequence == 0 {
             return Err(Error::invalid("invalid physical state recipe dimensions"));
         }
-        let mut regions = Vec::with_capacity(graph.tensors.len() + 9);
-        Self::compile_tensors(graph, page_tokens, element_bytes, &mut regions)?;
+        let mut regions = Vec::with_capacity(graph.tensors.len() + AUXILIARY_REGION_RESERVE);
+        Self::compile_tensors(graph, block_size, element_bytes, &mut regions)?;
         Self::compile_auxiliary(model, element_bytes, lease_bytes, &mut regions);
         if probes {
             let width = model
@@ -34,7 +40,7 @@ impl StateRecipe {
             });
         }
         let recipe = Self {
-            page_tokens,
+            block_size,
             max_tokens: model.max_sequence,
             regions,
         };
@@ -43,7 +49,7 @@ impl StateRecipe {
     }
     fn compile_tensors(
         graph: &DataflowGraph,
-        page_tokens: usize,
+        block_size: usize,
         element_bytes: usize,
         regions: &mut Vec<StateRegion>,
     ) -> Result<()> {
@@ -61,9 +67,7 @@ impl StateRecipe {
                         .ok_or_else(|| Error::invalid("KV state must have two dimensions"))?;
                     (
                         StateMemory::KvBlock,
-                        page_tokens
-                            .checked_mul(width)
-                            .and_then(|n| n.checked_mul(2)),
+                        block_size.checked_mul(width).and_then(|n| n.checked_mul(2)),
                         StateReset::ReleaseLease,
                     )
                 }
@@ -126,13 +130,13 @@ impl StateRecipe {
             (
                 StateRegionKind::Tokens,
                 StateExtent::Tokens(1),
-                4,
+                ID_ELEMENT_BYTES,
                 StateReset::Zero,
             ),
             (
                 StateRegionKind::PageTable,
                 StateExtent::Pages,
-                4,
+                ID_ELEMENT_BYTES,
                 StateReset::InvalidPage,
             ),
         ] {
@@ -156,13 +160,13 @@ impl StateRecipe {
             (
                 StateRegionKind::Tokens,
                 StateExtent::Tokens(1),
-                4,
+                ID_ELEMENT_BYTES,
                 StateReset::ClearCursor,
             ),
             (
                 StateRegionKind::PageTable,
                 StateExtent::Pages,
-                4,
+                ID_ELEMENT_BYTES,
                 StateReset::InvalidPage,
             ),
         ] {

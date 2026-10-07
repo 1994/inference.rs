@@ -1,6 +1,9 @@
 use crate::{Error, Result, StableId};
 use std::marker::PhantomData;
 
+/// Bit offset of the slot generation inside a packed arena handle.
+const GENERATION_SHIFT: u32 = u32::BITS;
+
 struct Slot<T> {
     generation: u32,
     value: Option<T>,
@@ -87,7 +90,8 @@ impl<I: StableId, T> Arena<I, T> {
         };
         self.len += 1;
         I::from_raw(
-            (u64::from(self.slots[index as usize].generation) << 32) | (u64::from(index) + 1),
+            (u64::from(self.slots[index as usize].generation) << GENERATION_SHIFT)
+                | (u64::from(index) + 1),
         )
     }
     fn decode(&self, id: I) -> Option<usize> {
@@ -96,7 +100,8 @@ impl<I: StableId, T> Arena<I, T> {
             .ok()?
             .checked_sub(1)? as usize;
         let slot = self.slots.get(index)?;
-        (u64::from(slot.generation) == raw >> 32 && slot.value.is_some()).then_some(index)
+        (u64::from(slot.generation) == raw >> GENERATION_SHIFT && slot.value.is_some())
+            .then_some(index)
     }
     pub fn get(&self, id: I) -> Option<&T> {
         self.slots

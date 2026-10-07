@@ -4,7 +4,9 @@ use infer_core::{Error, Result};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, collections::BTreeSet};
 
-type Hash = [u8; 32];
+/// Byte length of the SHA-256 digest that chains cached token blocks.
+const SHA256_DIGEST_BYTES: usize = 32;
+type Hash = [u8; SHA256_DIGEST_BYTES];
 struct Entry<V> {
     tokens: Vec<u32>,
     value: V,
@@ -13,7 +15,7 @@ struct Entry<V> {
 }
 pub struct PrefixCache<V> {
     root: Hash,
-    page_tokens: usize,
+    block_size: usize,
     budget: u64,
     max_entries: usize,
     entries: BTreeMap<Hash, Entry<V>>,
@@ -28,22 +30,17 @@ impl<V> PrefixCache<V> {
     ///
     /// # Errors
     /// Returns an invalid-input error for an empty namespace, zero page size, or zero entry limit.
-    pub fn new(
-        binding: &[u8],
-        page_tokens: usize,
-        budget: u64,
-        max_entries: usize,
-    ) -> Result<Self> {
-        if binding.is_empty() || page_tokens == 0 || max_entries == 0 {
+    pub fn new(binding: &[u8], block_size: usize, budget: u64, max_entries: usize) -> Result<Self> {
+        if binding.is_empty() || block_size == 0 || max_entries == 0 {
             return Err(Error::invalid("invalid prefix cache namespace/budget"));
         }
         let mut digest = Sha256::new();
         digest.update(b"kv-block-chain-v1");
         digest.update(binding);
-        digest.update((page_tokens as u64).to_le_bytes());
+        digest.update((block_size as u64).to_le_bytes());
         Ok(Self {
             root: digest.finalize().into(),
-            page_tokens,
+            block_size,
             budget,
             max_entries,
             entries: BTreeMap::new(),
@@ -57,7 +54,7 @@ impl<V> PrefixCache<V> {
     }
     fn key(&self, tokens: &[u32]) -> Hash {
         let mut parent = self.root;
-        for block in tokens.chunks(self.page_tokens) {
+        for block in tokens.chunks(self.block_size) {
             let mut hash = Sha256::new();
             hash.update(parent);
             for token in block {
@@ -123,8 +120,8 @@ impl<V> PrefixCache<V> {
     ) -> usize {
         let mut parent = self.root;
         let mut matched = 0;
-        for (i, block) in tokens.chunks_exact(self.page_tokens).enumerate() {
-            let length = (i + 1) * self.page_tokens;
+        for (i, block) in tokens.chunks_exact(self.block_size).enumerate() {
+            let length = (i + 1) * self.block_size;
             if length > maximum {
                 break;
             }
@@ -184,7 +181,7 @@ impl<V> PrefixCache<V> {
     /// # Errors
     /// Returns an invalid-input error for empty or partial token blocks, or an invariant error if eviction metadata is inconsistent.
     pub fn insert(&mut self, tokens: Vec<u32>, value: V, bytes: u64) -> Result<Vec<V>> {
-        if tokens.is_empty() || !tokens.len().is_multiple_of(self.page_tokens) {
+        if tokens.is_empty() || !tokens.len().is_multiple_of(self.block_size) {
             return Err(Error::invalid(
                 "only complete token blocks may be published",
             ));

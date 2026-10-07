@@ -37,7 +37,7 @@ impl MetalBackend {
                 "corrupt paged Metal checkpoint cursor/output",
             ));
         }
-        let count = saved.tokens.len().div_ceil(self.config.page_tokens);
+        let count = saved.tokens.len().div_ceil(self.config.block_size);
         if saved.blocks.len() != count
             || saved.blocks.iter().any(|l| l.generation == 0)
             || saved
@@ -103,11 +103,11 @@ impl MetalBackend {
                 continue;
             }
             let width = spec.shape[1];
-            let n = self.config.page_tokens * width;
+            let n = self.config.block_size * width;
             let mut data = vec![0.0; n * 2];
             let source = &saved.tensors[&spec.id];
-            for row in 0..self.config.page_tokens {
-                let absolute = at * self.config.page_tokens + row;
+            for row in 0..self.config.block_size {
+                let absolute = at * self.config.block_size + row;
                 if absolute >= saved.tokens.len() {
                     break;
                 }
@@ -140,7 +140,7 @@ impl MetalBackend {
                 !self.sequences.get(id).is_some_and(|s| {
                     s.capacity == *cap
                         && s.tokens.len() == *pos
-                        && s.blocks.len() == pos.div_ceil(self.config.page_tokens)
+                        && s.blocks.len() == pos.div_ceil(self.config.block_size)
                 })
             })
         {

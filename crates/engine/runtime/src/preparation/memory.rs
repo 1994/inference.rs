@@ -1,22 +1,31 @@
 //! Conservative retained native request/projection bounds, independent of device storage.
 use infer_ir::{CanonicalRequest, DecisionQuestion, RequestInput, Workload};
 
+/// Fixed request bookkeeping retained beyond input tokens and workload projections.
+const REQUEST_OVERHEAD_BYTES: usize = 256;
+
 pub fn request_bytes(request: &CanonicalRequest) -> usize {
     let input = match &request.input {
-        RequestInput::Sequence { tokens, media } => {
-            tokens.capacity().saturating_mul(4).saturating_add(
+        RequestInput::Sequence { tokens, media } => tokens
+            .capacity()
+            .saturating_mul(size_of::<u32>())
+            .saturating_add(
                 media
                     .capacity()
                     .saturating_mul(size_of::<infer_ir::MediaInput>()),
-            )
-        }
-        RequestInput::Pairs { query, documents } => documents.iter().fold(
-            query.capacity().saturating_mul(4).saturating_add(
-                documents
-                    .capacity()
-                    .saturating_mul(size_of::<infer_ir::TokenBuffer>()),
             ),
-            |bytes, document| bytes.saturating_add(document.capacity().saturating_mul(4)),
+        RequestInput::Pairs { query, documents } => documents.iter().fold(
+            query
+                .capacity()
+                .saturating_mul(size_of::<u32>())
+                .saturating_add(
+                    documents
+                        .capacity()
+                        .saturating_mul(size_of::<infer_ir::TokenBuffer>()),
+                ),
+            |bytes, document| {
+                bytes.saturating_add(document.capacity().saturating_mul(size_of::<u32>()))
+            },
         ),
     };
     let workload = match &request.workload {
@@ -28,12 +37,12 @@ pub fn request_bytes(request: &CanonicalRequest) -> usize {
             |bytes, question| {
                 bytes.saturating_add(match question {
                     DecisionQuestion::Categorical { options } => {
-                        options.capacity().saturating_mul(4)
+                        options.capacity().saturating_mul(size_of::<u32>())
                     }
                     DecisionQuestion::Ordinal { options, values } => options
                         .capacity()
                         .saturating_add(values.capacity())
-                        .saturating_mul(4),
+                        .saturating_mul(size_of::<u32>()),
                     DecisionQuestion::Binary { .. } | DecisionQuestion::Continuous { .. } => 0,
                 })
             },
@@ -46,7 +55,7 @@ pub fn request_bytes(request: &CanonicalRequest) -> usize {
     input
         .saturating_add(workload)
         .saturating_add(request.qos.tenant.capacity())
-        .saturating_add(size_of::<CanonicalRequest>() + 256)
+        .saturating_add(size_of::<CanonicalRequest>() + REQUEST_OVERHEAD_BYTES)
 }
 pub fn projection_bytes(request: &CanonicalRequest) -> usize {
     match &request.workload {
@@ -62,7 +71,7 @@ pub fn projection_bytes(request: &CanonicalRequest) -> usize {
                 };
                 bytes.saturating_add(
                     options
-                        .saturating_mul(4)
+                        .saturating_mul(size_of::<u32>())
                         .saturating_add(size_of::<infer_ir::DecisionAnswer>()),
                 )
             })

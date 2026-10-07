@@ -3,7 +3,7 @@ use infer_backend_metal::{MetalBackend, MetalConfig, MetalKernels};
 use infer_core::*;
 use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
-use infer_models::{QwenPackage, SafetensorsFile, TensorDtype, TensorHeader};
+use infer_models::{ModelPackage, SafetensorsFile, TensorDtype, TensorHeader};
 use infer_spi::BackendProvider;
 use std::{
     collections::BTreeMap, path::Path, path::PathBuf, sync::atomic::AtomicU64,
@@ -90,7 +90,11 @@ fn program(backend: &MetalBackend) -> Result<ExecutionProgram> {
     registry.register(&MetalKernels)?;
     infer_compiler::compile(
         ProgramId::ONE,
-        infer_compiler::lower(backend.model(), PrecisionPlan::f32())?,
+        infer_compiler::lower(
+            backend.model(),
+            backend.execution_graph(backend.model())?,
+            PrecisionPlan::f32(),
+        )?,
         &registry,
         &backend.capabilities(),
         1 << 20,
@@ -129,6 +133,8 @@ fn execute(
             request: RequestId::ONE,
             state: StateId::ONE,
             tokens: tokens.to_vec().into(),
+
+            sampling: None,
         }],
     )?;
     let limit = Instant::now() + Duration::from_secs(10);
@@ -161,7 +167,7 @@ fn sharded_bf16_and_f16_remain_native_and_match_f32_execution() -> TestResult {
     for name in ["qwen-hybrid-tiny", "qwen-hybrid-grouped"] {
         for dtype in [TensorDtype::BF16, TensorDtype::F16] {
             let root = fixture(name, dtype)?;
-            let mut package = QwenPackage::open(&root, ModelId::ONE)?;
+            let mut package = ModelPackage::open(&root, ModelId::ONE)?;
             let config = MetalConfig {
                 prefix_cache_bytes: 0,
                 upload_staging_bytes: 12,
@@ -219,10 +225,12 @@ fn layer_major_chunks_match_official_golden_and_reduce_dispatches() -> TestResul
         let expected = ModelOutput {
             logits: serde_json::from_value(prefix["logits"].clone())?,
             hidden: serde_json::from_value(prefix["hidden"].clone())?,
+
+            tokens: Vec::new(),
         };
         let mut dispatches = Vec::new();
         for chunk in [1, 2, 3, 32] {
-            let mut package = QwenPackage::open(original(name), ModelId::ONE)?;
+            let mut package = ModelPackage::open(original(name), ModelId::ONE)?;
             let mut backend = MetalBackend::from_package(
                 &mut package,
                 MetalConfig {

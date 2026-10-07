@@ -10,6 +10,7 @@ members = [
     "crates/backend/cuda",
     "crates/model/package",
     "crates/model/compiler",
+    "crates/model/recipes",
     "crates/engine/state",
     "crates/engine/scheduler",
     "crates/engine/workloads",
@@ -32,6 +33,7 @@ default-members = [
     "crates/backend/metal",
     "crates/model/package",
     "crates/model/compiler",
+    "crates/model/recipes",
     "crates/engine/state",
     "crates/engine/scheduler",
     "crates/engine/workloads",
@@ -50,6 +52,7 @@ rust-version = "1.90"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+infer-backend-cuda = { path = "crates/backend/cuda" }
 libc = "0.2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
@@ -74,6 +77,7 @@ infer-kernel-api = { version = "=0.1.0", path = "crates/backend/kernel-api" }
 infer-backend-metal = { version = "=0.1.0", path = "crates/backend/metal" }
 
 # Model loading and compilation
+infer-model-recipes = { version = "=0.1.0", path = "crates/model/recipes" }
 infer-models = { version = "=0.1.0", path = "crates/model/package" }
 infer-compiler = { version = "=0.1.0", path = "crates/model/compiler" }
 

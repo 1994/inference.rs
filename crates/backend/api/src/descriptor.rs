@@ -65,7 +65,7 @@ impl SubmissionDescriptor {
                     infer_ir::ExecutionRole::Prefill => 0,
                     infer_ir::ExecutionRole::Decode => 1,
                     infer_ir::ExecutionRole::Forward => 2,
-                    infer_ir::ExecutionRole::Mixed => 3,
+                    infer_ir::ExecutionRole::Mixed => crate::constants::ROLE_MIXED,
                 },
                 readout: 0,
             };

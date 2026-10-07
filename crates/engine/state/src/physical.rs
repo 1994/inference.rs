@@ -2,6 +2,9 @@ use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Bytes per stored `f32` state element, used by the allocation accounting.
+const F32_BYTES: usize = size_of::<f32>();
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagedRows {
     pub width: usize,
@@ -58,7 +61,7 @@ impl PagedRows {
     }
     #[must_use]
     pub const fn allocated_bytes(&self) -> usize {
-        self.pages.len() * self.page_rows * self.width * 4
+        self.pages.len() * self.page_rows * self.width * F32_BYTES
     }
     #[must_use]
     pub fn shared_pages(&self) -> usize {
@@ -109,8 +112,8 @@ impl PhysicalTensor {
     pub const fn allocated_bytes(&self) -> usize {
         match self {
             Self::Kv { keys, values } => keys.allocated_bytes() + values.allocated_bytes(),
-            Self::Conv { history, .. } => history.len() * 4,
-            Self::Delta { recurrent, .. } => recurrent.len() * 4,
+            Self::Conv { history, .. } => history.len() * F32_BYTES,
+            Self::Delta { recurrent, .. } => recurrent.len() * F32_BYTES,
         }
     }
 }

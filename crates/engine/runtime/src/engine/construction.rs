@@ -10,6 +10,9 @@ use infer_state::SequenceStateManager;
 use infer_workloads::NativeWorkloads;
 use std::{collections::BTreeSet, collections::VecDeque};
 
+/// Upper bound on parent trace contexts the event collector retains.
+const MAX_TRACKED_PARENTS: usize = 8192;
+
 impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
     ///
     /// # Errors
@@ -51,15 +54,15 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         config.validate()?;
         let program = infer_compiler::compile(
             ProgramId::new(1)?,
-            infer_compiler::lower(&model, precision)?,
+            infer_compiler::lower(&model, backend.execution_graph(&model)?, precision)?,
             registry,
             &backend.capabilities(),
             config.workspace_bytes,
         )?;
         backend.validate_program(&model, &program)?;
         let state = SequenceStateManager::with_capacity(
-            config.state_pages,
-            config.page_tokens,
+            config.num_gpu_blocks,
+            config.block_size,
             config.max_requests,
         )?;
         let guard = ProgressGuard::new(config.progress_limit)?;
@@ -80,7 +83,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         policy.reserve_workspace(
             &mut planning_workspace,
             config.candidate_limit.min(config.max_requests),
-            config.max_batch,
+            config.max_num_seqs,
         )?;
         let tenants = infer_core::map::BoundedMap::new(config.max_requests)?;
         let resources_pending = crate::resource::ResourceWaiters::new(config.max_requests)?;
@@ -188,11 +191,11 @@ where
             self.config
                 .history_capacity
                 .saturating_add(self.config.max_requests)
-                .min(8192),
+                .min(MAX_TRACKED_PARENTS),
         )?);
         let output_worker = crate::stages::worker::OutputWorker::placed(
             &self.fork_workloads()?.into(),
-            self.config.max_batch.min(self.config.max_requests),
+            self.config.max_num_seqs.min(self.config.max_requests),
             self.model.vocab_size,
             &self.config.cpu.placement.output,
         )?;
@@ -202,7 +205,7 @@ where
             self.program.clone(),
             crate::runner::RunnerConfig {
                 control_capacity: queue,
-                max_batch: self.config.max_batch,
+                max_num_seqs: self.config.max_num_seqs,
                 max_states: self.config.max_requests,
                 batch_slots: 2,
                 poll_min_us: self.config.cpu.poll_min_us,

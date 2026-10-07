@@ -4,6 +4,13 @@ use infer_core::{Error, Result};
 use infer_ir::{CostEstimate, CostQuery, ExecutionRole};
 use infer_spi::BatchCostSummary;
 
+/// `BatchCostSummary::roles` membership bit for prefill work.
+const ROLE_PREFILL_BIT: u8 = 1;
+/// `BatchCostSummary::roles` membership bit for decode work.
+const ROLE_DECODE_BIT: u8 = 2;
+/// `BatchCostSummary::roles` membership bit for forward work.
+const ROLE_FORWARD_BIT: u8 = 4;
+
 /// # Errors
 /// Rejects invalid queries, nonmonotone feature replacement or overflowing native resources.
 pub fn update_summary(
@@ -34,7 +41,11 @@ pub fn update_summary(
             .ok_or_else(error)?;
     }
     for (value, old, new) in [
-        (&mut total.state_pages, old.state_pages, new.state_pages),
+        (
+            &mut total.num_gpu_blocks,
+            old.num_gpu_blocks,
+            new.num_gpu_blocks,
+        ),
         (
             &mut total.logical_pages,
             old.logical_pages,
@@ -58,9 +69,9 @@ pub fn update_summary(
         .ok_or_else(error)?;
     summary.context_tokens = summary.context_tokens.max(next.context_tokens);
     summary.roles |= match next.role {
-        ExecutionRole::Prefill => 1,
-        ExecutionRole::Decode => 2,
-        ExecutionRole::Forward => 4,
+        ExecutionRole::Prefill => ROLE_PREFILL_BIT,
+        ExecutionRole::Decode => ROLE_DECODE_BIT,
+        ExecutionRole::Forward => ROLE_FORWARD_BIT,
         ExecutionRole::Mixed => return Err(Error::invalid("mixed summary query")),
     };
     Ok(summary)
@@ -68,9 +79,9 @@ pub fn update_summary(
 pub(super) fn shape(summary: &BatchCostSummary) -> Shape {
     Shape {
         role: match summary.roles {
-            1 => ExecutionRole::Prefill,
-            2 => ExecutionRole::Decode,
-            4 => ExecutionRole::Forward,
+            ROLE_PREFILL_BIT => ExecutionRole::Prefill,
+            ROLE_DECODE_BIT => ExecutionRole::Decode,
+            ROLE_FORWARD_BIT => ExecutionRole::Forward,
             _ => ExecutionRole::Mixed,
         },
         tokens: bucket(summary.tokens),
@@ -109,7 +120,7 @@ mod tests {
                     CostEstimate {
                         gpu_us: 2,
                         workspace_bytes: 16 + index as u64,
-                        state_pages: 1,
+                        num_gpu_blocks: 1,
                         state_bytes: 32,
                         transfer_us: 3,
                         encoder_us: 4,
@@ -117,13 +128,13 @@ mod tests {
                     },
                 );
                 query.page_growth = Some(PageGrowth {
-                    page_tokens: 16,
+                    block_size: 16,
                     allocated_pages: 1,
                     bytes_per_page: 64,
                     cow_tail: true,
                 });
                 query.logical_growth = Some(PageGrowth {
-                    page_tokens: 8,
+                    block_size: 8,
                     allocated_pages: 1,
                     bytes_per_page: 0,
                     cow_tail: false,

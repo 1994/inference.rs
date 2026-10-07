@@ -1,5 +1,9 @@
 //! Verification commands.
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use super::host_quality;
 use super::{VerifyOptions, backend, print, read_json};
 #[cfg(feature = "test-backends")]
@@ -8,7 +12,11 @@ use infer_core::{Error, Result};
 #[cfg(feature = "test-backends")]
 use infer_runtime::RuntimeConfig;
 
-pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Result<()> {
+/// Batch width of the candidate engine in the fixture invariance check.
+#[cfg(feature = "test-backends")]
+const INVARIANCE_CANDIDATE_BATCH: usize = 4;
+
+pub fn verify(options: VerifyOptions, backend_choice: &backend::Selection) -> Result<()> {
     let VerifyOptions {
         reference,
         candidate,
@@ -16,7 +24,7 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
         rtol,
         package,
         golden,
-        device_memory_mib,
+        host_memory_mib,
     } = options;
     if package.is_none()
         && let (Some(a), Some(b)) = (&reference, &candidate)
@@ -34,7 +42,11 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
             Err(Error::invariant("verification failed"))
         };
     }
-    #[cfg(any(target_os = "macos", feature = "test-backends"))]
+    #[cfg(any(
+        target_os = "macos",
+        feature = "test-backends",
+        all(target_os = "linux", feature = "cuda")
+    ))]
     {
         if let Some(package) = package {
             let report = host_quality::verify_package(
@@ -42,7 +54,7 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
                 golden
                     .as_deref()
                     .ok_or_else(|| Error::invariant("validated argument"))?,
-                device_memory_mib,
+                host_memory_mib,
                 atol,
                 rtol,
                 backend_choice,
@@ -56,7 +68,7 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
         }
         #[cfg(feature = "test-backends")]
         {
-            verify_fixture(device_memory_mib, backend_choice)
+            verify_fixture(host_memory_mib, backend_choice.clone())
         }
         #[cfg(not(feature = "test-backends"))]
         {
@@ -65,14 +77,18 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
             ))
         }
     }
-    #[cfg(not(any(target_os = "macos", feature = "test-backends")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        feature = "test-backends",
+        all(target_os = "linux", feature = "cuda")
+    )))]
     {
         if package.is_none() {
             return Err(Error::invalid(
                 "device backend verification requires --package and --golden",
             ));
         }
-        let _ = (golden, device_memory_mib, backend_choice);
+        let _ = (golden, host_memory_mib, backend_choice);
         Err(Error::unsupported(
             "GPU verification requires a supported device backend",
         ))
@@ -80,31 +96,31 @@ pub fn verify(options: VerifyOptions, backend_choice: backend::Selection) -> Res
 }
 #[cfg(feature = "test-backends")]
 pub(super) fn verify_fixture(
-    device_memory_mib: u64,
+    host_memory_mib: u64,
     backend_choice: backend::Selection,
 ) -> Result<()> {
     let input = examples()?;
     let ids = input.iter().map(|r| r.id).collect::<Vec<_>>();
     let mut baseline = selected_engine(
         RuntimeConfig {
-            max_batch: 1,
+            max_num_seqs: 1,
             ..Default::default()
         },
         None,
         None,
-        device_memory_mib,
-        backend_choice,
+        host_memory_mib,
+        backend_choice.clone(),
     )?;
     run_requests(&mut baseline, input.clone())?;
     let mut candidate = selected_engine(
         RuntimeConfig {
-            max_batch: 4,
-            token_budget: 2,
+            max_num_seqs: INVARIANCE_CANDIDATE_BATCH,
+            max_num_batched_tokens: 2,
             ..Default::default()
         },
         None,
         None,
-        device_memory_mib,
+        host_memory_mib,
         backend_choice,
     )?;
     run_requests(&mut candidate, input)?;

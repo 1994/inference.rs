@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "passed": true,
+  "source": "artifacts/batch32-pilot.json",
+  "sha256": "2f4818486232fc02142bd898bc9a8712e43e77179b0f94622a23be2e57e36ddf",
+  "hardware": "artifacts/batch32-pilot-hardware.jsonl",
+  "binary_sha256": "928a6028f302e008c0d2ee3f22dda422f90646a0eac3b28a50b1cbc7cfd9d9a5",
+  "baseline_source": "artifacts/batch32-pilot-base.json",
+  "baseline_sha256": "4a504c0c7a64e2be6214f29ecb8e27d7cfdfb1ef700015bf2a51dc51f6824e0c",
+  "baseline_hardware": "artifacts/batch32-pilot-base-hardware.jsonl",
+  "device": "NVIDIA GeForce RTX 5090",
+  "model": "Qwen3.8-27B-NVFP4",
+  "config": "--device-graph --prefill-batch 32 --tuning artifacts/rtx5090-projection-tuning.json --thinking false --temperature 0 --presence-penalty 0 --dataset artifacts/modelscope-pilot.json",
+  "token_identity": {
+    "entries": 8,
+    "decode_tokens": 822,
+    "identical_tokens": 822,
+    "scope": "pre-change prefill32 binary vs batched-arena prefill32 binary, same dataset and seeds; every decode token sequence compared element-wise"
+  },
+  "prefill_seconds_sum": {
+    "baseline_prefill32": 1.562404945,
+    "batched_arena": 0.767149642,
+    "reduction_percent": 50.9
+  },
+  "wall_seconds": {
+    "baseline_prefill32": 16.509702612,
+    "batched_arena": 15.544263811
+  },
+  "decode_tokens_per_second": {
+    "baseline_prefill32": 49.79,
+    "batched_arena": 52.88
+  },
+  "checks": [
+    "63 device-graph numeric checks PASS (artifacts/batch32-resident.log, sha256 1b2193f53de226677d97a4cae49474bc41e0d10fd0939eacac13df179bbc9b9a)",
+    "BackendProvider F32 and FP8-KV pool-pressure regression both generate 391 (artifacts/batch32-provider-f32.json, artifacts/batch32-provider-fp8.json)",
+    "prefill32 + MTP2 field-exact decode stats and tokens [18, 24, 16, 248046] (artifacts/batch32-mtp2.json)",
+    "822/822 decode tokens identical to the pre-change prefill32 binary on the pilot dataset"
+  ],
+  "limits": [
+    "prefill32 rounds prompt projection inputs to BF16; not bit-equivalent to the F32 GEMV prefill used by --prefill-batch 3, as documented since the prefill32 introduction",
+    "32 per-lane metadata updates and Row-mode auxiliary kernels remain per-lane; only activation storage and GEMM/aux batching changed",
+    "pilot dataset of 8 requests is not a formal throughput acceptance run; decode is still F32 GEMV and dominates wall time"
+  ]
+}

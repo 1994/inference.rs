@@ -8,12 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use model_smoke::{mtp::Mtp, options::Options};
     use std::time::Instant;
     let options = Options::parse();
+    cutile::jit_cache::enable_default()?;
     if options.dataset.is_some() {
         return model_smoke::suite::run(&options);
     }
-    if options.max_new_tokens == 0 || options.max_new_tokens > 1024 || options.mtp > 8 {
-        return Err("max_new_tokens must be 1..=1024; mtp depth must be 0..=8".into());
-    }
+    options.validate()?;
     let text = TextAssets::open(&options.model, 4096)?;
     let resolved = text.generation.resolve(&options.sampling())?;
     let input = text.encode_chat(
@@ -34,18 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if options.tune_projections {
+        return model_smoke::tuning::run(&model, mtp.as_ref()).map_err(Into::into);
+    }
+    model_smoke::prepare_graphs(&mut model, mtp.as_mut(), &options)?;
     let load_seconds = started.elapsed().as_secs_f64();
     let start = Instant::now();
-    let mut logits = Vec::new();
-    for (position, token) in input.iter().enumerate() {
-        if position > 0
-            && let Some(mtp) = &mut mtp
-        {
-            mtp.step(*token, &model.hidden, position, false)?;
-        }
-        logits = model.step(*token, position, position + 1 == input.len())?;
-        eprintln!("prefill {}/{}", position + 1, input.len());
-    }
+    let logits = model_smoke::prefill::run(&mut model, &mut mtp, &input, options.prefill_batch)?;
     let prefill_seconds = start.elapsed().as_secs_f64();
     let start = Instant::now();
     let result = model_smoke::decode::decode(
@@ -59,10 +53,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let decode_seconds = start.elapsed().as_secs_f64();
     let result = serde_json::json!({
-        "mode": "diagnostic: GPU projections + Rust CPU auxiliary operations",
-        "precision": "dequantized weights with F32 activations; dynamic activation quantization not enabled",
+        "mode": options.execution_mode(),
+        "limitation": options.limitation(),
+        "precision": options.limitation(),
         "mtp_depth": options.mtp, "generation": resolved,
-        "verification": "sequential target verification with exact rejection sampling; draft KV restore/replay",
+        "mlp_graph": options.mlp_graph,
+        "device_graph": options.device_graph, "prefill_batch": options.prefill_batch, "prefill_math": options.prefill_math(),
+        "nvfp4_loading_policy": model.package.imported.precision.resolve(|dtype| model.device.target().supports_compute(dtype)).storage,
+        "target_kv_cache": if options.fp8_kv { "fp8-e4m3-static-scales" } else { "f32" },
+        "tuning": options.tuning,
+        "projection_tuning": if options.tuning.is_some() { "file override" } else { "built-in default tiling" },
+        "mlp_pdl": options.mlp_pdl,
+        "verification": options.verification(),
         "timing_note": "diagnostic wall time includes host work, transfers and first-use JIT; not a production benchmark",
         "target": model.device.target(), "model": options.model, "prompt": options.prompt,
         "input_tokens": input, "decode": result, "text": text.decode(&result.tokens, true)?,

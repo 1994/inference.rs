@@ -1,0 +1,9 @@
+{
+  "max_requests": 4,
+  "candidate_limit": 4,
+  "max_num_seqs": 2,
+  "max_request_units": 4,
+  "max_num_batched_tokens": 128,
+  "workspace_bytes": 268435456,
+  "resource_timeout_us": 30000000
+}

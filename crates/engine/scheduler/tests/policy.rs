@@ -33,8 +33,8 @@ fn work(id: u64, role: ExecutionRole, tokens: usize) -> ReadyWork {
 }
 fn resources() -> ResourceSnapshot {
     ResourceSnapshot {
-        max_batch: 8,
-        token_budget: 16,
+        max_num_seqs: 8,
+        max_num_batched_tokens: 16,
         gpu_budget_us: 100,
         workspace_bytes: 1024,
         free_state_pages: 4,
@@ -71,7 +71,7 @@ fn slack_uses_remaining_service_instead_of_only_absolute_deadline() {
     let mut long = work(2, ExecutionRole::Prefill, 30);
     long.deadline_us = Some(40);
     let mut r = resources();
-    r.token_budget = 1;
+    r.max_num_batched_tokens = 1;
     let result = plan(&[short, long], &r, 0);
     assert_eq!(result.step.unwrap().work[0].request.get(), 2);
     assert_eq!(result.selected[0].slack_us, Some(10));
@@ -118,7 +118,7 @@ fn wfq_updates_tenant_service_inside_a_batch() {
     let mut b = work(2, ExecutionRole::Prefill, 32);
     b.weight = 3;
     let mut r = resources();
-    r.token_budget = 12;
+    r.max_num_batched_tokens = 12;
     let step = plan(&[a, b], &r, 0).step.unwrap();
     let count = |id| {
         step.work
@@ -138,7 +138,7 @@ fn aging_prevents_starvation_even_under_urgent_decode_traffic() {
     decode.last_service_us = 100;
     decode.latency_deadline_us = Some(101);
     let mut r = resources();
-    r.token_budget = 1;
+    r.max_num_batched_tokens = 1;
     r.scheduler.max_wait_us = 100;
     let decision = plan(&[long, decode], &r, 100);
     assert_eq!(decision.step.unwrap().work[0].request.get(), 1);
@@ -150,7 +150,7 @@ fn incompatible_or_resource_heavy_candidate_does_not_block_others() {
         let mut bad = work(1, ExecutionRole::Prefill, 1);
         match field {
             0 => bad.cost_query.workspace_bytes = 1025,
-            1 => bad.cost_query.state_pages = 5,
+            1 => bad.cost_query.num_gpu_blocks = 5,
             2 => bad.cost_query.transfer_us = 101,
             _ => bad.cost_query.encoder_us = 101,
         }
@@ -271,7 +271,7 @@ fn planning_budget_yields_partial_batch_with_explicit_cpu_deferrals() -> Result<
     ];
     let mut r = resources();
     r.scheduler.max_planning_probes = 1;
-    r.token_budget = 1024;
+    r.max_num_batched_tokens = 1024;
     r.gpu_budget_us = 10_000;
     let decision = CostAwarePolicy.plan(&ready, &r, 0, DecisionId::ONE, StepId::ONE)?;
     assert_eq!(decision.step.as_ref().map(|step| step.work.len()), Some(1));
@@ -287,7 +287,7 @@ fn exhausted_large_quantum_probe_still_dispatches_a_feasible_minimum() -> Result
     r.scheduler.max_planning_probes = 1;
     r.scheduler.prefill_chunk_tokens = 128;
     r.scheduler.fair_quantum_tokens = 128;
-    r.token_budget = 128;
+    r.max_num_batched_tokens = 128;
     r.gpu_budget_us = 2;
     let decision = CostAwarePolicy.plan(&ready, &r, 0, DecisionId::ONE, StepId::ONE)?;
     assert_eq!(

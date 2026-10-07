@@ -93,7 +93,8 @@ impl<C> BatchArena<C> {
             .slots
             .get(index as usize)
             .ok_or_else(|| Error::invalid("batch handle out of bounds"))?;
-        if u64::from(slot.generation.load(Ordering::Acquire)) != handle.get() >> 32
+        if u64::from(slot.generation.load(Ordering::Acquire))
+            != handle.get() >> crate::constants::HANDLE_GENERATION_SHIFT
             || matches!(slot.state.load(Ordering::Acquire), FREE | RETIRED)
         {
             return Err(Error::invariant("stale batch generation"));
@@ -147,7 +148,10 @@ impl<C> BatchArena<C> {
             slot.launch.store(0, Ordering::Relaxed);
             slot.abandoned.store(false, Ordering::Relaxed);
             let generation = slot.generation.load(Ordering::Relaxed);
-            let handle = BatchHandle::new((u64::from(generation) << 32) | (index as u64 + 1))?;
+            let handle = BatchHandle::new(
+                (u64::from(generation) << crate::constants::HANDLE_GENERATION_SHIFT)
+                    | (index as u64 + 1),
+            )?;
             slot.state.store(PUBLISHED, Ordering::Release);
             return Ok(BatchLease {
                 owner: self.owner,

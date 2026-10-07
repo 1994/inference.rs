@@ -3,6 +3,9 @@ use super::{Checkpoint, HostBackend, validate_checkpoint_tensors};
 use infer_core::{Error, ErrorCode, Result};
 use infer_state::cache::PrefixCache;
 
+/// Serialized checkpoint payloads may not exceed this multiple of the host memory budget.
+const CHECKPOINT_PAYLOAD_BUDGET_FACTOR: u64 = 16;
+
 impl HostBackend {
     pub(super) fn provider_restore_execution_state(
         &mut self,
@@ -10,7 +13,12 @@ impl HostBackend {
     ) -> Result<()> {
         let payload =
             payload.ok_or_else(|| Error::invalid("missing physical execution checkpoint"))?;
-        if payload.len() as u64 > self.config.memory_bytes.saturating_mul(16) {
+        if payload.len() as u64
+            > self
+                .config
+                .memory_bytes
+                .saturating_mul(CHECKPOINT_PAYLOAD_BUDGET_FACTOR)
+        {
             return Err(Error::new(
                 ErrorCode::Capacity,
                 "host checkpoint exceeds budget",
@@ -49,7 +57,9 @@ impl HostBackend {
         if self
             .weight_bytes()
             .checked_add(total)
-            .and_then(|n| n.checked_add(self.graph.scratch_elements as u64 * 4))
+            .and_then(|n| {
+                n.checked_add(self.graph.scratch_elements as u64 * crate::constants::F32_BYTES_U64)
+            })
             .and_then(|n| n.checked_add(self.config.prefix_cache_bytes))
             .and_then(|n| n.checked_add(self.config.probe_bytes))
             .is_none_or(|n| n > self.config.memory_bytes)
@@ -64,9 +74,9 @@ impl HostBackend {
         self.prefix_hits = checkpoint.prefix_hits;
         self.prefixes = PrefixCache::new(
             self.identity.as_bytes(),
-            self.config.page_tokens,
+            self.config.block_size,
             self.config.prefix_cache_bytes,
-            4096,
+            crate::constants::PREFIX_CACHE_MAX_ENTRIES,
         )?;
         Ok(())
     }

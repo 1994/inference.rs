@@ -5,9 +5,7 @@ use serde_json::{Value, json};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
-    if !(1..=1024).contains(&options.max_new_tokens) || options.mtp > 8 {
-        return Err("invalid token limit or MTP depth".into());
-    }
+    options.validate()?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(
         options.dataset.as_ref().ok_or("dataset required")?,
     )?)?;
@@ -34,11 +32,8 @@ pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
         inputs.iter().map(Vec::len).max().unwrap_or(0) + options.max_new_tokens + options.mtp;
     let started = Instant::now();
     let mut model = Model::load(&options.model, capacity)?;
-    let mut draft = if options.mtp > 0 {
-        Some(Mtp::load(&options.model, &model, capacity)?)
-    } else {
-        None
-    };
+    let mut draft = load_draft(options, &model, capacity)?;
+    super::prepare_graphs(&mut model, draft.as_mut(), options)?;
     let load_seconds = started.elapsed().as_secs_f64();
     let empty = model.state.clone();
     let draft_empty = draft.as_ref().map(Mtp::checkpoint);
@@ -50,7 +45,7 @@ pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
         model.state.clone_from(&empty);
         model.hidden.clear();
         if let (Some(draft), Some(empty)) = (&mut draft, &draft_empty) {
-            draft.restore(empty.clone());
+            draft.restore(empty.clone())?;
             draft.model.hidden.clear();
         }
         if index == 1 {
@@ -61,15 +56,7 @@ pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
         let input = &inputs[sample];
         let request_start_unix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
         let started = Instant::now();
-        let mut logits = Vec::new();
-        for (position, token) in input.iter().enumerate() {
-            if position > 0
-                && let Some(draft) = &mut draft
-            {
-                draft.step(*token, &model.hidden, position, false)?;
-            }
-            logits = model.step(*token, position, position + 1 == input.len())?;
-        }
+        let logits = super::prefill::run(&mut model, &mut draft, input, options.prefill_batch)?;
         let prefill_seconds = started.elapsed().as_secs_f64();
         let decoded = decode::decode(
             &mut model,
@@ -95,14 +82,33 @@ pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
-            "framework": "rust-diagnostic", "model": options.model, "target": model.device.target(),
-            "limitation": "GPU projections, CPU auxiliary ops; weight-only quantization; sequential MTP verification",
+            "framework": if options.device_graph { "rust-resident" } else { "rust-diagnostic" }, "model": options.model, "target": model.device.target(),
+            "limitation": options.limitation(), "verification": options.verification(),
             "dataset": manifest, "generation": resolved, "mtp_depth": options.mtp,
-            "max_new_tokens": options.max_new_tokens, "concurrency": 1, "warmup_requests": 1,
+        "max_new_tokens": options.max_new_tokens, "concurrency": 1, "warmup_requests": 1,
+        "mlp_graph": options.mlp_graph,
+        "device_graph": options.device_graph, "prefill_batch": options.prefill_batch, "prefill_math": options.prefill_math(),
+        "nvfp4_loading_policy": model.package.imported.precision.resolve(|dtype| model.device.target().supports_compute(dtype)).storage,
+        "target_kv_cache": if options.fp8_kv { "fp8-e4m3-static-scales" } else { "f32" },
+        "tuning": options.tuning,
+        "projection_tuning": if options.tuning.is_some() { "file override" } else { "built-in default tiling" },
+        "mlp_pdl": options.mlp_pdl,
         "load_seconds": load_seconds, "wall_seconds": wall_seconds, "results": results,
         "measured_start_unix": measured_start_unix,
             "completed": true
         }))?
     );
     Ok(())
+}
+
+fn load_draft(
+    options: &Options,
+    model: &Model,
+    capacity: usize,
+) -> infer_core::Result<Option<Mtp>> {
+    if options.mtp > 0 {
+        Ok(Some(Mtp::load(&options.model, model, capacity)?))
+    } else {
+        Ok(None)
+    }
 }

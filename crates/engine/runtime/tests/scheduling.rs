@@ -201,7 +201,7 @@ fn admission_provider_is_installed_before_requests_and_bound_to_checkpoint() {
 #[test]
 fn mixed_decode_prefill_executes_without_changing_generated_tokens() {
     let mut config = RuntimeConfig {
-        token_budget: 4,
+        max_num_batched_tokens: 4,
         ..Default::default()
     };
     config.scheduler.prefill_chunk_tokens = 2;
@@ -225,7 +225,7 @@ fn mixed_decode_prefill_executes_without_changing_generated_tokens() {
     );
     finish(&mut e, 3);
     let mut baseline = engine(RuntimeConfig {
-        max_batch: 1,
+        max_num_seqs: 1,
         ..Default::default()
     });
     baseline.submit(request(1, 3)).unwrap();
@@ -302,10 +302,10 @@ fn singleton_larger_than_quantum_makes_progress_with_explicit_overrun() {
 #[test]
 fn logical_page_pressure_recomputes_and_replays_without_losing_generated_tokens() {
     let config = RuntimeConfig {
-        state_pages: 3,
-        page_tokens: 4,
-        token_budget: 2,
-        max_batch: 2,
+        num_gpu_blocks: 3,
+        block_size: 4,
+        max_num_batched_tokens: 2,
+        max_num_seqs: 2,
         ..Default::default()
     };
     let mut e = engine(config.clone());
@@ -443,6 +443,9 @@ impl BackendProvider for TimedBackend {
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
     }
+    fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
     fn submit(
         &mut self,
         p: &ExecutionProgram,
@@ -485,7 +488,7 @@ fn timed_engine(config: RuntimeConfig, elapsed: u64) -> Engine<TimedBackend> {
 #[test]
 fn measured_cost_feedback_is_replayed_and_checkpointed_deterministically() {
     let config = RuntimeConfig {
-        token_budget: 4,
+        max_num_batched_tokens: 4,
         gpu_budget_us: 200,
         ..Default::default()
     };
@@ -553,10 +556,10 @@ fn measured_cost_feedback_is_replayed_and_checkpointed_deterministically() {
 #[test]
 fn memory_blocked_decode_preempts_even_when_another_request_is_feasible() {
     let mut config = RuntimeConfig {
-        state_pages: 3,
-        page_tokens: 4,
-        max_batch: 1,
-        token_budget: 6,
+        num_gpu_blocks: 3,
+        block_size: 4,
+        max_num_seqs: 1,
+        max_num_batched_tokens: 6,
         ..Default::default()
     };
     config.scheduler.prefill_chunk_tokens = 6;

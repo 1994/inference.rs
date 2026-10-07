@@ -1,4 +1,4 @@
-//! Lower model semantics at load time; no model-name dispatch in execution.
+//! Compile provider-owned dataflow at load time; topology belongs to the model.
 use infer_core::{Error, ProgramId, Result};
 use infer_ir::{
     CapabilityRequirements, CompiledOp, DeviceCapabilities, ExecutionIr, ExecutionProgram, ModelIr,
@@ -6,16 +6,24 @@ use infer_ir::{
 };
 use infer_kernel_api::KernelRegistry;
 
+/// Byte width of one scratch element; dataflow tensors are always `DType::F32`.
+const F32_BYTES: u64 = 4;
+
 ///
 /// # Errors
 /// Returns an invalid-input or unsupported error for an invalid model graph or unsupported model operations.
-pub fn lower(model: &ModelIr, precision: PrecisionPlan) -> Result<ExecutionIr> {
+pub fn lower(
+    model: &ModelIr,
+    graph: infer_ir::DataflowGraph,
+    precision: PrecisionPlan,
+) -> Result<ExecutionIr> {
     if precision != PrecisionPlan::f32() {
         return Err(Error::unsupported(
             "typed lowering for this precision provider is not installed",
         ));
     }
-    let graph = crate::dataflow::lower(model)?;
+    model.validate()?;
+    graph.validate()?;
     let operations = graph
         .nodes
         .iter()
@@ -92,7 +100,7 @@ pub fn compile(
     }
     let scratch = u64::try_from(ir.dataflow.scratch_elements)
         .ok()
-        .and_then(|n| n.checked_mul(4))
+        .and_then(|n| n.checked_mul(F32_BYTES))
         .ok_or_else(|| Error::invalid("dataflow workspace overflow"))?;
     workspace_bytes = workspace_bytes.max(scratch);
     if workspace_bytes > workspace_limit {

@@ -6,6 +6,9 @@ use std::{
     sync::atomic::AtomicUsize, sync::atomic::Ordering,
 };
 
+/// Upper bound on pre-allocated acknowledgement cells; larger startup requests are rejected.
+const MAX_POOL_CAPACITY: usize = 1_048_576;
+
 pub(super) struct Cell {
     leased: AtomicBool,
     readers: AtomicUsize,
@@ -91,7 +94,7 @@ impl ResourcePool {
     /// # Errors
     /// Rejects zero/oversized capacities and allocation failure.
     pub fn new(capacity: usize) -> Result<Self> {
-        if capacity == 0 || capacity > 1_048_576 {
+        if capacity == 0 || capacity > MAX_POOL_CAPACITY {
             return Err(Error::invalid("invalid resource pool capacity"));
         }
         let mut cells = Vec::new();

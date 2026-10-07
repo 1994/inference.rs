@@ -17,6 +17,20 @@ use std::{
 use tokio::{sync::mpsc as async_mpsc, sync::oneshot};
 
 type OutputChannel = async_mpsc::Sender<Result<EngineOutput>>;
+/// Maximum deferred bulk commands buffered before control commands are served again.
+const DEFERRED_QUEUE_CAPACITY: usize = 256;
+/// Pre-allocated capacity of the pending admission-quote queue.
+const QUOTING_QUEUE_CAPACITY: usize = 256;
+/// Maximum pending shutdown waiters the actor keeps before rejecting further stops.
+const STOP_WAITER_CAPACITY: usize = 256;
+/// Extra observed events charged beyond the configured history capacity.
+const OBSERVATION_RESERVED_EVENTS: usize = 256;
+/// Conservative exporter expansion multiplier applied to each retained event's footprint.
+const OBSERVATION_EXPORT_EXPANSION: usize = 32;
+/// Staging bytes charged per admitted parent request.
+const OBSERVATION_PARENT_BYTES: usize = 1024;
+/// Fixed observation staging headroom kept for exporter overhead.
+const OBSERVATION_HEADROOM_BYTES: usize = 64 << 10;
 enum Command {
     Submit {
         request: Box<infer_runtime::PreparedRequest>,
@@ -112,10 +126,10 @@ fn preparation_bytes(request: &CanonicalRequest) -> Result<usize> {
         0
     };
     tokens
-        .checked_mul(8)
+        .checked_mul(crate::constants::TOKEN_STAGING_BYTES)
         .and_then(|n| {
             generated
-                .checked_mul(4)
+                .checked_mul(crate::constants::GENERATED_TOKEN_STAGING_BYTES)
                 .and_then(|tail| n.checked_add(tail))
         })
         .ok_or_else(|| Error::invalid("preparation byte size overflow"))
@@ -134,15 +148,19 @@ impl Drop for RuntimeHandle {
 fn observation_bytes(config: &infer_runtime::RuntimeConfig) -> Result<usize> {
     config
         .history_capacity
-        .checked_add(256)
-        .and_then(|events| events.checked_mul(size_of::<infer_observe::ObservedEvent>() * 32))
+        .checked_add(OBSERVATION_RESERVED_EVENTS)
+        .and_then(|events| {
+            events.checked_mul(
+                size_of::<infer_observe::ObservedEvent>() * OBSERVATION_EXPORT_EXPANSION,
+            )
+        })
         .and_then(|bytes| {
             config
                 .max_requests
-                .checked_mul(1024)
+                .checked_mul(OBSERVATION_PARENT_BYTES)
                 .and_then(|parents| bytes.checked_add(parents))
         })
-        .and_then(|bytes| bytes.checked_add(64 << 10))
+        .and_then(|bytes| bytes.checked_add(OBSERVATION_HEADROOM_BYTES))
         .ok_or_else(|| Error::invalid("observation staging budget overflow"))
 }
 

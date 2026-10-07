@@ -1,5 +1,5 @@
 {
-  "max_batch": 4,
-  "token_budget": 2,
+  "max_num_seqs": 4,
+  "max_num_batched_tokens": 2,
   "history_capacity": 4096
 }

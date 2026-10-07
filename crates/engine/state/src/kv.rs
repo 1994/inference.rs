@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone)]
 pub struct KvCacheConfig {
     pub namespace: Vec<u8>,
-    pub page_tokens: usize,
+    pub block_size: usize,
     pub blocks: usize,
     pub bytes_per_block: u64,
     pub prefix_bytes: u64,
@@ -49,7 +49,7 @@ impl<P: KvPrefix> KvCacheManager<P> {
         let pool = BlockPool::new(config.blocks)?;
         let prefixes = PrefixCache::new(
             &config.namespace,
-            config.page_tokens,
+            config.block_size,
             config.prefix_bytes,
             config.max_prefixes,
         )?;
@@ -205,17 +205,17 @@ impl<P: KvPrefix> KvCacheManager<P> {
     /// # Errors
     /// Returns invalid-input errors for a table/cursor mismatch or stale page leases.
     pub fn page_growth(&self, table: &[BlockLease], committed: usize) -> Result<PageGrowth> {
-        if table.len() != committed.div_ceil(self.config.page_tokens) {
+        if table.len() != committed.div_ceil(self.config.block_size) {
             return Err(Error::invalid("KV table/cursor mismatch"));
         }
         let tail_references = table
             .last()
             .map(|lease| self.pool.references(*lease))
             .transpose()?;
-        let cow_tail = !committed.is_multiple_of(self.config.page_tokens)
+        let cow_tail = !committed.is_multiple_of(self.config.block_size)
             && tail_references.is_some_and(|references| references > 1);
         Ok(PageGrowth {
-            page_tokens: self.config.page_tokens,
+            block_size: self.config.block_size,
             allocated_pages: table.len(),
             bytes_per_page: self.config.bytes_per_block,
             cow_tail,
@@ -243,7 +243,7 @@ impl<P: KvPrefix> KvCacheManager<P> {
             .required_pages(end)
             .ok_or_else(|| Error::invalid("KV growth overflow"))?;
         let count = end
-            .div_ceil(self.config.page_tokens)
+            .div_ceil(self.config.block_size)
             .saturating_sub(table.len());
         table
             .try_reserve(count)
@@ -297,8 +297,8 @@ impl<P: KvPrefix> KvCacheManager<P> {
     pub fn publish_prefix(&mut self, prefix: P) -> Result<bool> {
         let tokens = prefix.tokens();
         if tokens.is_empty()
-            || !tokens.len().is_multiple_of(self.config.page_tokens)
-            || prefix.blocks().len() != tokens.len() / self.config.page_tokens
+            || !tokens.len().is_multiple_of(self.config.block_size)
+            || prefix.blocks().len() != tokens.len() / self.config.block_size
         {
             return Err(Error::invalid(
                 "KV prefix must own exactly its complete pages",
@@ -357,7 +357,7 @@ impl<P: KvPrefix> KvCacheManager<P> {
         let pinned: BTreeSet<_> = pins.iter().map(|lease| lease.index).collect();
         KvCacheInspection {
             pinned_blocks: pinned.len(),
-            page_tokens: self.config.page_tokens,
+            block_size: self.config.block_size,
             total_blocks: self.pool.capacity(),
             free_blocks: self.pool.free_blocks(),
             active_blocks: active.len(),

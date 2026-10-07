@@ -9,6 +9,7 @@
 | 目录与依赖 | crate 分组、路径注册、小型 facade、禁止实现层反向依赖服务或具体 backend、本地文档链接有效 |
 | Rust lint | `cargo fmt --check`；Clippy all / pedantic / nursery 全部 `-D warnings` |
 | 长度与复杂度 | `too_many_lines` ≤ 100、`cognitive_complexity` ≤ 25，不允许调高阈值 |
+| 数值常量 | `crates/*/*/src` 生产代码里的数字字面量必须写成带 `///` 说明的具名常量；白名单 `0`/`1`/`2`、数组下标、`const`/`static` 定义、字符串与字符字面量、注释、`#[cfg(test)]`/`#[cutile::module]` 段以及测试文件除外 |
 | 错误路径 | 生产代码禁止 `unwrap` / `expect` / `panic` / `todo` / `unimplemented` / `dbg` 与忽略 `Result` |
 | unsafe | 默认 `deny`；仅 OS 放置 FFI、Metal device FFI 与隔离的 benchmark allocator 开放，并说明安全条件 |
 | Feature 隔离 | 默认 CLI / IR / workspace 与 `--all-features` 分别构建；生产依赖图不含 CPU 执行器 |
@@ -32,11 +33,48 @@ make check-msrv       # Rust 1.90
 make check-cpu        # 隔离的 CPU 分配计数
 make check-metal      # Metal 实机验收（仅 macOS）
 make check-cuda       # CUDA 实机 kernel 验收（需 Toolkit 与 GPU）
+make check-attention  # 自研 Attention 对 Candle 基线：数值与性能不达标均非零退出
 make check-linux      # Linux 原生放置测试
 make check-linux-numa # Linux NUMA 硬件验收，见 Linux 指南
 ```
 
 `check-rust` 会单独构建 CUDA crate 的无 feature 版本，因此托管 CI 不需要 CUDA Toolkit；设备检查集中在 `check-cuda`。缺少 GPU 或相应 syscall 权限时，硬件门禁明确失败，不会跳过。
+
+## 通用 Attention 门禁
+
+生产运行时与 kernel 保持 Rust/cuTile 路线；Candle 0.11.0 仅作为独立 benchmark 基线。
+`make check-attention` 不切换实现，不允许用精度优势掩盖性能差距，也不因基线速度快就放宽自研精度。
+
+通用语义位于 `infer-kernel-api::attention`：Q/KV 长度和 head 数、独立 QK/V 维度、scale、dtype、
+causal query offset、滑动窗口与分段 mask。CUDA `DenseAttentionPlan` 接受调用方的 buffer/graph，
+不管理模型、RoPE、内存池或调度。当前 dense provider 支持 F32、padded head ≤256；
+其他 dtype/宽度显式拒绝。paged KV、量化 KV、MLA、稀疏/线性 attention 不能冒充已覆盖的 dense SDPA。
+
+- 数值矩阵：31 个用例，覆盖 head 32/64/72/128、短序列、尾块、长序列、MHA/GQA/MQA、
+  cross attention、causal prefill/decode、负 query offset 的全遮蔽行、滑动窗口，以及 RoPE/分帧回归。
+  显式 F64 matmul/mask/softmax/matmul oracle；全遮蔽行定义为零，不使用自动选择的 SDPA reference。
+- 自研正确性：输出有限、长度与 padding 正确，
+  `max_abs_error <= 1e-6 + 1e-4 * max_abs_reference`。独立测试还覆盖 QK/V 维度不同。
+- Candle 基线正确性：FP16 使用 atol=2e-4/rtol=2e-3，BF16 使用 atol=2e-3/rtol=2e-2；
+  记录各自实际误差。这是不同精度下的性能目标，不宣称两边采用相同计算精度。
+- 性能：同机 release 二进制，5 轮交替顺序、100 次图 warmup、每轮 60 个 event 样本；
+  每次图执行含 8 次算子调用，按调用平均，以摊薄主机提交开销。
+  每个形状的配对中位数与 P95 相对 Candle 均不得慢超过 5%，至少 4 轮满足中位数容差；
+  跨形状几何平均延迟不得高于 Candle，轮间中位数漂移超过 10% 判为需重测。
+- 两种计时：完整流程计入 dtype/layout 转换与恢复 F32 输出，RoPE 回归案例还计入 RoPE；
+  dense SDPA 另比较预先准备好输入的核心调用，不能靠 Candle 转换开销隐藏自研内核落后。
+  Candle 核心调用仍使用其公开 Rust wrapper，含其图内分配节点，不冒充裸 CUDA launch。
+  upload/JIT 在计时外；普通 SDPA 原生路径已是核心调用，两个计时共用样本。
+- 证据：校验 fixture SHA256、设备 UUID、驱动、Toolkit、运行 ID、精度标签、完整形状与轮次；
+  记录二进制 SHA256、manifest 与原始日志，结束时再次校验输入和二进制未变化。
+  缺失、重复、NaN、构建/执行失败为 `invalid`，数值失败为 `reject`，性能差距或噪声为 `review`；
+  只有 `pass` 返回零。任何一组形状落后都不能被其他形状的平均加速覆盖。
+
+CPU 门禁判定测试已进入 `check-rust`。Candle 在 `tools/bench/attention` 独立 workspace，
+锁定依赖，不进入生产依赖图。报告在 `artifacts/attention-gate/results-*`，每次独立保存；
+`INFER_ATTENTION_GATE_OUT` 可改目录，`ATTENTION_PYTHON` 可指定已安装 torch/safetensors 的 Python。
+默认通过 uv 运行 fixture generator。主机 bindgen 参数沿用 [CUDA 构建说明](../../crates/backend/cuda/README.md)。
+基准不按 GPU 型号选择算子；每台设备独立生成证据，单机结果不外推为所有硬件通过。
 
 ## 工具链与版本
 

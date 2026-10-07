@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "device": "NVIDIA GeForce RTX 5090|sm_120|32193MiB",
+  "source": "benchmarks/baselines/rtx5090-resident-projections.json",
+  "method": "paired CUDA events around graph replay, cold L2, actual Qwen3.8-27B-NVFP4 weights with synthetic activations, independent >=2% confirmation; entries equal to the conservative tile record that the search found no better one",
+  "scope": "keyed by device identity plus (dtype, rows, columns), never by model name; any model with the same projection geometry reuses an entry, and uncovered geometries are measured at load",
+  "entries": [
+    {
+      "dtype": "fp8-channel",
+      "rows": 10240,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 6144,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "bf16",
+      "rows": 48,
+      "columns": 5120,
+      "tile_rows": 1,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 5120,
+      "columns": 6144,
+      "tile_rows": 16,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "nvfp4",
+      "rows": 17408,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "nvfp4",
+      "rows": 5120,
+      "columns": 17408,
+      "tile_rows": 16,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 12288,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 1024,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 17408,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 5120,
+      "columns": 17408,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "fp8-channel",
+      "rows": 248320,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "bf16",
+      "rows": 12288,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "bf16",
+      "rows": 1024,
+      "columns": 5120,
+      "tile_rows": 8,
+      "tile_columns": 512
+    },
+    {
+      "dtype": "bf16",
+      "rows": 5120,
+      "columns": 6144,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "bf16",
+      "rows": 17408,
+      "columns": 5120,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "bf16",
+      "rows": 5120,
+      "columns": 17408,
+      "tile_rows": 16,
+      "tile_columns": 256
+    },
+    {
+      "dtype": "bf16",
+      "rows": 5120,
+      "columns": 10240,
+      "tile_rows": 16,
+      "tile_columns": 256
+    }
+  ]
+}

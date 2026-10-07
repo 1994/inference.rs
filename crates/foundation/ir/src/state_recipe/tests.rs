@@ -2,7 +2,7 @@ use super::*;
 use infer_core::{Error, Result};
 fn recipe() -> StateRecipe {
     StateRecipe {
-        page_tokens: 16,
+        block_size: 16,
         max_tokens: 64,
         regions: vec![
             StateRegion {
@@ -71,7 +71,7 @@ fn recipe_rejects_invalid_capacity_and_arithmetic_overflow() {
     assert!(recipe.layout(65, OutputReadout::Full).is_err());
     recipe.regions[1].extent = StateExtent::Tokens(usize::MAX);
     assert!(recipe.layout(2, OutputReadout::Full).is_err());
-    recipe.page_tokens = 0;
+    recipe.block_size = 0;
     assert!(recipe.layout(1, OutputReadout::Full).is_err());
 }
 #[test]

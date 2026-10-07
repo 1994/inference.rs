@@ -2,6 +2,13 @@ use infer_core::{Error, ErrorCode, ProgramId, Result};
 use infer_ir::{CanonicalRequest, ModelIr, ModelOutput, Workload, WorkloadOutput, WorkloadPlan};
 use infer_spi::{ProviderMetadata, WorkloadProvider};
 
+/// Maximum number of providers one registry accepts.
+const MAX_REGISTRY_PROVIDERS: usize = 64;
+/// Maximum bytes in a provider's registered display name.
+const MAX_PROVIDER_NAME_BYTES: usize = 256;
+/// Maximum bytes in a provider's self-reported identity string.
+const MAX_PROVIDER_IDENTITY_BYTES: usize = 1024;
+
 struct Entry {
     metadata: ProviderMetadata,
     priority: i32,
@@ -30,7 +37,7 @@ impl WorkloadRegistry {
         provider: impl WorkloadProvider + Send + Sync + 'static,
     ) -> Result<()> {
         metadata.validate()?;
-        if self.entries.len() >= 64 {
+        if self.entries.len() >= MAX_REGISTRY_PROVIDERS {
             return Err(Error::new(
                 ErrorCode::Capacity,
                 "workload provider registry full",
@@ -46,7 +53,9 @@ impl WorkloadRegistry {
                 "duplicate workload provider identity",
             ));
         }
-        if metadata.name.len() > 256 || provider.identity().len() > 1024 {
+        if metadata.name.len() > MAX_PROVIDER_NAME_BYTES
+            || provider.identity().len() > MAX_PROVIDER_IDENTITY_BYTES
+        {
             return Err(Error::invalid("provider identity exceeds budget"));
         }
         self.entries.push(Entry {

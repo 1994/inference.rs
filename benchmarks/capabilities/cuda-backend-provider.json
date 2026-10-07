@@ -1,0 +1,67 @@
+{
+  "backend": "cuda-resident/NVIDIA GeForce RTX 5090",
+  "capabilities": {
+    "backend": {
+      "capabilities": {
+        "architecture": {
+          "compute_major": 12,
+          "compute_minor": 0,
+          "multiprocessors": 170
+        },
+        "clusters": false,
+        "cuda_ipc": false,
+        "gpu_direct": false,
+        "graphs": true,
+        "nvlink": false,
+        "pinned_transfer": false,
+        "tensor_core_generation": 5,
+        "tma": false,
+        "warp_size": 32
+      },
+      "kind": "cuda"
+    },
+    "compute_dtypes": [
+      "F32"
+    ],
+    "device": 1,
+    "memory_bytes": 33757724672,
+    "profiling": false,
+    "unified_memory": false
+  },
+  "checks": [
+    "readout",
+    "state isolation",
+    "cursor rejection",
+    "kernel rejection",
+    "duplicate reservation",
+    "capacity rejection",
+    "completion ownership",
+    "one-shot poll",
+    "reset replay",
+    "release",
+    "Engine two-request scheduling"
+  ],
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "nodes": 1155,
+  "passed": true,
+  "prefill_width": 32,
+  "requests": 2,
+  "scope": "synchronous BackendProvider actual-model acceptance, greedy functional check; not throughput baseline or continuous batching",
+  "state_admission_bytes": 2659082496,
+  "text": "391",
+  "token_ids": [
+    18,
+    24,
+    16,
+    248046
+  ],
+  "schema": 1,
+  "date": "2026-10-06",
+  "source": "artifacts/cuda-provider-engine-check.json",
+  "sha256": "2272ebd4336f8712682c8cd05a24ca202d699c1dfb0d076c9ded72ffbae56910",
+  "hardware": "artifacts/cuda-provider-engine-check-hardware.jsonl",
+  "execution_mode": "synchronous",
+  "cuda_cli_service_complete": false,
+  "continuous_batching": false,
+  "device_sampling": false
+}

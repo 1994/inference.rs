@@ -1,6 +1,6 @@
 {
-  "max_batch": 16,
-  "token_budget": 64,
+  "max_num_seqs": 16,
+  "max_num_batched_tokens": 64,
   "gpu_budget_us": 10000,
   "scheduler": {
     "prefill_chunk_tokens": 32,
