@@ -79,3 +79,27 @@ make accept PACKAGE_FILE=/path/to/infer-....tar.gz \
 ## 本轮证据
 
 Linux x86_64 宿主已通过 Zig 生成 x86_64 与 AArch64 两种 CUDA ELF。两者的 ELF 版本需求检查均为最高 `GLIBC_2.28`；这描述主程序的直接符号需求，不能替代目标系统、驱动和运行时动态加载库的兼容性验收。AArch64 未在本机执行；macOS 本机缺少 SDK，已验证预检明确拒绝，不声明已产出 Metal 包。
+
+## GitHub CI
+
+`.github/workflows/ci.yml` runs on pushes, pull requests, merge queues and manual
+requests. Rust checks run on Ubuntu 24.04 and macOS 15. Formatting, Clippy, unit
+and golden tests, MSRV, tooling and security must pass before packaging starts.
+The hosted quality checks explicitly enable test backends without enabling CUDA
+through the CLI; CUDA-enabled compilation is covered by the package matrix.
+
+The package matrix builds Linux CUDA for x86_64 and AArch64 (glibc 2.28), plus
+macOS Metal for Apple Silicon and Intel. Linux installs CUDA 13.2 development
+headers without installing a GPU driver. Both platforms use Python 3.12,
+Zig 0.16.0 and the Makefile's pinned cargo-zigbuild version. macOS uses the
+runner's Xcode SDK. `make package` runs the target checks, builds the release
+binary, verifies the archive and executes native CLI smoke tests; cross-target
+executables receive static checks and are not executed on the host.
+
+Successful matrix jobs upload archives, SHA256SUMS and manifests as GitHub Actions
+artifacts for 14 days. The final `quality-gate` also requires every package job to
+pass, and should be the required branch-protection check. CI does not create a
+GitHub Release. Hosted package checks do not establish GPU correctness or
+performance: manifests retain `gpu_inference_accepted: false`. Real GPU acceptance
+uses `make accept`; CUDA/Metal device checks and the Candle attention performance
+gate remain explicit hardware runs with their existing thresholds.

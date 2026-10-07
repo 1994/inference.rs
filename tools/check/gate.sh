@@ -15,14 +15,16 @@ rust_checks() {
     cargo clippy --locked -p infer-cli --no-default-features --all-targets -- -D warnings
     cargo clippy --locked -p infer-ir --no-default-features --all-targets -- -D warnings
     cargo clippy --locked --all-targets -- -D warnings
-    # Hosted CI has no CUDA Toolkit; device checks are explicit in check-cuda.
+    # Hosted CI has no CUDA Toolkit. Excluding the CUDA package alone is not
+    # enough: --all-features also enables it through infer-cli/cuda.
+    # CUDA builds belong to the package matrix; device checks to check-cuda.
     cargo clippy --locked -p infer-backend-cuda --no-default-features --all-targets -- -D warnings
-    cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets --all-features -- -D warnings
+    cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets --features infer-cli/test-backends -- -D warnings
     cargo test --locked -p infer-cli --no-default-features
     cargo test --locked -p infer-ir --no-default-features
     cargo test --locked -p infer-backend-cuda --no-default-features
-    cargo test --locked --workspace --exclude infer-backend-cuda --all-features
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --all-features --no-deps
+    cargo test --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends --no-deps
     cargo build --locked --release -p infer-cli --no-default-features
     cpu_checks
     # Golden execution is independent of the Rust implementation.
@@ -80,7 +82,7 @@ metal_checks() {
 
 msrv_checks() {
     CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked -p infer-cli --no-default-features
-    CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked --workspace --exclude infer-backend-cuda --all-targets --all-features
+    CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked --workspace --exclude infer-backend-cuda --all-targets --features infer-cli/test-backends
     CARGO_TARGET_DIR=target/cpu-bench-msrv cargo +1.90.0 check --locked --manifest-path tools/bench/cpu/Cargo.toml --all-targets
 }
 
