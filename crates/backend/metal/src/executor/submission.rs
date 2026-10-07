@@ -138,6 +138,22 @@ mod tests {
             quantum_overrun: false,
         })
     }
+    fn compile_fixture(backend: &MetalBackend) -> Result<ExecutionProgram> {
+        let mut kernels = KernelRegistry::default();
+        kernels.register(&MetalKernels)?;
+        infer_compiler::compile(
+            ProgramId::ONE,
+            infer_compiler::lower(
+                backend.model(),
+                backend.execution_graph(backend.model())?,
+                PrecisionPlan::f32(),
+            )?,
+            &kernels,
+            &backend.capabilities(),
+            1 << 20,
+        )
+    }
+
     #[test]
     fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
         if !MetalBackend::available() {
@@ -154,19 +170,7 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        let mut kernels = KernelRegistry::default();
-        kernels.register(&MetalKernels)?;
-        let program = infer_compiler::compile(
-            ProgramId::ONE,
-            infer_compiler::lower(
-                backend.model(),
-                backend.execution_graph(backend.model())?,
-                PrecisionPlan::f32(),
-            )?,
-            &kernels,
-            &backend.capabilities(),
-            1 << 20,
-        )?;
+        let program = compile_fixture(&backend)?;
         backend.reserve_state(StateId::ONE, 8)?;
         let mut ticket = backend.submit(
             &program,

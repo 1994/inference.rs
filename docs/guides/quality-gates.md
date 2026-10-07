@@ -97,7 +97,7 @@ make check
 
 ## 例外
 
-- [deny.toml](../../deny.toml) 记录 `paste 1.0.15`（RUSTSEC-2024-0436）与两条精确重复版本例外，原因和移除条件以配置为准。
+- [deny.toml](../../deny.toml) 记录 `paste 1.0.15`（RUSTSEC-2024-0436）、CUDA 构建依赖的精确许可证审批与重复版本例外，原因和移除条件以配置为准。
 - `tools/check/policy.py` 另外校验 workspace lint 继承与闲置依赖。
 - Metal 间接依赖 `block 0.1.6` 有已知 future-incompatibility 报告，作为上游迁移项保留，不用全局 `RUSTFLAGS` 隐藏。
 - 测试代码允许 `unwrap` / `expect` / `panic` 用于断言，helper 仍返回 `Result`；其他数值或接口例外需在局部说明。

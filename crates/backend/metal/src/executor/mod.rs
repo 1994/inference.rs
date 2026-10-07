@@ -34,7 +34,7 @@ const DEFAULT_TRACE_CAPACITY: usize = 8192;
 /// Default prefix-cache budget (16 MiB).
 const DEFAULT_PREFIX_CACHE_BYTES: u64 = 16 * crate::constants::MIB_U64;
 /// Cap on the automatically sized KV pool when no block count is configured.
-const MAX_AUTO_KV_BLOCKS: usize = 1024;
+const MAX_AUTO_KV_BLOCKS: u64 = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalConfig {

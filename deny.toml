@@ -13,6 +13,12 @@ ignore = [
 [licenses]
 allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "Unicode-3.0"]
 confidence-threshold = 0.95
+# CUDA build dependencies use these permissive licenses. Keep approvals scoped
+# to the reviewed locked versions; review again when updating the dependency.
+exceptions = [
+    { crate = "ar_archive_writer@0.5.3", allow = ["Apache-2.0 WITH LLVM-exception"] },
+    { crate = "libloading@0.8.9", allow = ["ISC"] },
+]
 
 [bans]
 multiple-versions = "deny"
@@ -21,6 +27,14 @@ allow-wildcard-paths = true
 highlight = "all"
 multiple-versions-include-dev = true
 skip = [
+    { crate = "getrandom@0.3.4", reason = "ahash/rand/tokenizers require 0.3; CUDA compiler uuid uses 0.4. Remove when their supported ranges converge." },
+    { crate = "hashbrown@0.14.5", reason = "CUDA dashmap 6 requires 0.14; indexmap uses 0.17. Remove after dashmap migrates." },
+    { crate = "itertools@0.12.1", reason = "cuda-bindings uses bindgen 0.69, which requires 0.12; tokenizers uses 0.14. Remove after the upstream bindgen upgrade." },
+    { crate = "object@0.36.7", reason = "cuda-core uses oxide-artifacts 0.2 with object 0.36; stacker/psm archive writer uses 0.39. Remove after oxide-artifacts migrates." },
+    { crate = "rustc-hash@1.1.0", reason = "CUDA bindgen 0.69 requires 1.x; cutile uses 2.x. Remove after the upstream bindgen upgrade." },
+    { crate = "shlex@1.3.0", reason = "CUDA bindgen 0.69 requires 1.x; cc uses 2.x. Remove after the upstream bindgen upgrade." },
+    { crate = "thiserror@1.0.69", reason = "cutile IR and cuda-async require 1.x; the engine uses 2.x. Remove after the CUDA crates migrate." },
+    { crate = "thiserror-impl@1.0.69", reason = "Macro paired with CUDA's thiserror 1.0.69. Remove together with the thiserror 1.x exception." },
     { crate = "bitflags@1.3.2", reason = "core-graphics-types 0.1 requires bitflags 1 while metal also requires bitflags 2; remove with a compatible Metal binding upgrade" },
     { crate = "syn@2.0.119", reason = "tokenizers derive_builder still uses syn 2 while current serde and thiserror macros use syn 3; remove after upstream migration" },
 ]
