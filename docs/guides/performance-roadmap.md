@@ -279,10 +279,32 @@ launch for the 8-bit attention projections, which are 233 of the 497 Linear node
 
 So the change is a coordinated edit across both quantized pipelines plus their tests, not
 a one-constant tweak, and it was reverted rather than half-applied. The experiment is
-worth one dedicated round: parameterize `matmul` as `matmul<K, M>` the same way, update
-`record_fp8`, and run `nvfp4_gemm::tests`, `fp8_gemm::tests` and the serving gate. The
-mechanism above predicts a 2x-class gain on the 27B prompt path if the row-block reading
-is the cause, against a measured 505 GB/s vs 947 GB/s on identical weights. It also finally gives
+worth one dedicated round, and the scope is now fully enumerated.
+
+**Attempt two, taken further and reverted again.** Parameterizing both pipelines by `M`
+does compile: `nvfp4_gemm::kernels::{matmul,packed}` and `fp8_gemm::kernels::matmul` all
+became `<const K: i32, const M: i32>` with their partitions and accumulators sized by `M`,
+and `nvfp4_gemm::workspace` passes `QUANT_GEMM_TILE[0]` through `.generics(...)`. The
+runtime then failed on the *next* caller with
+`not enough generic arguments to instantiate const parameter M`, which is what a partial
+migration looks like here: the tile row height is threaded through `generics`, so **every**
+launch site of **every** kernel that takes the output tile must be updated in one change.
+An inventory of those sites (`grep -rn "\.generics(" crates/backend/cuda/src`):
+
+- `nvfp4_gemm/workspace.rs` — `kernels::packed`, `kernels::matmul` (done in the attempt)
+- `batch_projection.rs` — `deny`/`scaled` at lines 240/251 and `batched::{dense,fp8,nvfp4}`
+  at lines 276/281/290, i.e. **five more sites**, all taking the partitioned output tile
+- `nvfp4_gemm/tests.rs`, `fp8_gemm/tests.rs` — test call sites at literal `[16, 64]`
+
+That is nine sites across four files plus two test binaries, all of which must change
+together because the mismatch only surfaces at kernel-launch time, not at compile time.
+Reverted to the known-good state rather than leave a partially migrated kernel path on a
+repository whose correctness gate depends on these kernels.
+
+The prediction is unchanged and still untested: if row-block weight re-reading is the
+cause of 505 GB/s against 947 GB/s on identical weights, one row block for 64 rows should
+recover a 2x-class gain on the 27B prompt path. That is worth one dedicated round with
+room to run `nvfp4_gemm::tests`, `fp8_gemm::tests` and the serving gate afterwards. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
