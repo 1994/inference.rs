@@ -186,6 +186,9 @@ graph and 546 GB/s in the prompt graph, a 1.7x gap**, with both figures from the
 process and the same model. The verify graph does more rows of work per replay (3-12 lanes
 across 3 candidate positions) and finishes faster.
 
+> **Superseded below.** This entry's verdict was wrong. It is retained because the error is
+> instructive, but read the correction before using any of it.
+
 **The bandwidth framing was the wrong axis.** A roofline consistency check on the same
 numbers settles which limit governs. At M=64 the plan's arithmetic intensity is
 `2 x 27e9 FLOP / 23.4 GB = 148 FLOP/byte` against a machine balance of
@@ -215,6 +218,30 @@ safetensors headers directly:
 Using the text backbone alone as the resident volume gives `3.46 TFLOP / 20.16 GiB =
 171 FLOP/byte`, against a balance of 58.7 — **2.9x the balance, so the compute-bound
 conclusion holds and strengthens** when the unused tower is excluded.
+
+**Correction, and it reverses the verdict.** That balance of 58.7 is the *BF16* machine
+balance, but the weights are 4-bit (168 MLP projections) and 8-bit (233 attention and
+linear-attention projections), not BF16. The balance depends on which pipeline's peak is
+used:
+
+| Assumed pipeline | Peak | Balance | vs intensity 160 | Verdict |
+|---|---:|---:|---|---|
+| BF16 | 105 TFLOP/s | 59 | intensity wins | compute-bound |
+| FP8 | 419 TFLOP/s | 234 | balance wins | **memory-bound** |
+| NVFP4 | 838 TFLOP/s | 468 | balance wins | **memory-bound** |
+
+Because the bulk of the FLOPs run on 4-bit and 8-bit tensor cores, the quantized balances
+are the right ones and the verdict is **memory-bound**. My error was taking the "77% of
+dense BF16 peak" figure as evidence of compute saturation: an achieved-throughput
+percentage is not a utilization figure when the peak in the denominator is the wrong
+pipeline's.
+
+So the earlier bandwidth framing was correct after all, and this entry's retraction is
+itself retracted. What the numbers actually support: the prompt replay achieves
+`20.16 GiB / 42.88 ms = 505 GB/s`, or **28% of the device's 1.79 TB/s**, while the same
+weights in the 12-lane verify graph reach 947 GB/s (53%). A ~1.9x bandwidth gap on
+identical weights remains the standing observation, and the achieved-BF16-FLOP percentage
+should not be cited as evidence either way.
 
 This retracts the framing this file has carried for several entries: "the prompt graph
 runs at 31% of device bandwidth" is true but is not an inefficiency to attack, and every
