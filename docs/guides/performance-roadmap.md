@@ -332,7 +332,30 @@ prompt-specific tile is consistent with the existing structure. Reverted to `[16
 the migration is a prerequisite for the per-path change, not a fix on its own.
 
 Also note the TTFT gain is ~7%, not the 2x the bandwidth ratio suggested, so weight
-re-reading accounts for only part of the 505-versus-947 GB/s gap. It also finally gives
+re-reading accounts for only part of the 505-versus-947 GB/s gap.
+
+**The migration is preserved as an applicable patch.**
+`docs/patches/quant-gemm-row-tile-m.patch` (179 lines, `git apply` verified against the
+current tree) contains the whole change: `nvfp4_gemm::kernels::{matmul,packed}` and
+`fp8_gemm::kernels::matmul` parameterized as `<const K: i32, const M: i32>`, the fused
+matmul's activation-quantisation groups widened to `[M, 32, 16]`, and the two
+`nvfp4_gemm::workspace` call sites passing `QUANT_GEMM_TILE[0]` through `.generics(...)`.
+With `QUANT_GEMM_TILE` left at `[16, 64]` it is a no-op that compiles and passes all 27
+CUDA host tests, which is why it is safe to land independently.
+
+It is kept out of the tree because on its own it enables nothing. The follow-on that
+actually pays is **per-path row tiles**:
+
+1. Apply the patch.
+2. Add a prompt-specific tile constant (e.g. `PREFILL_GEMM_ROW_TILE = 64`) alongside the
+   existing per-path shapes (`SMALL_GEMM_TILE`, `VERIFY_OUTPUT_TILE`).
+3. Thread the row height into `nvfp4_gemm::workspace::{record, record_fp8}` instead of
+   reading `QUANT_GEMM_TILE[0]`, and have the prompt capture pass 64 while the decode
+   capture passes 16.
+
+Step 3 is the part that was NOT done and whose plumbing was not traced, so treat it as a
+plan rather than a completed step. The measured prize is the ~7% TTFT on both prompt
+lengths without the ~20% decode wall regression that a single global 64-row tile causes. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
