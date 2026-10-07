@@ -1,5 +1,15 @@
 # Inference performance roadmap
 
+> **Measurement discipline.** This file has repeatedly gone wrong by combining two
+> numbers that came from different populations: a cost measured on one captured graph
+> applied to another graph's event count; a device replay compared with a whole-execution
+> wall; a draft-head figure used as a target figure. Four separate errors of this kind are
+> recorded below, two of them across the target and MTP-draft prompt graphs, which are
+> both reported as `graph = "prefill"` in the same profile file. Before using any number
+> here, check which program, which captured graph, and which population produced it — and
+> prefer a like-for-like re-measurement over a ratio built from two sources.
+
+
 This is the requested follow-up work plan, dated 2026-10-07. It records the
 remaining engineering work and acceptance criteria, not a claim of performance
 parity. Update this file as work is qualified; keep raw experiments in `artifacts/`.
@@ -163,10 +173,14 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 The 23-node / 1.94 ms and 1154-node / 42.5 ms records do not belong to one program at two
 chunk widths. A model holds **two resident programs**, each with its own prompt graph:
 
-| Program | `prefill_width` | capture | nodes | replay |
-|---|---:|---|---:|---:|
-| target | 64 | `BatchBuilder::build` | 1154 | 42.5 ms |
-| draft (MTP head) | 32 | `BatchBuilder::capture32` | 23 | 1.94 ms |
+| Program | `prefill_width` | capture | layers | nodes | replay |
+|---|---:|---|---:|---:|---:|
+| target | 64 | `build32` -> `capture32` | 64 | 1154 | 42.5 ms |
+| draft (MTP head) | 32 | `build32` -> `capture32` | 1 | 23 | 1.94 ms |
+
+Both programs take the same path (`batch.rs:251` routes any width >= `PREFILL_LANES`
+through `build32`), so the node difference is **the layer count of the network being
+captured**, not the capture routine and not the chunk size.
 
 `prime_draft` chunks by `PREFILL_LANES = 32` (`execution.rs:752`), so the 23-node records
 are **draft KV priming**, and only the 1154-node records are target prefill. The profile
