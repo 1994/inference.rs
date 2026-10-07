@@ -207,12 +207,28 @@ Note which way the branch hurts: the **smaller** chunk is the efficient one per 
 not "small chunks under-utilize the GPU"; the 32-token path is simply 6-11x better per
 token and is not being used for the 64-token chunks.
 
-**Testable prediction.** If the 64-token chunks were routed through the small shape, long
-TTFT would fall from ~340 ms of replay toward `511 x ~0.08 = 41 ms`, i.e. an order of
-magnitude. A cheap probe of the branch without changing it: run the 27B long prompt with
-`--max-num-batched-tokens 32`, which should force every chunk through the 32-token shape.
-If TTFT drops sharply, the cliff is confirmed as a dispatch choice and `build_pair`'s
-width condition is the fix site. That experiment is the next step and it is one command.
+**The prediction was tested and FALSIFIED.** `--max-num-batched-tokens 32` did force the
+branch — the runtime reported `prefill_width: 32, automatic_prefill: false`, chunk 32, so
+16 chunks instead of 8, all through the small shape. Long TTFT came out **worse**:
+
+| Configuration | chunks | long TTFT (steady) |
+|---|---:|---:|
+| default, width 64 | 8 | **0.399-0.413 s** |
+| forced, width 32 | 16 | **0.506 s** |
+
+Worse still for the hypothesis, the arithmetic does not close either way. If the small
+shape really cost 1.94 ms per replay, 16 chunks would be ~31 ms of replay and predict a
+TTFT near 0.03-0.05 s; the measured 0.506 s means roughly **94% of TTFT is not replay at
+all**. So the 23-node 1.94 ms figure does not describe what a long prompt actually runs,
+and **neither width configuration is replay-bound**.
+
+What this leaves is stronger than the hypothesis it replaced: doubling the chunk count and
+halving the chunk width changed TTFT by only 25%, and both configurations spend the large
+majority of TTFT outside the measured replays. The 27B long-prompt TTFT is **host-side**,
+not device-side. The next measurement is therefore not a kernel diff but a decomposition of
+the 0.40 s itself — per-chunk submission, readback and scheduling gaps on the path from
+`run` to first token. The host-phase instrumentation added for the decode path
+(`host_phases_us`) covers `slot_speculate` only and does not yet instrument prefill.
 
 Also measured, and worth keeping: the **first** long prompt after a short warmup costs
 1.12 s TTFT while later ones cost 0.40 s, and re-running the first prompt costs 0.20 s
