@@ -537,7 +537,9 @@ mod readout_tests {
             .join("../../../examples/qwen-hybrid-tiny");
         let mut backend = metal::load(
             &root,
-            crate::constants::DEFAULT_HOST_MEMORY_MIB * crate::constants::MIB_U64,
+            // A zero budget derives the share from the Metal device; the CPU test-backend
+            // default is compiled out without `test-backends`.
+            0,
             &Selection {
                 kind: BackendChoice::Metal,
                 num_gpu_blocks_override: None,
