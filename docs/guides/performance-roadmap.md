@@ -243,6 +243,32 @@ weights in the 12-lane verify graph reach 947 GB/s (53%). A ~1.9x bandwidth gap 
 identical weights remains the standing observation, and the achieved-BF16-FLOP percentage
 should not be cited as evidence either way.
 
+**Mechanism, traced in the code.** The two graphs reach the *same* kernel but with
+different row counts, and that kernel tiles the row axis by 16:
+
+| | rows (M) | row blocks | weight reads per projection |
+|---|---:|---:|---:|
+| target prompt (`batch.rs:506` -> `prefill_projection::record`) | 64 | **4** | **4** |
+| target verify (`slot_verify.rs` -> `record_slots`) | 12 | 1 | 1 |
+
+Both land in `nvfp4_gemm::kernels::packed`, whose output tile is `[16, 64]` and whose
+weight partition is `[64, 128]` with `pid.0` selecting the row block and `pid.1` the column
+tile. Every column tile is therefore loaded once per row block, so a 64-row projection
+reads each weight tile four times where a 12-row projection reads it once.
+
+The quantities do not match exactly — 4x predicted traffic against a 1.9x observed
+bandwidth gap — and the discrepancy is consistent with L2 absorbing the repeat passes
+(each matrix is 42-90 MiB against a 96 MiB L2), which is also why the DRAM-only accounting
+showed no amplification. **This is a hypothesis fitted to the code and the observed ratio,
+not a measurement**: it has not been confirmed by counting weight bytes read per
+projection.
+
+If it holds, the fix is to widen the M tile so one row block covers all 64 prompt rows,
+which would remove the repeat passes; `QUANT_GEMM_TILE = [16, 64]` is the constant to
+change and `nvfp4_gemm::tests` plus the serving gate are the checks. It also finally gives
+a coherent account of why split-K regressed: on a memory-bound plan already re-reading
+weights, splitting K adds partial traffic without reducing weight reads.
+
 This retracts the framing this file has carried for several entries: "the prompt graph
 runs at 31% of device bandwidth" is true but is not an inefficiency to attack, and every
 bandwidth-motivated lever tried against it (split-K, wider tiles, L2 residency) was aimed
