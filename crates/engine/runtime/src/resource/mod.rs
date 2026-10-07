@@ -59,6 +59,20 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         ticket: ResourceTicket,
         phase: ResourcePhase,
     ) -> Result<()> {
+        self.park_pending(
+            id,
+            PendingResource {
+                ticket: Some(ticket),
+                phase,
+                retry_epoch: None,
+                started: self.now_us,
+            },
+        )
+    }
+    /// Park an intent that carries no live ticket. A reservation rejected because the
+    /// resident budget is busy keeps host state ownership and must not re-issue until
+    /// `retry_epoch` proves that resources or execution progressed.
+    pub(crate) fn park_pending(&mut self, id: RequestId, pending: PendingResource) -> Result<()> {
         if self.resources_pending.contains_key(id) {
             return Err(Error::invariant("resource command already pending"));
         }
@@ -81,15 +95,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             arg0: 1,
             arg1: 0,
         });
-        self.resources_pending.insert(
-            id,
-            PendingResource {
-                ticket: Some(ticket),
-                phase,
-                retry_epoch: None,
-                started: self.now_us,
-            },
-        )?;
+        self.resources_pending.insert(id, pending)?;
         Ok(())
     }
     pub(crate) fn reset_request_state(&mut self, id: RequestId) -> Result<()> {

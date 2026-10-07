@@ -89,6 +89,9 @@ where
         self.shared.releases.load(Ordering::Acquire) > 0
             || self.shared.controls.load(Ordering::Acquire) > 0
     }
+    fn tracks_reservation_intent(&self) -> bool {
+        true
+    }
     fn resource_epoch(&self) -> u64 {
         self.shared.epoch.load(Ordering::Acquire)
     }

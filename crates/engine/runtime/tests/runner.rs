@@ -581,3 +581,108 @@ fn deferred_reservation_can_time_out_or_cancel_without_a_backend_state() -> Resu
     }
     Ok(())
 }
+
+/// A direct backend that settles resource commands inline but owns reservation intent, so a
+/// busy `Reserve` is always observed on the engine's very first poll instead of a later one.
+struct InlineReservationIntent {
+    inner: ReferenceBackend,
+    attempts: Arc<AtomicUsize>,
+}
+impl BackendProvider for InlineReservationIntent {
+    type Ticket = ReferenceTicket;
+    fn identity(&self) -> &str {
+        self.inner.identity()
+    }
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.inner.capabilities()
+    }
+    fn tracks_reservation_intent(&self) -> bool {
+        true
+    }
+    fn state_reservation_bytes(&self, capacity: usize) -> Result<Option<u64>> {
+        self.inner.state_reservation_bytes(capacity)
+    }
+    fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
+        self.inner.validate_program(model, program)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
+    fn reserve_state(&mut self, _state: StateId, _capacity: usize) -> Result<()> {
+        self.attempts.fetch_add(1, Ordering::AcqRel);
+        Err(Error::new(
+            infer_core::ErrorCode::Capacity,
+            "resident budget busy",
+        ))
+    }
+    fn release_state(&mut self, _state: StateId) -> Result<()> {
+        // The rejected reservation never created backend state.
+        Ok(())
+    }
+    fn submit(
+        &mut self,
+        program: &ExecutionProgram,
+        step: &StepPlan,
+        tasks: Vec<ExecutionTask>,
+    ) -> Result<ReferenceTicket> {
+        self.inner.submit(program, step, tasks)
+    }
+    fn poll(&mut self, ticket: &mut ReferenceTicket) -> Result<Option<Vec<TaskOutput>>> {
+        self.inner.poll(ticket)
+    }
+}
+
+#[test]
+fn inline_busy_reservation_defers_instead_of_failing_admission() -> Result<()> {
+    // A direct backend settles `begin_resource` inline, so the busy rejection is always
+    // observed on the engine's first poll. When the backend owns reservation intent the
+    // rejection must be deferred exactly like a later acknowledgement: keep the request
+    // and its host state, and publish no retry until resource ownership progresses.
+    let model = ReferenceModel::fixture(ModelId::ONE, 7);
+    let ir = model.ir.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let backend = InlineReservationIntent {
+        inner: ReferenceBackend::new(model)?,
+        attempts: attempts.clone(),
+    };
+    let mut registry = KernelRegistry::default();
+    registry.register(&ReferenceKernels)?;
+    let mut engine = Engine::new(
+        backend,
+        ir,
+        PrecisionPlan::f32(),
+        &registry,
+        RuntimeConfig {
+            max_num_seqs: 1,
+            ..RuntimeConfig::default()
+        },
+    )?;
+    let prepared = engine.request_preparer()?.prepare(request(1)?)?;
+    let mut quote = engine.admission_quote(&prepared)?;
+    let bytes = loop {
+        if let Some(ResourceReply::ReservationBytes(bytes)) = quote.poll()? {
+            break bytes;
+        }
+    };
+    engine.submit_quoted_with_trace(prepared, bytes, None)?;
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    engine.check_invariants()?;
+    for _ in 0..100 {
+        engine.tick(engine.now_us() + 1)?;
+    }
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    assert!(
+        engine
+            .request(infer_core::RequestId::ONE)?
+            .completed
+            .is_none()
+    );
+    engine.cancel(infer_core::RequestId::ONE)?;
+    let limit = Instant::now() + Duration::from_secs(3);
+    while !engine.is_idle() {
+        engine.tick(engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    engine.check_invariants()?;
+    Ok(())
+}

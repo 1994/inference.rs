@@ -18,6 +18,12 @@ pub trait BackendProvider {
         let _ = reply.send(execute_resource(self, command));
         Ok(ticket)
     }
+    /// True when reservation intent lives on an owner lane, so a `Reserve` the owner
+    /// rejects for capacity can be absorbed as backpressure and its state released later.
+    /// Direct backends settle inline and must reject admission instead of deferring.
+    fn tracks_reservation_intent(&self) -> bool {
+        false
+    }
     fn identity(&self) -> &str;
     /// Reports loaded tensor dataflow execution without exposing concrete backend names.
     fn weight_backed_dataflow(&self) -> bool {

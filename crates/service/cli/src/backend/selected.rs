@@ -342,6 +342,9 @@ impl BackendProvider for SelectedBackend {
     fn resource_epoch(&self) -> u64 {
         forward!(self, resource_epoch)
     }
+    fn tracks_reservation_intent(&self) -> bool {
+        forward!(self, tracks_reservation_intent)
+    }
     fn set_waker(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
         forward!(self, set_waker, wake);
     }

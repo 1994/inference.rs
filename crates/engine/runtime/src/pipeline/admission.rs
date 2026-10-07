@@ -238,13 +238,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         self.discard_prepared();
         self.enqueue_request(id)?;
         if let Some(pending) = self.resources_pending.remove(id) {
-            self.park_resource(
-                id,
-                pending
-                    .ticket
-                    .ok_or_else(|| Error::invariant("reservation ticket lost"))?,
-                pending.phase,
-            )?;
+            self.park_pending(id, pending)?;
         }
         self.event(
             EventKind::Accepted,
@@ -353,38 +347,50 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             StateKind::AttentionKv,
             prepared.plan.reserved_tokens,
         )?;
-        let result = self
+        let pending = self
             .backend
             .begin_resource(infer_spi::ResourceCommand::Reserve {
                 state,
                 capacity: prepared.plan.reserved_tokens,
                 readout: crate::stages::prefill::retained_readout(&prepared.request.workload),
             })
-            .and_then(|mut ticket| {
-                match ticket.poll()? {
-                    Some(infer_spi::ResourceReply::Reserved) => {}
-                    Some(_) => {
-                        return Err(Error::invariant(
-                            "reservation acknowledgement type mismatch",
-                        ));
-                    }
-                    None => {
-                        self.resources_pending.insert(
-                            prepared.request.id,
-                            crate::resource::PendingResource {
-                                ticket: Some(ticket),
-                                phase: crate::resource::ResourcePhase::Reserve,
-                                retry_epoch: None,
-                                started: self.now_us,
-                            },
-                        )?;
-                    }
+            .and_then(|mut ticket| match ticket.poll() {
+                Ok(Some(infer_spi::ResourceReply::Reserved)) => Ok(None),
+                Ok(Some(_)) => Err(Error::invariant(
+                    "reservation acknowledgement type mismatch",
+                )),
+                // The device owner can acknowledge before the engine's first poll.
+                // A busy resident budget is backpressure, not a failed submission:
+                // keep the host state and retry only after ownership progresses.
+                Err(error)
+                    if error.code == ErrorCode::Capacity
+                        && self.backend.tracks_reservation_intent() =>
+                {
+                    Ok(Some(crate::resource::PendingResource {
+                        ticket: None,
+                        phase: crate::resource::ResourcePhase::Reserve,
+                        retry_epoch: Some(self.resource_epoch),
+                        started: self.now_us,
+                    }))
                 }
-                Ok(())
+                Err(error) => Err(error),
+                Ok(None) => Ok(Some(crate::resource::PendingResource {
+                    ticket: Some(ticket),
+                    phase: crate::resource::ResourcePhase::Reserve,
+                    retry_epoch: None,
+                    started: self.now_us,
+                })),
             });
-        if let Err(error) = result {
-            self.state.release(state)?;
-            return Err(error);
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => {
+                self.state.release(state)?;
+                return Err(error);
+            }
+        };
+        if let Some(pending) = pending {
+            self.resources_pending
+                .insert(prepared.request.id, pending)?;
         }
         Ok(state)
     }
