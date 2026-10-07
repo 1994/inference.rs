@@ -177,10 +177,32 @@ price (~50 ms each), or a large part of the TTFT is outside the profiled replays
 profile runs above were short-prompt dominated and never captured a single long prompt
 end to end, so they cannot settle it.
 
-**This is the specific gap in the prefill evidence**: no run to date has profiled one
-long prompt from submission to first token and shown the per-replay cost of all 8 chunks
-in sequence. Until that exists, the 42.5 ms tail figure and the 398 ms TTFT cannot both be
-used in the same model, and every conclusion drawn from combining them is unreliable.
+**Resolved: the profile never contained a long prompt.** Inspecting the captured
+positions settles it. Every `prefill` record in the batch4 profile sits in the 0-127
+position band (33 samples, median 2.14 ms), and every `prefill_last` record carries 30-63
+tokens across positions 40-52 — i.e. the 52-token batch4 prompts. There is **no mid-chunk
+sample above position 127 at all**, which is where a 511-token prompt's 8 chunks would
+live.
+
+So the 42.5 ms `prefill_last` figure that this file has been using as "the last chunk of a
+long prompt" is in fact **the last chunk of a ~52-token prompt**. It says nothing about
+long-context prefill. That is the specific gap in the prefill evidence: no run to date has
+profiled one long prompt from submission to first token.
+
+Consequences, which supersede several earlier entries:
+
+- The claim that "the 27B prefill cost is concentrated in the last chunk" is unsupported:
+  it was inferred from short-prompt tails.
+- The claim that the prefill replay is dominated by captured node count came from a
+  correlation between 1.98 ms/23-node and 43 ms/1154-node graphs — but the 1154-node
+  graphs are the short-prompt width-32 captures, not long-prompt chunks.
+- The 398-427 ms long TTFT has never been decomposed by replay. Its dominant term is
+  **unknown**.
+
+What is established is narrower and still useful: a 27B prefill replay costs 1.98-2.14 ms
+when the captured graph has 23 nodes and ~43 ms when it has 1154, and the 64-token
+width-32 capture is the expensive shape. Whether a long prompt uses the expensive shape
+for all eight chunks is exactly what the missing measurement would show.
 
 #### The 27B prefill cost is concentrated in the last chunk
 
