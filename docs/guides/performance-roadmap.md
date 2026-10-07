@@ -158,6 +158,30 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
 (5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
 
+#### An unreconciled 8x: per-replay prefill costs do not sum to the measured TTFT
+
+Two independent runs agree on the shape — the last chunk of a prompt graph costs ~21x a
+mid chunk — but neither reconciles with the end-to-end number:
+
+| Measurement | mid chunk | last chunk |
+|---|---:|---:|
+| direct HTTP, one request in flight | 1.98 ms | 42.84 ms |
+| harness, 4 concurrent | 2.14 ms | 42.54 ms |
+
+A 511-token prompt at width 64 is 8 chunks. If only the tail were expensive the total
+would be `7 x 1.98 + 42.84 = 56.7 ms`; if every chunk cost the tail price it would be
+`8 x 42.5 = 340 ms`. The **measured long TTFT is 398-427 ms**, which matches neither.
+
+So one of these is wrong: either most chunks in a real long-prompt run cost near the tail
+price (~50 ms each), or a large part of the TTFT is outside the profiled replays. The
+profile runs above were short-prompt dominated and never captured a single long prompt
+end to end, so they cannot settle it.
+
+**This is the specific gap in the prefill evidence**: no run to date has profiled one
+long prompt from submission to first token and shown the per-replay cost of all 8 chunks
+in sequence. Until that exists, the 42.5 ms tail figure and the 398 ms TTFT cannot both be
+used in the same model, and every conclusion drawn from combining them is unreliable.
+
 #### The 27B prefill cost is concentrated in the last chunk
 
 Graph-only measurement with one request in flight at a time (no batching), which settles
