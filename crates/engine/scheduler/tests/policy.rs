@@ -1,7 +1,7 @@
 use infer_core::*;
 use infer_ir::*;
 use infer_scheduler::*;
-use infer_spi::SchedulingPolicy;
+use infer_spi::{CostModelProvider, SchedulingPolicy};
 
 #[expect(
     clippy::unwrap_used,
@@ -299,4 +299,55 @@ fn exhausted_large_quantum_probe_still_dispatches_a_feasible_minimum() -> Result
         Some(1)
     );
     validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts)
+}
+
+#[test]
+fn fixed_cost_paging_fixture_keeps_its_mixed_batch_after_slow_gpu_feedback() -> Result<()> {
+    let ready = [
+        work(1, ExecutionRole::Decode, 1),
+        work(2, ExecutionRole::Prefill, 2),
+    ];
+    let mut r = resources();
+    r.gpu_budget_us = 10_000;
+    let sample = CostObservation {
+        step: StepId::ONE,
+        work: vec![CostQuery::from_unit(
+            ProgramId::ONE,
+            BackendKind::Metal,
+            ExecutionRole::Prefill,
+            6,
+            6,
+            CostEstimate {
+                gpu_us: 1,
+                ..Default::default()
+            },
+        )]
+        .into(),
+        timing: ExecutionTiming {
+            elapsed_us: 120_000,
+            source: TimingSource::MetalGpu,
+        },
+    };
+    for adaptive in [false, true] {
+        let mut costs = CalibratedCosts::new(
+            "paging-fixture".into(),
+            CostModelConfig {
+                adaptive,
+                ..Default::default()
+            },
+        )?;
+        costs.observe(&sample)?;
+        let decision =
+            CostAwarePolicy.plan_with_cost(&ready, &r, 0, DecisionId::ONE, StepId::ONE, &costs)?;
+        validate_decision(&decision, &ready, &r, ProgramId::ONE, &costs)?;
+        let step = decision.step.as_ref().unwrap();
+        assert_eq!(step.work.len(), if adaptive { 1 } else { 2 });
+        if !adaptive {
+            assert_eq!(
+                step.work.iter().map(|work| work.token_count).sum::<usize>(),
+                3
+            );
+        }
+    }
+    Ok(())
 }

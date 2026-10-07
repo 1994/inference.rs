@@ -75,7 +75,15 @@ fn real_metal_pages_grow_share_cached_blocks_and_preserve_hybrid_trajectory() {
             kv_cache_blocks: Some(16),
             ..Default::default()
         },
-        RuntimeConfig::default(),
+        RuntimeConfig {
+            // This fixture asserts a mixed decode/prefill batch and its exact page count.
+            // GPU timing feedback must not change that batch on slower/shared CI devices.
+            cost_model: CostModelConfig {
+                adaptive: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     );
     let tokens = vec![1, 2, 3, 5, 8, 13];
     e.submit(request(1, &tokens)).unwrap();
@@ -86,6 +94,16 @@ fn real_metal_pages_grow_share_cached_blocks_and_preserve_hybrid_trajectory() {
     assert_eq!(e.backend().inspect().kv_cache.unwrap().active_blocks, 3);
     e.submit(request(2, &tokens)).unwrap();
     e.tick(e.now_us() + 1).unwrap();
+    let step = e.decisions().back().unwrap().step.as_ref().unwrap();
+    assert_eq!(
+        step.work.len(),
+        2,
+        "fixture requires both requests in the batch"
+    );
+    assert_eq!(
+        step.work.iter().map(|work| work.token_count).sum::<usize>(),
+        3
+    );
     let stats = e.backend().inspect().kv_cache.unwrap();
     assert!(stats.shared_blocks >= 2);
     assert_eq!(stats.active_blocks, 5);
