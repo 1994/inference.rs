@@ -110,7 +110,8 @@ jobs:
           sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            libclang-dev cuda-cudart-dev-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2
+            libclang-dev cuda-cudart-dev-13-2 cuda-crt-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2
+          test -f /usr/local/cuda-13.2/include/crt/host_config.h
           echo 'CUDA_HOME=/usr/local/cuda-13.2' >> "$GITHUB_ENV"
       - name: Select macOS SDK
         if: runner.os == 'macOS'
