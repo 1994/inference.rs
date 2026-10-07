@@ -691,21 +691,25 @@ impl Sequence {
             let read_logits = last && readout != OutputReadout::None;
             let read_hidden = self.readout == OutputReadout::Full || speculate;
             let results = if count > 1 {
-                self.program.prefill_batch_readout(
-                    &tokens[offset..offset + count],
-                    position,
-                    read_logits,
-                    read_hidden,
-                )?
+                super::profiling::phase("prefill_chunk", || {
+                    self.program.prefill_batch_readout(
+                        &tokens[offset..offset + count],
+                        position,
+                        read_logits,
+                        read_hidden,
+                    )
+                })?
             } else {
-                vec![self.program.step_readout(
-                    tokens[offset],
-                    position,
-                    position,
-                    None,
-                    read_logits,
-                    read_hidden,
-                )?]
+                vec![super::profiling::phase("prefill_step", || {
+                    self.program.step_readout(
+                        tokens[offset],
+                        position,
+                        position,
+                        None,
+                        read_logits,
+                        read_hidden,
+                    )
+                })?]
             };
             for (lane, (hidden, row_logits)) in results.into_iter().enumerate() {
                 if speculate {

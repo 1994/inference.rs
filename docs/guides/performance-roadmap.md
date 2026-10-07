@@ -158,6 +158,39 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
 (5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
 
+#### Prefill attribution: the replay is 94% of TTFT (host instrumentation)
+
+`host_phases_us` now covers prefill (`prefill_chunk` around
+`DeviceProgram::prefill_batch_readout`, `prefill_step` around `step_readout`). One
+511-token prompt, 16 generated tokens, quiet server:
+
+| Phase | samples | median |
+|---|---:|---:|
+| `prefill_chunk` | 25 | **43.66 ms** |
+| `prefill_step` | 1 | 16.13 ms |
+| whole execution wall | 47 | 46.53 ms |
+
+The phase covers **94% of the execution wall**, and the 42.5 ms device replay measured
+independently for the same 64-token shape sits inside it. So `prefill_batch_readout` is
+almost entirely GPU work with a synchronous readback at the end, and `8 x ~43 = 344 ms`
+reproduces the measured 0.398 s steady-state TTFT.
+
+This **reinstates the device-side conclusion** that the previous entry retracted. That
+entry reasoned "16 chunks x 1.94 ms = 31 ms, so 94% of the 0.506 s forced-width run is not
+replay, therefore TTFT is host-side". The error was in the premise: the 1.94 ms figure
+belongs to a *different* captured graph (23 nodes) than the one a long prompt actually
+runs (1154 nodes, 42.5 ms). Applying the cheap graph's cost to the expensive graph's chunk
+count produced a nonsense total, and I read the resulting gap as host overhead instead of
+as evidence that the cost figure did not apply.
+
+So the corrected position, with the host phase measured rather than inferred:
+
+- 27B long-prompt TTFT is **device-bound**: ~43 ms per 64-token prompt replay, 8 replays.
+- The host adds only ~3 ms around that call, i.e. submission and readout are not the gap.
+- The open question is what makes a 64-token prefill replay cost 42.5 ms while a 32-token
+  one costs 1.94 ms, which is a genuine 22x and has never been explained by any hypothesis
+  tested so far.
+
 #### The 27B long-prompt prefill cliff: 32 tokens costs 1.9 ms, 64 tokens costs 42.5 ms
 
 This is the missing long-prompt measurement. One 511-token prompt, profiled end to end on

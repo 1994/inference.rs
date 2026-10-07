@@ -43,6 +43,10 @@ impl PhaseScope {
 }
 
 /// Time one host-side phase. A no-op unless a [`PhaseScope`] is installed.
+///
+/// Phases must not nest: the accumulator is a `RefCell` borrowed for the duration of the
+/// body, so an inner `phase` re-enters the same thread-local and panics. Time the finest
+/// granularity needed and leave the enclosing region unmeasured.
 pub(super) fn phase<T>(name: &'static str, body: impl FnOnce() -> T) -> T {
     PHASES.with(|phases| {
         let mut phases = phases.borrow_mut();
