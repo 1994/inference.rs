@@ -202,6 +202,20 @@ arithmetic, above it the arithmetic dominates. At 64 tokens the prompt replay is
 breakeven, so **the 546 GB/s figure is a consequence of being compute-limited, not a
 cause** — a compute-bound kernel necessarily leaves bandwidth idle.
 
+The 23.4 GB denominator was worth checking against the checkpoint rather than a byte total,
+since an unused vision tower would inflate it and weaken the conclusion. Reading the
+safetensors headers directly:
+
+| Component | size |
+|---|---:|
+| text backbone | 20.16 GiB |
+| MTP head | 0.79 GiB |
+| vision tower (**4.1% of the shard, unused by these benchmarks**) | 0.86 GiB |
+
+Using the text backbone alone as the resident volume gives `3.46 TFLOP / 20.16 GiB =
+171 FLOP/byte`, against a balance of 58.7 — **2.9x the balance, so the compute-bound
+conclusion holds and strengthens** when the unused tower is excluded.
+
 This retracts the framing this file has carried for several entries: "the prompt graph
 runs at 31% of device bandwidth" is true but is not an inefficiency to attack, and every
 bandwidth-motivated lever tried against it (split-K, wider tiles, L2 residency) was aimed
