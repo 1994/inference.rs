@@ -353,9 +353,29 @@ actually pays is **per-path row tiles**:
    reading `QUANT_GEMM_TILE[0]`, and have the prompt capture pass 64 while the decode
    capture passes 16.
 
-Step 3 is the part that was NOT done and whose plumbing was not traced, so treat it as a
-plan rather than a completed step. The measured prize is the ~7% TTFT on both prompt
-lengths without the ~20% decode wall regression that a single global 64-row tile causes. It also finally gives
+**Attempt at step 3, and it fails on shared-workspace layout, not on the constant.**
+The plumbing is small and it compiles: `Workspace` gained a `tile_rows` field, a
+`use_tile_rows` setter, both call sites read `self.tile_rows`, and `build_pair` sets the
+prompt height to `prefill_width` before building the prompt graph.
+
+It fails at kernel launch with `output partition shape mismatch. Expected [64, 64], got
+[16, 64]`, and resetting the height immediately after the prompt capture moves the failure
+rather than removing it. The reason is structural: **one `Workspace` serves several graphs
+of different widths** — the prompt graph at `prefill_width`, the batched and restore graphs
+at `batch_width`, and the lane graphs — and the height the kernel expects is fixed by each
+captured tensor's own partition, which is decided when the *graph* is built, not when the
+launch happens. A mutable field on a shared workspace therefore cannot discriminate: the
+last writer wins for every graph that shares it.
+
+The correct shape is a per-width partition, not a per-workspace field: either give each
+graph its own workspace (the type is already constructed per program, so this would be a
+per-graph split), or derive the height from the tensor being partitioned
+(`output.shape()[0]`) where the kernel is recorded, so no mutable state is involved. The
+second is smaller and removes the class of bug entirely, because the tile then cannot
+disagree with the tensor it partitions.
+
+Reverted to `[16, 64]`. The patch above remains a valid prerequisite; the open work is the
+partition source, not the plumbing. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
