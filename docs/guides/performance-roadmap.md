@@ -168,6 +168,34 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
 (5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
 
+#### Like-for-like: the target prompt replay vs the target verify replay
+
+Both graphs measured in **one profile run on one process**, which is what the discipline
+note above requires and what no earlier comparison had done:
+
+| Graph | tokens | nodes | n | median | weights at 23.4 GB |
+|---|---:|---:|---:|---:|---:|
+| `prefill` (target prompt) | 64 | 1154 | 7 | **42.88 ms** | **546 GB/s** |
+| `prefill_last` (target prompt) | 31-63 | 1155 | 10 | **40.76 ms** | 574 GB/s |
+| `slot_verify` (target verify) | 3-12 lanes | 1155 | 36 | **24.71 ms** | **947 GB/s** |
+| `slot_decode` | 2-4 lanes | 24 | 64 | 1.54 ms | — |
+| `prefill` (draft head) | 9-32 | 23 | 36 | **1.86 ms** | — |
+
+This is the clean comparison: **the same target weights stream at 947 GB/s in the verify
+graph and 546 GB/s in the prompt graph, a 1.7x gap**, with both figures from the same
+process and the same model. The verify graph does more rows of work per replay (3-12 lanes
+across 3 candidate positions) and finishes faster.
+
+One caveat to carry forward rather than gloss: both columns divide by 23.4 GB of resident
+weights, which assumes each replay reads all of them exactly once. That assumption is
+untested for either path, and if the prompt path reads weights more than once the real
+bandwidth is higher than 546 GB/s and the gap is smaller. The *ordering* is solid — both
+graphs are the same model, same process, same profiler — but the absolute utilization
+figures are conditional on that assumption.
+
+The draft head's 1.86 ms at 23 nodes is a one-layer network, so it remains non-comparable
+and is listed only to keep it out of future ratios.
+
 #### The 22x "cliff" compared two different programs, not two chunk sizes
 
 The 23-node / 1.94 ms and 1154-node / 42.5 ms records do not belong to one program at two
