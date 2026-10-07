@@ -9,6 +9,11 @@ impl MetalBackend {
     pub fn available() -> bool {
         metal::Device::system_default().is_some_and(|d| d.has_unified_memory())
     }
+    /// Device-recommended working-set budget for automatic service sizing.
+    #[must_use]
+    pub fn recommended_memory_bytes() -> Option<u64> {
+        metal::Device::system_default().map(|device| device.recommended_max_working_set_size())
+    }
     #[must_use]
     pub const fn model(&self) -> &ModelIr {
         &self.model

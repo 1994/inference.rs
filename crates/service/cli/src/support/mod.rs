@@ -5,8 +5,14 @@
     all(target_os = "linux", feature = "cuda")
 ))]
 mod engine;
-#[cfg(all(target_os = "linux", feature = "cuda"))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub mod memory;
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
+mod serving;
 #[cfg(any(
     target_os = "macos",
     feature = "test-backends",

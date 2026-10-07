@@ -28,6 +28,8 @@ pub fn prepare(
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion,
+        fp8_inputs: std::collections::BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: model
             .projections
             .iter()

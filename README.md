@@ -67,9 +67,7 @@ On a Mac with a supported Metal device:
 
 ```sh
 cargo build --locked --release -p infer-cli
-target/release/infer --backend metal serve \
-  --package examples/qwen-hybrid-tiny \
-  --listen 127.0.0.1:8080
+target/release/infer examples/qwen-hybrid-tiny
 ```
 
 ### Serve with CUDA
@@ -78,13 +76,20 @@ Configure the [CUDA build environment](crates/backend/cuda/README.md), then buil
 
 ```sh
 cargo build --locked --release -p infer-cli --features cuda
-target/release/infer --backend cuda serve \
-  --package /path/to/model \
-  --config examples/cuda-runtime.json \
-  --listen 127.0.0.1:8080
+target/release/infer /path/to/model
 ```
 
-`--backend auto` selects an enabled, available backend in CUDA → Metal order and returns an error when no GPU is available. CPU execution requires explicit selection.
+Once `infer` is on your `PATH`, the default entry point is simply:
+
+```sh
+infer /path/to/model
+```
+
+This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace and input limits are derived from the loaded model, and an exposed KV pool sets the logical page budget. CUDA derives its memory budget from device capacity and available memory; Metal uses the device's recommended working set. CUDA projection autotuning is enabled by default and reuses matching cached measurements.
+
+Optional flags override these choices, for example `infer /path/to/model --listen 127.0.0.1:9000`. An explicit `--config` preserves the supplied runtime budgets; the original `infer serve --package ...` syntax remains supported. CPU execution requires explicit selection.
+
+Automatic sizing and measured tile selection do not guarantee optimal end-to-end performance for every device, model, or workload. Performance changes must still pass the benchmark gates; MTP remains opt-in until its benefit is established for the workload.
 
 The server exposes native HTTP/SSE routes and a subset of the OpenAI API. See the [development guide](docs/guides/development.md) for CLI commands and memory budgets, and the [OpenAI API guide](docs/guides/openai-api.md) for supported routes and parameters.
 

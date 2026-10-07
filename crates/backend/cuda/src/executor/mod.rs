@@ -1,9 +1,12 @@
 //! Engine adapter for shared weights and isolated resident CUDA graphs.
 //! Execution currently settles synchronously; tickets preserve the engine ownership protocol.
 mod capabilities;
+mod drafting;
 mod execution;
 mod pool;
 pub mod prefix;
+mod prefix_state;
+mod profiling;
 mod provider;
 pub use pool::PoolInspection;
 mod state;
@@ -28,6 +31,7 @@ pub struct CudaBackend {
     /// Continuous-batching decode slots, captured lazily on the first batchable step;
     /// `None` with `slots_disabled` means initialization failed and decode stays serial.
     slots: Option<SlotPool>,
+    draft_slots: Option<SlotPool>,
     slots_disabled: bool,
     busy: bool,
     fatal: Option<Error>,
@@ -148,6 +152,7 @@ impl CudaBackend {
             pool: pool::StatePool::default(),
             prefix: prefix::PrefixCache::new(prefix_cache_bytes(state_budget)),
             slots: None,
+            draft_slots: None,
             slots_disabled: false,
             busy: false,
             fatal: None,

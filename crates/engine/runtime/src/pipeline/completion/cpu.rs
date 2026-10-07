@@ -22,6 +22,18 @@ impl OutputFlights {
     pub fn is_empty(&self) -> bool {
         self.slots.iter().all(Option::is_none)
     }
+    /// A short, nonblocking grace period lets rows from the preceding output batch
+    /// rejoin one device dispatch. A slow CPU job cannot stall independent work
+    /// beyond this bound; deadlines and resource polling continue on every tick.
+    pub fn coalescing(&self, now_us: u64) -> bool {
+        const OUTPUT_BATCH_GRACE_US: u64 = 500;
+        self.slots
+            .iter()
+            .flatten()
+            .map(|flight| flight.started)
+            .min()
+            .is_some_and(|started| now_us.saturating_sub(started) < OUTPUT_BATCH_GRACE_US)
+    }
     pub fn len(&self) -> usize {
         self.slots.iter().flatten().count()
     }
@@ -248,6 +260,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .ok_or_else(|| Error::invariant("CPU output request lost"))?
             .status
             .transition(RequestStatus::Runnable)?;
+        // A plan prepared while this request was awaiting CPU sampling cannot
+        // include its next decode. Rebuild so newly ready rows can join the batch.
+        self.discard_prepared();
         match output.and_then(|output| self.complete_prepared_work(step, work, output, emitted)) {
             Ok(()) => {}
             Err(error) => {

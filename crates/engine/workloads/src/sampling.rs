@@ -96,6 +96,12 @@ pub fn sample_with_history(
     scratch: &mut SamplingWorkspace,
 ) -> Result<u32> {
     sampling.validate()?;
+    if sampling.temperature == 0.0
+        && sampling.presence_penalty == 0.0
+        && sampling.repetition_penalty.to_bits() == 1.0_f32.to_bits()
+    {
+        return greedy(logits);
+    }
     if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) {
         return Err(Error::invalid("invalid sampling logits"));
     }
@@ -130,6 +136,21 @@ pub fn sample_with_history(
 }
 fn token(index: usize) -> Result<u32> {
     u32::try_from(index).map_err(|_| Error::invalid("vocabulary exceeds token ABI"))
+}
+
+/// Greedy decoding needs neither an indexed vocabulary copy nor sorting scratch.
+/// Preserve total ordering (including signed zero) and the lowest-index tie rule.
+fn greedy(logits: &[f32]) -> Result<u32> {
+    let mut best = None;
+    for (index, &value) in logits.iter().enumerate() {
+        if !value.is_finite() {
+            return Err(Error::invalid("invalid sampling logits"));
+        }
+        if best.is_none_or(|(_, maximum): (usize, f32)| value.total_cmp(&maximum).is_gt()) {
+            best = Some((index, value));
+        }
+    }
+    token(best.ok_or_else(|| Error::invalid("empty logits"))?.0)
 }
 #[expect(
     clippy::cast_precision_loss,

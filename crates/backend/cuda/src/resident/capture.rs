@@ -13,6 +13,8 @@ pub(super) enum CaptureMode {
     Flat,
     /// Prefill width 32: every slot is one `[32, size]` tensor used as a whole.
     Batched,
+    /// Contiguous prompt rows with [position, active rows, state offset, unused] metadata.
+    Prefill,
     /// Prefill width 32, one lane at a time: slots stay `[32, size]`, kernels
     /// with per-lane metadata or ordered state read and write single rows.
     Row(usize),
@@ -22,6 +24,8 @@ pub(super) struct Capture<'a> {
     pub scope: &'a Scope,
     pub arena: &'a mut ActivationArena,
     pub weights: &'a ProgramWeights,
+    pub nvfp4: &'a mut super::nvfp4_gemm::Workspace,
+    pub attention: &'a mut super::attention_decode::Workspace,
     pub fp8_states: &'a mut super::fp8_cache::Fp8Caches,
     pub states: &'a mut BTreeMap<TensorId, Vec<Tensor<f32>>>,
     pub metadata: &'a Tensor<i32>,
@@ -53,7 +57,9 @@ impl Capture<'_> {
         let tensor = self.arena.get(id).map_err(error)?;
         match self.mode {
             CaptureMode::Flat => identity(tensor),
-            CaptureMode::Batched => tensor.view(&[tensor.size()]).map_err(error),
+            CaptureMode::Batched | CaptureMode::Prefill => {
+                tensor.view(&[tensor.size()]).map_err(error)
+            }
             CaptureMode::Row(lane) => self.arena.row(id, lane).map_err(error),
         }
     }
@@ -108,7 +114,7 @@ impl Capture<'_> {
                 self.embedding(node, &mut output)?;
             }
             TensorOp::Linear => {
-                self.linear(node, &mut output)?;
+                output = self.linear(node, output)?;
             }
             TensorOp::Silu | TensorOp::Sigmoid => {
                 self.scope.record(
@@ -157,46 +163,8 @@ impl Capture<'_> {
                     .generics(vec![stride.to_string(), width.to_string()]),
                 )?;
             }
-            TensorOp::Rope {
-                heads,
-                head_dim,
-                rotary_dim,
-                ..
-            } => {
-                let half = rotary_dim / 2;
-                if !half.is_power_of_two() || !head_dim.is_multiple_of(half) {
-                    return Err(error("unsupported rotary dimensions"));
-                }
-                output = output.reshape(&[*heads, *head_dim])?;
-                let frequency = self
-                    .weights
-                    .rope_frequencies
-                    .get(&node.id)
-                    .ok_or_else(|| error("missing rotary frequencies"))?;
-                if self.metadata.size() == crate::constants::METADATA_FIELDS * 2
-                    && let Some(axes) = self.weights.rope_axes.get(&node.id)
-                {
-                    self.scope.record(
-                        aux::mrope(
-                            (&mut output).partition([1, half]),
-                            &self.input(node.inputs[0])?.view(&[*heads, *head_dim])?,
-                            frequency,
-                            axes,
-                            self.metadata,
-                        )
-                        .generics(vec![head_dim.to_string(), half.to_string()]),
-                    )?;
-                } else {
-                    self.scope.record(
-                        aux::rope(
-                            (&mut output).partition([1, half]),
-                            &self.input(node.inputs[0])?.view(&[*heads, *head_dim])?,
-                            frequency,
-                            self.metadata,
-                        )
-                        .generics(vec![head_dim.to_string(), half.to_string()]),
-                    )?;
-                }
+            TensorOp::Rope { .. } => {
+                output = self.record_rope(node, output)?;
             }
             TensorOp::Conv { .. } | TensorOp::Delta { .. } | TensorOp::Attention { .. } => {
                 output = self.record_state(node, output)?;
@@ -207,7 +175,11 @@ impl Capture<'_> {
 
     /// Width-1 and verification-width projection: per-lane input tensor.
     /// Prefill width 32 linear nodes never reach here; see `prefill_projection`.
-    fn linear(&self, node: &TensorNode, output: &mut Tensor<f32>) -> Result<(), DeviceError> {
+    fn linear(
+        &mut self,
+        node: &TensorNode,
+        mut output: Tensor<f32>,
+    ) -> Result<Tensor<f32>, DeviceError> {
         let input = self.weights.constants.get(&node.inputs[0]).map_or_else(
             || self.arena.get(node.inputs[0]).map_err(error),
             |value| Ok(value.as_ref()),
@@ -217,9 +189,27 @@ impl Capture<'_> {
             .projections
             .get(&node.inputs[1])
             .ok_or_else(|| error("missing projection"))?;
+        if let Some(scale) = self.weights.activation_quantization(node.inputs[1]) {
+            let size = output.size();
+            let mut matrix = output.reshape(&[1, size])?;
+            if !super::nvfp4_gemm::record(
+                self.scope,
+                self.nvfp4,
+                weights,
+                Some(scale),
+                &input.view(&[1, input.size()]).map_err(error)?,
+                &mut matrix,
+                input.size(),
+            )? {
+                return Err(error(
+                    "activation quantization and weight encoding disagree",
+                ));
+            }
+            return Ok(matrix.reshape(&[size])?);
+        }
         weights.record(
             self.scope,
-            output,
+            &mut output,
             input,
             input.size(),
             self.weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
@@ -229,7 +219,8 @@ impl Capture<'_> {
                 )
                 .map_err(error)?,
             ),
-        )
+        )?;
+        Ok(output)
     }
 
     fn embedding(

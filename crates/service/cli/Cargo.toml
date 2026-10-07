@@ -17,6 +17,7 @@ test-backends = ["infer-ir/test-backends", "dep:infer-backend-host", "dep:infer-
 [dependencies]
 infer-backend-cuda = { workspace = true, optional = true }
 infer-core.workspace = true
+infer-compiler.workspace = true
 infer-ir.workspace = true
 infer-spi.workspace = true
 infer-runtime.workspace = true

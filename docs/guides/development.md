@@ -16,9 +16,26 @@ cargo build --locked -p infer-cli --features test-backends
 
 完整检查见 `make check`，提交前至少运行 `make check-rust`。
 
+## 默认启动
+
+```sh
+infer /path/to/model
+```
+
+默认启动 `127.0.0.1:8080` 的 HTTP 服务，无需指定 backend、`serve`、`--package` 或配置文件。未加入 PATH 时使用 `target/release/infer /path/to/model`。同名子命令优先解析为命令，模型目录若叫 `serve` 或 `doctor`，使用 `./serve` / `./doctor` 路径。
+
+- 后端按已编译且可用的 CUDA → Metal 选择。
+- CUDA 使用设备容量、当前可用显存与利用率计算预算；Metal 使用设备建议 working set 与利用率，替代固定 512 MiB 默认预算。
+- 无配置文件时，workspace 由已绑定的模型图编译结果确定，输入上限受模型上下文限制；提供物理 KV 池的后端同步逻辑页预算，资源等待超时采用设备提交超时以覆盖冷图捕获。
+- CUDA 投影默认自动选 tile，优先使用匹配的测量缓存，缺失时测量；MTP 默认关闭，不能假定推测必然提速。
+- `--listen`、`--backend` 等仍可覆盖默认选择；`--config` 显式保留配置中的 runtime 预算，`--block-size` 和 `--max-num-batched-tokens` 作为命令行覆盖。旧 `serve --package` 入口保留兼容。
+
+自动参数保证按契约配置与容量校验，最优性能仍需目标硬件和实际负载验证。调优与门槛见 [CUDA 性能指南](cuda-performance.md)。
+
 ## CLI
 
 ```sh
+infer [options] <model_path>
 infer [--backend auto|metal|cuda|test-cpu] <command> [options]
 ```
 
@@ -28,7 +45,7 @@ infer [--backend auto|metal|cuda|test-cpu] <command> [options]
 |---|---:|---|
 | `--backend` | `auto` | `auto` 按 CUDA → Metal 选择，无可用 GPU 时报错 |
 | `--gpu-memory-utilization` | 0.9 | 允许 engine 使用的显存比例（vLLM 语义，含权重） |
-| `--host-memory-mib` | 512 | 宿主内存后端的预算 |
+| `--host-memory-mib` | 自动 | 兼容预算覆盖；未指定时 CUDA/Metal 按设备推导，测试 CPU 使用 512 MiB |
 | `--num-gpu-blocks-override` | 自动 | 物理 KV block 数 |
 | `--block-size` | 自动 | 每个 KV block / 逻辑页的 token 数 |
 | `--max-num-batched-tokens` | 自动 | 单次 GPU prefill 的最大 token 行数 |

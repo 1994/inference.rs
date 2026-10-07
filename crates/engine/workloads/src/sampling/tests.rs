@@ -1,4 +1,22 @@
 use super::*;
+
+#[test]
+fn greedy_preserves_ties_signed_zero_and_rejects_nonfinite_tail() -> Result<()> {
+    let sampling = Sampling::default();
+    for (logits, expected) in [
+        (vec![2.0, 2.0, 1.0], 0),
+        (vec![-0.0, 0.0, 0.0], 1),
+        (vec![f32::MIN, -5.0, -6.0], 1),
+        (vec![f32::MAX, f32::MAX], 0),
+    ] {
+        assert_eq!(sample(&logits, &sampling, 1, 0)?, expected);
+    }
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(sample(&[f32::MAX, invalid], &sampling, 1, 0).is_err());
+    }
+    assert!(sample(&[], &sampling, 1, 0).is_err());
+    Ok(())
+}
 fn reference(logits: &[f32], sampling: &Sampling, request: u64, position: usize) -> Result<u32> {
     let mut candidates: Vec<_> = logits.iter().copied().enumerate().collect();
     candidates.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));

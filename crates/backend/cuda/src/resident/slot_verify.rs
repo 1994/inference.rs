@@ -117,7 +117,13 @@ impl BatchBuilder<'_> {
                     profile.graph().boundary(scope, index, node)?;
                 }
                 if node.op == TensorOp::Linear {
-                    super::batch_projection::record_slots(scope, node, arena, self.weights)?;
+                    super::batch_projection::record_slots(
+                        scope,
+                        node,
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                    )?;
                     continue;
                 }
                 match dispatch32(node, self.weights) {
@@ -126,6 +132,8 @@ impl BatchBuilder<'_> {
                         scope,
                         arena,
                         weights: self.weights,
+                        nvfp4: self.nvfp4,
+                        attention: self.attention,
                         states: self.states,
                         fp8_states: self.fp8_states,
                         metadata: &metadata[0],
@@ -143,6 +151,8 @@ impl BatchBuilder<'_> {
                                 scope,
                                 arena,
                                 weights: self.weights,
+                                nvfp4: self.nvfp4,
+                                attention: self.attention,
                                 states: &mut lane_states[slot],
                                 fp8_states: &mut lane_fp8[slot],
                                 metadata: lane_metadata,
@@ -187,8 +197,8 @@ impl BatchBuilder<'_> {
     /// once across every lane; state, metadata and checkpoint copies record per lane
     /// against `lane_states[lane / verify]`.
     /// # Errors
-    /// Rejects mismatched lane slices, a slot count other than `CB_DECODE_SLOTS`, a verify
-    /// width outside `2..=FUSED_VERIFY_LANES`, an exceeded checkpoint budget or CUDA
+    /// Rejects mismatched lane slices, a slot count outside `2..=CB_DECODE_SLOTS`, a verify
+    /// width outside `2..=MAX_VERIFICATION_WIDTH`, an exceeded checkpoint budget or CUDA
     /// capture failures.
     pub fn build_slot_verify(
         &mut self,
@@ -200,8 +210,8 @@ impl BatchBuilder<'_> {
         let lanes = slots
             .checked_mul(verify)
             .ok_or_else(|| Error::invalid("slot verify width overflow"))?;
-        if slots != crate::constants::CB_DECODE_SLOTS
-            || !(2..=crate::constants::FUSED_VERIFY_LANES).contains(&verify)
+        if !(2..=crate::constants::CB_DECODE_SLOTS).contains(&slots)
+            || !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&verify)
             || lane_fp8.len() != slots
             || self.lane_external.len() < lanes
             || self.lane_fusion.len() < lanes

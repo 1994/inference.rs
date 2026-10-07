@@ -72,10 +72,31 @@ pub struct ProgramWeights {
     pub tiling: BTreeMap<TensorId, LinearTiling>,
     pub fusion: Option<FusionWeights>,
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
+    pub input_scales: BTreeMap<TensorId, f32>,
+    pub fp8_inputs: std::collections::BTreeSet<TensorId>,
     pub constants: BTreeMap<TensorId, Arc<Tensor<f32>>>,
     pub embeddings: BTreeMap<TensorId, Arc<Tensor<bf16>>>,
     pub rope_axes: BTreeMap<infer_core::OpId, Arc<Tensor<i32>>>,
     pub rope_frequencies: BTreeMap<infer_core::OpId, Arc<Tensor<f32>>>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ActivationQuantization {
+    Fp4(f32),
+    Fp8Token,
+}
+impl ProgramWeights {
+    pub(super) fn activation_quantization(&self, id: TensorId) -> Option<ActivationQuantization> {
+        self.input_scales
+            .get(&id)
+            .copied()
+            .map(ActivationQuantization::Fp4)
+            .or_else(|| {
+                self.fp8_inputs
+                    .contains(&id)
+                    .then_some(ActivationQuantization::Fp8Token)
+            })
+    }
 }
 
 /// Captures a complete single-token forward pass; all state and activations stay on CUDA.
@@ -87,6 +108,8 @@ pub struct DeviceProgram {
     readbacks: crate::device::Readbacks,
     prefill: CudaGraph<()>,
     metadata: Tensor<i32>,
+    nvfp4: super::nvfp4_gemm::Workspace,
+    attention: super::attention_decode::Workspace,
     external: Tensor<f32>,
     // Declared after the graphs: the state tensors outlive every capture that references them,
     // and prefix caching reads them back for snapshots.
@@ -95,7 +118,7 @@ pub struct DeviceProgram {
     lane_external: Vec<Tensor<f32>>,
     lane_uploads: Vec<Arc<Tensor<f32>>>,
     // Fusion workspaces are referenced by the captured graphs and never touched afterwards.
-    _lane_fusion: Vec<Option<FusionWorkspace>>,
+    lane_fusion: Vec<Option<FusionWorkspace>>,
     reset_graph: CudaGraph<()>,
     hidden: Arc<Tensor<f32>>,
     logits: Arc<Tensor<f32>>,
@@ -106,6 +129,56 @@ pub struct DeviceProgram {
     attention_only: bool,
     requires_external: bool,
     pub activation_bytes: usize,
+    pub(crate) reclaimable_bytes: u64,
+    released_verification_bytes: u64,
+}
+
+/// Conservative lower bound on uniquely owned device storage; excludes graph metadata,
+/// readback buffers and auxiliary workspaces. Idle-state admission can reclaim this much.
+fn retained_tensor_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    states: &super::batch::States,
+    fp8: &super::fp8_cache::Fp8Caches,
+    activation_bytes: usize,
+) -> u64 {
+    let verify = if weights.batch_width > 1 {
+        weights.batch_width
+    } else {
+        0
+    };
+    let prompt = if weights.prefill_width >= PREFILL_LANES {
+        weights.prefill_width
+    } else {
+        0
+    };
+    let activations = activation_bytes as u64 * (1 + verify + prompt) as u64;
+    let state_bytes = states
+        .values()
+        .flatten()
+        .map(|t| t.size() as u64 * F32_BYTES as u64)
+        .sum::<u64>();
+    let packed_bytes = fp8
+        .values()
+        .map(|(k, v)| (k.size() + v.size()) as u64)
+        .sum::<u64>();
+    let recurrent = graph
+        .tensors
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.storage,
+                TensorStorage::State {
+                    kind: StateKind::Conv | StateKind::LinearAttention,
+                    ..
+                }
+            )
+        })
+        .filter_map(|t| states.get(&t.id))
+        .flatten()
+        .map(|t| t.size() as u64 * F32_BYTES as u64)
+        .sum::<u64>();
+    activations + state_bytes + packed_bytes + recurrent * verify as u64
 }
 
 /// Per-lane external hidden buffers paired with their fusion workspaces.
@@ -115,10 +188,16 @@ type LaneFusion = (Vec<Tensor<f32>>, Vec<Option<FusionWorkspace>>);
 ///
 /// A fused program consumes one external hidden per lane; the batch capture owns a buffer and
 /// a workspace per lane so batched draft priming no longer replays the prompt token by token.
-fn allocate_lane_fusion(device: &CudaDevice, hidden: usize, enabled: bool) -> Result<LaneFusion> {
+fn allocate_lane_fusion(
+    device: &CudaDevice,
+    hidden: usize,
+    weights: &ProgramWeights,
+) -> Result<LaneFusion> {
+    let width = weights.prefill_width.max(weights.batch_width).max(1);
+    let enabled = weights.fusion.is_some();
     let mut external = Vec::new();
     let mut fusion = Vec::new();
-    for _ in 0..PREFILL_LANES {
+    for _ in 0..width {
         external.push(
             api::zeros::<f32>(&[hidden])
                 .sync_on(&device.stream)
@@ -135,6 +214,7 @@ fn arena_budget(device: &CudaDevice) -> Result<usize> {
 }
 /// Validate one program request and return the padded capacity it will be captured at.
 fn program_capacity(
+    graph: &DataflowGraph,
     weights: &ProgramWeights,
     capacity: usize,
     hidden: usize,
@@ -148,6 +228,13 @@ fn program_capacity(
     {
         return Err(Error::invalid("resident capacity or vocabulary"));
     }
+    if graph
+        .nodes
+        .iter()
+        .any(|node| node.inputs.iter().any(|id| Some(*id) == graph.logits))
+    {
+        return Err(Error::unsupported("logits must be a terminal graph output"));
+    }
     if let Some(fusion) = &weights.fusion {
         fusion.validate(hidden)?;
     }
@@ -155,6 +242,70 @@ fn program_capacity(
 }
 
 impl DeviceProgram {
+    /// A leased sequence verifies through the shared pool. Its private rollback
+    /// graph is idle and can be rebuilt if the sequence later returns to serial use.
+    pub(crate) fn discard_verification(&mut self) -> bool {
+        if self.batch.take().is_none() {
+            return false;
+        }
+        self.last_batch = None;
+        let before = self.reclaimable_bytes;
+        let state_bytes = self
+            .states
+            .values()
+            .flatten()
+            .map(|t| t.size() as u64 * F32_BYTES as u64)
+            .sum::<u64>();
+        let packed_bytes = self
+            .fp8_states
+            .values()
+            .map(|(k, v)| (k.size() + v.size()) as u64)
+            .sum::<u64>();
+        let prompt = self.prompt_batch.as_ref().map_or(0, |g| g.width);
+        self.reclaimable_bytes =
+            state_bytes + packed_bytes + self.activation_bytes as u64 * (1 + prompt) as u64;
+        self.released_verification_bytes = before - self.reclaimable_bytes;
+        true
+    }
+
+    pub(crate) const fn released_verification_bytes(&self) -> u64 {
+        self.released_verification_bytes
+    }
+
+    pub(crate) fn ensure_verification(
+        &mut self,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+    ) -> Result<()> {
+        if self.batch.is_some() || weights.batch_width < 2 {
+            return Ok(());
+        }
+        let mut builder = super::batch::BatchBuilder {
+            device: &self.device,
+            graph,
+            weights,
+            nvfp4: &mut self.nvfp4,
+            attention: &mut self.attention,
+            states: &mut self.states,
+            fp8_states: &mut self.fp8_states,
+            external: &self.external,
+            lane_external: &mut self.lane_external,
+            lane_fusion: &mut self.lane_fusion,
+            capacity: self.capacity,
+            width: weights.batch_width,
+        };
+        self.batch = Some(builder.build()?);
+        self.reclaimable_bytes = retained_tensor_bytes(
+            graph,
+            weights,
+            &self.states,
+            &self.fp8_states,
+            self.activation_bytes,
+        );
+        self.released_verification_bytes = 0;
+        Ok(())
+    }
+
     /// # Errors
     /// Rejects unsupported graph shapes, storage budgets or CUDA capture failures.
     pub fn new(
@@ -166,12 +317,16 @@ impl DeviceProgram {
         vocabulary: usize,
     ) -> Result<Self> {
         super::validation::validate(graph, weights)?;
-        let capacity = program_capacity(weights, capacity, hidden, vocabulary)?;
+        let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
+        let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        let mut nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights)?;
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
+        let reclaimable_bytes =
+            retained_tensor_bytes(graph, weights, &states, &fp8_states, activation_bytes);
         let reset_graph = capture_reset(device, &mut states)?;
         let metadata = device.upload(vec![0_i32; METADATA_FIELDS * 2], &[METADATA_FIELDS * 2])?;
         let metadata =
@@ -180,14 +335,15 @@ impl DeviceProgram {
             .sync_on(&device.stream)
             .map_err(device_error)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
-        let (mut lane_external, mut lane_fusion) =
-            allocate_lane_fusion(device, hidden, weights.fusion.is_some())?;
+        let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
         let mut capture_graph = |skip_logits: bool| {
             CudaGraph::scope(&device.stream, |scope| {
                 let mut capture = capture::Capture {
                     scope,
                     arena: &mut arena,
                     weights,
+                    nvfp4: &mut nvfp4,
+                    attention: &mut attention,
                     states: &mut states,
                     fp8_states: &mut fp8_states,
                     metadata: &metadata,
@@ -205,19 +361,14 @@ impl DeviceProgram {
             })
             .map_err(device_error)
         };
-        if graph
-            .nodes
-            .iter()
-            .any(|node| node.inputs.iter().any(|id| Some(*id) == graph.logits))
-        {
-            return Err(Error::unsupported("logits must be a terminal graph output"));
-        }
         let graph_exec = capture_graph(false)?;
         let prefill = capture_graph(true)?;
         let mut builder = super::batch::BatchBuilder {
             device,
             graph,
             weights,
+            nvfp4: &mut nvfp4,
+            attention: &mut attention,
             states: &mut states,
             fp8_states: &mut fp8_states,
             external: &external,
@@ -230,6 +381,8 @@ impl DeviceProgram {
         let hidden = super::batch::take_result(&mut arena, graph.hidden)?;
         let logits = super::batch::take_result(&mut arena, graph.logits)?;
         Ok(Self {
+            nvfp4,
+            attention,
             batch,
             prompt_batch,
             last_batch: None,
@@ -242,7 +395,7 @@ impl DeviceProgram {
             lane_uploads: Vec::new(),
             states,
             fp8_states,
-            _lane_fusion: lane_fusion,
+            lane_fusion,
             reset_graph,
             hidden,
             logits,
@@ -251,16 +404,10 @@ impl DeviceProgram {
             vocabulary,
             next_position: 0,
             requires_external: weights.fusion.is_some(),
-            attention_only: graph.tensors.iter().all(|spec| {
-                !matches!(
-                    spec.storage,
-                    TensorStorage::State {
-                        kind: StateKind::Conv | StateKind::LinearAttention,
-                        ..
-                    }
-                )
-            }),
+            attention_only: attention_only(graph),
             activation_bytes,
+            reclaimable_bytes,
+            released_verification_bytes: u64::default(),
         })
     }
 
@@ -448,6 +595,12 @@ impl DeviceProgram {
         &self.fp8_states
     }
 
+    /// Mutable quantized KV storage for a prefix restore.
+    #[must_use]
+    pub const fn fp8_states_mut(&mut self) -> &mut super::fp8_cache::Fp8Caches {
+        &mut self.fp8_states
+    }
+
     #[must_use]
     pub fn prefill_width(&self) -> usize {
         self.prompt_batch
@@ -523,7 +676,7 @@ impl DeviceProgram {
         if (self.batch.is_none() && self.prompt_batch.is_none())
             || tokens.is_empty()
             || tokens.len() > width
-            || (width != PREFILL_LANES && tokens.len() != width)
+            || (width < PREFILL_LANES && tokens.len() != width)
             || position
                 .checked_add(tokens.len())
                 .is_none_or(|end| end > self.capacity)
@@ -584,6 +737,21 @@ impl DeviceProgram {
     #[must_use]
     pub const fn position(&self) -> usize {
         self.next_position
+    }
+
+    /// Validate an externally executed attention prefix before copying its state.
+    pub(super) fn external_attention_capacity(&self, position: usize) -> Result<usize> {
+        if !self.attention_only || position > self.capacity {
+            return Err(Error::invalid("external attention prefix is incompatible"));
+        }
+        Ok(self.capacity)
+    }
+    /// Called only after slot state has been copied into this program's buffers.
+    pub(super) fn adopt_attention_prefix(&mut self, position: usize) -> Result<()> {
+        self.external_attention_capacity(position)?;
+        self.next_position = position;
+        self.last_batch = None;
+        Ok(())
     }
 
     /// Rewind an attention-only draft. Replay overwrites the suffix; attention masks stale rows.
@@ -702,4 +870,16 @@ pub fn allocate_states(
         states.insert(id, tensors);
     }
     Ok(states)
+}
+
+fn attention_only(graph: &DataflowGraph) -> bool {
+    graph.tensors.iter().all(|spec| {
+        !matches!(
+            spec.storage,
+            TensorStorage::State {
+                kind: StateKind::Conv | StateKind::LinearAttention,
+                ..
+            }
+        )
+    })
 }

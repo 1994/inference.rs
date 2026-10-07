@@ -18,13 +18,17 @@ pub struct PendingResource {
     pub ticket: Option<ResourceTicket>,
     pub phase: ResourcePhase,
     pub started: u64,
+    /// Retry a rejected reservation only after resources or execution have progressed.
+    pub retry_epoch: Option<u64>,
 }
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub(crate) fn check_resource_ownership(&self) -> Result<()> {
         for (id, pending) in self.resources_pending.iter() {
-            if pending.ticket.is_none() && !matches!(pending.phase, ResourcePhase::Reset) {
+            if pending.ticket.is_none()
+                && !matches!(pending.phase, ResourcePhase::Reset | ResourcePhase::Reserve)
+            {
                 return Err(Error::invariant(
-                    "unpublished resource intent is not a reset",
+                    "unpublished resource intent cannot be retried",
                 ));
             }
             let record = self
@@ -82,6 +86,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             PendingResource {
                 ticket: Some(ticket),
                 phase,
+                retry_epoch: None,
                 started: self.now_us,
             },
         )?;
@@ -130,6 +135,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             PendingResource {
                 ticket: None,
                 phase: ResourcePhase::Reset,
+                retry_epoch: None,
                 started: self.now_us,
             },
         )?;
@@ -141,16 +147,25 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .get_mut(id)
             .ok_or_else(|| Error::invariant("resource waiter lost"))?;
         if pending.ticket.is_none() {
-            let state = self
-                .host
-                .requests
-                .known(id)?
+            if pending.retry_epoch == Some(self.resource_epoch) {
+                return Ok(None);
+            }
+            let record = self.host.requests.known(id)?;
+            let state = record
                 .state
-                .ok_or_else(|| Error::invariant("reset state lost"))?;
-            match self
-                .backend
-                .begin_resource(ResourceCommand::Reset { state })
-            {
+                .ok_or_else(|| Error::invariant("resource state lost"))?;
+            let command = match pending.phase {
+                ResourcePhase::Reserve => ResourceCommand::Reserve {
+                    state,
+                    capacity: record.plan.reserved_tokens,
+                    readout: crate::stages::prefill::retained_readout(&record.request.workload),
+                },
+                ResourcePhase::Reset => ResourceCommand::Reset { state },
+                ResourcePhase::Prefix => {
+                    return Err(Error::invariant("prefix intent has no ticket"));
+                }
+            };
+            match self.backend.begin_resource(command) {
                 Ok(ticket) => pending.ticket = Some(ticket),
                 Err(error) if error.code == ErrorCode::Capacity => return Ok(None),
                 Err(error) => return Err(error),
@@ -174,7 +189,25 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         result
     }
     fn poll_resource(&mut self, id: RequestId, emitted: &mut Vec<EngineOutput>) -> Result<()> {
-        let result = self.resource_reply(id);
+        let mut result = self.resource_reply(id);
+        // A quote can race with other reservations on the backend owner. Capacity
+        // is backpressure, not a failed generation. Keep the request and its host
+        // state, but publish no retry until execution or resource ownership changes.
+        if matches!(&result, Err(error) if error.code == ErrorCode::Capacity)
+            && matches!(
+                self.resources_pending.get(id).map(|p| p.phase),
+                Some(ResourcePhase::Reserve)
+            )
+            && self.host.requests.known(id)?.pending_finish.is_none()
+        {
+            let pending = self
+                .resources_pending
+                .get_mut(id)
+                .ok_or_else(|| Error::invariant("resource waiter lost"))?;
+            pending.ticket = None;
+            pending.retry_epoch = Some(self.resource_epoch);
+            result = Ok(None);
+        }
         if matches!(result, Ok(None)) {
             let pending = self
                 .resources_pending
@@ -265,6 +298,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                         PendingResource {
                             ticket,
                             phase: ResourcePhase::Reset,
+                            retry_epoch: None,
                             started: self.now_us,
                         },
                     )?;

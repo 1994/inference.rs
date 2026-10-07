@@ -38,7 +38,7 @@ pub(super) fn allocate(
         nodes: BTreeMap::new(),
         buffers: BTreeMap::new(),
     };
-    if width != crate::constants::FUSED_VERIFY_LANES {
+    if width < 2 {
         return Ok(buffers);
     }
     let sizes: BTreeMap<_, _> = graph
@@ -87,6 +87,7 @@ pub(super) fn record(
     lanes: &mut [Lane],
     weights: &ProgramWeights,
     buffers: &mut Workspace,
+    nvfp4: &mut super::nvfp4_gemm::Workspace,
 ) -> std::result::Result<(), DeviceError> {
     let key = buffers
         .nodes
@@ -96,29 +97,51 @@ pub(super) fn record(
         .buffers
         .get_mut(key)
         .ok_or_else(|| error("batch projection workspace"))?;
-    let columns = input.size() / crate::constants::FUSED_VERIFY_LANES;
-    scope.record(batched::pack_inputs(
-        (&mut *input).partition([1, crate::constants::AUX_KERNEL_TILE]),
-        weights.constants.get(&node.inputs[0]).map_or_else(
-            || lanes[0].arena.get(node.inputs[0]).map_err(error),
-            |value| Ok(value.as_ref()),
-        )?,
-        weights.constants.get(&node.inputs[0]).map_or_else(
-            || lanes[1].arena.get(node.inputs[0]).map_err(error),
-            |value| Ok(value.as_ref()),
-        )?,
-        weights.constants.get(&node.inputs[0]).map_or_else(
-            || lanes[2].arena.get(node.inputs[0]).map_err(error),
-            |value| Ok(value.as_ref()),
-        )?,
-    ))?;
+    let width = lanes.len();
+    let columns = input.size() / width;
+    if width == crate::constants::FUSED_VERIFY_LANES {
+        scope.record(batched::pack_inputs(
+            (&mut *input).partition([1, crate::constants::AUX_KERNEL_TILE]),
+            weights.constants.get(&node.inputs[0]).map_or_else(
+                || lanes[0].arena.get(node.inputs[0]).map_err(error),
+                |value| Ok(value.as_ref()),
+            )?,
+            weights.constants.get(&node.inputs[0]).map_or_else(
+                || lanes[1].arena.get(node.inputs[0]).map_err(error),
+                |value| Ok(value.as_ref()),
+            )?,
+            weights.constants.get(&node.inputs[0]).map_or_else(
+                || lanes[2].arena.get(node.inputs[0]).map_err(error),
+                |value| Ok(value.as_ref()),
+            )?,
+        ))?;
+    } else {
+        for (row, lane) in lanes.iter().enumerate() {
+            let source = weights.constants.get(&node.inputs[0]).map_or_else(
+                || lane.arena.get(node.inputs[0]).map_err(error),
+                |value| Ok(value.as_ref()),
+            )?;
+            scope.record(batched::pack_row(
+                (&mut *input).partition([1, crate::constants::AUX_KERNEL_TILE]),
+                source,
+                i32::try_from(row).map_err(error)?,
+            ))?;
+        }
+    }
     let weight = weights
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("batch projection weight"))?;
-    let width = crate::constants::FUSED_VERIFY_LANES;
     let packed = input.view(&[width, columns]).map_err(error)?;
-    record_projection(scope, weight, &packed, output, columns)?;
+    record_projection(
+        scope,
+        nvfp4,
+        weight,
+        weights.activation_quantization(node.inputs[1]),
+        &packed,
+        output,
+        columns,
+    )?;
     let mut outputs = Vec::new();
     let mut slots = Vec::new();
     for lane in lanes.iter_mut() {
@@ -130,15 +153,22 @@ pub(super) fn record(
         );
         slots.push(slot);
     }
-    let [first, second, third] = outputs.as_mut_slice() else {
-        return Err(error("batch width"));
-    };
-    scope.record(batched::unpack_outputs(
-        first.partition([crate::constants::AUX_KERNEL_TILE]),
-        second.partition([crate::constants::AUX_KERNEL_TILE]),
-        third.partition([crate::constants::AUX_KERNEL_TILE]),
-        &*output,
-    ))?;
+    if let [first, second, third] = outputs.as_mut_slice() {
+        scope.record(batched::unpack_outputs(
+            first.partition([crate::constants::AUX_KERNEL_TILE]),
+            second.partition([crate::constants::AUX_KERNEL_TILE]),
+            third.partition([crate::constants::AUX_KERNEL_TILE]),
+            &*output,
+        ))?;
+    } else {
+        for (row, target) in outputs.iter_mut().enumerate() {
+            scope.record(batched::unpack_row(
+                target.partition([crate::constants::AUX_KERNEL_TILE]),
+                &*output,
+                i32::try_from(row).map_err(error)?,
+            ))?;
+        }
+    }
     for ((lane, slot), output) in lanes.iter_mut().zip(slots).zip(outputs) {
         lane.arena.buffers[slot] = Some(output);
     }
@@ -153,6 +183,7 @@ pub(super) fn record_slots(
     node: &TensorNode,
     arena: &mut super::ActivationArena,
     weights: &ProgramWeights,
+    nvfp4: &mut super::nvfp4_gemm::Workspace,
 ) -> std::result::Result<(), DeviceError> {
     if weights.constants.contains_key(&node.inputs[0]) {
         return Err(error("slot decode constant linear input"));
@@ -171,18 +202,68 @@ pub(super) fn record_slots(
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("slot projection weight"))?;
-    record_projection(scope, weight, &input, &mut output, columns)?;
+    record_projection(
+        scope,
+        nvfp4,
+        weight,
+        weights.activation_quantization(node.inputs[1]),
+        &input,
+        &mut output,
+        columns,
+    )?;
     arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
     Ok(())
 }
 
 fn record_projection(
     scope: &Scope,
+    nvfp4: &mut super::nvfp4_gemm::Workspace,
     weight: &ProjectionWeight,
+    input_scale: Option<super::program::ActivationQuantization>,
     x: &TensorView<'_, f32>,
     output: &mut Tensor<f32>,
     columns: usize,
 ) -> std::result::Result<(), DeviceError> {
+    if super::nvfp4_gemm::record(scope, nvfp4, weight, input_scale, x, output, columns)? {
+        return Ok(());
+    }
+    // Tensor cores amortize weights across candidate rows. Keep the measured
+    // GEMV path for narrow batches with a very wide output (e.g. a vocabulary head).
+    let rows = usize::try_from(x.shape()[0]).map_err(error)?;
+    let outputs = output.size() / rows;
+    if rows > crate::constants::SMALL_GEMV_MAX_ROWS
+        || outputs <= columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+    {
+        match weight {
+            ProjectionWeight::Dense(w) => {
+                scope.record(
+                    super::small_gemm::kernels::dense(
+                        output.partition(crate::constants::SMALL_GEMM_TILE),
+                        x,
+                        w,
+                    )
+                    .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
+                )?;
+                return Ok(());
+            }
+            ProjectionWeight::Fp8(w, scale) => {
+                scope.record(
+                    super::small_gemm::kernels::scaled(
+                        output.partition(crate::constants::SMALL_GEMM_TILE),
+                        x,
+                        w,
+                        scale,
+                    )
+                    .generics(vec![
+                        cuda_core::f8e4m3fn::DTYPE.as_str().into(),
+                        columns.to_string(),
+                    ]),
+                )?;
+                return Ok(());
+            }
+            ProjectionWeight::Fp4(..) => {}
+        }
+    }
     let mut generics = vec![
         VERIFY_TILE_COLUMNS.to_string(),
         VERIFY_TILE_DEPTH.to_string(),

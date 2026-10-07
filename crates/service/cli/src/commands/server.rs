@@ -1,5 +1,6 @@
 //! Server commands.
-use super::{ServeOptions, axum_serve, backend, config, selected_engine};
+use super::{ServeOptions, axum_serve, backend};
+use crate::support::{configured_engine, read_json};
 #[cfg(any(
     target_os = "macos",
     feature = "test-backends",
@@ -20,8 +21,8 @@ pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Resul
         package,
         host_memory_mib,
     } = options;
-    let engine = selected_engine(
-        config(config_path.as_deref())?,
+    let engine = configured_engine(
+        config_path.as_deref().map(read_json).transpose()?,
         None,
         package.as_deref(),
         host_memory_mib,

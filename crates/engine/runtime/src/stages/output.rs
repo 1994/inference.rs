@@ -23,7 +23,7 @@ pub struct OutputAcknowledgement {
     pub elapsed_us: u64,
 }
 /// Decided tokens a step may carry: the sampled token plus any accepted speculative prefix.
-pub const DECIDED_TOKEN_CAPACITY: usize = 8;
+pub const DECIDED_TOKEN_CAPACITY: usize = 16;
 
 /// Tokens decided by one step, held inline.
 ///
@@ -64,6 +64,9 @@ impl OutputJob {
         scratch: &mut infer_workloads::SamplingWorkspace,
     ) -> Result<ProcessedOutput> {
         self.shape.validate(&self.output)?;
+        if self.output.tokens.len() + usize::from(self.sample.is_some()) > DECIDED_TOKEN_CAPACITY {
+            return Err(Error::invariant("backend decided token capacity exceeded"));
+        }
         let mut tokens = DecidedTokens::default();
         for token in self.output.tokens.drain(..) {
             tokens.push(token);

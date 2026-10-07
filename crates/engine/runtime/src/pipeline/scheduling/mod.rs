@@ -27,6 +27,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         {
             return Ok(());
         }
+        if self.output_pending.coalescing(self.now_us) {
+            return Ok(());
+        }
         if self.dispatch_prepared(emitted)? {
             return Ok(());
         }

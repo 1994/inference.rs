@@ -16,16 +16,26 @@ use std::{
 
 struct ReserveGate {
     inner: ReferenceBackend,
+    draft_depth: usize,
     gate: Option<mpsc::Receiver<()>>,
     entered: mpsc::Sender<()>,
     owned: Arc<AtomicUsize>,
+    reservation_limit: Arc<AtomicUsize>,
+    reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
+    observed_sampling: Arc<AtomicUsize>,
     poll_gate: Arc<AtomicBool>,
 }
 impl BackendProvider for ReserveGate {
     type Ticket = ReferenceTicket;
     fn identity(&self) -> &str {
         self.inner.identity()
+    }
+    fn speculation_capability(&self) -> infer_ir::SpeculationCapability {
+        infer_ir::SpeculationCapability {
+            draft_depth: self.draft_depth,
+            greedy_only: true,
+        }
     }
     fn capabilities(&self) -> DeviceCapabilities {
         self.inner.capabilities()
@@ -37,6 +47,13 @@ impl BackendProvider for ReserveGate {
         self.inner.execution_graph(model)
     }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
+        self.reservation_attempts.fetch_add(1, Ordering::AcqRel);
+        if self.owned.load(Ordering::Acquire) >= self.reservation_limit.load(Ordering::Acquire) {
+            return Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                "resident budget busy",
+            ));
+        }
         self.inner.reserve_state(state, capacity)?;
         self.owned.fetch_add(1, Ordering::AcqRel);
         self.entered
@@ -60,6 +77,10 @@ impl BackendProvider for ReserveGate {
     ) -> Result<ReferenceTicket> {
         self.observed_work
             .store(step.work.as_ptr() as usize, Ordering::Release);
+        self.observed_sampling.fetch_add(
+            tasks.iter().filter(|task| task.sampling.is_some()).count(),
+            Ordering::Release,
+        );
         self.inner.submit(program, step, tasks)
     }
     fn poll(&mut self, ticket: &mut ReferenceTicket) -> Result<Option<Vec<TaskOutput>>> {
@@ -76,24 +97,37 @@ struct Fixture {
     release: mpsc::Sender<()>,
     entered: mpsc::Receiver<()>,
     owned: Arc<AtomicUsize>,
+    reservation_limit: Arc<AtomicUsize>,
+    reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
+    observed_sampling: Arc<AtomicUsize>,
     poll_gate: Arc<AtomicBool>,
 }
 impl Fixture {
     fn new(gated: bool) -> Result<Self> {
+        Self::with_draft(gated, 0)
+    }
+    fn with_draft(gated: bool, draft_depth: usize) -> Result<Self> {
         let model = ReferenceModel::fixture(ModelId::ONE, 7);
         let ir = model.ir.clone();
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
         let owned = Arc::new(AtomicUsize::new(0));
+        let reservation_limit = Arc::new(AtomicUsize::new(usize::MAX));
+        let reservation_attempts = Arc::new(AtomicUsize::new(0));
         let observed_work = Arc::new(AtomicUsize::new(0));
+        let observed_sampling = Arc::new(AtomicUsize::new(0));
         let poll_gate = Arc::new(AtomicBool::new(true));
         let backend = ReserveGate {
             inner: ReferenceBackend::new(model)?,
+            draft_depth,
             gate: gated.then_some(gate),
             entered,
             owned: owned.clone(),
+            reservation_limit: reservation_limit.clone(),
+            reservation_attempts: reservation_attempts.clone(),
             observed_work: observed_work.clone(),
+            observed_sampling: observed_sampling.clone(),
             poll_gate: poll_gate.clone(),
         };
         let mut registry = KernelRegistry::default();
@@ -114,7 +148,10 @@ impl Fixture {
             release,
             entered: start,
             owned,
+            reservation_limit,
+            reservation_attempts,
             observed_work,
+            observed_sampling,
             poll_gate,
         })
     }
@@ -430,6 +467,117 @@ fn independent_ready_work_is_preplanned_and_new_admission_invalidates_it() -> Re
                 .map(|done| &done.reason),
             Some(&FinishReason::Length)
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn threaded_dispatch_preserves_speculation_and_supplies_decode_sampling() -> Result<()> {
+    for depth in [0, 2] {
+        let mut fixture = Fixture::with_draft(false, depth)?;
+        assert_eq!(
+            fixture
+                .engine
+                .backend()
+                .speculation_capability()
+                .draft_depth,
+            depth
+        );
+        fixture.admit(1)?;
+        fixture.drain()?;
+        assert_eq!(
+            fixture.observed_sampling.load(Ordering::Acquire) > 0,
+            depth > 0,
+            "a loaded draft must receive sampling through the threaded service path"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn reservation_capacity_waits_for_progress_and_retries_without_losing_tokens() -> Result<()> {
+    let mut fixture = Fixture::new(false)?;
+    fixture.reservation_limit.store(1, Ordering::Release);
+    fixture.poll_gate.store(false, Ordering::Release);
+    fixture.admit(1)?;
+    fixture
+        .entered
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|e| Error::invariant(e.to_string()))?;
+    fixture.admit(2)?;
+    let limit = Instant::now() + Duration::from_secs(3);
+    while fixture.reservation_attempts.load(Ordering::Acquire) < 2 {
+        deadline(limit)?;
+    }
+    // Consume the failed acknowledgement and stabilize the snapshot. The busy
+    // backend must not receive a new reservation on every scheduler poll.
+    for _ in 0..100 {
+        fixture.engine.tick(fixture.engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    let attempts = fixture.reservation_attempts.load(Ordering::Acquire);
+    for _ in 0..100 {
+        fixture.engine.tick(fixture.engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    assert_eq!(
+        fixture.reservation_attempts.load(Ordering::Acquire),
+        attempts
+    );
+    assert!(
+        fixture
+            .engine
+            .request(infer_core::RequestId::new(2)?)?
+            .completed
+            .is_none()
+    );
+    fixture.engine.check_invariants()?;
+    fixture.poll_gate.store(true, Ordering::Release);
+    fixture.drain()?;
+    for id in [1, 2] {
+        let record = fixture.engine.request(infer_core::RequestId::new(id)?)?;
+        assert_eq!(
+            record.completed.as_ref().map(|done| &done.reason),
+            Some(&FinishReason::Length)
+        );
+        assert_eq!(record.generated.len(), 2);
+    }
+    assert_eq!(fixture.owned.load(Ordering::Acquire), 0);
+    Ok(())
+}
+
+#[test]
+fn deferred_reservation_can_time_out_or_cancel_without_a_backend_state() -> Result<()> {
+    for cancel in [false, true] {
+        let mut fixture = Fixture::new(false)?;
+        fixture.reservation_limit.store(0, Ordering::Release);
+        fixture.admit(1)?;
+        let limit = Instant::now() + Duration::from_secs(3);
+        for _ in 0..100 {
+            fixture.engine.tick(fixture.engine.now_us() + 1)?;
+            deadline(limit)?;
+        }
+        assert_eq!(fixture.reservation_attempts.load(Ordering::Acquire), 1);
+        fixture.engine.check_invariants()?;
+        if cancel {
+            fixture.engine.cancel(infer_core::RequestId::ONE)?;
+        } else {
+            fixture.engine.tick(20_001)?;
+        }
+        fixture.drain()?;
+        let reason = &fixture
+            .engine
+            .request(infer_core::RequestId::ONE)?
+            .completed
+            .as_ref()
+            .ok_or_else(|| Error::invariant("deferred reservation did not terminate"))?
+            .reason;
+        if cancel {
+            assert_eq!(reason, &FinishReason::Cancelled);
+        } else {
+            assert!(matches!(reason, FinishReason::Failed(_)));
+        }
+        assert_eq!(fixture.owned.load(Ordering::Acquire), 0);
     }
     Ok(())
 }

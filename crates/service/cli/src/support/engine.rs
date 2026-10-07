@@ -37,10 +37,6 @@ const REFERENCE_FIXTURE_SEED: u64 = 7;
     feature = "test-backends",
     all(target_os = "linux", feature = "cuda")
 ))]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Callers hand over a request-local selection that is refined here by struct update, so ownership is the clear contract"
-)]
 pub fn selected_engine(
     config: RuntimeConfig,
     model: Option<&Path>,
@@ -48,9 +44,28 @@ pub fn selected_engine(
     memory_mib: u64,
     choice: backend::Selection,
 ) -> Result<Engine<SelectedBackend>> {
+    configured_engine(Some(config), model, package, memory_mib, choice)
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Callers hand over a request-local selection that is refined here by struct update, so ownership is the clear contract"
+)]
+pub fn configured_engine(
+    config: Option<RuntimeConfig>,
+    model: Option<&Path>,
+    package: Option<&Path>,
+    memory_mib: u64,
+    choice: backend::Selection,
+) -> Result<Engine<SelectedBackend>> {
+    let automatic = config.is_none();
+    let config = config.unwrap_or_default();
     if let Some(package) = package {
         let mut config = config;
         config.block_size = choice.block_size.unwrap_or(config.block_size);
+        if let Some(tokens) = choice.max_num_batched_tokens {
+            config.max_num_batched_tokens = tokens;
+        }
         let choice = backend::Selection {
             block_size: Some(config.block_size),
             ..choice
@@ -62,6 +77,9 @@ pub fn selected_engine(
             .scope(|| backend::load(package, memory_mib, &choice))?;
         let ir = backend.model_ir().clone();
         let registry = backend.registry()?;
+        if automatic {
+            super::serving::derive_config(&mut config, &backend, &ir, &registry)?;
+        }
         let mut engine = Engine::new(backend, ir, PrecisionPlan::f32(), &registry, config)?;
         if package.join("readouts.safetensors").exists() {
             let provider = infer_workloads::ProjectionWorkloads::open(

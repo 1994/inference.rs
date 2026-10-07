@@ -8,9 +8,9 @@ pub const MIB_U64: u64 = MIB as u64;
 pub const GIB_U64: u64 = 1024 * MIB_U64;
 /// Fraction of device memory the engine may use when `--gpu-memory-utilization` is defaulted.
 pub const DEFAULT_GPU_MEMORY_UTILIZATION: f64 = 0.9;
-/// Host-memory budget used when `--host-memory-mib` is omitted on a host-memory backend.
+/// Host-memory budget used when `--host-memory-mib` is omitted on the CPU test backend.
 /// Native device backends derive their own budget from the device instead.
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
+#[cfg(feature = "test-backends")]
 pub const DEFAULT_HOST_MEMORY_MIB: u64 = 512;
 /// Default temporary weight-staging budget in MiB for upload and package inspection.
 pub const DEFAULT_STAGING_MIB: usize = 4;
@@ -47,7 +47,7 @@ pub const DEFAULT_DEVICE_MEMORY_GIB: u64 = 32;
 #[cfg(any(target_os = "macos", feature = "test-backends"))]
 pub const DEFAULT_KV_PAGE_TOKENS: usize = 16;
 /// Default maximum token rows in one native device prefill chunk.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(target_os = "macos")]
 pub const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
 /// Pause between polls while a device step is still in flight.
 #[cfg(any(
@@ -56,3 +56,6 @@ pub const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
     all(target_os = "linux", feature = "cuda")
 ))]
 pub const DEVICE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(100);
+
+/// Default port for the local inference HTTP server.
+pub const DEFAULT_LISTEN_PORT: u16 = 8080;

@@ -6,9 +6,21 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "infer",
     version,
+    subcommand_negates_reqs = true,
+    subcommand_precedence_over_arg = true,
+    arg_required_else_help = true,
     about = "Rust-native inference runtime with Safetensors-backed incremental execution across native backends."
 )]
 pub struct Cli {
+    /// Local model package to serve. Backend and runtime configuration are automatic.
+    #[arg(
+        value_name = "MODEL_PATH",
+        required_unless_present = "package",
+        conflicts_with = "package"
+    )]
+    pub(super) model_path: Option<std::path::PathBuf>,
+    #[command(flatten)]
+    pub(super) serve: commands::ServeOptions,
     #[arg(long, global = true, value_enum, default_value = "auto")]
     pub(super) backend: backend::BackendChoice,
     /// Number of GPU blocks to use, overriding the profiled count; automatic when omitted.
@@ -33,7 +45,7 @@ pub struct Cli {
     #[arg(long, global = true, default_value_t = crate::constants::DEFAULT_GPU_MEMORY_UTILIZATION)]
     pub(super) gpu_memory_utilization: f64,
     #[command(subcommand)]
-    pub(super) command: Command,
+    pub(super) command: Option<Command>,
 }
 #[derive(Subcommand)]
 pub enum Command {
@@ -65,3 +77,29 @@ pub enum Command {
     /// Encode plain text or package chat template with native Rust assets.
     Tokenize(commands::TokenizeOptions),
 }
+
+impl Cli {
+    pub fn into_command(self) -> Result<Command, clap::Error> {
+        if self.command.is_some()
+            && (self.model_path.is_some()
+                || self.serve.package.is_some()
+                || self.serve.config.is_some()
+                || self.serve.host_memory_mib != 0
+                || self.serve.listen != commands::ServeOptions::default_listen())
+        {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "model launch arguments cannot be combined with a subcommand; put subcommand options after its name",
+            ));
+        }
+        Ok(self.command.unwrap_or_else(|| {
+            let mut options = self.serve;
+            options.package = self.model_path.or(options.package);
+            Command::Serve(options)
+        }))
+    }
+}
+
+#[cfg(test)]
+#[path = "arguments/tests.rs"]
+mod tests;

@@ -4,14 +4,24 @@ use infer_ir::OutputReadout;
 impl CudaBackend {
     pub(super) fn available(&self) -> Result<u64> {
         let used = self.active_budget()?;
-        // Preserve a GiB for external display allocations, modules and driver bookkeeping.
-        Ok(self.budget.saturating_sub(used).min(
-            self.loaded
-                .device()
-                .memory_info()?
-                .0
-                .saturating_sub(self.loaded.profile().device_headroom_bytes()),
-        ))
+        // Idle programs and prefix snapshots are reclaimable. Omitting them makes
+        // repeated requests fail admission even when their exact state is already cached.
+        let reclaimable = self
+            .pool
+            .reclaimable_bytes
+            .saturating_add(self.prefix.bytes());
+        Ok(self
+            .budget
+            .saturating_sub(used)
+            .min(self.physical_available()?.saturating_add(reclaimable)))
+    }
+    pub(super) fn physical_available(&self) -> Result<u64> {
+        Ok(self
+            .loaded
+            .device()
+            .memory_info()?
+            .0
+            .saturating_sub(self.loaded.profile().device_headroom_bytes()))
     }
     /// Prefill width the state's captured program will use.
     ///
@@ -48,7 +58,13 @@ impl CudaBackend {
         {
             return Err(Error::new(
                 ErrorCode::Capacity,
-                "CUDA resident state admission budget exhausted",
+                format!(
+                    "CUDA resident state admission budget exhausted: needed={budget}, active={}, budget={}, states={}, maximum={}",
+                    self.active_budget()?,
+                    self.budget,
+                    self.states.len(),
+                    self.maximum_states
+                ),
             ));
         }
         if let Some(mut state) = self.pool.take(capacity, readout) {
@@ -70,6 +86,9 @@ impl CudaBackend {
                 return Err(Error::invariant("pooled CUDA state holds a slot lease"));
             }
             state.capacity = capacity;
+            // Reused programs may have released private verification storage.
+            // Reserve the full serial policy until a new slot lease credits it again.
+            state.budget = budget;
             state.history.clear();
             state.hidden.clear();
             state.poisoned = false;
@@ -117,11 +136,23 @@ impl CudaBackend {
     }
     pub(super) fn reset(&mut self, id: StateId) -> Result<()> {
         self.idle()?;
+        let restore = self
+            .states
+            .get(&id)
+            .filter(|s| s.slot.is_some())
+            .map_or(0, |s| s.program.released_verification_bytes());
+        if restore > 0 {
+            self.make_room(restore)?;
+        }
         let state = self
             .states
             .get_mut(&id)
             .ok_or_else(|| Error::invalid("unknown CUDA state"))?;
         state.poisoned = true;
+        state.budget = state
+            .budget
+            .checked_add(restore)
+            .ok_or_else(|| Error::invariant("private verification reservation overflow"))?;
         state.program.reset()?;
         if let Some(speculation) = state.speculation.as_mut() {
             speculation.reset()?;

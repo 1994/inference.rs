@@ -2,16 +2,17 @@
 //!
 //! Matching policy is pure so it can be unit-tested without a device; the snapshots themselves
 //! hold resident state tensors that later sequences restore with a device-to-device copy.
-use cutile::prelude::Tensor;
-use infer_core::TensorId;
-use std::collections::{BTreeMap, VecDeque};
+use super::prefix_state::{DraftSnapshot, ProgramSnapshot};
+use std::collections::VecDeque;
 
 /// One cached prompt prefix: the covered tokens plus copies of the sequence's state tensors.
 pub struct CachedPrefix {
     /// Prompt tokens this snapshot covers, in order.
     pub tokens: Vec<u32>,
     /// Device copies of the state tensors at that boundary.
-    pub states: BTreeMap<TensorId, Vec<Tensor<f32>>>,
+    pub target: ProgramSnapshot,
+    /// Draft state and last hidden row are restored together with the target.
+    pub draft: Option<DraftSnapshot>,
     /// Admission bytes of the snapshot, used for eviction.
     pub bytes: u64,
 }
@@ -44,7 +45,8 @@ impl PrefixCache {
     pub fn match_len(&self, tokens: &[u32], maximum: usize) -> usize {
         self.entries
             .iter()
-            .map(|entry| shared_prefix(&entry.tokens, tokens).min(maximum))
+            .filter(|entry| entry.tokens.len() <= maximum && tokens.starts_with(&entry.tokens))
+            .map(|entry| entry.tokens.len())
             .max()
             .unwrap_or(0)
     }
@@ -59,7 +61,7 @@ impl PrefixCache {
         let index = self
             .entries
             .iter()
-            .position(|entry| shared_prefix(&entry.tokens, tokens).min(maximum) == wanted)?;
+            .position(|entry| entry.tokens.len() == wanted && tokens.starts_with(&entry.tokens))?;
         let entry = self.entries.remove(index)?;
         self.bytes -= entry.bytes;
         self.hits = self.hits.saturating_add(1);
@@ -90,6 +92,15 @@ impl PrefixCache {
         }
     }
 
+    /// Release the least recently used snapshot under sequence admission pressure.
+    pub fn evict(&mut self) -> bool {
+        let Some(entry) = self.entries.pop_front() else {
+            return false;
+        };
+        self.bytes -= entry.bytes;
+        true
+    }
+
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         self.bytes
@@ -106,15 +117,6 @@ impl PrefixCache {
     }
 }
 
-/// Length of the common leading run of two token slices.
-fn shared_prefix(cached: &[u32], tokens: &[u32]) -> usize {
-    cached
-        .iter()
-        .zip(tokens)
-        .take_while(|(a, b)| a == b)
-        .count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,19 +124,22 @@ mod tests {
     fn entry(tokens: &[u32], bytes: u64) -> CachedPrefix {
         CachedPrefix {
             tokens: tokens.to_vec(),
-            states: BTreeMap::new(),
+            target: ProgramSnapshot::default(),
+            draft: None,
             bytes,
         }
     }
 
     #[test]
-    fn matches_the_longest_shared_prefix_within_the_cap() {
+    fn restores_only_complete_snapshots_within_the_cap() {
         let mut cache = PrefixCache::new(1024);
         cache.insert(entry(&[1, 2, 3, 4], 10));
         cache.insert(entry(&[1, 2, 9], 10));
-        // The longest shared run wins, and `maximum` clamps it.
-        assert_eq!(cache.match_len(&[1, 2, 3, 5], 4), 3);
-        assert_eq!(cache.match_len(&[1, 2, 3, 5], 2), 2);
+        // Recurrent state cannot be rolled back to an arbitrary partial match.
+        assert_eq!(cache.match_len(&[1, 2, 3, 5], 4), 0);
+        assert_eq!(cache.match_len(&[1, 2, 3, 4, 5], 4), 4);
+        assert_eq!(cache.match_len(&[1, 2, 3, 4, 5], 2), 0);
+        assert!(cache.take_match(&[1, 2, 3, 5], 4).is_none());
         assert_eq!(cache.match_len(&[7, 7], 4), 0);
     }
 

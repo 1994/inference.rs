@@ -7,6 +7,8 @@
 //! 32-lane prefill chunk or slot decode replay appends one JSON line of per-segment
 //! device times (per-op totals plus every segment). With the variable unset no events
 //! are created, no graph nodes change, and the runtime path is exactly the baseline.
+//! Set `INFER_CUDA_PROFILE_GRAPH_ONLY=1` as well to record just the graph boundaries,
+//! reducing instrumentation overhead when separating host time from device time.
 
 use crate::device::{CudaDevice, device_error};
 use cuda_core::{CudaContext, CudaEvent};
@@ -31,14 +33,18 @@ pub(super) struct GraphProfile {
     context: Arc<CudaContext>,
     segments: Vec<Segment>,
     events: Vec<Arc<CudaEvent>>,
+    graph_only: bool,
+    node_count: usize,
 }
 
 impl GraphProfile {
-    const fn new(context: Arc<CudaContext>) -> Self {
+    fn new(context: Arc<CudaContext>) -> Self {
         Self {
             context,
             segments: Vec::new(),
             events: Vec::new(),
+            graph_only: std::env::var("INFER_CUDA_PROFILE_GRAPH_ONLY").is_ok_and(|v| v == "1"),
+            node_count: 0,
         }
     }
 
@@ -49,10 +55,18 @@ impl GraphProfile {
         node: usize,
         op: &TensorNode,
     ) -> std::result::Result<(), DeviceError> {
+        self.node_count += 1;
+        if self.graph_only && !self.segments.is_empty() {
+            return Ok(());
+        }
         self.mark(scope)?;
         self.segments.push(Segment {
             node,
-            op: category(&op.op),
+            op: if self.graph_only {
+                "graph"
+            } else {
+                category(&op.op)
+            },
             layer: op.layer,
         });
         Ok(())
@@ -100,6 +114,7 @@ impl GraphProfile {
             "tokens": tokens,
             "position": position,
             "total_ms": total,
+            "node_count": self.node_count,
             "by_op": by_op,
             "segments": segments,
         }))

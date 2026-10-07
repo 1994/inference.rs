@@ -53,6 +53,8 @@ fn check_projection(
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,
+        fp8_inputs: std::collections::BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),

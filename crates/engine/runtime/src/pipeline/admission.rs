@@ -374,6 +374,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                             crate::resource::PendingResource {
                                 ticket: Some(ticket),
                                 phase: crate::resource::ResourcePhase::Reserve,
+                                retry_epoch: None,
                                 started: self.now_us,
                             },
                         )?;

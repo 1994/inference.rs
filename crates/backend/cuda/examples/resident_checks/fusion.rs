@@ -77,6 +77,8 @@ pub fn run(device: &CudaDevice) -> Result<()> {
             epsilon: 1e-6,
             offset: 1.0,
         }),
+        fp8_inputs: std::collections::BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),

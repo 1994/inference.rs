@@ -14,28 +14,37 @@ pub(super) fn record(
     arena: &mut super::ActivationArena,
     weights: &ProgramWeights,
     partials: &mut BTreeMap<usize, Tensor<f32>>,
+    nvfp4: &mut super::nvfp4_gemm::Workspace,
 ) -> Result<(), DeviceError> {
     if weights.constants.contains_key(&node.inputs[0]) {
         return Err(error("prefill32 constant linear input"));
     }
+    let width = arena.lanes();
     let slot = arena.slot(node.outputs[0]).map_err(error)?;
     let output = arena.buffers[slot]
         .take()
         .ok_or_else(|| error("prefill output"))?;
     let flat = output.size();
-    let mut output = output.reshape(&[
-        crate::constants::PREFILL_LANES,
-        flat / crate::constants::PREFILL_LANES,
-    ])?;
+    let mut output = output.reshape(&[width, flat / width])?;
     let input = arena.get(node.inputs[0]).map_err(error)?;
-    let columns = input.size() / crate::constants::PREFILL_LANES;
-    let input = input
-        .view(&[crate::constants::PREFILL_LANES, columns])
-        .map_err(error)?;
+    let columns = input.size() / width;
+    let input = input.view(&[width, columns]).map_err(error)?;
     let weight = weights
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("prefill projection"))?;
+    if super::nvfp4_gemm::record(
+        scope,
+        nvfp4,
+        weight,
+        weights.activation_quantization(node.inputs[1]),
+        &input,
+        &mut output,
+        columns,
+    )? {
+        arena.buffers[slot] = Some(output.reshape(&[flat])?);
+        return Ok(());
+    }
     let generics = vec![columns.to_string()];
     match weight {
         ProjectionWeight::Dense(w) => {
@@ -66,7 +75,10 @@ pub(super) fn record(
             )?;
         }
         ProjectionWeight::Fp4(w, scales, global) => {
-            let rows = flat / crate::constants::PREFILL_LANES;
+            if width != crate::constants::PREFILL_LANES {
+                return Err(error("legacy FP4 split prefill requires width 32"));
+            }
+            let rows = flat / width;
             let partial = partials
                 .get_mut(&rows)
                 .ok_or_else(|| error("prefill split partials"))?;
@@ -75,10 +87,7 @@ pub(super) fn record(
                 .map_err(|_| error("prefill split window"))?;
             scope.record(
                 gemm::nvfp4_split(
-                    partial.partition([
-                        crate::constants::PREFILL_LANES,
-                        crate::constants::PREFILL_NVFP4_TILE_N,
-                    ]),
+                    partial.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
                     &input,
                     w,
                     scales,
@@ -87,10 +96,7 @@ pub(super) fn record(
                 .generics(generics),
             )?;
             scope.record(gemm::reduce_split(
-                (&mut output).partition([
-                    crate::constants::PREFILL_LANES,
-                    crate::constants::PREFILL_NVFP4_TILE_N,
-                ]),
+                (&mut output).partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
                 &*partial,
                 global.recip(),
                 i32::try_from(crate::constants::PREFILL_SPLIT_K)

@@ -22,7 +22,10 @@ pub fn run() {
         gpu_memory_utilization: cli.gpu_memory_utilization,
         autotune: !cli.no_autotune,
     };
-    if let Err(error) = execute(cli.command, selection) {
+    if let Err(error) = execute(
+        cli.into_command().unwrap_or_else(|error| error.exit()),
+        selection,
+    ) {
         let _ = serde_json::to_writer(io::stderr().lock(), &error);
         eprintln!();
         std::process::exit(1);

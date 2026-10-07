@@ -87,22 +87,36 @@ impl BackendProvider for CudaBackend {
             return Ok(0);
         }
         let matched = entry.tokens.len();
-        let device = self.loaded.device();
+        if matched > maximum
+            || matched > sequence.capacity
+            || sequence.speculation.is_some() != entry.draft.is_some()
         {
-            let live = sequence.program.states_mut();
-            for (id, cached) in &entry.states {
-                let Some(tensors) = live.get_mut(id) else {
-                    continue;
-                };
-                for (dst, src) in tensors.iter_mut().zip(cached.iter()) {
-                    device.copy_d2d(dst, src, src.size())?;
-                }
-            }
+            self.prefix.insert(entry);
+            return Ok(0);
         }
-        // The engine records `matched` as prefill progress, so the sequence must agree.
+        let device = self.loaded.device();
+        let restored = (|| {
+            entry
+                .target
+                .restore(device, &mut sequence.program, matched)?;
+            if let (Some(spec), Some(draft)) = (&mut sequence.speculation, &entry.draft) {
+                draft.program.restore(
+                    device,
+                    &mut spec.program,
+                    matched.saturating_sub(crate::constants::MTP_KV_OFFSET),
+                )?;
+                spec.last_hidden.clone_from(&draft.hidden);
+                spec.prompt_len = None;
+            }
+            Ok(())
+        })();
+        self.prefix.insert(entry);
+        if let Err(error) = restored {
+            sequence.poisoned = true;
+            return Err(error);
+        }
         sequence.history.clear();
-        sequence.history.extend_from_slice(&entry.tokens);
-        sequence.program.set_position(matched);
+        sequence.history.extend_from_slice(&tokens[..matched]);
         Ok(matched)
     }
 

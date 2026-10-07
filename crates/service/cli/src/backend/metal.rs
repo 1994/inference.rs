@@ -7,14 +7,15 @@ pub fn available() -> bool {
     MetalBackend::available()
 }
 pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<SelectedBackend> {
-    // Sizing a budget against a device profile and measuring kernels are CUDA-path concepts;
-    // host-memory backends simply report the selection values as unused.
-    let _ = (selection.autotune, selection.gpu_memory_utilization);
-    // Without an explicit budget, Metal and the CPU test backend keep the host-memory default.
+    let _ = selection.autotune;
+    let recommended = MetalBackend::recommended_memory_bytes()
+        .ok_or_else(|| Error::unsupported("no Metal device available"))?;
+    let share =
+        crate::support::memory::utilization_bytes(recommended, selection.gpu_memory_utilization)?;
     let memory_bytes = if memory_bytes == 0 {
-        crate::constants::DEFAULT_HOST_MEMORY_MIB * crate::constants::MIB_U64
+        share
     } else {
-        memory_bytes
+        memory_bytes.min(share)
     };
     if selection.num_speculative_tokens != 0 {
         return Err(Error::unsupported(

@@ -1,5 +1,4 @@
 use super::{CudaBackend, CudaTicket, ModelOutput, Sequence, SlotLease, Speculation, prefix};
-use crate::constants::F32_BYTES;
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, Result, StateId};
 use infer_ir::{
@@ -13,20 +12,14 @@ const PREFIX_GRANULARITY: usize = 256;
 /// Snapshot the KV rows a sequence has covered, when they form a reusable prompt prefix.
 ///
 /// Returns `None` unless the sequence is a logits-readout generation that just consumed prefill
-/// tokens at a cacheable granularity, and unless the state layout matches the assumed token-major
-/// `[capacity, row]` shape: a layout surprise must never produce a wrong cache entry.
+/// tokens at a cacheable granularity. Capture head-major KV rows and complete recurrent
+/// and draft state so restoration resumes the same inference trajectory.
 fn cacheable_prefix(
     device: &crate::device::CudaDevice,
+    loaded: &crate::loading::LoadedModel,
     state: &Sequence,
     task: &ExecutionTask,
 ) -> Option<prefix::CachedPrefix> {
-    // Measured cost of snapshotting: a 1096-token prefill with four snapshots took 6015 ms
-    // against 5882 ms with snapshots disabled, so a snapshot costs ~33 ms while a reused
-    // 1k-token prefix saves seconds. Enabled.
-    const SNAPSHOT_ENABLED: bool = true;
-    if !SNAPSHOT_ENABLED {
-        return None;
-    }
     if state.poisoned
         || state.readout != OutputReadout::Logits
         || !matches!(
@@ -40,31 +33,34 @@ fn cacheable_prefix(
     if covered == 0 || covered > state.capacity || !covered.is_multiple_of(PREFIX_GRANULARITY) {
         return None;
     }
-    let covered_rows = i32::try_from(state.capacity).ok()?;
-    let mut states = BTreeMap::new();
-    let mut bytes = 0_u64;
-    for (id, tensors) in state.program.states() {
-        let mut copies = Vec::with_capacity(tensors.len());
-        for tensor in tensors {
-            if tensor.shape().first().copied() != Some(covered_rows) {
-                return None;
-            }
-            let row = tensor.size() / state.capacity;
-            let elements = row.checked_mul(covered)?;
-            let allocated = device.upload(vec![0.0_f32; elements], &[elements]).ok()?;
-            let mut copy = Arc::try_unwrap(allocated).ok()?;
-            device.copy_d2d(&mut copy, tensor, elements).ok()?;
-            let snapshot_bytes = u64::try_from(elements)
-                .ok()?
-                .saturating_mul(F32_BYTES as u64);
-            bytes = bytes.saturating_add(snapshot_bytes);
-            copies.push(copy);
-        }
-        states.insert(*id, copies);
-    }
+    let target = super::prefix_state::ProgramSnapshot::capture(
+        device,
+        &state.program,
+        loaded.graph(),
+        covered,
+    )
+    .ok()?;
+    let draft = if let Some(spec) = &state.speculation {
+        Some(super::prefix_state::DraftSnapshot {
+            program: super::prefix_state::ProgramSnapshot::capture(
+                device,
+                &spec.program,
+                loaded.draft_graph()?,
+                covered.saturating_sub(crate::constants::MTP_KV_OFFSET),
+            )
+            .ok()?,
+            hidden: spec.last_hidden.clone(),
+        })
+    } else {
+        None
+    };
+    let bytes = target
+        .bytes
+        .saturating_add(draft.as_ref().map_or(0, |d| d.program.bytes));
     Some(prefix::CachedPrefix {
         tokens: state.history.clone(),
-        states,
+        target,
+        draft,
         bytes,
     })
 }
@@ -77,12 +73,16 @@ impl CudaBackend {
         tasks: &[ExecutionTask],
     ) -> Result<CudaTicket> {
         self.check_tasks(program, step, tasks)?;
+        let profile = super::profiling::StepProfile::start(self, tasks);
         self.busy = true;
         // Snapshots are collected while a sequence is mutably borrowed and inserted afterwards,
         // so the cache borrow never overlaps the state borrow.
         let mut snapshots: Vec<prefix::CachedPrefix> = Vec::new();
         // From here every failure belongs to the ticket, including partially executed batches.
         let result = self.run_grouped(tasks, &mut snapshots);
+        if let Some(profile) = profile {
+            profile.finish(self, tasks, result.as_ref().ok().map(Vec::as_slice));
+        }
         for snapshot in snapshots {
             self.prefix.insert(snapshot);
         }
@@ -170,13 +170,77 @@ impl CudaBackend {
         {
             return;
         }
-        match self.loaded.slot_pool(
-            crate::constants::CB_DECODE_SLOTS,
-            crate::constants::CB_SLOT_TOKENS,
-        ) {
-            Ok(pool) => self.slots = Some(pool),
-            Err(_) => self.slots_disabled = true,
+        // Size shared KV storage from admitted requests, not the maximum context.
+        // Long contexts outside this pool retain their private execution graph.
+        let capacity = self
+            .states
+            .values()
+            .filter(|state| {
+                state.readout == OutputReadout::Logits
+                    && state.capacity <= crate::constants::CB_SLOT_TOKENS
+            })
+            .map(|state| state.capacity)
+            .max()
+            .unwrap_or(1)
+            .next_power_of_two();
+        // Reserve the configured capture bucket, not the transient number of
+        // arrivals seen on this tick. Otherwise a two-request first tick fixes
+        // the pool at two slots for the server's entire lifetime.
+        let width = self
+            .maximum_states
+            .clamp(2, crate::constants::CB_DECODE_SLOTS);
+        for width in (2..=width).rev() {
+            loop {
+                match self.loaded.slot_pool(width, capacity) {
+                    Ok(pool) => {
+                        for state in self.states.values_mut() {
+                            if state.capacity <= capacity
+                                && state.speculation.is_some()
+                                && state.readout == OutputReadout::Logits
+                            {
+                                state.program.discard_verification();
+                            }
+                        }
+                        if self.loaded.device().reclaim_barrier().is_err() {
+                            self.slots_disabled = true;
+                            return;
+                        }
+                        self.draft_slots = self.prepare_draft_pool(width, capacity);
+                        self.slots = Some(pool);
+                        return;
+                    }
+                    Err(error) => {
+                        super::profiling::pool_failure("target", width, capacity, &error);
+                        if !self.reclaim_cached_for_pool(&error) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
+        self.slots_disabled = true;
+    }
+
+    fn prepare_draft_pool(&mut self, width: usize, capacity: usize) -> Option<SlotPool> {
+        loop {
+            match self.loaded.draft_slot_pool(width, capacity) {
+                Ok(pool) => return pool,
+                Err(error) => {
+                    super::profiling::pool_failure("draft", width, capacity, &error);
+                    if !self.reclaim_cached_for_pool(&error) {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Idle programs and cached prefixes must not permanently disable active batching.
+    /// Drain deferred frees before retrying the constructor's physical-memory admission.
+    fn reclaim_cached_for_pool(&mut self, error: &Error) -> bool {
+        error.code == infer_core::ErrorCode::Capacity
+            && (self.pool.evict() || self.prefix.evict())
+            && self.loaded.device().reclaim_barrier().is_ok()
     }
 
     /// One consecutive run of eligible decode tasks: batched through the slot pool when
@@ -206,8 +270,8 @@ impl CudaBackend {
     /// Assign slots to one eligible segment, replay it and commit the results.
     /// Returns the batched task indices; unassigned tasks are left for the serial path.
     /// Bound sequences always batch (their state lives in the slot), while unbound ones
-    /// only bind when at least two lanes share the replay — a lone decode keeps its MTP
-    /// speculation instead.
+    /// only bind when at least two lanes share a plain decode replay. An existing
+    /// verification pool can accept one lane without recreating private checkpoints.
     fn execute_slot_segment(
         &mut self,
         tasks: &[ExecutionTask],
@@ -240,7 +304,8 @@ impl CudaBackend {
             };
             newly.push((index, slot));
         }
-        if participants.is_empty() && newly.len() < 2 {
+        let minimum = if pool.verify().is_some() { 1 } else { 2 };
+        if participants.is_empty() && newly.len() < minimum {
             for (_, slot) in newly {
                 pool.release(slot);
             }
@@ -250,7 +315,7 @@ impl CudaBackend {
         participants.sort_unstable_by_key(|&(index, _)| index);
         let device = self.loaded.device();
         if let Err(error) = slot_replay(
-            pool,
+            (pool, self.draft_slots.as_mut()),
             &mut self.states,
             device,
             tasks,
@@ -290,8 +355,14 @@ impl CudaBackend {
                 "slot-leased CUDA sequence cannot run serially",
             ));
         }
+        if state.speculation.is_some()
+            && (matches!(task.tokens, ExecutionInput::Decode { .. })
+                || state.program.prefill_width() < crate::constants::PREFILL_LANES)
+        {
+            self.loaded.ensure_verification(&mut state.program)?;
+        }
         let output = state.run(task)?;
-        if let Some(snapshot) = cacheable_prefix(self.loaded.device(), state, task) {
+        if let Some(snapshot) = cacheable_prefix(self.loaded.device(), &self.loaded, state, task) {
             snapshots.push(snapshot);
         }
         outputs[index] = Some(TaskOutput {
@@ -324,7 +395,7 @@ impl CudaBackend {
 /// Bind newly assigned sequences into their slots, replay one decode step for every
 /// participant and commit each lane's token, logits and cursor in task order.
 fn slot_replay(
-    pool: &mut SlotPool,
+    pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,
     device: &crate::device::CudaDevice,
     tasks: &[ExecutionTask],
@@ -332,6 +403,7 @@ fn slot_replay(
     newly: &[(usize, usize)],
     outputs: &mut [Option<TaskOutput>],
 ) -> Result<()> {
+    let (pool, draft) = pools;
     for &(index, slot) in newly {
         let state = states
             .get_mut(&tasks[index].state)
@@ -344,6 +416,11 @@ fn slot_replay(
             rows,
             device,
         )?;
+        state.program.discard_verification();
+        state.budget = state
+            .budget
+            .checked_sub(state.program.released_verification_bytes())
+            .ok_or_else(|| Error::invariant("private verification admission credit"))?;
         state.slot = Some(SlotLease {
             slot,
             position: rows,
@@ -351,7 +428,15 @@ fn slot_replay(
         });
     }
     if let Some(width) = pool.verify() {
-        return slot_speculate(pool, states, device, tasks, participants, outputs, width);
+        return slot_speculate(
+            (pool, draft),
+            states,
+            device,
+            tasks,
+            participants,
+            outputs,
+            width,
+        );
     }
     let mut lanes = Vec::with_capacity(participants.len());
     for &(index, slot) in participants {
@@ -385,9 +470,9 @@ fn slot_replay(
     Ok(())
 }
 
-/// Draft each sequence independently, then verify all candidate chains in one target replay.
+/// Batch compatible drafts, then verify all candidate chains in one target replay.
 fn slot_speculate(
-    pool: &mut SlotPool,
+    pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,
     device: &crate::device::CudaDevice,
     tasks: &[ExecutionTask],
@@ -395,18 +480,30 @@ fn slot_speculate(
     outputs: &mut [Option<TaskOutput>],
     width: usize,
 ) -> Result<()> {
-    let mut candidates = Vec::with_capacity(participants.len());
+    let (pool, mut draft) = pools;
+    let batched = match draft.as_deref_mut() {
+        Some(draft) => super::drafting::propose(draft, states, device, tasks, participants, width)?,
+        None => None,
+    };
+    let defer_draft = batched.is_some();
+    let candidates = match batched {
+        Some(candidates) => candidates,
+        None => participants
+            .iter()
+            .map(|&(index, _)| {
+                states
+                    .get_mut(&tasks[index].state)
+                    .ok_or_else(|| Error::invariant("slot speculation state"))?
+                    .slot_candidates(&tasks[index], width)
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
     let mut lanes = Vec::new();
-    for &(index, slot) in participants {
-        let state = states
-            .get_mut(&tasks[index].state)
-            .ok_or_else(|| Error::invariant("slot speculation state"))?;
-        let chain = state.slot_candidates(&tasks[index], width)?;
-        let position = state.history.len();
+    for (&(index, slot), chain) in participants.iter().zip(&candidates) {
+        let position = states[&tasks[index].state].history.len();
         for (offset, &token) in chain.iter().enumerate() {
             lanes.push((slot, offset, token, position + offset, position + offset));
         }
-        candidates.push(chain);
     }
     let mut rows = pool.run_verify(device, &lanes)?;
     for (&(index, slot), chain) in participants.iter().zip(candidates) {
@@ -417,6 +514,7 @@ fn slot_speculate(
             &tasks[index],
             &chain,
             &mut rows[slot * width..][..chain.len()],
+            defer_draft,
         )?;
         pool.commit_verify(device, slot, output.tokens.len())?;
         if let Some(lease) = &mut state.slot {
@@ -426,6 +524,18 @@ fn slot_speculate(
             request: tasks[index].request,
             output,
         });
+    }
+    if defer_draft {
+        super::drafting::catch_up(
+            draft.ok_or_else(|| Error::invariant("batched draft pool"))?,
+            states,
+            device,
+            tasks,
+            participants,
+            outputs,
+            &rows,
+            width,
+        )?;
     }
     Ok(())
 }
@@ -503,6 +613,7 @@ impl Sequence {
         task: &ExecutionTask,
         chain: &[u32],
         rows: &mut [(Vec<f32>, Vec<f32>)],
+        defer_draft: bool,
     ) -> Result<ModelOutput> {
         let position = self.history.len();
         task.tokens.commit(&mut self.history)?;
@@ -530,21 +641,9 @@ impl Sequence {
                     }
                 }
             }
-            if !accepted.is_empty() && accepted.len() + 1 == chain.len() {
-                // A fully accepted draft chain already consumed every token except the
-                // last proposal. Catch up once instead of replaying the whole prefix.
-                let last = accepted.len() - 1;
-                let index = position + accepted.len();
-                spec.program.step(
-                    accepted[last],
-                    index,
-                    index - crate::constants::MTP_KV_OFFSET,
-                    Some(&rows[last].0),
-                    false,
-                )?;
-            } else {
-                // Keep the submitted token, rewind the rejected suffix, and replay only
-                // accepted proposals with the target hidden rows.
+            if !defer_draft {
+                // Even fully accepted proposals used draft hidden rows during drafting.
+                // Replace their KV with target-conditioned rows before the next proposal.
                 let hidden: Vec<_> = rows[..accepted.len()].iter().map(|r| r.0.clone()).collect();
                 spec.replay(&accepted, &hidden, position + 1)?;
             }
@@ -571,7 +670,7 @@ impl Sequence {
         let mut priming = Vec::new();
         while offset < tokens.len() {
             let width = self.program.prefill_width();
-            let count = if width == crate::constants::PREFILL_LANES
+            let count = if width >= crate::constants::PREFILL_LANES
                 || width > 1 && tokens.len() - offset >= width
             {
                 width.min(tokens.len() - offset)
@@ -702,7 +801,7 @@ impl Sequence {
         let Some(sampling) = task.sampling.as_ref() else {
             return Ok(None);
         };
-        let ExecutionInput::Decode { position, token } = task.tokens else {
+        let ExecutionInput::Decode { position, .. } = task.tokens else {
             return Ok(None);
         };
         let width = self.program.batch_width();
@@ -718,117 +817,18 @@ impl Sequence {
         {
             return Ok(None);
         }
-        let Some(mut spec) = self.speculation.take() else {
-            return Ok(None);
-        };
-        let result = self.speculate_inner(task, &mut spec, position, token, sampling, width);
-        self.speculation = Some(spec);
-        result.map(Some)
-    }
-
-    fn speculate_inner(
-        &mut self,
-        task: &ExecutionTask,
-        spec: &mut Speculation,
-        position: usize,
-        token: u32,
-        sampling: &infer_ir::Sampling,
-        width: usize,
-    ) -> Result<ModelOutput> {
-        let proposals_max = spec.depth.min(width - 1);
-        task.tokens.commit(&mut self.history)?;
-        let prompt_len = *spec.prompt_len.get_or_insert(position);
-        let base = self.history[prompt_len..].to_vec();
-        // `verified` tracks committed history for target verification; `proposed` also carries
-        // speculative candidates, which is what the draft's own proposal chain consumes.
-        let mut verified = base.clone();
-        let mut proposed = base;
-        let mut sampler = Sampler {
-            sampling,
-            request: task.request.get(),
-            prompt: &self.history[..prompt_len],
-            scratch: &mut spec.scratch,
-        };
-        // The draft catches up on the submitted token in its first step, so that step already
-        // proposes the token after it. Draft proposals then cover positions +1 ..= +depth.
-        let previous_hidden = std::mem::take(&mut spec.last_hidden);
-        let proposals = propose(
-            &mut spec.program,
-            &mut sampler,
-            &mut proposed,
-            (token, position),
-            &previous_hidden,
-            proposals_max,
-        )?;
-        // One target forward consumes the submitted token and every candidate position, so a
-        // fully accepted chain costs a single weight pass instead of one per token.
-        let mut batch = Vec::with_capacity(width);
-        batch.push(token);
-        batch.extend_from_slice(&proposals);
-        let mut outputs = self.program.step_batch(&batch, position)?;
-        let mut decided = Vec::new();
-        let mut replacement = None;
-        for (chain, proposal) in proposals.iter().enumerate() {
-            // Lane `chain` holds the token at `position + chain`, so its logits are the target
-            // distribution for `position + 1 + chain`, where this proposal lives.
-            let index = position + 1 + chain;
-            let target = sampler.pick(&outputs[chain].1, index, &verified)?;
-            if *proposal == target {
-                decided.push(*proposal);
-                verified.push(*proposal);
-                // EOS ends the request; the engine discards the token it samples afterwards.
-                if sampling.is_eos(*proposal) {
-                    break;
-                }
-                continue;
-            }
-            decided.push(target);
-            verified.push(target);
-            replacement = Some(target);
-            break;
-        }
-        // The batch consumed the submitted token plus every accepted proposal, except that a
-        // replacement token is not a lane and costs one extra single step.
-        let decided_len = decided.len();
-        let committed = decided_len + usize::from(replacement.is_none());
-        self.program.commit_batch(committed)?;
-        let hidden_of: Vec<Vec<f32>> = outputs[..decided_len]
-            .iter()
-            .map(|row| row.0.clone())
-            .collect();
-        let (tail, last_hidden) = if let Some(target) = replacement {
-            let index = position + committed;
-            let (hidden, row_logits) = self.program.step(target, index, index, None, true)?;
-            (row_logits, hidden)
-        } else {
-            (
-                std::mem::take(&mut outputs[decided_len].1),
-                outputs[decided_len].0.clone(),
-            )
-        };
-        // The draft already consumed the submitted token and every proposal but the last, so an
-        // exhausted chain only owes that final token; anything else rewinds and replays.
-        if replacement.is_none() && decided_len == proposals_max {
-            let index = position + decided_len;
-            spec.program.step(
-                decided[decided_len - 1],
-                index,
-                index - crate::constants::MTP_KV_OFFSET,
-                Some(&hidden_of[decided_len - 1]),
-                false,
-            )?;
-        } else {
-            spec.replay(&decided, &hidden_of, position + 1)?;
-        }
-        spec.last_hidden = last_hidden;
-        self.history.extend_from_slice(&decided);
-        Ok(ModelOutput {
-            logits: tail,
-            hidden: Vec::new(),
-            tokens: decided,
-        })
+        // Use the same accept/rollback contract as pooled verification. On rejection
+        // return the target logits at the accepted prefix; the output stage samples
+        // the replacement and submits it on the next step. An extra scalar target
+        // forward here repeats the rejected work and defeats weight sharing.
+        let chain = self.slot_candidates(task, width)?;
+        let mut rows = self.program.step_batch(&chain, position)?;
+        let output = self.slot_decide(task, &chain, &mut rows, false)?;
+        self.program.commit_batch(output.tokens.len() + 1)?;
+        Ok(Some(output))
     }
 }
+
 impl Speculation {
     /// Rebuild the draft timeline after speculation: rewind, then replay the accepted prefix.
     fn replay(&mut self, decided: &[u32], hidden_of: &[Vec<f32>], start: usize) -> Result<()> {

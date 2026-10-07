@@ -46,7 +46,7 @@ pub(super) fn load(
         &mut weights,
         &package.imported.model.position,
     )?;
-    if options.fp8_kv {
+    if options.fp8_kv == Some(true) {
         weights.kv_scales = super::kv_scales::load(package)?;
     }
     let draft = if options.mtp_depth > 0 {
@@ -78,6 +78,8 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,
+        fp8_inputs: BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
@@ -120,6 +122,7 @@ fn bind_tensors(
             .clone();
         if projections.contains(&tensor.id) {
             let projection = Projection::load(device, package, &source)?.resident();
+            bind_activation(package, &source, weights, tensor.id)?;
             let tiling =
                 crate::tuning::select_tiling(device, &projection, profile, tuning_source, tuning)?;
             weights.tiling.insert(tensor.id, tiling);
@@ -221,6 +224,8 @@ fn draft_weights(
             &plan,
             report,
         )?),
+        fp8_inputs: BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
@@ -254,6 +259,12 @@ fn draft_weights(
                 .copied()
                 .ok_or_else(|| Error::invalid("missing MTP target tiling"))?;
             weights.projections.insert(tensor.id, projection);
+            if target.fp8_inputs.contains(&id) {
+                weights.fp8_inputs.insert(tensor.id);
+            }
+            if let Some(scale) = target.input_scales.get(&id) {
+                weights.input_scales.insert(tensor.id, *scale);
+            }
             weights.tiling.insert(tensor.id, tiling);
             continue;
         }
@@ -267,6 +278,7 @@ fn draft_weights(
         }
         if linear_inputs.contains(&tensor.id) {
             let projection = Projection::load(device, package, &source)?.resident();
+            bind_activation(package, &source, &mut weights, tensor.id)?;
             weights.tiling.insert(
                 tensor.id,
                 crate::tuning::select_tiling(device, &projection, profile, tiling_source, report)?,
@@ -371,6 +383,31 @@ fn add_rope(
                 .rope_frequencies
                 .insert(node.id, device.upload(frequencies, &[half])?);
         }
+    }
+    Ok(())
+}
+
+/// Bind checkpoint activation encoding separately from weight storage and runtime buffers.
+fn bind_activation(
+    package: &mut QuantizedPackage,
+    source: &infer_models::DeviceWeight,
+    weights: &mut ProgramWeights,
+    id: TensorId,
+) -> Result<()> {
+    if source.fp8_token_input {
+        weights.fp8_inputs.insert(id);
+    }
+    if source.encoding == infer_models::WeightEncoding::Nvfp4
+        && let Some(scale) = source.input_global_scale.as_ref()
+    {
+        let values = floats(package, scale)?;
+        let [value] = values.as_slice() else {
+            return Err(Error::invalid("input global scale must be scalar"));
+        };
+        if !value.is_finite() || *value <= 0.0 {
+            return Err(Error::invalid("invalid activation scale"));
+        }
+        weights.input_scales.insert(id, *value);
     }
     Ok(())
 }

@@ -1,0 +1,105 @@
+//! Resolve activation policy from checkpoint module targets, independently of the architecture.
+use super::FP8_WEIGHT_BITS;
+use infer_core::{Error, Result};
+
+pub(super) struct Rule {
+    targets: Vec<Target>,
+    fp8_token: bool,
+}
+enum Target {
+    AllLinear,
+    Exact(String),
+    Regex(regex::Regex),
+}
+impl Rule {
+    pub(super) fn parse(quant: &serde_json::Value) -> Result<Vec<Self>> {
+        let Some(groups) = quant["config_groups"].as_object() else {
+            return Ok(Vec::new());
+        };
+        let mut rules = Vec::new();
+        for group in groups.values() {
+            if group["weights"]["num_bits"] != FP8_WEIGHT_BITS {
+                continue;
+            }
+            let input = &group["input_activations"];
+            let fp8_token = !input.is_null();
+            if fp8_token
+                && !(input["num_bits"] == FP8_WEIGHT_BITS
+                    && input["type"] == "float"
+                    && input["strategy"] == "token"
+                    && input["dynamic"] == true
+                    && input["symmetric"] == true)
+            {
+                return Err(Error::unsupported(
+                    "unsupported FP8 activation quantization",
+                ));
+            }
+            let targets = group["targets"]
+                .as_array()
+                .ok_or_else(|| Error::invalid("quantization module targets"))?
+                .iter()
+                .map(|target| {
+                    let name = target
+                        .as_str()
+                        .ok_or_else(|| Error::invalid("quantization target must be a string"))?;
+                    if name == "Linear" {
+                        Ok(Target::AllLinear)
+                    } else if let Some(pattern) = name.strip_prefix("re:") {
+                        regex::Regex::new(pattern)
+                            .map(Target::Regex)
+                            .map_err(|e| Error::invalid(e.to_string()))
+                    } else {
+                        Ok(Target::Exact(name.to_owned()))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            rules.push(Self { targets, fp8_token });
+        }
+        Ok(rules)
+    }
+    pub(super) fn for_module(rules: &[Self], module: &str) -> Result<bool> {
+        let mut declared = None;
+        for rule in rules {
+            if rule.targets.iter().any(|target| match target {
+                Target::AllLinear => true,
+                Target::Exact(name) => name == module,
+                Target::Regex(pattern) => pattern.is_match(module),
+            }) {
+                if declared.is_some_and(|value| value != rule.fp8_token) {
+                    return Err(Error::invalid("conflicting activation policies for module"));
+                }
+                declared = Some(rule.fp8_token);
+            }
+        }
+        Ok(declared.unwrap_or(false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn activation_rules_resolve_exact_regex_and_weight_only_modules() -> Result<()> {
+        let quant = serde_json::json!({"config_groups":{
+            "quantized":{"weights":{"num_bits":8},"targets":["re:.*attention\\.q_proj$", "lm_head"],
+                "input_activations":{"num_bits":8,"type":"float","strategy":"token","dynamic":true,"symmetric":true}},
+            "weight_only":{"weights":{"num_bits":8},"targets":["re:.*attention\\.v_proj$"],"input_activations":null}
+        }});
+        let rules = Rule::parse(&quant)?;
+        assert!(Rule::for_module(&rules, "model.layers.3.attention.q_proj")?);
+        assert!(Rule::for_module(&rules, "lm_head")?);
+        assert!(!Rule::for_module(
+            &rules,
+            "model.layers.3.attention.v_proj"
+        )?);
+        assert!(!Rule::for_module(
+            &rules,
+            "model.layers.3.attention.k_proj"
+        )?);
+        let conflict = serde_json::json!({"config_groups":{
+            "a":{"weights":{"num_bits":8},"targets":["Linear"],"input_activations":null},
+            "b":quant["config_groups"]["quantized"]}});
+        assert!(Rule::for_module(&Rule::parse(&conflict)?, "lm_head").is_err());
+        Ok(())
+    }
+}

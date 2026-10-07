@@ -3,14 +3,22 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct ServeOptions {
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    #[arg(long, default_value_t = Self::default_listen())]
     pub listen: std::net::SocketAddr,
     #[arg(long)]
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub package: Option<PathBuf>,
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, hide = true)]
     pub host_memory_mib: u64,
+}
+impl ServeOptions {
+    pub const fn default_listen() -> std::net::SocketAddr {
+        std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            crate::constants::DEFAULT_LISTEN_PORT,
+        )
+    }
 }
 #[derive(clap::Args)]
 pub struct RunOptions {

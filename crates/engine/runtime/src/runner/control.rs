@@ -58,6 +58,9 @@ where
     fn capabilities(&self) -> DeviceCapabilities {
         self.capabilities.clone()
     }
+    fn speculation_capability(&self) -> infer_ir::SpeculationCapability {
+        self.speculation
+    }
     fn maintenance(&mut self) -> Result<()> {
         if self.shared.flight_abandoned.load(Ordering::Acquire)
             && let Ok(handle) = self.completions.pop()

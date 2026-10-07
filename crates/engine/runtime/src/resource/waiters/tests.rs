@@ -4,6 +4,7 @@ fn pending() -> PendingResource {
     PendingResource {
         ticket: None,
         phase: ResourcePhase::Reset,
+        retry_epoch: None,
         started: 0,
     }
 }

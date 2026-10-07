@@ -1,4 +1,4 @@
-//! Conservative admission accounting: no activation reuse credit, plus driver graph headroom.
+//! Admission accounting for allocated tensor storage, plus driver graph headroom.
 use super::LoadedModel;
 use crate::resident::ProgramWeights;
 use infer_core::{Error, Result};
@@ -21,10 +21,6 @@ impl LoadedModel {
             ));
         }
         let capacity = capacity.next_power_of_two() as u64;
-        let verify = self.weights.batch_width as u64;
-        let prompt = u64::from(self.weights.prefill_width == crate::constants::PREFILL_LANES)
-            * crate::constants::PREFILL_LANES as u64;
-        let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
         let hidden = self.model.hidden_size;
         let vocabulary = self.model.vocab_size;
         let mut bytes = self.device().profile()?.graph_headroom_bytes();
@@ -34,21 +30,19 @@ impl LoadedModel {
                 &self.graph,
                 &self.weights,
                 capacity,
-                lanes,
                 hidden,
                 vocabulary,
                 readout,
             )?,
         )?;
         if let Some(draft) = &self.draft {
-            // The draft always runs one token at a time with F32 KV and no scale side tables.
+            // Draft priming has a prefill arena even though draft decode runs one token at a time.
             bytes = add(
                 bytes,
                 program(
                     &draft.graph,
                     &draft.weights,
                     capacity,
-                    1,
                     hidden,
                     vocabulary,
                     readout,
@@ -64,15 +58,38 @@ fn program(
     graph: &DataflowGraph,
     weights: &ProgramWeights,
     capacity: u64,
-    lanes: u64,
     hidden: usize,
     vocabulary: usize,
     readout: OutputReadout,
 ) -> Result<u64> {
     let verify = weights.batch_width as u64;
-    let prompt = u64::from(weights.prefill_width == crate::constants::PREFILL_LANES)
-        * crate::constants::PREFILL_LANES as u64;
+    let prompt = u64::from(weights.prefill_width >= crate::constants::PREFILL_LANES)
+        * weights.prefill_width as u64;
+    let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
     let mut bytes = 0;
+    // Split-KV scratch is shared by sequential attention nodes with the same geometry.
+    // Charge the supported upper bound (16 partitions), independent of device tuning.
+    let mut attention_shapes = std::collections::BTreeSet::new();
+    for node in &graph.nodes {
+        if let TensorOp::Attention {
+            query_heads,
+            head_dim,
+            ..
+        } = node.op
+            && attention_shapes.insert((query_heads, head_dim))
+        {
+            bytes = add(
+                bytes,
+                mul(
+                    mul(
+                        query_heads as u64,
+                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
+                    )?,
+                    mul(head_dim as u64 + 2, F32)?,
+                )?,
+            )?;
+        }
+    }
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
     bytes = add(
@@ -83,6 +100,26 @@ fn program(
         )?)
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
+    let mut recurrent_shapes = std::collections::BTreeSet::new();
+    for node in &graph.nodes {
+        if let TensorOp::Delta {
+            value_heads,
+            value_dim,
+            ..
+        } = node.op
+            && weights.input_scales.is_empty()
+            && weights.fp8_inputs.is_empty()
+            && recurrent_shapes.insert((value_heads, value_dim))
+        {
+            bytes = add(
+                bytes,
+                mul(
+                    mul(value_heads as u64, value_dim as u64)?,
+                    mul(prompt, F32)?,
+                )?,
+            )?;
+        }
+    }
     for spec in &graph.tensors {
         let elements = spec.elements()? as u64;
         let amount = match spec.storage {
@@ -107,24 +144,19 @@ fn program(
         };
         bytes = add(bytes, amount)?;
     }
-    // Overcount shared projection workspaces deliberately; never count immutable model weights.
-    for node in &graph.nodes {
-        if node.op != TensorOp::Linear {
-            continue;
-        }
-        for id in [node.inputs[0], node.outputs[0]] {
-            let spec = graph
-                .tensors
-                .iter()
-                .find(|t| t.id == id)
-                .ok_or_else(|| Error::invariant("projection tensor budget"))?;
-            bytes = add(
-                bytes,
-                mul(spec.elements()? as u64, mul(verify + prompt, F32)?)?,
-            )?;
-        }
-    }
-    bytes = add(bytes, mul(hidden as u64, F32)?)?;
+    bytes = add(bytes, projection_workspace(graph, weights)?)?;
+    // External hidden buffers exist for the scalar graph and every prompt lane.
+    // Fused draft programs additionally retain embedding and two normalized rows per lane.
+    let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
+    let fusion_rows = if weights.fusion.is_some() {
+        crate::constants::MTP_FUSION_ROWS
+    } else {
+        1
+    };
+    bytes = add(
+        bytes,
+        mul(mul(hidden as u64, external_lanes * fusion_rows)?, F32)?,
+    )?;
     // Pinned readback staging is retained with each graph/state. Count all
     // lanes conservatively even though prompt mode reads only the last logits.
     let readout_elements = add(hidden as u64, vocabulary as u64)?;
@@ -138,6 +170,72 @@ fn program(
     }
     Ok(bytes)
 }
+/// Projection buffers are shared by geometry; prefill views use the activation arena.
+fn projection_workspace(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64> {
+    let sizes = graph
+        .tensors
+        .iter()
+        .map(|t| Ok((t.id, t.elements()? as u64)))
+        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+    let mut verification = std::collections::BTreeSet::new();
+    let mut partials = std::collections::BTreeSet::new();
+    let mut quantized = std::collections::BTreeSet::new();
+    let mut fp8_quantized = std::collections::BTreeSet::new();
+    let quantized_rows = [1, weights.batch_width, weights.prefill_width]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .sum::<usize>() as u64;
+    let mut bytes = 0;
+    for node in &graph.nodes {
+        if node.op != TensorOp::Linear {
+            continue;
+        }
+        let columns = *sizes
+            .get(&node.inputs[0])
+            .ok_or_else(|| Error::invariant("projection input budget"))?;
+        let rows = *sizes
+            .get(&node.outputs[0])
+            .ok_or_else(|| Error::invariant("projection output budget"))?;
+        if weights.fp8_inputs.contains(&node.inputs[1]) && fp8_quantized.insert(columns) {
+            bytes = add(bytes, mul(columns + F32, quantized_rows)?)?;
+        }
+        if weights.input_scales.contains_key(&node.inputs[1]) && quantized.insert(columns) {
+            // Two FP4 values per byte, plus one E4M3 scale per block of 16.
+            bytes = add(
+                bytes,
+                mul(
+                    columns / 2 + columns / crate::constants::NVFP4_GROUP_SIZE as u64,
+                    quantized_rows,
+                )?,
+            )?;
+        }
+        if weights.batch_width > 1 && verification.insert((rows, columns)) {
+            bytes = add(
+                bytes,
+                mul(add(rows, columns)?, weights.batch_width as u64 * F32)?,
+            )?;
+        }
+        if weights.prefill_width == crate::constants::PREFILL_LANES
+            && !weights.input_scales.contains_key(&node.inputs[1])
+            && matches!(
+                weights.projections.get(&node.inputs[1]),
+                Some(crate::mlp::ProjectionWeight::Fp4(..))
+            )
+            && partials.insert(rows)
+        {
+            bytes = add(
+                bytes,
+                mul(
+                    rows,
+                    (crate::constants::PREFILL_SPLIT_K * crate::constants::PREFILL_LANES) as u64
+                        * F32,
+                )?,
+            )?;
+        }
+    }
+    Ok(bytes)
+}
 fn mul(a: u64, b: u64) -> Result<u64> {
     a.checked_mul(b)
         .ok_or_else(|| Error::invalid("CUDA state budget overflow"))
@@ -146,3 +244,6 @@ fn add(a: u64, b: u64) -> Result<u64> {
     a.checked_add(b)
         .ok_or_else(|| Error::invalid("CUDA state budget overflow"))
 }
+
+#[cfg(test)]
+mod tests;

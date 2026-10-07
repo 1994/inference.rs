@@ -8,6 +8,8 @@ use infer_spi::ModelProvider;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
+mod activations;
+
 /// Values sharing one E4M3 block scale in an NVFP4 weight.
 const NVFP4_GROUP_SIZE: usize = 16;
 /// Bits per weight in channel-wise FP8 quantization.
@@ -39,6 +41,8 @@ pub struct DeviceWeight {
     pub scale: Option<WeightSource>,
     pub global_scale: Option<WeightSource>,
     pub input_global_scale: Option<WeightSource>,
+    #[serde(default)]
+    pub fp8_token_input: bool,
 }
 
 pub struct QuantizedPackage {
@@ -48,8 +52,11 @@ pub struct QuantizedPackage {
     pub graph: DataflowGraph,
     pub weights: BTreeMap<String, DeviceWeight>,
     pub mtp: BTreeMap<String, DeviceWeight>,
+    /// KV storage declared by the checkpoint, separate from weight encoding.
+    pub kv_cache_dtype: Option<TensorDtype>,
     shards: BTreeMap<String, SafetensorsFile>,
     tensor_map: BTreeMap<String, String>,
+    activation_rules: Vec<activations::Rule>,
 }
 
 impl QuantizedPackage {
@@ -94,8 +101,10 @@ impl QuantizedPackage {
             graph,
             weights: BTreeMap::new(),
             mtp: BTreeMap::new(),
+            kv_cache_dtype: declared_kv_dtype(&value["quantization_config"]["kv_cache_scheme"])?,
             shards,
             tensor_map,
+            activation_rules: activations::Rule::parse(&value["quantization_config"])?,
         };
         package.bind_backbone()?;
         package.bind_mtp()?;
@@ -215,6 +224,8 @@ impl QuantizedPackage {
             scale: None,
             global_scale: None,
             input_global_scale: None,
+            fp8_token_input: encoding == WeightEncoding::Fp8Channel
+                && activations::Rule::for_module(&self.activation_rules, base)?,
         };
         match encoding {
             WeightEncoding::Float => {
@@ -325,4 +336,39 @@ fn validate_groups(quant: &serde_json::Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn declared_kv_dtype(scheme: &serde_json::Value) -> Result<Option<TensorDtype>> {
+    if scheme.is_null() {
+        return Ok(None);
+    }
+    if scheme["num_bits"] == FP8_WEIGHT_BITS
+        && scheme["type"] == "float"
+        && scheme["strategy"] == "tensor"
+        && scheme["dynamic"] == false
+        && scheme["symmetric"] == true
+    {
+        Ok(Some(TensorDtype::F8E4m3))
+    } else {
+        Err(Error::unsupported(
+            "unsupported checkpoint KV quantization scheme",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod kv_tests {
+    use super::*;
+    #[test]
+    fn checkpoint_kv_storage_is_declared_independently_of_weights() -> Result<()> {
+        assert_eq!(declared_kv_dtype(&serde_json::Value::Null)?, None);
+        let mut scheme = serde_json::json!({"num_bits":8,"type":"float","strategy":"tensor","dynamic":false,"symmetric":true});
+        assert_eq!(declared_kv_dtype(&scheme)?, Some(TensorDtype::F8E4m3));
+        scheme["dynamic"] = true.into();
+        assert!(declared_kv_dtype(&scheme).is_err());
+        scheme["dynamic"] = false.into();
+        scheme["type"] = "int".into();
+        assert!(declared_kv_dtype(&scheme).is_err());
+        Ok(())
+    }
 }

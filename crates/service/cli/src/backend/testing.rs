@@ -7,7 +7,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
     // Sizing a budget against a device profile and measuring kernels are CUDA-path concepts;
     // host-memory backends simply report the selection values as unused.
     let _ = (selection.autotune, selection.gpu_memory_utilization);
-    // Without an explicit budget, Metal and the CPU test backend keep the host-memory default.
+    // The CPU reference keeps a bounded host-memory default.
     let memory_bytes = if memory_bytes == 0 {
         crate::constants::DEFAULT_HOST_MEMORY_MIB * crate::constants::MIB_U64
     } else {

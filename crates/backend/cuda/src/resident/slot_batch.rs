@@ -75,7 +75,11 @@ pub struct SlotPool {
     // The captured graph bakes these buffers' device pointers; declared last so the
     // graph drops before anything it references.
     _external: Tensor<f32>,
-    _lane_external: Vec<Tensor<f32>>,
+    _nvfp4: super::nvfp4_gemm::Workspace,
+    _attention: super::attention_decode::Workspace,
+    lane_external: Vec<Tensor<f32>>,
+    external_uploads: Vec<Option<Arc<Tensor<f32>>>>,
+    _lane_fusion: Vec<Option<super::program::FusionWorkspace>>,
 }
 
 impl SlotPool {
@@ -83,7 +87,7 @@ impl SlotPool {
     /// `verify` ≥ 2 captures the pooled speculation graph with `verify` candidate lanes
     /// per slot; `verify` < 2 captures the plain decode graph.
     /// # Errors
-    /// Rejects invalid geometry, fused (draft) weight sets, an exceeded device budget
+    /// Rejects invalid geometry, fused verification graphs, an exceeded device budget
     /// or CUDA capture failures; the caller disables batching on any error.
     pub fn new(
         device: &CudaDevice,
@@ -103,9 +107,9 @@ impl SlotPool {
         {
             return Err(Error::invalid("slot pool width, capacity or geometry"));
         }
-        if weights.fusion.is_some() {
+        if weights.fusion.is_some() && verify >= 2 {
             return Err(Error::unsupported(
-                "slot pool requires unfused target weights",
+                "pooled verification requires unfused target weights",
             ));
         }
         let plan = copy_plan(graph, weights)?;
@@ -143,8 +147,13 @@ impl SlotPool {
                     .map_err(device_error)?,
             );
         }
-        let mut lane_fusion: Vec<Option<super::program::FusionWorkspace>> =
-            (0..lanes).map(|_| None).collect();
+        let mut lane_fusion: Vec<Option<super::program::FusionWorkspace>> = (0..lanes)
+            .map(|_| {
+                super::program::FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())
+            })
+            .collect::<Result<_>>()?;
+        let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        let mut nvfp4 = super::nvfp4_gemm::Workspace::new(device, graph, weights, &[1, lanes])?;
         let mut placeholder_states = States::new();
         let mut placeholder_fp8 = Fp8Caches::new();
         let (decode, verify_graph) = {
@@ -152,6 +161,8 @@ impl SlotPool {
                 device,
                 graph,
                 weights,
+                nvfp4: &mut nvfp4,
+                attention: &mut attention,
                 states: &mut placeholder_states,
                 fp8_states: &mut placeholder_fp8,
                 external: &external,
@@ -180,7 +191,11 @@ impl SlotPool {
             capacity,
             vocabulary,
             _external: external,
-            _lane_external: lane_external,
+            _nvfp4: nvfp4,
+            _attention: attention,
+            lane_external,
+            external_uploads: (0..lanes).map(|_| None).collect(),
+            _lane_fusion: lane_fusion,
         })
     }
 
@@ -289,10 +304,20 @@ impl SlotPool {
     /// # Errors
     /// Rejects invalid lanes or positions, a speculation pool and CUDA replay failures.
     pub fn run_lanes(&mut self, device: &CudaDevice, lanes: &[SlotLane]) -> Result<BatchOutput> {
+        if self
+            .decode
+            .as_ref()
+            .is_some_and(|graph| graph.external_hidden)
+            && lanes
+                .iter()
+                .any(|&(slot, ..)| self.external_uploads.get(slot).is_none_or(Option::is_none))
+        {
+            return Err(Error::invalid("draft lane has no external hidden input"));
+        }
         self.decode
             .as_mut()
             .ok_or_else(|| Error::invalid("slot pool has no decode graph"))?
-            .run_lanes(device, lanes, self.capacity, self.vocabulary)
+            .run_lanes(device, lanes, self.capacity, self.vocabulary, true)
     }
 
     /// Replay one pooled speculation step; see [`SlotVerifyGraph::run_verify`].
@@ -442,3 +467,8 @@ impl SlotPool {
         Ok(())
     }
 }
+
+mod draft;
+
+#[cfg(test)]
+mod draft_tests;

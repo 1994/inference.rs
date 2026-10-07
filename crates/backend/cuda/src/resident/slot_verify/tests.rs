@@ -93,6 +93,8 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         embeddings: BTreeMap::from([(TensorId::ONE, Arc::clone(&embedding))]),
+        fp8_inputs: std::collections::BTreeSet::new(),
+        input_scales: BTreeMap::new(),
         projections: BTreeMap::from([(TensorId::new(6)?, ProjectionWeight::Dense(embedding))]),
         constants: BTreeMap::from([(TensorId::new(3)?, device.upload(vec![0.25; 128], &[32, 4])?)]),
         rope_axes: BTreeMap::new(),
@@ -104,16 +106,27 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
 #[test]
 #[ignore = "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh"]
 fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
+    for (width, verify) in [(2, 2), (2, 3), (3, 3), (4, 3), (2, 5)] {
+        check_pool_width(width, verify, 32)?;
+    }
+    // Long-capacity pooled split-KV must match unsplit private graphs, including inactive lanes.
+    check_pool_width(4, 3, 1024)?;
+    Ok(())
+}
+
+fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> {
     cutile::jit_cache::enable_default().map_err(device_error)?;
     let device = CudaDevice::new(0)?;
-    let (graph, weights) = fixture(&device)?;
-    let mut pool = SlotPool::new(&device, &graph, &weights, 3, 32, 32, (32, 3))?;
-    let mut serial = (0..3)
+    let (graph, mut weights) = fixture(&device)?;
+    weights.batch_width = verify;
+    weights.prefill_width = 1;
+    let mut pool = SlotPool::new(&device, &graph, &weights, width, capacity, 32, (32, verify))?;
+    let mut serial = (0..width)
         .map(|_| DeviceProgram::new(&device, &graph, &weights, 32, 32, 32))
         .collect::<Result<Vec<_>>>()?;
     // Different accepted prefixes, an inactive slot, reversed task order, and a short
     // chain exercise row groups beyond the first four rows and recurrent rollback.
-    for plans in [
+    for mut plans in [
         vec![
             (0, vec![1, 2, 3], 0),
             (1, vec![7, 8, 9], 1),
@@ -122,6 +135,14 @@ fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
         vec![(2, vec![15, 16, 17], 0), (0, vec![4, 5], 1)],
         vec![(1, vec![10], 0), (2, vec![18, 19, 20], 2)],
     ] {
+        plans.retain(|(slot, _, _)| *slot < width);
+        for (_, tokens, accepted) in &mut plans {
+            tokens.truncate(verify);
+            *accepted = (*accepted).min(tokens.len() - 1);
+        }
+        if width == 4 {
+            plans.push((3, vec![25, 26, 27], 1));
+        }
         let mut lanes = Vec::new();
         let mut expected = Vec::new();
         for (slot, tokens, _) in &plans {
@@ -133,7 +154,7 @@ fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
         }
         let actual = pool.run_verify(&device, &lanes)?;
         for ((slot, tokens, accepted), reference) in plans.into_iter().zip(expected) {
-            compare(&actual[slot * 3..][..tokens.len()], &reference);
+            compare(&actual[slot * verify..][..tokens.len()], &reference);
             pool.commit_verify(&device, slot, accepted)?;
             serial[slot].commit_batch(accepted + 1)?;
             assert_eq!(pool.cursors()[slot], serial[slot].position());
@@ -142,13 +163,15 @@ fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
     serial[1].reset()?;
     serial[1].step(21, 0, 0, None, false)?;
     pool.bind(1, serial[1].states(), serial[1].fp8_states(), 1, &device)?;
-    let expected = serial[1].step_batch(&[22, 23, 24], 1)?;
+    let count = verify.min(3);
+    let tokens = &[22, 23, 24][..count];
+    let expected = serial[1].step_batch(tokens, 1)?;
     let actual = pool.run_verify(
         &device,
-        &[(1, 0, 22, 1, 1), (1, 1, 23, 2, 2), (1, 2, 24, 3, 3)],
+        &[(1, 0, 22, 1, 1), (1, 1, 23, 2, 2), (1, 2, 24, 3, 3)][..count],
     )?;
-    compare(&actual[3..6], &expected);
-    pool.commit_verify(&device, 1, 2)?;
+    compare(&actual[verify..verify + count], &expected);
+    pool.commit_verify(&device, 1, count - 1)?;
     Ok(())
 }
 
@@ -171,4 +194,55 @@ fn verify_lanes_rejects_holes_duplicates_and_invalid_positions() {
     assert!(verify_lanes(&[(0, 0, 1, 2, 1)], &cursors, 3, 16, 32).is_err());
     assert!(verify_lanes(&[(2, 0, 1, 7, 7)], &cursors, 3, 7, 32).is_err());
     assert!(verify_lanes(&[(2, 0, 1, 7, 7), (0, 0, 2, 2, 2)], &cursors, 3, 16, 32).is_ok());
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn wide_prefill_preserves_tail_and_scalar_continuation() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (graph, mut weights) = fixture(&device)?;
+    weights.batch_width = 0;
+    weights.prefill_width = 1;
+    let mut reference = DeviceProgram::new(&device, &graph, &weights, 256, 32, 32)?;
+    weights.prefill_width = 128;
+    let mut candidate = DeviceProgram::new(&device, &graph, &weights, 256, 32, 32)?;
+    let mut position = 0;
+    for count in [117, 11] {
+        let tokens = (position..position + count)
+            .map(|i| u32::try_from(i % 32).unwrap())
+            .collect::<Vec<_>>();
+        let actual = candidate.prefill_batch(&tokens, position, true)?;
+        for (offset, token) in tokens.iter().enumerate() {
+            let expected =
+                reference.step(*token, position + offset, position + offset, None, true)?;
+            compare(
+                &[(actual[offset].0.clone(), Vec::new())],
+                &[(expected.0.clone(), Vec::new())],
+            );
+            if offset + 1 == count {
+                // Prompt projection uses BF16 inputs; compare its declared arithmetic
+                // with an independent dot product instead of the F32 scalar GEMV.
+                for col in 0..32 {
+                    let expected: f32 = expected
+                        .0
+                        .iter()
+                        .enumerate()
+                        .map(|(row, &x)| {
+                            let index = u16::try_from((col * 32 + row) % 29).unwrap();
+                            bf16::from_f32(x).to_f32()
+                                * bf16::from_f32(f32::from(index) / 29.0 - 0.5).to_f32()
+                        })
+                        .sum();
+                    assert!((actual[offset].1[col] - expected).abs() < 0.00002);
+                }
+            }
+        }
+        position += count;
+    }
+    compare(
+        &[candidate.step(7, position, position, None, true)?],
+        &[reference.step(7, position, position, None, true)?],
+    );
+    Ok(())
 }

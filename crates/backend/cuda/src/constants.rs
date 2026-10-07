@@ -10,6 +10,32 @@ pub const DEFAULT_TILE_COLUMNS: usize = 256;
 /// Device-only geometry and budget constants; empty without the `cuda` feature.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 mod device {
+    /// Middle prompt capture bucket, including quantized recurrent models.
+    pub const MID_PREFILL_LANES: usize = 64;
+    /// Head-major KV cache axes: heads, capacity, head dimension.
+    pub const KV_CACHE_RANK: usize = 3;
+    /// Minimum KV span where split decoding amortizes its reduction.
+    pub const ATTENTION_SPLIT_THRESHOLD: usize = 1024;
+    /// Minimum tokens assigned to a split attention partition.
+    pub const ATTENTION_SPLIT_MIN_TOKENS: usize = 128;
+    /// Maximum split attention partitions and their scratch budget.
+    pub const ATTENTION_SPLIT_MAX_PARTS: usize = 16;
+    /// External hidden, embedding and two normalized rows used by draft fusion.
+    pub const MTP_FUSION_ROWS: u64 = 4;
+    /// MMA output tile used by dense and scaled verification projections.
+    pub const SMALL_GEMM_TILE: [usize; 2] = [16, 32];
+    /// Maximum row count before MMA replaces the vocabulary GEMV path.
+    pub const SMALL_GEMV_MAX_ROWS: usize = 4;
+    /// Vocabulary-like expansion ratio where narrow-batch GEMV remains useful.
+    pub const GEMV_WIDE_OUTPUT_RATIO: usize = 4;
+    /// Output tile shared by the native activation-quantized GEMMs.
+    pub const QUANT_GEMM_TILE: [usize; 2] = [16, 64];
+    /// Packed activation codes written by one NVFP4 quantization block.
+    pub const NVFP4_QUANT_CODES_TILE: [usize; 2] = [1, 256];
+    /// Activation scales written by one NVFP4 quantization block.
+    pub const NVFP4_QUANT_SCALES_TILE: [usize; 2] = [1, 32];
+    /// QKV, beta and alpha activation inputs to gated delta recurrence.
+    pub const GDN_PROJECTED_INPUTS: usize = 3;
     /// Fallback decode GEMV tile used by the untiled `matvec` entry point.
     pub const MATVEC_TILE_ROWS: usize = 4;
     /// Fallback decode GEMV tile used by the untiled `matvec` entry point.
@@ -24,6 +50,8 @@ mod device {
     pub const AUX_KERNEL_TILE: usize = 256;
     /// Tokens per batched prefill graph; the GEMM M tile matches the lane count.
     pub const PREFILL_LANES: usize = 32;
+    /// Largest automatically selected prompt batch, bounded by the activation budget.
+    pub const MAX_PREFILL_LANES: usize = 128;
     /// Column tile of the batched prefill GEMM.
     pub const PREFILL_GEMM_TILE_N: usize = 64;
     /// K tile of the batched prefill GEMM: columns of input per loop iteration.
@@ -60,14 +88,9 @@ mod device {
     pub const MAX_CAPACITY_TOKENS: usize = 32768;
     /// Hidden size bound for resident programs.
     pub const MAX_HIDDEN_SIZE: usize = 32768;
-    /// Decode slots captured into the shared continuous-batching graph. Four lanes cover the
-    /// concurrency the admission budget grants on the reference device (`resident_states`
-    /// floor is 4) without baking more state copies than traffic can occupy; retune only
-    /// with the service-level memory and concurrency checks in docs/guides/cuda-performance.md.
-    /// **Must equal `FUSED_VERIFY_LANES`**: slot decode reuses the 3-lane fused
-    /// shared-weight GEMV (`linear_batch::batched` is hardcoded to three lanes plus
-    /// padding), which is what makes a batched replay read weights once.
-    pub const CB_DECODE_SLOTS: usize = FUSED_VERIFY_LANES;
+    /// Maximum shared decode slots. Independent of the per-sequence draft depth;
+    /// the batched projection kernels handle row tails and reuse weights across slots.
+    pub const CB_DECODE_SLOTS: usize = 4;
     /// Token rows in each slot's KV cache. Sequences admitted above this stay on the
     /// per-sequence serial path; 4096 keeps the pool's upfront allocation (one state set per
     /// slot) inside the device budget next to resident sequences and the prefix cache.

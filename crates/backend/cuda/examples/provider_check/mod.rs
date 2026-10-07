@@ -24,7 +24,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         &root,
         ModelId::ONE,
         LoadOptions {
-            fp8_kv: std::env::args().any(|arg| arg == "--fp8-kv"),
+            fp8_kv: std::env::args()
+                .any(|arg| arg == "--fp8-kv")
+                .then_some(true),
             prefill_width: 32,
             mtp_depth: mtp_depth(),
             ..Default::default()

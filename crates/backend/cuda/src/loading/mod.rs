@@ -20,7 +20,8 @@ pub use weights::{Projection, floats};
 pub struct LoadOptions {
     pub prefill_width: usize,
     pub verification_width: usize,
-    pub fp8_kv: bool,
+    /// None follows the checkpoint declaration; Some overrides KV storage.
+    pub fp8_kv: Option<bool>,
     pub mtp_depth: usize,
     /// Measure GEMV tiles for geometries the local or shipped tables do not cover. On by default:
     /// tile size is a property of the machine, so the first load measures and caches its winners
@@ -32,18 +33,36 @@ impl Default for LoadOptions {
         Self {
             prefill_width: 1,
             verification_width: 0,
-            fp8_kv: false,
+            fp8_kv: None,
             mtp_depth: 0,
             autotune: true,
         }
     }
 }
 impl LoadOptions {
+    fn resolve_verification(&mut self) -> Result<()> {
+        self.validate()?;
+        if self.mtp_depth > 0 {
+            let width = self.mtp_depth + 1;
+            if self.verification_width == 0 {
+                self.verification_width = width;
+            }
+            if self.verification_width != width {
+                return Err(Error::invalid(
+                    "verification width must equal MTP depth plus one",
+                ));
+            }
+        }
+        self.validate()
+    }
     fn validate(&self) -> Result<()> {
         if ![
+            0,
             1,
             crate::constants::FUSED_VERIFY_LANES,
             crate::constants::PREFILL_LANES,
+            crate::constants::MID_PREFILL_LANES,
+            crate::constants::MAX_PREFILL_LANES,
         ]
         .contains(&self.prefill_width)
             || self.verification_width > crate::constants::MAX_VERIFICATION_WIDTH
@@ -164,6 +183,9 @@ impl LoadedVision {
 }
 
 impl LoadedModel {
+    pub(crate) fn draft_graph(&self) -> Option<&DataflowGraph> {
+        self.draft.as_ref().map(|draft| &draft.graph)
+    }
     /// # Errors
     /// Rejects unsupported formats, invalid policies, budgets or CUDA loading errors.
     pub fn open(
@@ -172,17 +194,61 @@ impl LoadedModel {
         id: ModelId,
         mut options: LoadOptions,
     ) -> Result<Self> {
-        // Speculation verifies candidates with the fused multi-lane graph; enable it on demand.
-        if options.mtp_depth > 0 && options.verification_width == 0 {
-            options.verification_width = crate::constants::FUSED_VERIFY_LANES;
-        }
-        options.validate()?;
+        options.resolve_verification()?;
         // Query hardware once: the profile keys machine-local tuning artifacts and derives the
         // device budget policy, so no per-model or per-board table needs maintaining here.
         let profile = device.profile()?.clone();
         let mut package = QuantizedPackage::open(root, id)?;
+        options.fp8_kv =
+            Some(options.fp8_kv.unwrap_or_else(|| {
+                package.kv_cache_dtype == Some(infer_models::TensorDtype::F8E4m3)
+            }));
+        let automatic_prefill = options.prefill_width == 0;
+        if automatic_prefill {
+            options.prefill_width = crate::constants::PREFILL_LANES;
+        }
         let mtp_depth = options.mtp_depth;
-        let (weights, draft, tuning) = bindings::load(&device, &profile, &mut package, &options)?;
+        let (mut weights, draft, tuning) =
+            bindings::load(&device, &profile, &mut package, &options)?;
+        if automatic_prefill
+            && !weights.projections.iter().any(|(id, weight)| {
+                matches!(weight, crate::mlp::ProjectionWeight::Fp4(..))
+                    && !weights.input_scales.contains_key(id)
+            })
+        {
+            let arena_budget = profile.arena_budget_bytes().min(
+                device.memory_info()?.0
+                    / u64::try_from(profile.resident_states())
+                        .map_err(|_| Error::invalid("resident state count"))?,
+            );
+            // Quantized recurrent graphs keep the scalar Delta path for numerical
+            // stability. Limit their prompt graph size while sharing projection loads.
+            let recurrent_limit = if package
+                .graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.op, infer_ir::TensorOp::Delta { .. }))
+                && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty())
+            {
+                crate::constants::MID_PREFILL_LANES
+            } else {
+                crate::constants::MAX_PREFILL_LANES
+            };
+            for width in [
+                crate::constants::MAX_PREFILL_LANES,
+                crate::constants::MID_PREFILL_LANES,
+            ]
+            .into_iter()
+            .filter(|&width| width <= recurrent_limit)
+            {
+                let needed =
+                    crate::resident::arena::ActivationArena::required_bytes(&package.graph, width)?;
+                if needed as u64 <= arena_budget {
+                    weights.prefill_width = width;
+                    break;
+                }
+            }
+        }
         let requirements = package.imported.requirements.clone();
         let vision = LoadedVision::bind(&device, &mut package)?;
         let imported = package.imported.clone();
@@ -254,6 +320,9 @@ impl LoadedModel {
             self.model.vocab_size,
         )
     }
+    pub(crate) fn ensure_verification(&self, program: &mut DeviceProgram) -> Result<()> {
+        program.ensure_verification(&self.graph, &self.weights)
+    }
     /// # Errors
     /// Rejects invalid capacity, missing draft configuration or capture failures.
     pub fn draft(&self, capacity: usize) -> Result<Option<DeviceProgram>> {
@@ -267,6 +336,39 @@ impl LoadedModel {
             capacity,
             self.model.hidden_size,
             self.model.vocab_size,
+        )
+        .map(Some)
+    }
+
+    pub(crate) fn draft_slot_pool(
+        &self,
+        width: usize,
+        capacity: usize,
+    ) -> Result<Option<crate::resident::slot_batch::SlotPool>> {
+        let Some(draft) = &self.draft else {
+            return Ok(None);
+        };
+        if draft.weights.fusion.is_none()
+            || draft.graph.tensors.iter().any(|tensor| {
+                matches!(
+                    tensor.storage,
+                    infer_ir::TensorStorage::State {
+                        kind: infer_ir::StateKind::Conv | infer_ir::StateKind::LinearAttention,
+                        ..
+                    }
+                )
+            })
+        {
+            return Ok(None);
+        }
+        crate::resident::slot_batch::SlotPool::new(
+            &self.device,
+            &draft.graph,
+            &draft.weights,
+            width,
+            capacity,
+            self.model.hidden_size,
+            (self.model.vocab_size, 0),
         )
         .map(Some)
     }
@@ -303,6 +405,25 @@ impl LoadedModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mtp_depth_controls_the_actual_verification_width() -> Result<()> {
+        for depth in [1, 2, 4, 8] {
+            let mut options = LoadOptions {
+                mtp_depth: depth,
+                prefill_width: 32,
+                ..LoadOptions::default()
+            };
+            options.resolve_verification()?;
+            assert_eq!(options.verification_width, depth + 1);
+        }
+        let mut mismatch = LoadOptions {
+            mtp_depth: 4,
+            verification_width: 3,
+            ..LoadOptions::default()
+        };
+        assert!(mismatch.resolve_verification().is_err());
+        Ok(())
+    }
     #[test]
     fn mtp_depth_bounds_are_validated() {
         assert!(

@@ -172,6 +172,7 @@ impl<B: BackendProvider> Worker<B> {
             match result {
                 Ok(()) => {
                     self.states.remove(&state);
+                    self.shared.epoch.fetch_add(1, Ordering::AcqRel);
                     self.shared.releases.fetch_sub(1, Ordering::AcqRel);
                 }
                 Err(error) => {
@@ -225,6 +226,7 @@ impl<B: BackendProvider> Worker<B> {
                 match result {
                     Ok(()) => {
                         self.states.remove(&state);
+                        self.shared.epoch.fetch_add(1, Ordering::AcqRel);
                         self.shared.releases.fetch_sub(1, Ordering::AcqRel);
                     }
                     Err(error) => {

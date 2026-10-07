@@ -9,6 +9,30 @@ pub(crate) mod batched {
         f4e2m1fnx2, f8e4m3fn, get_tile_block_id, reduce_sum,
     };
 
+    /// Generic candidate-width packing; the three-row case retains its fused copy.
+    #[cutile::entry()]
+    fn pack_row(out: &mut Tensor<f32, { [1, 256] }>, input: &Tensor<f32, { [-1] }>, row: i32) {
+        let pid = get_tile_block_id();
+        if pid.0 == row {
+            out.store(
+                input
+                    .partition(shape![256])
+                    .load([pid.1])
+                    .reshape(shape![1, 256]),
+            );
+        }
+    }
+    #[cutile::entry()]
+    fn unpack_row(out: &mut Tensor<f32, { [256] }>, input: &Tensor<f32, { [-1, -1] }>, row: i32) {
+        let pid = get_tile_block_id();
+        out.store(
+            input
+                .partition(shape![1, 256])
+                .load([row, pid.0])
+                .reshape(shape![256]),
+        );
+    }
+
     #[cutile::entry()]
     fn pack_inputs(
         out: &mut Tensor<f32, { [1, 256] }>,

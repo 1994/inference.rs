@@ -21,6 +21,7 @@
 | [质量门禁](guides/quality-gates.md) | 本地/CI 检查、Attention 对照与验收要求 |
 | [CPU 性能测量](guides/cpu-performance.md) | 分配计数、延迟与测量范围 |
 | [CUDA 性能测量](guides/cuda-performance.md) | 算子/模型/服务基线、能力探针与调优 |
+| [性能优化后续计划](guides/performance-roadmap.md) | 当前差距、优化顺序、数值与服务性能验收门禁 |
 | [工具导航](../tools/README.md) | 门禁、参考导出与基准入口 |
 
 ## 架构

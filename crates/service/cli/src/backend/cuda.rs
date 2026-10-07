@@ -33,9 +33,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
             path,
             infer_core::ModelId::ONE,
             LoadOptions {
-                prefill_width: selection
-                    .max_num_batched_tokens
-                    .unwrap_or(crate::constants::DEFAULT_PREFILL_CHUNK_TOKENS),
+                prefill_width: selection.max_num_batched_tokens.unwrap_or(0),
                 mtp_depth: selection.num_speculative_tokens,
                 autotune: selection.autotune,
                 ..LoadOptions::default()
