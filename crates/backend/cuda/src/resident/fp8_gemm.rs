@@ -2,9 +2,9 @@
 #[cutile::module]
 pub(crate) mod kernels {
     use cutile::core::{
-        BroadcastScalar, Reshape, Shape_1, Shape_2, StoreTileAtCurrentBlock, Tensor_1, Tensor_2,
-        Tile_1, Tile_2, absf, constant, convert_tile, f8e4m3fn, get_tile_block_id, max_tile,
-        min_tile, mmaf, reduce_max,
+        BroadcastScalar, Reshape, Shape_1, Shape_2, Shape_3, StoreTileAtCurrentBlock, Tensor_1,
+        Tensor_2, Tensor_3, Tile_1, Tile_2, absf, constant, convert_tile, f8e4m3fn,
+        get_tile_block_id, max_tile, min_tile, mmaf, reduce_max,
     };
 
     #[cutile::entry()]
@@ -49,6 +49,59 @@ pub(crate) mod kernels {
         let xs = input_scale
             .partition(shape![16, 1])
             .load([pid.0, 0i32])
+            .broadcast(shape![16, 64]);
+        let ws = weight_scale
+            .partition(shape![64])
+            .load([pid.1])
+            .reshape(shape![1, 64])
+            .broadcast(shape![16, 64]);
+        output.store(acc * xs * ws);
+    }
+
+    /// Split-K twin of `matmul`: `pid.0` selects the K window, so a narrow-M replay stops
+    /// paying one deep dependent K chain per output tile. The row and column scales are
+    /// uniform across K, so the raw partials are summed and scaled once by `reduce_split`.
+    #[cutile::entry()]
+    fn matmul_split<const K: i32>(
+        output: &mut Tensor<f32, { [1, 16, 64] }>,
+        input: &Tensor<f8e4m3fn, { [-1, K] }>,
+        weight: &Tensor<f8e4m3fn, { [-1, K] }>,
+        k_tiles: i32,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![16, 128]);
+        let wp = weight.partition(shape![64, 128]);
+        let total = (K + 127) / 128;
+        let k0 = pid.0 * k_tiles;
+        let mut k1 = k0 + k_tiles;
+        if k1 > total {
+            k1 = total;
+        }
+        let mut acc: Tile<f32, { [16, 64] }> = constant(0.0f32, shape![16, 64]);
+        for k in k0..k1 {
+            acc = mmaf(xp.load([0i32, k]), wp.load([pid.1, k]).transpose(), acc);
+        }
+        output.store(acc.reshape(shape![1, 16, 64]));
+    }
+
+    /// Sums `[splits, 16, N]` partial windows in split order and applies both scales.
+    #[cutile::entry()]
+    fn reduce_split(
+        output: &mut Tensor<f32, { [16, 64] }>,
+        partials: &Tensor<f32, { [-1, -1, -1] }>,
+        input_scale: &Tensor<f32, { [-1, 1] }>,
+        weight_scale: &Tensor<f32, { [-1] }>,
+        splits: i32,
+    ) {
+        let pid = get_tile_block_id();
+        let pp = partials.partition(shape![1, 16, 64]);
+        let mut acc: Tile<f32, { [16, 64] }> = constant(0.0f32, shape![16, 64]);
+        for s in 0i32..splits {
+            acc = acc + pp.load([s, 0i32, pid.1]).reshape(shape![16, 64]);
+        }
+        let xs = input_scale
+            .partition(shape![16, 1])
+            .load([0i32, 0i32])
             .broadcast(shape![16, 64]);
         let ws = weight_scale
             .partition(shape![64])

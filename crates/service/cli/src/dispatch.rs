@@ -11,6 +11,7 @@ use infer_core::Result;
 use std::io;
 
 pub fn run() {
+    crate::support::init_logging();
     let cli = Cli::parse();
     let selection = backend::Selection {
         kind: cli.backend,
@@ -28,6 +29,7 @@ pub fn run() {
     ) {
         let _ = serde_json::to_writer(io::stderr().lock(), &error);
         eprintln!();
+        crate::support::flush_logs();
         std::process::exit(1);
     }
 }

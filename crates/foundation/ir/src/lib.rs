@@ -14,7 +14,9 @@ pub mod workload;
 pub use dataflow::{
     BufferLifetime, DataflowGraph, TensorNode, TensorOp, TensorSpec, TensorStorage,
 };
-pub use diagnostics::{ExecutionStats, KvCacheInspection, LayerProbe, OpTrace};
+pub use diagnostics::{
+    ExecutionProfileInspection, ExecutionStats, KvCacheInspection, LayerProbe, OpTrace,
+};
 pub use execution::{
     CompiledOp, CostEstimate, DecisionWindow, DeferReason, DeferredWork, ExecutionIr,
     ExecutionProgram, ExecutionRole, ExecutionTask, GraphVariant, ModelOutput, Operation,

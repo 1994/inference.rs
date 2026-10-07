@@ -8,6 +8,7 @@ use native::trace_parent;
 use observability::{diagnostics, events, metrics, observability, otlp, timeline};
 
 mod error;
+mod logging;
 mod native;
 mod observability;
 mod openai;

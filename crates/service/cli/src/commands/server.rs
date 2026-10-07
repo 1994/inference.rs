@@ -42,7 +42,7 @@ pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Resul
                 .map_err(|e| Error::new(ErrorCode::Backend, e.to_string()))?;
             let handle = infer_frontdoor::RuntimeHandle::start(engine)?;
             let shutdown = handle.clone();
-            eprintln!("Native inference server listening on http://{listen}");
+            tracing::info!(target: "infer::serve", listen = %listen, "listening for requests");
             axum_serve(listener, handle, shutdown, assets).await
         })?;
 

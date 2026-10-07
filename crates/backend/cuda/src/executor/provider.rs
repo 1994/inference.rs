@@ -13,6 +13,9 @@ impl BackendProvider for CudaBackend {
     fn weight_backed_dataflow(&self) -> bool {
         true
     }
+    fn execution_profile(&self) -> Option<infer_ir::ExecutionProfileInspection> {
+        Some(self.loaded.execution_profile())
+    }
     fn capabilities(&self) -> DeviceCapabilities {
         self.capabilities.clone()
     }

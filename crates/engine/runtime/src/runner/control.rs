@@ -16,6 +16,9 @@ where
     fn state_recipe(&self) -> Option<&infer_ir::StateRecipe> {
         self.recipe.as_ref()
     }
+    fn execution_profile(&self) -> Option<infer_ir::ExecutionProfileInspection> {
+        self.execution_profile.clone()
+    }
     fn recycle_output(&mut self, state: StateId, output: infer_ir::ModelOutput) -> Result<()> {
         self.recycle(super::Recycled::Output(state, output))
     }

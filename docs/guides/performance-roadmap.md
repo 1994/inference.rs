@@ -98,12 +98,19 @@ against their preceding native baseline. This does not imply cross-engine token 
 
 ### P0 — Make comparisons reproducible from a clean checkout
 
-- [ ] Promote the reusable serving harness and workload definitions out of the local
+- [x] Promote the reusable serving harness and workload definitions out of the local
   `artifacts/best-20261007/qualified/compare.py` experiment into `tools/bench/` and
-  `benchmarks/`. Accept model paths and executable paths as arguments.
-- [ ] Record engine/package versions, executable hash, effective MTP, precision,
+  `benchmarks/`. Accept model paths and executable paths as arguments. The promoted
+  harness is [serve-compare.py](../../tools/bench/serve-compare.py) with its canonical
+  matrix in [serve-workloads.py](../../tools/bench/serve-workloads.py); `serve-cases.py`
+  filters a prepared file for focused runs.
+- [x] Record engine/package versions, executable hash, effective MTP, precision,
   cache configuration, prompt hashes, warmups, repetitions and hardware telemetry.
   Retain failed runs; never silently replace a failed reference with a weaker setup.
+  The harness writes `binary_sha256`, `inputs_sha256`, engine version and command, and
+  `/native/v1/runtime` now reports `execution_profile` (`prefill_width`, `batch_width`,
+  `mtp_depth`, `automatic_prefill`, `arena_budget_bytes`) plus the effective
+  `scheduler` chunk budgets, so a run can prove which graph geometry really ran.
 - [ ] Support sequential paired runs and report wall time, output throughput, TTFT
   and TPOT. Add longer-context and concurrency sweeps beyond the initial batch4 case.
 - [ ] Establish a separate quality/precision comparison before adopting a faster
@@ -113,6 +120,110 @@ Acceptance: another developer can reproduce the initial cases without the local
 virtual environments or an untracked script. The existing
 [serving gate](../../tools/bench/compare-results.py) rejects incomplete runs,
 misaligned workloads, absent hot-prefix reuse and performance regressions.
+
+### P1a — Qualified state after the first pass (2026-10-07)
+
+A same-session paired A/B of the preserved baseline binary
+(`artifacts/infer-perf-baseline`, SHA256 `f6b11d49…`) against the current build over
+the canonical matrix, both at `--gpu-memory-utilization 0.88`, one excluded warmup and
+three measured trials, gives:
+
+| Model | Case | vLLM wall | Native wall | wall ratio | TTFT ratio |
+|---|---|---:|---:|---:|---:|
+| 27B | short | 0.5890 | 0.7523 | 1.277 | 1.301 |
+| 27B | long | 0.6216 | 1.2524 | 2.015 | 6.628 |
+| 27B | batch4 | 1.2397 | 1.7255 | 1.392 | 2.783 |
+| 27B | hot_long | 0.7770 | 0.8316 | 1.070 | 0.399 |
+| 2B | short | 0.2268 | 0.2390 | 1.054 | 0.853 |
+| 2B | long | 0.2303 | 0.2894 | 1.257 | 3.409 |
+| 2B | batch4 | 0.2783 | 0.4554 | 1.636 | 2.408 |
+| 2B | hot_long | 0.2505 | 0.2979 | 1.189 | 1.775 |
+
+Two load-time defects were fixed and are reflected above:
+
+1. Automatic prompt-graph width divided the *remaining* device memory by the expected
+   resident state count. A single request owns one arena, so that conflated two budgets
+   and rejected the 128-lane graph. `crates/backend/cuda/src/loading/mod.rs` now bounds
+   the width by the profiled arena budget only. Measured effect: `qwen3vl-2b` selects
+   128 lanes and its 507-token TTFT falls from a 0.0835 s median to 0.0542 s (1.54x)
+   with no 27B regression.
+2. The CUDA prefill chunk stayed at the generic 64-token runtime default even when the
+   captured graph was wider, and a chunk wider than the graph adds replays without
+   helping. `crates/service/cli/src/support/serving.rs` now sets the logical chunk from
+   the backend's reported `prefill_width`. The chunk size itself is **not** a lever:
+   a 64/128/192/256 sweep on `qwen3vl-2b` moved the 507-token TTFT by under 3%.
+
+The 27B is unchanged by both fixes because its prompt graph is already width 64 and the
+profiled arena budget cannot fund 128 lanes at 0.88 utilization. Its dominant gap is
+per-chunk prompt throughput:
+
+- A 64-token prompt replay measures ~47.7 ms, of which linear projections are 26.1 ms
+  (496 nodes, ~52.6 us each), the GDN `Delta` op is 15.7 ms (48 nodes, ~327 us each,
+  48 CTAs per replay), and all elementwise/attention traffic is the remainder.
+- 19.1 GB of weights are read exactly once per replay, so the memory-bandwidth floor is
+  10.7 ms. Measured effective bandwidth is 0.69–0.71 TB/s (38–40% of the 1.79 TB/s
+  device peak) and compute is ~1.6% of the dense BF16 peak: the gap is grid parallelism,
+  not redundant weight traffic. The same kernels at two row blocks (32-lane prefill)
+  reach 1.17 TB/s, and the slot-verify graph at 12 lanes is 27.7 ms against the same
+  10.7 ms floor.
+- The 27B `long` TTFT is therefore ~9.4 us per prompt token against vLLM's ~1.3 us.
+
+A fresh 12-lane `slot_verify` profile (99 replays, batch4) reproduces the same shape
+and attributes the 27.28 ms median replay:
+
+| Bucket | ms / replay | Share | Notes |
+|---|---:|---:|---|
+| linear | 17.55 | 64% | 497 nodes; 19.1 GB of weights read once, 1.09 TB/s |
+| delta | 3.45 | 13% | 48 nodes, 12 per-lane launches each |
+| conv | 2.25 | 8% | 48 nodes, per-lane |
+| norm | 0.84 | 3% | 161 nodes |
+| attention | 1.25 | 5% | 16 nodes |
+| add / multiply / rope / silu / gated_norm / split / sigmoid | 1.92 | 7% | per-lane elementwise |
+| embedding | 0.02 | — | |
+
+The linear bucket carries the replay and runs at 1.09 TB/s against a 10.7 ms
+weight-only floor at the device's 1.79 TB/s. Forward projections use a `[16, 64]`
+output tile, so a 12-lane replay has exactly one row block and the grid is bounded by
+`N / 64` (288 CTAs for `N = 18432`) with a 40-to-136-step dependent K loop per CTA;
+the whole-replay bottleneck is CTA count and K-chain depth, not bytes. A 4-request
+step measures a 47.3 ms median wall (p10 46.5, p90 48.8) against vLLM's ~21.7 ms,
+with 2.29 accepted tokens per request per step.
+
+Concretely, the next lever is split-K for the small-M activation-quantized
+projections, reusing `gemm::nvfp4_split`/`gemm::reduce_split` and the
+`PREFILL_SPLIT_K` partial-sum pattern that the prompt path already validates. It must
+be scoped by measured CTA count, because the record already notes that broad NVFP4
+split-K dispatch regressed other shapes. A second, independent lever is batching the
+per-lane `Conv`/`Delta`/`Norm`/`Rope` verification nodes over the verify lanes, which
+is 9.95 ms of per-replay launches.
+
+#### Split-K is measured and rejected for the target graph (2026-10-08)
+
+A split-K twin of the FP8 projection kernel was implemented and measured in isolation:
+`fp8_gemm::kernels::matmul_split` plus `reduce_split`, splitting the K loop across four
+CTAs. The kernel-level evidence is a **clean win**, and the ignored regression test
+`fp8_small_m_split_k_preserves_values_and_measures_better` reproduces it (paired CUDA
+events, cold L2, 12 rows):
+
+| Geometry | Unsplit | Split-K | Speedup | Worst relative gap |
+|---|---:|---:|---:|---:|
+| 12x17408x5120 | 0.0655 ms | 0.0370 ms | **1.77x** | 0.0 |
+| 12x18432x5120 | 0.0702 ms | 0.0383 ms | **1.83x** | 0.0 |
+
+Wired into the production dispatch for the narrow-row activation-quantized path, the
+same change **regressed the measured serving case**: the 27B `batch4` wall moved from a
+1.55 s median (unsplit) to a 2.75 s median with split-K, a 1.8x regression, and was
+reverted. So a kernel that wins its microbenchmark by 1.8x lost end to end by 1.8x.
+
+The reason is that the target graph is not a GEMM benchmark: a K-split adds a second
+kernel and a partials round trip, and the replay's non-GEMM traffic (quantization
+barriers, per-lane `Conv`/`Delta`/`Norm`, snapshot copies) does not shrink. This is the
+concrete form of the warning already recorded below: a kernel-level speedup does not
+imply a serving improvement. Do not re-attempt split-K here without an end-to-end
+serving measurement first, and do not treat the isolated result as a pending win.
+
+The L2/partial traffic also scales with the output width, which is large for the target
+graph (`N` up to 18432), unlike the prompt path where the split-K windows are small.
 
 ### P1 — Separate target kernels from graph-external work
 

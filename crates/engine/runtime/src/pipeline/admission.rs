@@ -169,6 +169,16 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     ) {
         match result {
             Ok(()) => {
+                let workload = self.host.requests.get(id).map_or_else(
+                    || "unknown".to_owned(),
+                    |record| format!("{:?}", record.request.workload),
+                );
+                tracing::info!(
+                    target: "infer::request",
+                    request = id.get(),
+                    workload = %workload,
+                    "request accepted"
+                );
                 if let Some(parent) = parent.filter(TraceContext::valid)
                     && self
                         .observations
@@ -185,6 +195,13 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     /// Retain cold-stage rejection evidence even when no runtime record was admitted.
     pub fn record_admission_rejection(&mut self, id: RequestId, error: &Error) {
+        tracing::warn!(
+            target: "infer::request",
+            request = id.get(),
+            code = ?error.code,
+            "request rejected: {}",
+            error.message
+        );
         self.event(
             EventKind::Rejected,
             ObjectKind::Request,

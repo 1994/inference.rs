@@ -16,6 +16,7 @@ infer-models.workspace = true
 infer-runtime.workspace = true
 infer-observe.workspace = true
 serde.workspace = true
+tracing.workspace = true
 serde_json.workspace = true
 axum.workspace = true
 tokio.workspace = true

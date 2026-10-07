@@ -21,6 +21,10 @@ mod serving;
 pub use engine::*;
 mod json;
 pub use json::*;
+mod logging;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+pub use logging::human_bytes;
+pub use logging::{flush as flush_logs, init as init_logging};
 #[cfg(any(
     target_os = "macos",
     feature = "test-backends",

@@ -4,6 +4,7 @@ mod weights;
 pub use kv_scales::load as load_kv_scales;
 mod bindings;
 mod budget;
+mod phase;
 use crate::{
     device::CudaDevice,
     resident::{DeviceProgram, ProgramWeights},
@@ -97,6 +98,8 @@ pub struct LoadedModel {
     vision: Option<LoadedVision>,
     imported: infer_spi::ImportedModel,
     mtp_depth: usize,
+    /// Whether the prompt graph width was chosen automatically at load time.
+    automatic_prefill: bool,
     tuning: TuningReport,
     requirements: infer_ir::CapabilityRequirements,
 }
@@ -186,6 +189,18 @@ impl LoadedModel {
     pub(crate) fn draft_graph(&self) -> Option<&DataflowGraph> {
         self.draft.as_ref().map(|draft| &draft.graph)
     }
+
+    /// Effective graph widths and speculation depth after automatic resolution.
+    #[must_use]
+    pub fn execution_profile(&self) -> infer_ir::ExecutionProfileInspection {
+        infer_ir::ExecutionProfileInspection {
+            prefill_width: self.weights.prefill_width,
+            batch_width: self.weights.batch_width,
+            mtp_depth: self.mtp_depth,
+            automatic_prefill: self.automatic_prefill,
+            arena_budget_bytes: self.profile.arena_budget_bytes(),
+        }
+    }
     /// # Errors
     /// Rejects unsupported formats, invalid policies, budgets or CUDA loading errors.
     pub fn open(
@@ -198,7 +213,15 @@ impl LoadedModel {
         // Query hardware once: the profile keys machine-local tuning artifacts and derives the
         // device budget policy, so no per-model or per-board table needs maintaining here.
         let profile = device.profile()?.clone();
-        let mut package = QuantizedPackage::open(root, id)?;
+        let package_phase = phase::Phase::start(
+            "package",
+            format!(
+                "reading checkpoint metadata from {}",
+                root.as_ref().display()
+            ),
+        );
+        let mut package = QuantizedPackage::open(root, id).map_err(|e| package_phase.fail(&e))?;
+        package_phase.finish();
         options.fp8_kv =
             Some(options.fp8_kv.unwrap_or_else(|| {
                 package.kv_cache_dtype == Some(infer_models::TensorDtype::F8E4m3)
@@ -216,11 +239,16 @@ impl LoadedModel {
                     && !weights.input_scales.contains_key(id)
             })
         {
-            let arena_budget = profile.arena_budget_bytes().min(
-                device.memory_info()?.0
-                    / u64::try_from(profile.resident_states())
-                        .map_err(|_| Error::invalid("resident state count"))?,
-            );
+            let geometry_phase =
+                phase::Phase::start("geometry", "resolving the prompt graph width");
+            // The prompt graph width is a per-request decision bounded by the profile's
+            // activation-arena budget. Dividing the remaining device memory by the
+            // expected resident state count conflates two different budgets: a single
+            // request only ever owns one arena, and `CudaBackend` still admits states
+            // against the real byte budget. The conservative division rejected the
+            // 128-lane graph; selecting it cuts a 507-token prompt's TTFT from 0.0835 s
+            // to 0.0542 s on the measured device.
+            let arena_budget = profile.arena_budget_bytes();
             // Quantized recurrent graphs keep the scalar Delta path for numerical
             // stability. Limit their prompt graph size while sharing projection loads.
             let recurrent_limit = if package
@@ -248,9 +276,18 @@ impl LoadedModel {
                     break;
                 }
             }
+            tracing::info!(
+                target: "infer::load",
+                prefill_width = weights.prefill_width,
+                "prompt graph width selected"
+            );
+            geometry_phase.finish();
         }
         let requirements = package.imported.requirements.clone();
-        let vision = LoadedVision::bind(&device, &mut package)?;
+        let vision_phase = phase::Phase::start("vision", "binding the vision tower");
+        let vision =
+            LoadedVision::bind(&device, &mut package).map_err(|e| vision_phase.fail(&e))?;
+        vision_phase.finish();
         let imported = package.imported.clone();
         Ok(Self {
             device,
@@ -262,6 +299,7 @@ impl LoadedModel {
             vision,
             imported,
             mtp_depth,
+            automatic_prefill,
             tuning,
             requirements,
         })

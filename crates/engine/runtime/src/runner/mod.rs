@@ -152,6 +152,7 @@ pub struct RunnerTicket {
 pub struct ThreadedBackend<B: BackendProvider> {
     recycled: infer_gpu_api::Producer<Recycled>,
     recipe: Option<infer_ir::StateRecipe>,
+    execution_profile: Option<infer_ir::ExecutionProfileInspection>,
     jobs: mpsc::SyncSender<Job>,
     submissions: infer_gpu_api::Producer<infer_gpu_api::BatchLease>,
     completions: infer_gpu_api::Consumer<infer_gpu_api::BatchLease>,
@@ -288,6 +289,7 @@ where
         let program = Arc::new(program);
         let runner = Self {
             recipe: backend.state_recipe().cloned(),
+            execution_profile: backend.execution_profile(),
             recycled,
             resources: infer_spi::ResourcePool::new(
                 config

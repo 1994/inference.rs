@@ -62,6 +62,13 @@ pub struct RuntimeInspection {
     pub pending_cost_observations: usize,
     pub preemptions: u64,
     pub kv_cache: Option<KvCacheInspection>,
+    /// Effective scheduler chunk budgets; a benchmark can prove the logical prompt chunk
+    /// instead of inferring it from the captured graph width.
+    #[serde(default)]
+    pub scheduler: infer_ir::SchedulerConfig,
+    /// Effective load-time graph geometry and speculation depth.
+    #[serde(default)]
+    pub execution_profile: Option<infer_ir::ExecutionProfileInspection>,
     pub queues: infer_scheduler::QueueInspection,
     pub cpu: crate::CpuRuntimeInspection,
 }

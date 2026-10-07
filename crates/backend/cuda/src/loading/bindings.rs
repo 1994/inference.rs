@@ -1,4 +1,4 @@
-use super::{Draft, LoadOptions, Projection, floats};
+use super::{Draft, LoadOptions, Projection, floats, phase};
 use crate::mlp::ProjectionWeight;
 use crate::tuning::{TilingSource, TuningReport, resolve_table, shipped_table, table_path};
 use crate::{
@@ -32,6 +32,10 @@ pub(super) fn load(
     };
     let mut tuning = TuningReport::default();
     let mut weights = empty_weights(options);
+    let weights_phase = phase::Phase::start(
+        "weights",
+        format!("binding {} checkpoint weights", package.weights.len()),
+    );
     bind_tensors(
         device,
         profile,
@@ -39,7 +43,9 @@ pub(super) fn load(
         &tuning_source,
         &mut tuning,
         &mut weights,
-    )?;
+    )
+    .map_err(|e| weights_phase.fail(&e))?;
+    weights_phase.finish();
     add_rope(
         device,
         &package.graph,
@@ -47,17 +53,23 @@ pub(super) fn load(
         &package.imported.model.position,
     )?;
     if options.fp8_kv == Some(true) {
-        weights.kv_scales = super::kv_scales::load(package)?;
+        let kv_phase = phase::Phase::start("kv_scales", "uploading KV scales");
+        weights.kv_scales = super::kv_scales::load(package).map_err(|e| kv_phase.fail(&e))?;
+        kv_phase.finish();
     }
     let draft = if options.mtp_depth > 0 {
-        Some(draft(
+        let draft_phase = phase::Phase::start("draft", "binding the MTP draft head");
+        let draft = draft(
             device,
             profile,
             package,
             &weights,
             &tuning_source,
             &mut tuning,
-        )?)
+        )
+        .map_err(|e| draft_phase.fail(&e))?;
+        draft_phase.finish();
+        Some(draft)
     } else {
         None
     };
@@ -111,6 +123,13 @@ fn bind_tensors(
         .filter(|n| n.op == TensorOp::Embedding)
         .map(|n| n.inputs[0])
         .collect();
+    let total = package
+        .graph
+        .tensors
+        .iter()
+        .filter(|tensor| matches!(tensor.storage, TensorStorage::Weight { .. }))
+        .count();
+    let mut done = 0;
     for tensor in package.graph.tensors.clone() {
         let TensorStorage::Weight { slot } = tensor.storage else {
             continue;
@@ -159,6 +178,15 @@ fn bind_tensors(
                 .constants
                 .insert(tensor.id, device.upload(values, &[length])?);
         }
+        done += 1;
+        tracing::debug!(
+            target: "infer::load",
+            done,
+            total,
+            bytes = source.data.bytes,
+            item = source.data.name.as_str(),
+            "weight bound"
+        );
     }
     Ok(())
 }

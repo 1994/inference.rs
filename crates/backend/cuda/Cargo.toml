@@ -21,6 +21,7 @@ infer-compiler.workspace = true
 infer-kernel-api.workspace = true
 infer-workloads.workspace = true
 serde.workspace = true
+tracing.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

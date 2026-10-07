@@ -46,6 +46,21 @@ pub struct ExecutionStats {
     #[serde(default)]
     pub kv_cache: Option<KvCacheInspection>,
 }
+/// Effective load-time execution choices, reported so a benchmark can prove which graph
+/// geometry and speculation depth actually ran instead of restating the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileInspection {
+    /// Token rows one captured prompt graph processes per replay.
+    pub prefill_width: usize,
+    /// Candidate rows one captured verification graph processes per replay.
+    pub batch_width: usize,
+    /// Resolved multi-token-prediction depth.
+    pub mtp_depth: usize,
+    /// Whether the prompt graph width came from automatic device policy.
+    pub automatic_prefill: bool,
+    /// Activation arena budget the prompt width was validated against.
+    pub arena_budget_bytes: u64,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvCacheInspection {
     /// Pages retained by submitted device copies until their completion fence.

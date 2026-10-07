@@ -206,6 +206,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 successful,
             },
         };
+        log_finish(&completed);
         r.completed = Some(completed.clone());
         self.resources_changed()?;
         if self.preemption_focus == Some(id) {
@@ -289,5 +290,31 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             self.tenants.remove(record.request.qos.tenant.as_str());
         }
         Ok(record.completed)
+    }
+}
+
+/// Report a finished request with the measurement an operator reads: how many tokens were
+/// produced and how long the request took end to end.
+fn log_finish(completed: &CompletedRequest) {
+    let measurement = &completed.measurement;
+    if measurement.successful {
+        tracing::info!(
+            target: "infer::request",
+            request = completed.request.get(),
+            reason = ?completed.reason,
+            output_tokens = measurement.output_tokens,
+            ttft_us = measurement.ttft_us,
+            e2e_us = measurement.e2e_us,
+            "request finished"
+        );
+    } else {
+        tracing::warn!(
+            target: "infer::request",
+            request = completed.request.get(),
+            reason = ?completed.reason,
+            output_tokens = measurement.output_tokens,
+            e2e_us = measurement.e2e_us,
+            "request finished unsuccessfully"
+        );
     }
 }

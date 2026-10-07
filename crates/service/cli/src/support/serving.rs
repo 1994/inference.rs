@@ -5,8 +5,8 @@ use infer_kernel_api::KernelRegistry;
 use infer_runtime::RuntimeConfig;
 use infer_spi::BackendProvider;
 
-/// Logical CUDA prefill chunk; the backend selects smaller captured kernel batches.
-const CUDA_PREFILL_CHUNK_TOKENS: usize = 256;
+/// Fallback logical CUDA prefill chunk when the backend does not report graph geometry.
+const CUDA_PREFILL_CHUNK_TOKENS: usize = 64;
 
 pub fn derive_config(
     config: &mut RuntimeConfig,
@@ -27,9 +27,18 @@ pub fn derive_config(
     )?;
     config.workspace_bytes = program.workspace_bytes.max(1);
     if capabilities.backend_kind() == infer_ir::BackendKind::Cuda {
-        // The backend subdivides this logical chunk to its selected kernel width.
-        config.scheduler.prefill_chunk_tokens =
-            CUDA_PREFILL_CHUNK_TOKENS.min(config.max_num_batched_tokens);
+        // One logical chunk costs one captured prompt graph replay: a chunk wider than the
+        // captured graph is wasted work, and a graph wider than the chunk never runs. Ask
+        // the backend for the width it resolved at load and hand the scheduler exactly
+        // that, instead of leaving the generic 64-token default in place.
+        let width = backend
+            .execution_profile()
+            .map_or(CUDA_PREFILL_CHUNK_TOKENS, |profile| profile.prefill_width)
+            .max(1);
+        config.scheduler.prefill_chunk_tokens = config.scheduler.prefill_chunk_tokens.max(width);
+        config.max_num_batched_tokens = config
+            .max_num_batched_tokens
+            .max(config.scheduler.prefill_chunk_tokens);
     }
     config.max_input_tokens = config.max_input_tokens.min(model.max_sequence);
     // Cold graph capture can take as long as a device submission. The generic resource

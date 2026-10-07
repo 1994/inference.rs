@@ -105,6 +105,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             pending_cost_observations: self.pending_cost_observations.len(),
             preemptions: self.host.requests.values().map(|r| r.preemptions).sum(),
             kv_cache: self.backend.kv_cache(),
+            execution_profile: self.backend.execution_profile(),
+            scheduler: self.config.scheduler.clone(),
             queues: self.host.queues.inspect(),
             cpu: crate::CpuRuntimeInspection {
                 config: self.config.cpu.clone(),

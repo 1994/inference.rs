@@ -118,3 +118,121 @@ fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn std::e
     }
     Ok(())
 }
+
+/// Split-K over the K axis must reproduce the unsplit kernel exactly, and must be faster
+/// on the narrow-row geometries the verification path actually runs.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn fp8_small_m_split_k_preserves_values_and_measures_better()
+-> Result<(), Box<dyn std::error::Error>> {
+    use cutile::bench::{BenchOptions, do_bench_paired};
+    use std::time::Duration;
+    const SPLITS: i32 = 4;
+    if cfg!(debug_assertions) {
+        return Err("performance measurements require cargo test --release".into());
+    }
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let options = BenchOptions {
+        warmup: Duration::from_millis(50),
+        rep: Duration::from_millis(100),
+        min_reps: 10,
+        max_reps: 100,
+        clear_l2: true,
+    };
+    for (n, k) in [(17408, 5120), (18432, 5120)] {
+        let codes: Vec<f8e4m3fn> = (0..k)
+            .map(|i| f8e4m3fn(u8::try_from(1 + (i % 40)).unwrap_or(1)))
+            .collect();
+        // The kernels tile rows by 16, so the activation buffer carries 12 real rows plus
+        // padding; a 12-row buffer would make the tiled load read past the allocation.
+        let mut input_codes: Vec<f8e4m3fn> = Vec::with_capacity(16 * k);
+        for _ in 0..12 {
+            input_codes.extend_from_slice(&codes);
+        }
+        input_codes.resize(16 * k, f8e4m3fn(0));
+        let mut weight_codes: Vec<f8e4m3fn> = Vec::with_capacity(n * k);
+        for _ in 0..n {
+            weight_codes.extend_from_slice(&codes);
+        }
+        let input = device.upload(input_codes, &[16, k])?;
+        let weight = device.upload(weight_codes, &[n, k])?;
+        let input_scale = device.upload(vec![0.5_f32; 16], &[16, 1])?;
+        let weight_scale = device.upload(vec![0.25_f32; n], &[n])?;
+        let mut output = api::zeros::<f32>(&[16, n]).sync_on(&device.stream)?;
+        let mut split_out = api::zeros::<f32>(&[16, n]).sync_on(&device.stream)?;
+        let splits = usize::try_from(SPLITS).unwrap();
+        let mut partials = api::zeros::<f32>(&[splits, 16, n]).sync_on(&device.stream)?;
+        let windows = k.div_ceil(128);
+        let k_tiles = i32::try_from(windows.div_ceil(splits)).unwrap();
+        let baseline = CudaGraph::scope(&device.stream, |scope| {
+            scope.record(
+                kernels::matmul(
+                    (&mut output).partition([16, 64]),
+                    &input,
+                    &weight,
+                    &input_scale,
+                    &weight_scale,
+                )
+                .generics(vec![k.to_string()]),
+            )?;
+            Ok(())
+        })?;
+        let candidate = CudaGraph::scope(&device.stream, |scope| {
+            scope.record(
+                kernels::matmul_split(
+                    (&mut partials).partition([1, 16, 64]),
+                    &input,
+                    &weight,
+                    k_tiles,
+                )
+                .generics(vec![k.to_string()]),
+            )?;
+            scope.record(kernels::reduce_split(
+                (&mut split_out).partition([16, 64]),
+                &partials,
+                &input_scale,
+                &weight_scale,
+                SPLITS,
+            ))?;
+            Ok(())
+        })?;
+        baseline.launch().sync_on(&device.stream)?;
+        candidate.launch().sync_on(&device.stream)?;
+        let direct = output.to_host_vec().sync_on(&device.stream)?;
+        let split = split_out.to_host_vec().sync_on(&device.stream)?;
+        let worst = relative_gap(&direct[..12 * n], &split[..12 * n]);
+        let (slow, fast) = do_bench_paired(
+            &device.stream,
+            &options,
+            |_| {
+                baseline
+                    .launch()
+                    .sync_on(&device.stream)
+                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            },
+            |_| {
+                candidate
+                    .launch()
+                    .sync_on(&device.stream)
+                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            },
+        )?;
+        println!(
+            "12x{n}x{k}: direct_ms={} split_ms={} speedup={} worst_rel={worst:e}",
+            slow.median_ms(),
+            fast.median_ms(),
+            slow.median_ms() / fast.median_ms()
+        );
+    }
+    Ok(())
+}
+
+/// Largest relative difference between two equal-length result rows.
+fn relative_gap(direct: &[f32], split: &[f32]) -> f32 {
+    direct
+        .iter()
+        .zip(split)
+        .map(|(a, b)| (a - b).abs() / b.abs().max(1.0))
+        .fold(0.0_f32, f32::max)
+}

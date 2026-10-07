@@ -35,6 +35,8 @@ infer-frontdoor.workspace = true
 infer-agent.workspace = true
 tokio.workspace = true
 mimalloc.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [[bin]]
 name = "infer"

@@ -91,6 +91,12 @@ Optional flags override these choices, for example `infer /path/to/model --liste
 
 Automatic sizing and measured tile selection do not guarantee optimal end-to-end performance for every device, model, or workload. Performance changes must still pass the benchmark gates; MTP remains opt-in until its benefit is established for the workload.
 
+### Logs
+
+Startup and request logs go to stderr through `tracing`, so a command's JSON result on stdout stays parseable. At the default `info` level the log reports the device and derived budget, the parameters in effect, the identified model and its payload, every load phase with its duration, and one line per HTTP request with status and latency. Engine events cover the request lifecycle (`request accepted`, `request finished` with token count, TTFT and end-to-end time), so a request can be followed without a profiler.
+
+Set `INFER_LOG` (or `RUST_LOG`) to change the level or filter by target, for example `INFER_LOG=infer=debug` adds per-weight load progress and finer engine detail, and `INFER_LOG=infer::load=debug` keeps it to loading.
+
 The server exposes native HTTP/SSE routes and a subset of the OpenAI API. See the [development guide](docs/guides/development.md) for CLI commands and memory budgets, and the [OpenAI API guide](docs/guides/openai-api.md) for supported routes and parameters.
 
 ## Testing and packaging

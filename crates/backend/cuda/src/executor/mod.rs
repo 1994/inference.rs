@@ -111,6 +111,13 @@ impl CudaBackend {
         )
     }
 
+    /// Effective load-time choices, so a benchmark report can prove which graph widths and
+    /// speculation depth actually ran instead of restating the request.
+    #[must_use]
+    pub fn execution_profile(&self) -> infer_ir::ExecutionProfileInspection {
+        self.loaded.execution_profile()
+    }
+
     /// # Errors
     /// Rejects an empty state limit/budget or unavailable device attributes.
     pub fn new(loaded: LoadedModel, state_budget: u64, maximum_states: usize) -> Result<Self> {

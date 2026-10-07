@@ -143,7 +143,7 @@ impl SelectedBackend {
             }
             #[cfg(all(target_os = "linux", feature = "cuda"))]
             Self::Cuda(b) => {
-                serde_json::json!({"kind":"cuda-resident", "execution":"synchronous", "capabilities":b.capabilities(), "state_pool":b.pool_inspection()})
+                serde_json::json!({"kind":"cuda-resident", "execution":"synchronous", "capabilities":b.capabilities(), "state_pool":b.pool_inspection(), "profile":b.execution_profile()})
             }
         }
     }
@@ -323,6 +323,16 @@ impl BackendProvider for SelectedBackend {
     }
     fn weight_backed_dataflow(&self) -> bool {
         forward!(self, weight_backed_dataflow)
+    }
+    fn execution_profile(&self) -> Option<infer_ir::ExecutionProfileInspection> {
+        match self {
+            #[cfg(all(target_os = "linux", feature = "cuda"))]
+            Self::Cuda(b) => Some(b.execution_profile()),
+            #[cfg(feature = "test-backends")]
+            Self::Reference(_) | Self::Host(_) => None,
+            #[cfg(target_os = "macos")]
+            Self::Metal(_) => None,
+        }
     }
     fn capabilities(&self) -> DeviceCapabilities {
         forward!(self, capabilities)
