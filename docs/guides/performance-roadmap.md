@@ -265,7 +265,24 @@ projection.
 
 If it holds, the fix is to widen the M tile so one row block covers all 64 prompt rows,
 which would remove the repeat passes; `QUANT_GEMM_TILE = [16, 64]` is the constant to
-change and `nvfp4_gemm::tests` plus the serving gate are the checks. It also finally gives
+change and `nvfp4_gemm::tests` plus the serving gate are the checks.
+
+**Attempted and blocked by a wider coupling than the constant.** Raising
+`QUANT_GEMM_TILE` to `[64, 64]` fails at launch with
+`output partition shape mismatch. Expected [16, 64], got [64, 64]`, because the tile
+height is hardcoded in the kernels, not read from the constant. Parameterizing
+`nvfp4_gemm::kernels::packed` as `packed<K, M>` and threading `M` through its generics
+compiles and is correct, but the *same* fp8 twin
+(`nvfp4_gemm/workspace.rs::record_fp8` -> `kernels::matmul`, whose accumulator is
+`Tile<f32, { [16, 64] }>`) carries its own hardcoded `[16, 64]` and fails on the same
+launch for the 8-bit attention projections, which are 233 of the 497 Linear nodes.
+
+So the change is a coordinated edit across both quantized pipelines plus their tests, not
+a one-constant tweak, and it was reverted rather than half-applied. The experiment is
+worth one dedicated round: parameterize `matmul` as `matmul<K, M>` the same way, update
+`record_fp8`, and run `nvfp4_gemm::tests`, `fp8_gemm::tests` and the serving gate. The
+mechanism above predicts a 2x-class gain on the 27B prompt path if the row-block reading
+is the cause, against a measured 505 GB/s vs 947 GB/s on identical weights. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
