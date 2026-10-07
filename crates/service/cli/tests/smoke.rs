@@ -58,6 +58,8 @@ fn cuda_remains_primary_and_explicit_unavailable_backend_does_not_fallback() {
     assert!(report["backends"].get("host").is_none());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
     let output = Command::new(binary)
+        // Make the unavailable-device case deterministic even on GPU hosts.
+        .env("CUDA_VISIBLE_DEVICES", "-1")
         .args(["--backend", "cuda", "run", "--package"])
         .arg(root.join("qwen-hybrid-tiny"))
         .arg("--requests")
@@ -65,9 +67,17 @@ fn cuda_remains_primary_and_explicit_unavailable_backend_does_not_fallback() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let error = String::from_utf8(output.stderr).unwrap();
-    assert!(error.contains("Unsupported"), "{error}");
-    assert!(error.contains("CUDA"), "{error}");
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    let expected_code = if cfg!(all(target_os = "linux", feature = "cuda")) {
+        "Backend"
+    } else {
+        "Unsupported"
+    };
+    assert_eq!(error["code"], expected_code, "{error}");
+    assert!(
+        output.stdout.is_empty(),
+        "failed backend must not emit results"
+    );
     for backend in ["metal", "cuda"] {
         let output = Command::new(binary)
             .args(["--backend", backend, "verify"])
