@@ -2,7 +2,6 @@
 
 - 状态：采用
 - 日期：2026-10-07
-- 设计项：SPI-002 / MODEL-001
 
 ## 背景
 
@@ -28,6 +27,6 @@
 - 新增模型 = 实现 `ModelProvider` + 在组合根注册；核心分派、绑定时序与预算校验不改。未知架构的报错直接指明扩展点。一个 omni 家族的模态、精度偏好、草稿头与命名都在同一个 `import` 里声明，见 `registry.rs` 的 `an_omni_family_converges_every_customization_into_one_import`。
 - provider 负责自己的配置解析与 HF 张量命名，因此命名差异（前缀、共享 head、MTP 槽位）不再泄漏进通用包层；MTP 前缀与融合投影名来自 `SpeculationPlan`，CUDA 侧不再硬编码 `mtp.fc.weight`。
 - `architectures()` 是静态列表，没有通配或正则；一个配置只被一个 provider 认领，重叠必须在注册期解决。
-- 模型声明的 `modalities` 目前用于上报与门禁判断；多模态编码器图的执行（`ModalityProvider`/`FusionProvider`）仍未实现，因此 omni 模型现在能失败得清楚，但还不能跑图像/音频。
-- 保留 `pub type QwenPackage = ModelPackage;` 兼容别名供外部调用迁移；仓库内加载路径已统一为 `ModelPackage`。Metal GPU 执行仍需在 macOS 验证。
+- 模态声明不自动赋予后端执行能力；图像编码与服务调度需分别验收，当前范围见[图像指南](../guides/vision.md)。
+- 保留 `pub type QwenPackage = ModelPackage;` 兼容别名供外部调用迁移；仓库内加载路径已统一为 `ModelPackage`。各后端需独立通过设备验收。
 - 仍未做：动态加载（C ABI/WASM）与从独立 crate 分发模型；当前扩展点在编译期组合。新增模型的操作步骤见[新增模型指南](../guides/adding-a-model.md)。

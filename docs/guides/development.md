@@ -8,7 +8,7 @@
 cargo build --locked --release -p infer-cli
 ```
 
-默认构建只包含 `auto` / `cuda` / `metal` 后端，`auto` 不会回退到 CPU。本机 CPU 对照需要显式启用 feature：
+默认构建提供 Metal 路径；Linux CUDA 需要 `cargo build --locked --release -p infer-cli --features cuda` 和 [CUDA 环境](../../crates/backend/cuda/README.md)。`auto` 只选择已启用且可用的 GPU，不会回退到 CPU。本机 CPU 对照需要显式启用 feature：
 
 ```sh
 cargo build --locked -p infer-cli --features test-backends
@@ -104,7 +104,7 @@ target/release/infer --backend metal benchmark --package examples/qwen-hybrid-ti
 - checkpoint 要求 quiescent 状态；restore 会校验 schema、weights/program/provider 身份与物理数据，协议见[请求生命周期](../architecture/request-lifecycle.md)。
 - journal 截断不可视为完整记录，回放会报告 dropped。
 - `benchmark` 为 closed 测量；`compare` 用正确性、goodput 与 P99 约束评估候选。
-- 固定到达 HTTP 验证由 `make check-metal` 执行，测量范围见[验证记录](../validation/index.md)。
+- 固定到达 HTTP 验证由 `make check-metal` 执行，测量范围见[质量门禁](quality-gates.md)。
 
 ## 仓库约定
 

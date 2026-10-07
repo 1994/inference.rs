@@ -204,4 +204,4 @@ let quantized = QuantizedPackage::open_with(&registry, root, ModelId::ONE)?;
 - 配置字段一律按可选处理：导出器常把未设置字段写成 `null`（注册表的 hints 解析已如此）。
 - provider 不拥有设备内存与 kernel；它只产出 IR、声明与命名映射。设备分配仍在 backend，编译仍在 `infer-compiler`。
 - `modalities` 既用于上报与门禁，也驱动真实执行：CUDA 后端按声明绑定视觉塔（`LoadedModel::vision`），图像经预处理、塔编码与占位符合并进入 resident 路径。未声明的模态、缺失的占位符、占位符与编码数量/位置不匹配、编码宽度不符都会返回 `Unsupported`/`InvalidInput`，不会静默按纯文本运行；视频/音频编码器仍是缺口。
-- 动态加载（C ABI/WASM）与从独立 crate 分发模型属于后续工作，见 [ADR-0003](../adr/0003-model-providers.md)、[实现状态](../design/status.md)。
+- 动态加载（C ABI/WASM）与从独立 crate 分发模型属于后续工作，见 [ADR-0003](../adr/0003-model-providers.md)、[能力边界](../architecture/backends.md)。

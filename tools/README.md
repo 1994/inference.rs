@@ -15,8 +15,13 @@
 | `fixtures` | [requirements.txt](fixtures/requirements.txt) | 参考导出环境的固定依赖 |
 | `bench/cpu` | [Cargo.toml](bench/cpu/Cargo.toml) | 隔离的 release 分配计数与协议测量，通过 `make check-cpu` 运行 |
 | `bench` | [cuda-baseline.sh](bench/cuda-baseline.sh) | CUDA 投影基线采集，用法见 [CUDA 性能指南](../docs/guides/cuda-performance.md) |
+| `bench` / `attention` | [attention.sh](bench/attention.sh) | 原生 attention 与 Candle 的独立数值、性能门禁 |
+| `bench` | [check-cuda-service.py](bench/check-cuda-service.py)、[mtp-ab.py](bench/mtp-ab.py) | CUDA 服务与 MTP A/B 验证；参数见 `--help` |
+| `bench` | [safe-run.sh](bench/safe-run.sh) | GPU 验证任务的内存限额与互斥保护 |
+| `vision` | [图像指南](../docs/guides/vision.md) | 官方参考导出、预处理、视觉塔与端到端 parity |
+| `package` | [package.py](package/package.py) | 根 build.rs 契约、Zig 编译、归档与验收，见 [打包指南](../docs/guides/packaging.md) |
 
-服务检查依赖已构建的 CLI，参数通过各脚本的 `--help` 查看。参考模型导出示例见[微型模型说明](../examples/qwen-hybrid-tiny/README.md)；CPU 基准的计数范围见 [CPU 验证](../docs/validation/cpu.md)。
+服务检查依赖已构建的 CLI，参数通过各脚本的 `--help` 查看。参考模型导出示例见[微型模型说明](../examples/qwen-hybrid-tiny/README.md)；CPU 基准的计数范围见 [CPU 性能测量](../docs/guides/cpu-performance.md)。
 
 ```sh
 python3 tools/check/clean-artifacts.py --dry-run   # 预览将被删除的生成输出
@@ -24,5 +29,3 @@ make clean-artifacts                              # 实际删除
 ```
 
 清理会移除历史验收输出、调试日志与可重建的 golden Python 环境，但保留文档链接的证据及其 summary 日志、顶层模型文件与模型 / tokenizer 包。参考导出环境按样例说明重新创建；普通 Rust / Metal 验证直接使用已提交的 golden。
-
-`package/`：调用根 build.rs 契约与 cargo-zigbuild 的 Linux/CUDA、macOS/Metal 跨平台 release 编译、归档完整性校验和解压后验收，由根 Makefile 调用。

@@ -1,6 +1,6 @@
 # Linux 与 CPU 放置
 
-Linux 是首要生产平台。本页说明线程放置、NUMA 配置和硬件门禁；CUDA 执行器的实现范围见[实现状态](../design/status.md)。
+Linux 是首要生产平台。本页说明线程放置、NUMA 配置和硬件门禁；CUDA 执行器的实现范围见[能力边界](../architecture/backends.md)。
 
 ## 放置配置
 
@@ -39,4 +39,4 @@ make check-linux-numa  # Linux 硬件测试，需要允许 NUMA 策略与 move_p
 
 `check-linux` 覆盖原生绑核、非法 cpuset 拒绝、失败恢复与 owner 启动，要求安装 `x86_64-unknown-linux-gnu` target（跨编译不执行 Linux 测试）。`check-linux-numa` 验证 Bind/Prefer 的实际线程策略、scope 失败恢复、worker 策略，以及匿名新映射首次触碰后每页的实际 NUMA 节点；它用 `move_pages` 的查询模式读取驻留位置，不迁移页面。容器 seccomp / 权限禁止相关 syscall、内存不足或驻留不符都会使专项门禁失败。
 
-这两个硬件测试在普通 CI 中标记为 `ignored`，必须由目标机器上的专项门禁执行；跨编译成功不代表 NUMA 验收通过。验收应保存日志、进程 cpuset、GPU PCI/NUMA 与 CPU 拓扑，并核对真实引擎池的页面驻留、迁核次数、CPU P99 与 goodput。当前本机证据范围见 [CPU 验证](../validation/cpu.md)。
+这两个硬件测试在普通 CI 中标记为 `ignored`，必须由目标机器上的专项门禁执行；跨编译成功不代表 NUMA 验收通过。验收应保存日志、进程 cpuset、GPU PCI/NUMA 与 CPU 拓扑，并核对真实引擎池的页面驻留、迁核次数、CPU P99 与 goodput。当前本机证据范围见 [CPU 性能测量](cpu-performance.md)。

@@ -1,43 +1,45 @@
 # 文档导航
 
-## 指南
+文档说明当前接口、操作方法与能力边界。实现细节以源码为准，命令参数以 `--help` 为准。
+
+## 使用与开发
 
 | 文档 | 内容 |
 |---|---|
-| [开发与运行](guides/development.md) | 构建、CLI 命令、HTTP/SSE、checkpoint 与测量 |
-| [模型执行](guides/model-execution.md) | 模型包格式、权重加载、prefill / decode |
-| [新增模型](guides/adding-a-model.md) | ModelProvider 契约、注册表与接入步骤 |
-| [OpenAI 兼容接口](guides/openai-api.md) | `/v1` 路由、参数与错误约定 |
-| [Linux 与 CPU 放置](guides/linux.md) | cpuset / NUMA 配置与硬件门禁 |
-| [质量门禁](guides/quality-gates.md) | 检查项、工具版本与执行入口 |
-| [CUDA 性能基线与调优](guides/cuda-performance.md) | cuTile 基线复现、指标分层与调优规则 |
+| [开发与运行](guides/development.md) | 构建、CLI、HTTP/SSE、checkpoint 与测量 |
+| [构建与打包](guides/packaging.md) | Zig 平台矩阵、归档、校验与 GitHub CI |
+| [模型执行](guides/model-execution.md) | 模型包、权重、prefill/decode |
+| [新增模型](guides/adding-a-model.md) | ModelProvider、执行图与注册 |
+| [图像模型](guides/vision.md) | 视觉塔、MRoPE、独立参考与支持限制 |
+| [OpenAI 兼容接口](guides/openai-api.md) | 路由、参数与错误约定 |
+| [Linux 放置](guides/linux.md) | cpuset、NUMA 与硬件验收 |
+
+## 测试与性能
+
+| 文档 | 内容 |
+|---|---|
+| [质量门禁](guides/quality-gates.md) | 本地/CI 检查、Attention 对照与验收要求 |
+| [CPU 性能测量](guides/cpu-performance.md) | 分配计数、延迟与测量范围 |
+| [CUDA 性能测量](guides/cuda-performance.md) | 算子/模型/服务基线、能力探针与调优 |
+| [工具导航](../tools/README.md) | 门禁、参考导出与基准入口 |
 
 ## 架构
 
 | 文档 | 内容 |
 |---|---|
-| [代码布局](architecture/layout.md) | 目录职责、依赖方向与推理调用链 |
-| [Runtime](architecture/runtime.md) | 执行流水线、故障排空与观测边界 |
-| [调度](architecture/scheduling.md) | 队列、准入、批次选择与成本模型 |
-| [请求生命周期](architecture/request-lifecycle.md) | 阶段、状态提交、取消与恢复 |
+| [代码布局](architecture/layout.md) | 职责、依赖方向、模型与 kernel 边界 |
+| [Runtime](architecture/runtime.md) | 执行流水线、故障与观测 |
+| [CPU 资源协议](architecture/cpu-runtime.md) | owner、队列、内存、fence 与回收 |
+| [调度](architecture/scheduling.md) | 就绪队列、准入与成本模型 |
+| [请求生命周期](architecture/request-lifecycle.md) | 状态提交、取消与恢复 |
 | [KV Manager](architecture/kv-manager.md) | 页所有权、StateRecipe、COW 与 prefix |
-| [Backend](architecture/backends.md) | 设备能力分组、选择与新增后端 |
-| [Agent](architecture/agent.md) | JSON-RPC 控制面、命令与配置实验 |
+| [Backend](architecture/backends.md) | 设备能力、选择、扩展与支持限制 |
+| [Agent](architecture/agent.md) | JSON-RPC 诊断与配置实验 |
+| [架构决策](adr/README.md) | 已采纳决策及其理由 |
 
-## 设计、状态与验证
+## 维护约定
 
-| 文档 | 内容 |
-|---|---|
-| [技术方案](design/technical-plan.md) | 总体目标、模块契约与验收标准 |
-| [性能路线](design/performance-plan.md) | 现状解剖、分阶段优化与对照 vLLM 的判定 |
-| [CPU Runtime 设计](design/cpu-runtime.md) | Owner、队列、内存与性能预算 |
-| [实现状态](design/status.md) | 已实现能力与剩余缺口 |
-| [NVIDIA 目标](design/nvidia-targets.md) | H200 / RTX 5090 的精度与优化策略 |
-| [验证记录](validation/index.md) | 已验证范围与复现方式 |
-| [CPU 验证](validation/cpu.md) | 分配计数范围与延迟测量 |
-
-## 架构决策
-
-已采纳的决策记录见 [ADR 索引](adr/README.md)。
-
-> 设计文档描述目标，架构文档描述当前实现，指南提供操作步骤，验证记录说明测量边界；运行日志与原始报告输出到 `artifacts/`，不随仓库发布。
+- 使用方法写入指南，跨模块契约写入架构；同一事实只在一个主文档维护，其余链接引用。
+- 文档跟随代码更新，不保留会话交接、逐轮进度、过时计划、待办清单和重复状态总表；历史通过 Git 查询。
+- 原始日志、临时报告和 profiler 输出放入 `artifacts/`；可复用的机器可读基线与数据集定义放入 `benchmarks/`。保留验收门槛与已知限制，不把单机实验写成通用性能承诺。
+- 删除或移动文档时修复链接，并运行 `python3 tools/check/layout.py`。

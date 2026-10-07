@@ -42,4 +42,4 @@ Restore 校验当前 schema、精确 weights/program/backend、workload/cost/adm
 
 Journal 保留 Submit / Tick / Quiesce / Cancel / Drain / CostFeedback 与调用方单调时钟。回放使用记录中的成本输入；历史截断会报告 dropped。异步 GPU 由哪个 tick 观察到可能变化，因此输出语义与控制记录分别核验。
 
-物理页、prefix 与 restore 的安全条件见 [KV Manager](kv-manager.md)，线程与确认协议见 [CPU 设计](../design/cpu-runtime.md)。
+物理页、prefix 与 restore 的安全条件见 [KV Manager](kv-manager.md)，线程与确认协议见 [CPU 设计](cpu-runtime.md)。

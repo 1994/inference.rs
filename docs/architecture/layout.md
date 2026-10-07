@@ -89,7 +89,7 @@ prefill / decode 适配保留在 `runtime/src/stages`，runner 管理 backend �
 
 ## 文档与工具
 
-`docs/guides` 放操作说明，`docs/architecture` 放当前实现，`docs/design` 放目标与差距，`docs/validation` 放测量范围，`docs/adr` 放架构决策。模型样例与测试资产归 `examples`，生成日志、报告与负载结果归 `artifacts`。
+`docs/guides` 放操作、测量方法与验收边界，`docs/architecture` 放当前实现契约，`docs/adr` 放已采纳的架构决策。模型样例与测试资产归 `examples`，可复用基线归 `benchmarks`，生成日志、临时报告与负载结果归 `artifacts`；不另设过程计划或会话进度目录。
 
 `tools/check` 是统一门禁与架构规则，`tools/validation` 是服务与负载验证，`tools/fixtures` 是独立参考导出，`tools/bench/cpu` 是隔离的分配测量 crate；`tools/attention` 保存独立正确性 oracle 和性能判定，`tools/bench/attention` 是隔离的 Candle 基线 crate。`Makefile` 与 CI 调用同一门禁入口。
 

@@ -1,6 +1,6 @@
 # 质量门禁
 
-所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV 与依赖安全结果。
+所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV、依赖安全与四平台打包结果，见 [打包指南](packaging.md)。
 
 ## 检查项
 
@@ -11,10 +11,10 @@
 | 长度与复杂度 | `too_many_lines` ≤ 100、`cognitive_complexity` ≤ 25，不允许调高阈值 |
 | 数值常量 | `crates/*/*/src` 生产代码里的数字字面量必须写成带 `///` 说明的具名常量；白名单 `0`/`1`/`2`、数组下标、`const`/`static` 定义、字符串与字符字面量、注释、`#[cfg(test)]`/`#[cutile::module]` 段以及测试文件除外 |
 | 错误路径 | 生产代码禁止 `unwrap` / `expect` / `panic` / `todo` / `unimplemented` / `dbg` 与忽略 `Result` |
-| unsafe | 默认 `deny`；仅 OS 放置 FFI、Metal device FFI 与隔离的 benchmark allocator 开放，并说明安全条件 |
-| Feature 隔离 | 默认 CLI / IR / workspace 与 `--all-features` 分别构建；生产依赖图不含 CPU 执行器 |
+| unsafe | 默认 `deny`；仅经局部安全证明的 OS/设备 FFI、CUDA PDL 与隔离的 benchmark allocator 开放，并说明安全条件 |
+| Feature 隔离 | 默认 CLI / IR / workspace 与显式 `infer-cli/test-backends` 分别构建；CUDA 在打包和硬件门禁单独启用，生产依赖图不含 CPU 执行器 |
 | 编译与文档 | release 构建、unit / integration / doctest、独立 golden、Rustdoc 警告失败 |
-| CPU | release 协议、KV primitives、Engine tick 分配门禁，范围见 [CPU 验证](../validation/cpu.md) |
+| CPU | release 协议、KV primitives、Engine tick 分配门禁，范围见 [CPU 性能测量](cpu-performance.md) |
 | MSRV | Rust 1.90 检查 workspace（不含 CUDA）与隔离的 CPU benchmark |
 | 依赖 | frozen lockfile；advisory / yanked、license / source allowlist、重复与通配版本、闲置声明 |
 | 凭证 | Gitleaks 扫描源码；在 Git 仓库中另扫历史 |
@@ -102,3 +102,9 @@ make check
 - Metal 间接依赖 `block 0.1.6` 有已知 future-incompatibility 报告，作为上游迁移项保留，不用全局 `RUSTFLAGS` 隐藏。
 - 测试代码允许 `unwrap` / `expect` / `panic` 用于断言，helper 仍返回 `Result`；其他数值或接口例外需在局部说明。
 - 可选的官方 tokenizer parity 测试通过 `INFER_QWEN_TEXT_PACKAGE` 指向外部包，普通 CI 使用仓库内微型资产。
+
+## 验收口径
+
+能力声明需要分别提供执行、正确性、benchmark、profiling、observability 与 Agent 证据。编译成功、微型 golden 或单个 kernel 通过，只证明相应范围。性能未达门槛时保留失败结论，不通过放宽误差或删掉慢形状放行。
+
+Attention 当前保留的设备结果为 `review`，详见 [CUDA 性能指南](cuda-performance.md#通用-attention-对照)。GPU 与 NUMA 专项检查必须在对应硬件运行；hosted CI 上传的包仍保留 `gpu_inference_accepted: false`。

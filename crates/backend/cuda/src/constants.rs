@@ -63,7 +63,7 @@ mod device {
     /// Decode slots captured into the shared continuous-batching graph. Four lanes cover the
     /// concurrency the admission budget grants on the reference device (`resident_states`
     /// floor is 4) without baking more state copies than traffic can occupy; retune only
-    /// against the §4 concurrency measurement in docs/design/continuous-batching-plan.md.
+    /// with the service-level memory and concurrency checks in docs/guides/cuda-performance.md.
     /// **Must equal `FUSED_VERIFY_LANES`**: slot decode reuses the 3-lane fused
     /// shared-weight GEMV (`linear_batch::batched` is hardcoded to three lanes plus
     /// padding), which is what makes a batched replay read weights once.

@@ -13,7 +13,7 @@ rustup target add aarch64-unknown-linux-gnu
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ```
 
-需要仓库指定的 Rust、Python 3.12+、Git 和 Zig。本次实测 cargo-zigbuild 0.23.4 / Zig 0.16.0。`setup-build` 不替换系统 Zig；可通过 `CARGO_ZIGBUILD_ZIG_PATH` 选择已有版本。依赖和 ABI 机制见 [cargo-zigbuild 官方说明](https://github.com/rust-cross/cargo-zigbuild)。
+需要仓库指定的 Rust、Python 3.12+、Git 和 Zig。CI 使用 cargo-zigbuild 0.23.4 / Zig 0.16.0。`setup-build` 不替换系统 Zig；可通过 `CARGO_ZIGBUILD_ZIG_PATH` 选择已有版本。依赖和 ABI 机制见 [cargo-zigbuild 官方说明](https://github.com/rust-cross/cargo-zigbuild)。
 
 | TARGET | 平台 | 生产 feature |
 |---|---|---|
@@ -76,30 +76,12 @@ make accept PACKAGE_FILE=/path/to/infer-....tar.gz \
 
 异构宿主、缺失模型/golden、设备不支持均报错。CUDA 继续通过 `safe-run.sh` 的内存和互斥保护运行，需要 systemd user session；Metal 直接运行。打包不自动修改 `gpu_inference_accepted: false`，不把未执行的检查写成通过。完整 Rust 门禁与 attention 性能仍分别执行 `make check-rust` / `make check-attention`。
 
-## 本轮证据
-
-Linux x86_64 宿主已通过 Zig 生成 x86_64 与 AArch64 两种 CUDA ELF。两者的 ELF 版本需求检查均为最高 `GLIBC_2.28`；这描述主程序的直接符号需求，不能替代目标系统、驱动和运行时动态加载库的兼容性验收。AArch64 未在本机执行；macOS 本机缺少 SDK，已验证预检明确拒绝，不声明已产出 Metal 包。
-
 ## GitHub CI
 
-`.github/workflows/ci.yml` runs on pushes, pull requests, merge queues and manual
-requests. Rust checks run on Ubuntu 24.04 and macOS 15. Formatting, Clippy, unit
-and golden tests, MSRV, tooling and security must pass before packaging starts.
-The hosted quality checks explicitly enable test backends without enabling CUDA
-through the CLI; CUDA-enabled compilation is covered by the package matrix.
+[工作流](../../.github/workflows/ci.yml) 在 push、pull request、merge queue 和手动触发时运行。Rust 检查覆盖 Ubuntu 24.04 与 macOS 15；格式、Clippy、单元/golden、MSRV、工具和安全检查全部通过后才开始打包。
 
-The package matrix builds Linux CUDA for x86_64 and AArch64 (glibc 2.28), plus
-macOS Metal for Apple Silicon and Intel. Linux installs CUDA 13.2 development
-headers without installing a GPU driver. Both platforms use Python 3.12,
-Zig 0.16.0 and the Makefile's pinned cargo-zigbuild version. macOS uses the
-runner's Xcode SDK. `make package` runs the target checks, builds the release
-binary, verifies the archive and executes native CLI smoke tests; cross-target
-executables receive static checks and are not executed on the host.
+打包矩阵为 Linux CUDA x86_64 / AArch64（glibc 2.28）和 macOS Metal Apple Silicon / Intel。Linux 安装 CUDA 13.2 开发头文件，无需 GPU driver；macOS 使用 runner 的 Xcode SDK。两者使用 Python 3.12、Zig 0.16.0 和 Makefile 固定的 cargo-zigbuild。
 
-Successful matrix jobs upload archives, SHA256SUMS and manifests as GitHub Actions
-artifacts for 14 days. The final `quality-gate` also requires every package job to
-pass, and should be the required branch-protection check. CI does not create a
-GitHub Release. Hosted package checks do not establish GPU correctness or
-performance: manifests retain `gpu_inference_accepted: false`. Real GPU acceptance
-uses `make accept`; CUDA/Metal device checks and the Candle attention performance
-gate remain explicit hardware runs with their existing thresholds.
+`make package` 执行目标检查、release 构建和归档校验；与宿主同架构时执行 CLI 冒烟，交叉目标只做编译和静态检查。成功后上传归档、SHA256SUMS 和 manifest，保留 14 天，不自动创建 GitHub Release。
+
+最终 `quality-gate` 要求所有质量检查和打包项通过，可用作分支保护的必需检查。hosted CI 不证明真实 GPU 的正确性或性能，manifest 保留 `gpu_inference_accepted: false`。设备验收使用 `make accept`、`check-cuda` / `check-metal` 和独立的 Candle attention 门禁。

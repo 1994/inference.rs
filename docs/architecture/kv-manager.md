@@ -13,7 +13,7 @@ KV 管理分为 scheduler 的逻辑页预算和 backend owner 的物理页 / 私
 | `pin` / `release` | GPU copy / reader 期间保留；最后一个 fence 与引用归零后可回收 |
 | `inspect` / `check_owners` | 冷路径核对 unique block、refcount、generation、owner 与 cache |
 
-lease 为 `(OwnerId, index, generation)`，跨池、旧 generation 和重复确认都会被拒绝。pool owner 不可 clone，页表使用设备 `u32` index。逻辑增页是批次事务：物理编码失败时回滚新增 lease 与页表；已发布的设备操作保留其 pin 直到 fence。引用计数校验使用固定 marker，append / COW 使用常驻 lease scratch。分配证据范围见 [CPU 验证](../validation/cpu.md)。
+lease 为 `(OwnerId, index, generation)`，跨池、旧 generation 和重复确认都会被拒绝。pool owner 不可 clone，页表使用设备 `u32` index。逻辑增页是批次事务：物理编码失败时回滚新增 lease 与页表；已发布的设备操作保留其 pin 直到 fence。引用计数校验使用固定 marker，append / COW 使用常驻 lease scratch。分配证据范围见 [CPU 性能测量](../guides/cpu-performance.md)。
 
 ## StateRecipe 与预算
 
@@ -38,4 +38,4 @@ active 与 cache 可以共享同一块，容量按 unique block 统计；pinned 
 
 quiescent checkpoint 冷读回实际状态并记录共享页关联；恢复时先校验身份、shape、有限值、容量、generation 与 payload 一致性，再创建新池，同一共享页只分配一次。失败保留现有状态；prefix cache 与 debug history 不作为恢复缓存。
 
-当前物理分配与淘汰的 owner 位于 backend。统一到 scheduler 决策 ledger、异构状态组、分层 offload 与远程 PD transfer 的目标见[实现状态](../design/status.md)。
+当前物理分配与淘汰的 owner 位于 backend。统一到 scheduler 决策 ledger、异构状态组、分层 offload 与远程 PD transfer 的目标见[能力边界](backends.md)。

@@ -1,6 +1,6 @@
-# CPU Runtime 设计
+# CPU 控制与资源生命周期
 
-本文规定 GPU 引擎的 CPU 控制、准备、提交与交付契约。实现范围见[实现状态](status.md)，分配与延迟证据见 [CPU 验证](../validation/cpu.md)。
+本文说明 GPU 引擎的 CPU 控制、准备、提交与交付契约。具体执行器能力见 [Backend](backends.md)，计量范围见 [CPU 性能测量](../guides/cpu-performance.md)。
 
 ## Owner 与线程预算
 
@@ -108,30 +108,3 @@ Metal 的 shared/private storage 遵守 UMA 读写与完成契约，共享地址
 owner 有进展时处理有限工作，无工作时根据通知或 deadline park。等待前 arm、重读 wake epoch 与 lane，避免 lost wake。callback 只更新预留的原子状态并唤醒；adaptive poll 与短 spin 有预算，其延迟计入 completion detection。
 
 Linux 在继承的 cpuset 内选择不同物理核，先设置 NUMA 策略再初始化/first touch，并报告实际放置；macOS 只承诺 QoS/affinity hint。部署规则见 [Linux 指南](../guides/linux.md)。
-
-## 性能验收目标
-
-条件：R=1024、32 tenants、B=64、K≤256、增量 decode、预热完成、无 probe 与详细 trace；大词表 sampling 单独统计。
-
-| 阶段 | 初始 P99 CPU service 预算 |
-|---|---:|
-| control/index/planning/lease | 40µs |
-| metadata/token/page delta | 15µs |
-| completion/output descriptor | 15µs |
-| device apply/driver launch | 15µs |
-| host notification/handoff | 15µs |
-
-直接测量 host critical path P99 ≤ 100µs 与纯 CPU 完整 cycle ≥ 10k/s；不能把阶段分位数相加推算整体 P99。受控 GPU batch 为 2ms 时，CPU 引起的 idle 应 ≤ 5%，并额外 sweep 0.25/0.5/1/2/5ms。
-
-```text
-Tperiod ≥ max(Cowner, Csubmit, transfer/device critical path)
-decode_tokens/s ≤ Bdecode / Tperiod
-```
-
-该下界只适用于独立工作流水线；同一请求的 completion→sampling→commit→launch 依赖需要直接测 TPOT 与 idle gap。容量规划初始利用率 ≤ 70%，用开放到达实验校准；平均 Little 定律不能推导 P99。
-
-验收覆盖 R=1/64/1024/8192、B=1/16/64、context=1K/16K/上限、prefix/COW/页耗尽、集中 deadline、取消风暴与慢 output。并发测试覆盖 lost wake、满队列、ABA、乱序/重复 completion 与安全排空；Metal 验证数值和真实 fence，5090 验证 pinned/graph/overlap。指定硬件运行性能门槛，普通 CI 保持确定性的分配、协议与正确性门槛。
-
-开放到达报告从计划时刻计算延迟，列出拒绝、queue age、资源排空、CPU/RSS、cpuset、线程数、版本与 seed。观测与 Agent 查询在冷 snapshot 上执行，并报告 trace gap、snapshot age 与观测 A/B 开销。
-
-流水线参考固定版本的 [vLLM EngineCore](https://github.com/vllm-project/vllm/blob/d61081dc3d3f1740a5d8bf82608b62974393c2de/vllm/v1/engine/core.py) 与 [SGLang scheduler](https://github.com/sgl-project/sglang/blob/35f3c96ff4794a4de15daf12caad371084a037ee/python/sglang/srt/managers/scheduler.py)。线程拆分、SPSC 与使用 Rust 本身都不构成性能达标证据。

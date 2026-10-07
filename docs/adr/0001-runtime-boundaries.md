@@ -2,7 +2,6 @@
 
 - 状态：采用
 - 日期：2026-10-04
-- 设计项：ARCH-001 / CORE-001 / SPI-001 / PROGRESS-001
 
 ## 背景
 
@@ -22,4 +21,4 @@
 
 依赖边界允许更换 backend、workload 与策略，静态执行减少热路径解析与动态查找。代价是新增状态或扩展必须提供资源与生命周期合约，并增加编译、验证与恢复的复杂度。
 
-实现上先按职责建立可执行模块，具体依赖出现后再细拆 crate，避免为空能力创建占位工程。Python/WASM、协议与分布式编排留在外围。生产 Supported 的六项验收规则见[技术方案](../design/technical-plan.md)，当前完成度见[实现状态](../design/status.md)。
+实现上先按职责建立可执行模块，具体依赖出现后再细拆 crate，避免为空能力创建占位工程。Python/WASM、协议与分布式编排留在外围。生产 Supported 的六项验收规则见[质量门禁](../guides/quality-gates.md)，当前完成度见[能力边界](../architecture/backends.md)。

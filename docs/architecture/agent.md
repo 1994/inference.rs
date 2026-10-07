@@ -59,4 +59,4 @@ JSON-RPC 2.0：通知不回复，显式 `id:null` 才回复；batch 按输入顺
 - 每侧上限为 30 秒或一百万 tick，最多 256 个请求。
 - 结果保存 ExperimentId、workload SHA256、配置、测量、正确性与接受 / 拒绝原因。
 
-代码制品实验、自动性能根因、远程 adapter、持久化与 counters 的剩余范围见[实现状态](../design/status.md)。
+当前实验只比较运行时配置，不执行代码制品变更。自动性能根因、远程 adapter、持久实验仓库与硬件 counters 不属于当前接口支持范围。

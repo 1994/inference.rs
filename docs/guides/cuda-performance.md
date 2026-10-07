@@ -1,55 +1,60 @@
-# CUDA 性能基线与调优
+# CUDA 性能测量与调优
 
-cuTile Rust 算子已有可复现的 BF16 投影基线；完整 CUDA 执行器尚未接入，因此当前数字只描述算子和同步提交流程，不代表模型吞吐。
+CUDA 执行器使用原生 Rust/cuTile kernel 和设备驻留图。测量按算子、执行图、模型和服务分层；算子加速不能替代完整模型数值、状态与服务验收。构建要求见 [CUDA 后端](../../crates/backend/cuda/README.md)。
 
-## 复现基线
+## 投影基线
 
 ```sh
 mkdir -p artifacts
 bash tools/bench/cuda-baseline.sh 17408 5120 artifacts/cuda-baseline
 ```
 
-脚本默认使用 release profile（可用 `CUDA_BASELINE_PROFILE=dev` 改为 debug），输出目录必须尚不存在。它会保存二进制与源码 SHA-256、工具链、构建日志、GPU 前后快照和原始样本。本机需要按 [CUDA 后端说明](../../crates/backend/cuda/README.md)设置 `CUDA_TOOLKIT_PATH` 与 `BINDGEN_EXTRA_CLANG_ARGS`。
+输出目录必须尚不存在。脚本默认使用 release，保存二进制与源码 SHA256、工具链、构建日志、设备快照和原始样本。矩阵尺寸应取自模型投影清单；`cuda-baseline --catalog /path/to/model` 只解析元数据，不执行完整模型。
 
-`cuda-baseline ROWS COLUMNS` 使用 Rust / cuTile 执行 BF16 权重、F32 输入与累加的 decode GEMV。权重与输入为可复现的合成数据；每个候选先逐元素对照独立 CPU 点积，再进入测量。矩阵尺寸可以直接取自模型投影清单。
+BF16 GEMV 候选先对照独立 CPU 点积，再用 CUDA events 测量。A/B 交替、预热、冷 L2 与原始样本的具体参数由工具记录。这条同步投影基线包含分配、清零和提交成本，不能标成裸 kernel 时间。已有可复用测量数据见 [基线目录](../../benchmarks/baselines/README.md)。
 
-测量使用 CUDA events，A/B 逐次交替；每组至少 30 次、最多 100 次，预热预算 100 ms、测量预算 500 ms，每次测量前清理 L2，第一次 JIT 不计入。JSON 保留双方原始样本、中位数、矩阵尺寸、dtype 与 tile 参数。
+## 模型与服务
 
-## 当前结果
+```sh
+cargo build --locked --release -p infer-backend-cuda --features cuda \
+  --example cuda-model-smoke
+bash tools/bench/safe-run.sh target/release/examples/cuda-model-smoke \
+  /path/to/model '只输出17乘23的结果。' 32 \
+  --device-graph --prefill-batch 32 --mtp 0 --thinking false --temperature 0
+```
 
-`17408 × 5120` BF16 投影的 release 独立复测：
+模型诊断入口与生产 CLI 服务分别验收。服务运行方式见 [开发指南](development.md)，服务与 MTP 对照工具见 [工具导航](../../tools/README.md)。固定模型、prompt、seed、采样和输出长度；比较 MTP 开关时核对完整 token 序列、接受率、拒绝后的 KV/recurrent state 回滚、EOS 与容量边界。
 
-| 配置 | 中位数 |
-|---|---:|
-| 4 × 128 | 0.187120 ms |
-| 16 × 256 | 0.130672 ms（1.432×） |
+| 层级 | 必须区分的指标 |
+|---|---|
+| 单算子 | 数值误差、dtype、shape、预分配范围、CUDA event 延迟 |
+| 执行图 | 捕获/JIT、首次运行、稳态 replay、主机提交、prefill/decode/draft/verify |
+| 完整模型 | TTFT、TPOT、有效 tokens/s、峰值显存、MTP 接受率 |
+| 并发服务 | 到达率、并发、拒绝/取消、P95/P99、满足 SLO 的 goodput |
 
-详见 [release 复测原始样本](../../benchmarks/baselines/rtx5090-release-confirmation.json)。该结果不能外推到其他形状、量化类型或完整模型。更早的 debug 记录与宽归约搜索见 [baseline 说明](../../benchmarks/baselines/README.md)。
+`safe-run.sh` 默认限制任务主机内存为 32 GiB、禁用任务 swap，并要求限额之外保留至少 16 GiB 可用内存；`--memory-gib` 可降低限额。报告与 profiler 输出放在 `artifacts/`，不写入使用文档作为逐轮日志。
 
-注意：当前数字包含输出分配、清零、同步提交以及可能的主机提交间隙，不是孤立的 kernel 时间；合成 BF16 矩阵不能代表 FP8/NVFP4 模型吞吐。debug 与 release、冷缓存与热缓存的结果必须分别保存，不可混合比较。
+## 通用 Attention 对照
 
-## 指标分层
+`make check-attention` 将原生实现与隔离的 Candle FP16/BF16 基线比较。它同时限制数值误差、完整流程、核心调用、逐形状延迟、P95 与跨轮稳定性，详细契约见 [质量门禁](quality-gates.md#通用-attention-门禁)。
 
-| 层级 | 指标 | 状态 |
-|---|---|---|
-| 同步投影调用 | 中位数、原始样本、A/B 比率、数值误差 | 已实现 BF16 基线 |
-| 单算子 | 预分配缓冲、GPU event 耗时、带宽、寄存器与 spill | 待实现 |
-| 执行图 | Graph replay、主机提交、prefill / decode / MTP 分项 | 待实现 |
-| 完整模型 | TTFT、TPOT、吞吐、峰值显存、MTP 接受率 | 待完整执行器 |
+保留的验收结论：2026-10-07 RTX 5090 / CUDA 13.4.92 / Candle 0.11.0，31 个用例、5 轮测量中，完整流程几何平均加速约 1.25×，核心调用约 0.69×；长序列退化，结果为 `review`（非零退出），性能未放行。加速比为 Candle 耗时 / 原生耗时。原生补偿 F32 与 Candle FP16/BF16 的精度契约不同；该结果不能外推其他设备，也不能用完整流程收益掩盖核心退化。
 
-## 代码边界
+## 能力与精度
 
-模型适配通过 `ProjectionCatalog` 从实际模型绑定提取逻辑尺寸、存储类型、量化编码与 MTP 标记，不依赖 CUDA；`LinearStrategy` 提供合法 tile 候选；设备层负责形状校验、内存与 launch；kernel 只实现数学运算。
+设备能力由 driver 查询，模型 provider 声明 `PrecisionPolicy`，加载时选择合法存储和计算路径。支持原生 FP4 与支持某个高效 Tensor Core tile 是两件事；数值通过也不证明编译器生成了预期指令。NVFP4→BF16 加载转换不会恢复原始权重精度，并会增加显存需求。Hopper 转换路径不等于已完成 H200 实机验收。
 
-当前 Qwen 包含 168 个 NVFP4、233 个 FP8 与 104 个浮点投影矩阵，其中 8 个浮点矩阵属于 MTP。相同尺寸但 dtype、阶段或量化语义不同的投影需要独立调优。`--catalog` 只解析元数据，不代表完整模型可执行。
+NVFP4 lowering 探针为 `cuda-mma-probe`，用 `tools/bench/inspect-cutile-cache.py` 检查 cubin/SASS；固定设备上的能力证据保存在 `benchmarks/capabilities/`。变更 tile 或工具链需重做数值、lowering 与性能验证。
 
-## 调优验收规则
+MLP 的 `MlpConfig.pdl` 默认关闭，仅控制 SiLU×up → down projection 依赖边。生产者 signal 必须依赖 store token，消费者 load 必须依赖 wait token，graph 保持缓冲区生命周期；具体安全证明在 `mlp/pdl.rs` 与 `mlp/pdl_consumers.rs`。显式启用前校验工具链和架构，使用 `cuda-mlp-check --pdl` 验证。正确性通过不代表已证明 PDL 加速。
 
-1. 保留默认配置作为对照；候选必须先校验数值、非整除维度和状态语义。
-2. 使用模型实际的 shape 与 dtype，分别覆盖 prefill、decode、MTP draft / verify。
-3. 记录 GPU、驱动、Toolkit、Rust / cuTile、代码版本、构建模式与模型指纹。
-4. 搜索结束后另做独立 A/B 复测，不能把搜索中的最快一次直接设为默认。
-5. 先用 Nsight 定位带宽、occupancy、spill 或提交瓶颈，再选择融合、Tensor Core、持久化执行或 CUDA Graph，并记录每次修改的正确性与性能证据。
-6. 完整模型需要固定输入与 seed，比较 MTP 开关前后的输出和吞吐，并覆盖拒绝 draft 后的 KV / recurrent state 回滚。算子加速比不能替代这些验收。
+## 调优规则
 
-共享桌面 GPU 上的波动结果不作为通用阈值，未经独立复测的配置不声明为最优。调优缓存键至少包含 GPU 架构、kernel 版本、dtype、shape、布局和执行阶段；键不一致时回退基线配置。
+1. 候选先校验独立参考、尾块、非整除维度与状态语义，再测量。
+2. 按实际 dtype、shape、layout、执行阶段和设备测量；prefill、decode、MTP 不共享未经验证的性能结论。
+3. 记录代码、二进制、设备、驱动、Toolkit、构建模式、模型与输入指纹；冷/热缓存和 debug/release 分开。
+4. 搜索结束后独立 A/B 复测，不能用最快一次样本替换默认实现。
+5. 用 profiler 定位访存、提交、occupancy 或 spill，再决定融合与流水化；功能边界由通用 API 保持。
+6. 解码 slot 数与 KV 容量改变会影响常驻显存、准入与并发，必须连同完整服务负载重测。
+
+投影自动 tile 选择与缓存规则见 [CUDA 后端](../../crates/backend/cuda/README.md#自动-tile-选择)。缓存匹配不能替代工具链或 kernel 变更后的回归验证。

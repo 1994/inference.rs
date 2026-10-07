@@ -1,6 +1,6 @@
 # Backend 能力与扩展
 
-正式设备架构为 NVIDIA CUDA 与 Metal；CPU Host / Reference 位于 `testing/cpu`，只在 `test-backends` feature 下启用。平台目标与实现缺口见[实现状态](../design/status.md)。
+正式设备架构为 NVIDIA CUDA 与 Metal；CPU Host / Reference 位于 `testing/cpu`，只在 `test-backends` feature 下启用。具体路径的限制见下文。
 
 ## 能力与目录
 
@@ -17,7 +17,7 @@
 
 ## 选择与隔离
 
-发布版提供 `--backend auto|cuda|metal`：`auto` 按 CUDA → Metal 选择已实现且可用的设备，无可用设备时返回 Unsupported；当前 CUDA 执行器未实现，显式选择同样返回 Unsupported。测试 CPU 不进入 `auto` 与 supported catalog。
+发布版提供 `--backend auto|cuda|metal`：`auto` 按 CUDA → Metal 选择已实现且可用的设备，无可用设备时返回 Unsupported。CUDA 需要显式启用 `cuda` feature，并通过设备与模型能力检查。测试 CPU 不进入 `auto` 与 supported catalog。
 
 `ModelIr` / `DataflowGraph` 描述共有语义，`KernelRegistration` / `ExecutionProgram` 绑定 backend。编译与执行都会校验能力、精度、kernel 与 program target；更换 backend 需要重新编译，checkpoint 不能直接跨 backend 恢复。
 
@@ -37,3 +37,18 @@ shared storage 用于 CPU / device 可见数据，private storage 用于设备�
 2. 实现编译、权重上传、状态报价 / recipe、资源确认、submit / poll 与 fence / reader 契约。
 3. 注册匹配目标的 kernel，并通过独立数值、状态 invariance、取消 / 排空与跨 owner 拒绝测试。
 4. 接入 CLI catalog、硬件门禁、profile 与原始性能报告；未经过实机执行的能力保持明确的 Unsupported。
+
+## CUDA 与支持限制
+
+CUDA provider 已接入 CLI/HTTP，执行设备驻留图、状态/图复用、受限连续解码批处理与贪心 MTP。provider 当前同步执行；批处理受 slot、KV 容量和请求兼容性约束，不能视作任意模型或批次均可融合。模型提供 topology、draft 和精度策略；设备侧选择 kernel 与融合，调度不依赖具体实现。
+
+| 范围 | 当前限制 |
+|---|---|
+| Attention | 通用 dense F32、padded head ≤256；paged/量化 KV、MLA 与稀疏/线性 attention 不属于该 provider 的覆盖范围。Candle 性能门禁未放行，见 [测量指南](../guides/cuda-performance.md) |
+| CUDA 执行 | 同步 provider；尚无通用异步多 compute flight、全设备采样或完整生产 SLO 验收。cuTile 运行时 JIT 需要相应工具链，非完整 AOT 制品 |
+| 精度与设备 | 按能力及 `PrecisionPolicy` 选择；Hopper 的 NVFP4→BF16 转换不代表 H200 实机已验收。`check-cuda` 含 Blackwell FP4 检查，不能作为所有 CUDA 设备统一通过的证明 |
+| 模型与模态 | 内置 provider 与算子覆盖有限，不保证任意 HF 包可运行。图像使用专用示例，Engine/Scheduler 多模态调度、视频/音频及完整 DeepStack 路径未覆盖 |
+| 状态与扩展 | 物理分配/淘汰 owner 仍在 backend；跨 GPU、远程 PD、offload 和动态 C ABI/WASM 加载不属于当前支持范围 |
+| 性能 | CPU 分配门禁只覆盖指定路径，不代表全进程零分配；单模型/单设备实验不能代表通用 P99 或吞吐达标 |
+
+模型扩展见 [新增模型](../guides/adding-a-model.md)，CUDA 工具链与执行入口见 [CUDA README](../../crates/backend/cuda/README.md)。服务协议限制见 [OpenAI API](../guides/openai-api.md)，诊断能力见 [Agent](agent.md)。

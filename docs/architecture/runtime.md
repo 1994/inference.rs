@@ -11,7 +11,7 @@ preparation → resource quote/reserve → ready queues → plan/validate
 ```
 
 - `SchedulerOwner` 单写请求、队列和逻辑状态；`DeviceSubmitOwner` 单写 device/context、物理 buffer 与 ticket。
-- preparation、output、delivery、collector 与 query 使用有界独立执行单元。Tokio 处理网络等待，长期 owner 使用普通线程，具体协议见 [CPU 设计](../design/cpu-runtime.md)。
+- preparation、output、delivery、collector 与 query 使用有界独立执行单元。Tokio 处理网络等待，长期 owner 使用普通线程，具体协议见 [CPU 设计](cpu-runtime.md)。
 - `Engine::tick_into` 先处理完成与 control，再推进资源、规划和提交。GPU 在途期间可构造独立请求的 provisional N+1 plan；提交前重新检查 ready / resource / cost / config epoch。
 - 当前设备 compute depth 为 1，一个批次内可以有多个请求。
 - 资源报价与 Reserve / Reset / Prefix / Release 通过 typed command/reply pool 协调。满队列保留意图并重试，确认身份后才提交状态。
@@ -41,4 +41,4 @@ preparation → resource quote/reserve → ready queues → plan/validate
 
 HTTP 接收 W3C version 00 `traceparent`，非法值忽略。OTLP JSON 表达已保留的 request span，cursor 按 Engine session 隔离；导出格式不等于已实现网络 exporter 或重试。backend timing 区分 CPU encoding、CPU wall 与 GPU command 三类时间。
 
-接口见[开发指南](../guides/development.md)，源码关联与实验见 [Agent](agent.md)，验收目标见[实现状态](../design/status.md)。
+接口见[开发指南](../guides/development.md)，源码关联与实验见 [Agent](agent.md)，验收目标见[能力边界](backends.md)。

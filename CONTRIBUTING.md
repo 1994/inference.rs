@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢参与 inference.rs。开始之前，请先阅读 [README](README.md)、[代码布局](docs/architecture/layout.md) 与 [实现状态](docs/design/status.md)，了解模块边界和当前能力范围。
+感谢参与 inference.rs。开始之前，请先阅读 [README](README.md)、[代码布局](docs/architecture/layout.md) 与 [能力边界](docs/architecture/backends.md)，了解模块边界和当前能力范围。
 
 ## 环境准备
 
@@ -17,13 +17,11 @@
 
 1. 从最新主干创建分支，一个分支只解决一个明确问题。
 2. 在负责该功能的 crate 内修改代码，并为行为变化补充回归测试。
-3. 更新受影响的使用文档、示例或[实现状态](docs/design/status.md)。
+3. 更新受影响的使用文档、示例或[能力边界](docs/architecture/backends.md)，遵循[文档维护约定](docs/README.md#维护约定)，不新增会话日志或进度文档。
 4. 本地通过相关门禁后再提交。
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo test --locked --workspace --all-features
 make check-rust
 ```
 

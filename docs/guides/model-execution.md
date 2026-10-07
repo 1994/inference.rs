@@ -20,8 +20,8 @@ target/release/infer inspect-package --package /path/to/hf-package --weights-f32
 
 ## 精度与内存
 
-- 源格式支持 F32 / BF16 / F16；Metal 保持原始权重字节，在 shader 中转换为 F32。
-- activation、累加、KV 与 recurrent 状态使用 F32。
+- 公共浮点加载支持 F32 / BF16 / F16；Metal 保持原始权重字节，在 shader 中转换为 F32。CUDA 量化加载与计算路径见 [CUDA 后端](../../crates/backend/cuda/README.md)。
+- Metal 的 activation、累加、KV 与 recurrent 状态使用 F32；CUDA 按模型精度策略与执行配置选择，不能把权重存储 dtype 当作所有中间计算的 dtype。
 - 默认上传 chunk 为 4 MiB；F32 展开路径同时计算源与转换后 chunk，不会先整包展开。
 - payload hash 与 chunk 大小无关。不可变权重可共享，可变资源每次重建。
 - 加载前校验权重、chunk scratch、cache/probe reserve、单 buffer 与设备索引限制；请求私有状态和页池在 admission 阶段另行报价。
@@ -59,7 +59,7 @@ target/release/infer --backend metal --max-num-batched-tokens 32 --upload-stagin
   run --package examples/qwen-hybrid-tiny --requests examples/requests.json
 ```
 
-`profile` 区分权重加载、chunk/scratch、GPU command 与 CPU op encoding 时间。数值验证范围见[验证记录](../validation/index.md)，生产 kernel 与完整模型缺口见[实现状态](../design/status.md)。
+`profile` 区分权重加载、chunk/scratch、GPU command 与 CPU op encoding 时间。数值验证范围见[质量门禁](quality-gates.md)，生产 kernel 与完整模型缺口见[能力边界](../architecture/backends.md)。
 
 ### Memory-mapped weight loading
 

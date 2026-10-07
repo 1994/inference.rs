@@ -13,7 +13,7 @@ Example (Python dependencies live in the external benchmark environment):
 artifacts/vllm-compare/bin/python tools/bench/prepare-modelscope.py \
   --gsm8k /tmp/gsm8k-test.parquet --sharegpt /tmp/sharegpt-zh.jsonl \
   --per-dataset 16 --max-chars 2000 --output artifacts/modelscope-suite.json
-bash tools/bench/safe-run.sh target/release/examples/cuda-model-smoke /home/r/models/Qwen3.8-27B-NVFP4 unused 512 \
+bash tools/bench/safe-run.sh target/release/examples/cuda-model-smoke /path/to/model unused 512 \
   --device-graph --prefill-batch 3 --dataset artifacts/modelscope-suite.json --mtp 0 --thinking false \
   --temperature 0 --presence-penalty 0 > artifacts/rust-suite.json
 bash tools/bench/safe-run.sh artifacts/vllm-compare/bin/python tools/bench/vllm-dataset.py \

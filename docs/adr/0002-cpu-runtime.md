@@ -2,7 +2,6 @@
 
 - 状态：采用
 - 日期：2026-10-04
-- 设计项：ARCH-001 / SCHED-001 / COST-001 / CUDA-001 / OBS-001 / BENCH-001
 
 ## 背景
 
@@ -24,4 +23,4 @@ GPU 执行期间 CPU 侧仍要准备其他请求、采样输出并维护状态�
 
 预分配减少热分配与 page fault，但提高常驻内存并可能产生容量拒绝；staging、delivery、history 与 reader 都纳入额度。Rust allocator 计数不覆盖 native driver，模拟得到的吞吐不代表模型吞吐。
 
-完整契约与预算见 [CPU Runtime 设计](../design/cpu-runtime.md)，物理 owner 与验收缺口见[实现状态](../design/status.md)。
+完整契约与预算见 [CPU 资源协议](../architecture/cpu-runtime.md)，物理 owner 与验收缺口见[能力边界](../architecture/backends.md)。
