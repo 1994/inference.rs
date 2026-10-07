@@ -58,6 +58,28 @@ async fn preparation_workers_run_concurrently_and_a_blocked_job_does_not_block_d
     Ok(())
 }
 #[tokio::test]
+async fn completed_jobs_release_credit_before_delivering_results() -> Result<()> {
+    let pool = CpuPool::new(CpuConfig {
+        workers: 1,
+        max_jobs: 1,
+        max_bytes: 32,
+        ..config()
+    })?;
+    for _ in 0..1000 {
+        pool.run(32, |_| Ok(())).await?;
+        assert_eq!(pool.inspect().retained_jobs, 0);
+        assert_eq!(pool.inspect().retained_bytes, 0);
+        assert!(
+            pool.run::<()>(32, |_| Err(Error::invalid("provider failed")))
+                .await
+                .is_err()
+        );
+        assert_eq!(pool.inspect().retained_jobs, 0);
+        assert_eq!(pool.inspect().retained_bytes, 0);
+    }
+    Ok(())
+}
+#[tokio::test]
 async fn timeout_keeps_byte_credit_until_the_actual_cpu_job_exits() -> Result<()> {
     let pool = CpuPool::new(CpuConfig {
         workers: 1,

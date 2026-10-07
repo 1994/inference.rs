@@ -250,6 +250,8 @@ impl CpuPool {
                     .check()
                     .and_then(|()| work(&context))
                     .and_then(|value| context.check().map(|()| value));
+                // Completion must make admission capacity reusable before waking the caller.
+                drop(_credit);
                 let _ = reply.send(result);
             }))
             .map_err(|_| Error::new(ErrorCode::Capacity, "CPU queue unavailable"))?;
