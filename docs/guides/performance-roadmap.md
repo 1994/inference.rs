@@ -186,12 +186,32 @@ graph and 546 GB/s in the prompt graph, a 1.7x gap**, with both figures from the
 process and the same model. The verify graph does more rows of work per replay (3-12 lanes
 across 3 candidate positions) and finishes faster.
 
-One caveat to carry forward rather than gloss: both columns divide by 23.4 GB of resident
-weights, which assumes each replay reads all of them exactly once. That assumption is
-untested for either path, and if the prompt path reads weights more than once the real
-bandwidth is higher than 546 GB/s and the gap is smaller. The *ordering* is solid — both
-graphs are the same model, same process, same profiler — but the absolute utilization
-figures are conditional on that assumption.
+**The bandwidth framing was the wrong axis.** A roofline consistency check on the same
+numbers settles which limit governs. At M=64 the plan's arithmetic intensity is
+`2 x 27e9 FLOP / 23.4 GB = 148 FLOP/byte` against a machine balance of
+`105 TFLOP/s / 1.79 TB/s = 59 FLOP/byte`. Intensity is **2.5x the balance**, so a 64-token
+prompt replay is **compute-bound, not memory-bound**:
+
+| Roofline | Value | Reading |
+|---|---:|---|
+| memory | 23.4 GB / 42.88 ms = 546 GB/s | 31% of 1.79 TB/s — not the limiter |
+| compute | 3.46 TFLOP / 42.88 ms = 80.6 TFLOP/s | **77% of ~105 TFLOP/s dense BF16** |
+
+The breakeven is `M = 59/2 = 29` tokens: below that the weights cost more than the
+arithmetic, above it the arithmetic dominates. At 64 tokens the prompt replay is past
+breakeven, so **the 546 GB/s figure is a consequence of being compute-limited, not a
+cause** — a compute-bound kernel necessarily leaves bandwidth idle.
+
+This retracts the framing this file has carried for several entries: "the prompt graph
+runs at 31% of device bandwidth" is true but is not an inefficiency to attack, and every
+bandwidth-motivated lever tried against it (split-K, wider tiles, L2 residency) was aimed
+at the non-limiting resource. The relevant question is why a compute-bound plan reaches
+only 77% of dense BF16 peak — and note that the weights are quantized (NVFP4/FP8), whose
+peaks are several times higher, so 77%-of-BF16 is a much smaller fraction of what the
+hardware can do on this data.
+
+The caveat that remains: both rows assume each replay reads all 23.4 GB exactly once, which
+is untested for either path.
 
 The draft head's 1.86 ms at 23 nodes is a one-layer network, so it remains non-comparable
 and is listed only to keep it out of future ratios.
