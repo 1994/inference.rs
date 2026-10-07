@@ -301,10 +301,38 @@ together because the mismatch only surfaces at kernel-launch time, not at compil
 Reverted to the known-good state rather than leave a partially migrated kernel path on a
 repository whose correctness gate depends on these kernels.
 
-The prediction is unchanged and still untested: if row-block weight re-reading is the
-cause of 505 GB/s against 947 GB/s on identical weights, one row block for 64 rows should
-recover a 2x-class gain on the 27B prompt path. That is worth one dedicated round with
-room to run `nvfp4_gemm::tests`, `fp8_gemm::tests` and the serving gate afterwards. It also finally gives
+**Attempt three: completed, measured, and rejected — but the mechanism is confirmed.**
+
+The full migration was finished and it runs. In addition to `nvfp4_gemm::workspace`, the
+fp8 twin had to be parameterized as well (`fp8_gemm::kernels::matmul<K, M>`, reached from
+`nvfp4_gemm::workspace::record_fp8` for the 8-bit attention projections), and the fused
+`matmul` kernel's activation-quantisation pass needed its `[16, 32, 16]` group tensors
+widened to `[M, 32, 16]`. With `QUANT_GEMM_TILE = [64, 64]` everything builds, the 27 CUDA
+host tests pass, and serving runs clean. Measured against the `[16, 64]` baseline on the
+same 27B matrix:
+
+| Case | Metric | M=16 (baseline) | M=64 | change |
+|---|---|---:|---:|---:|
+| short | TTFT | 0.0568 | **0.0529** | **-7.0%** |
+| short | wall | 0.6749 | 0.8151 | **+20.8%** |
+| long | TTFT | 0.3980 | **0.3693** | **-7.2%** |
+| long | wall | 1.0956 | 1.2219 | **+11.5%** |
+
+So the row-block mechanism is **confirmed**: removing the repeat weight reads cuts TTFT by
+~7% on both prompt lengths. But it is net-negative, because the tile's row height is a
+single global constant shared by the prompt *and* decode paths. Decode has M=1, so an M=64
+tile spends 63 of 64 rows idle and the decode wall cost (~+20% short) cancels the prefill
+gain.
+
+That is the real finding, and it is more useful than a win would have been: the 7% prefill
+gain is available **only if the prompt path can use a taller row tile than decode**, which
+means per-path tiles rather than one `QUANT_GEMM_TILE`. The constants already distinguish
+other per-path shapes (`SMALL_GEMM_TILE = [16, 32]` versus `VERIFY_OUTPUT_TILE`), so a
+prompt-specific tile is consistent with the existing structure. Reverted to `[16, 64]`;
+the migration is a prerequisite for the per-path change, not a fix on its own.
+
+Also note the TTFT gain is ~7%, not the 2x the bandwidth ratio suggested, so weight
+re-reading accounts for only part of the 505-versus-947 GB/s gap. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
