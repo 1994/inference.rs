@@ -158,6 +158,45 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
 (5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
 
+#### The 27B long-prompt prefill cliff: 32 tokens costs 1.9 ms, 64 tokens costs 42.5 ms
+
+This is the missing long-prompt measurement. One 511-token prompt, profiled end to end on
+a quiet server with graph-only replay timings (111 records):
+
+| Captured graph | tokens | nodes | median |
+|---|---:|---:|---:|
+| `prefill` | 32 | 23 | **1.9 ms** |
+| `prefill` | 64 | **1154** | **42.5 ms** |
+| `prefill_last` | 63 | 1155 | 44.5 ms |
+
+**Doubling the chunk from 32 to 64 tokens multiplies the captured node count by 50 and the
+replay time by 22.** The prompt's 511 tokens are processed as 8 chunks at positions
+0/64/128/192/256/320/384/448, and **every one uses the 64-token shape**, so the device
+replay is `8 x ~42.5 = 340 ms` against a measured steady-state TTFT of 0.399-0.413 s. That
+closes the budget: the replay *is* the TTFT, and the 64-token shape is essentially all of
+it.
+
+This resolves the reconciliation gap above and supersedes the retraction that preceded it.
+It also means the long-prompt gap is a **discrete dispatch cliff**, not a bandwidth,
+launch-count or scheduling problem:
+
+- The two shapes come from different ways of recording the same model.
+  `batch.rs::build_pair` builds the prompt graph at `weights.prefill_width`; a 2x-large
+  chunk that multiplies node count by 50 is consistent with a per-lane or per-row-group
+  recording loop that the 32-token shape does not take.
+- A 2x token increase cannot plausibly cost 50x the nodes in a batched graph. Something in
+  the 64-lane capture records ~18 nodes per token against ~0.36 for the 23-node shape.
+
+The next step is therefore to diff what the 64-lane prompt capture records against the
+32-lane one — `batch.rs::capture32` and `batch_projection::record` are the two candidates —
+and find why the wider width inflates the node count. That is a dispatch question with a
+measurable target, and unlike the previous hypotheses it has a 22x number behind it.
+
+Also measured, and worth keeping: the **first** long prompt after a short warmup costs
+1.12 s TTFT while later ones cost 0.40 s, and re-running the first prompt costs 0.20 s
+(prefix reuse). So there is a further one-time ~0.7 s warm cost on the first long prompt
+that the serving gate's single warmup absorbs.
+
 #### An unreconciled 8x: per-replay prefill costs do not sum to the measured TTFT
 
 Two independent runs agree on the shape — the last chunk of a prompt graph costs ~21x a
