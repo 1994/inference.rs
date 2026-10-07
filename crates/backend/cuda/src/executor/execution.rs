@@ -74,6 +74,7 @@ impl CudaBackend {
     ) -> Result<CudaTicket> {
         self.check_tasks(program, step, tasks)?;
         let profile = super::profiling::StepProfile::start(self, tasks);
+        let phases = super::profiling::PhaseScope::install(profile.is_some());
         self.busy = true;
         // Snapshots are collected while a sequence is mutably borrowed and inserted afterwards,
         // so the cache borrow never overlaps the state borrow.
@@ -81,7 +82,13 @@ impl CudaBackend {
         // From here every failure belongs to the ticket, including partially executed batches.
         let result = self.run_grouped(tasks, &mut snapshots);
         if let Some(profile) = profile {
-            profile.finish(self, tasks, result.as_ref().ok().map(Vec::as_slice));
+            let recorded = phases.map(super::profiling::PhaseScope::finish);
+            profile.finish(
+                self,
+                tasks,
+                result.as_ref().ok().map(Vec::as_slice),
+                recorded.unwrap_or_default(),
+            );
         }
         for snapshot in snapshots {
             self.prefix.insert(snapshot);
@@ -482,7 +489,9 @@ fn slot_speculate(
 ) -> Result<()> {
     let (pool, mut draft) = pools;
     let batched = match draft.as_deref_mut() {
-        Some(draft) => super::drafting::propose(draft, states, device, tasks, participants, width)?,
+        Some(draft) => super::profiling::phase("draft_propose", || {
+            super::drafting::propose(draft, states, device, tasks, participants, width)
+        })?,
         None => None,
     };
     let defer_draft = batched.is_some();
@@ -505,7 +514,7 @@ fn slot_speculate(
             lanes.push((slot, offset, token, position + offset, position + offset));
         }
     }
-    let mut rows = pool.run_verify(device, &lanes)?;
+    let mut rows = super::profiling::phase("verify", || pool.run_verify(device, &lanes))?;
     for (&(index, slot), chain) in participants.iter().zip(candidates) {
         let state = states
             .get_mut(&tasks[index].state)

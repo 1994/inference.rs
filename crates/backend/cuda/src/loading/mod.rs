@@ -241,13 +241,14 @@ impl LoadedModel {
         {
             let geometry_phase =
                 phase::Phase::start("geometry", "resolving the prompt graph width");
-            // The prompt graph width is a per-request decision bounded by the profile's
-            // activation-arena budget. Dividing the remaining device memory by the
-            // expected resident state count conflates two different budgets: a single
-            // request only ever owns one arena, and `CudaBackend` still admits states
-            // against the real byte budget. The conservative division rejected the
-            // 128-lane graph; selecting it cuts a 507-token prompt's TTFT from 0.0835 s
-            // to 0.0542 s on the measured device.
+            // One request owns one arena, so the width decision is bounded by the profiled
+            // activation-arena budget, not by a fixed share of total memory.
+            //
+            // Both this budget and the recurrent cap below are load-bearing: letting live
+            // free memory fund the 128-lane 27B prompt graph measured worse on three of four
+            // cases (short TTFT 0.058 -> 0.084 s, batch4 0.247 -> 0.291 s, hot-prefix
+            // 0.090 -> 0.115 s) while the long case barely moved (0.436 -> 0.424 s). Do not
+            // widen a quantized recurrent prompt graph without an end-to-end measurement.
             let arena_budget = profile.arena_budget_bytes();
             // Quantized recurrent graphs keep the scalar Delta path for numerical
             // stability. Limit their prompt graph size while sharing projection loads.

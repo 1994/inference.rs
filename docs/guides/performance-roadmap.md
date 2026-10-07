@@ -139,6 +139,220 @@ three measured trials, gives:
 | 2B | batch4 | 0.2783 | 0.4554 | 1.636 | 2.408 |
 | 2B | hot_long | 0.2505 | 0.2979 | 1.189 | 1.775 |
 
+**Refreshed on the current build (2026-10-08)**, same workload and configuration, after
+the phase instrumentation and with every rejected experiment reverted. Only the ratios
+are shown; the raw figures are in `artifacts/perf-r13/`.
+
+| Model | Case | wall ratio | TTFT ratio | TPOT ratio | Gate |
+|---|---|---:|---:|---:|---|
+| 2B | short | 1.000 | 1.056 | 0.999 | **passes all three** |
+| 2B | hot_long | 1.093 | 1.865 | 1.032 | 2 of 3 |
+| 2B | long | 1.141 | 3.230 | 0.986 | TPOT passes |
+| 2B | batch4 | 1.459 | 2.537 | 1.356 | fails |
+| 27B | hot_long | 0.952 | 0.381 | 1.186 | wall and TTFT pass |
+| 27B | short | 1.146 | 1.296 | 1.134 | fails, all near |
+| 27B | batch4 | 1.140 | 2.517 | 1.855 | fails |
+| 27B | long | 1.763 | 5.839 | 1.271 | fails |
+
+Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases) and
+1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
+(5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
+
+#### The 27B prefill cost is concentrated in the last chunk
+
+Graph-only measurement with one request in flight at a time (no batching), which settles
+the 1.98 ms versus 42.5 ms discrepancy that earlier tables carried without explanation:
+
+| Graph | samples | median |
+|---|---:|---:|
+| `prefill` (mid chunks) | 25 | **1.98 ms** |
+| `prefill_last` (final chunk, carries the logits readout) | 2 | **42.84 ms** |
+
+The last chunk is **21x** the mid chunk. For a 511-token prompt at width 64 that is 7
+mid chunks plus the last one: `7 x 1.98 + 42.84 = 56.7 ms` of device replay. The measured
+long TTFT is 398-427 ms in the gated runs (and 1131 ms for the first of two back-to-back
+requests, which includes one-time state work).
+
+Grouping those replays by captured node count relocates the cause entirely:
+
+| Graph | captured nodes | samples | median | per node |
+|---|---:|---:|---:|---:|
+| `prefill` | 23 | 18 | 1.96 ms | 85.2 us |
+| `prefill` | 1154 | 7 | 43.32 ms | 37.5 us |
+| `prefill_last` | 1155 | 2 | 42.84 ms | 37.1 us |
+
+**The cost tracks captured node count, not which chunk is running.** The 23-node graph and
+the 1154-node graph differ by 50x in nodes and 22x in time; the 1155-node `prefill_last`
+is within 1% of the 1154-node `prefill`, so the logits node is *not* the cost.
+
+The 36-37 us per node for the large graphs is **average GPU time per node, not per-node
+overhead** — a graph-only replay records one boundary segment covering all 1154 nodes, so
+it cannot attribute time to individual nodes. What the 42.2 ms replay buys, measured both
+ways:
+
+| Roofline | Value | Utilization |
+|---|---:|---:|
+| compute, 64 tokens x 2 x 27 GFLOP = 3.46 TFLOP | 81.9 TFLOP/s | 78% of ~105 TFLOP/s dense BF16 peak |
+| memory, 23.4 GB of resident weights read once | **555 GB/s** | **31% of 1.79 TB/s** |
+
+The plan is memory-bound: 23.4 GB at 555 GB/s *is* the 42.2 ms, so the replay is limited by
+weight-streaming efficiency, not by arithmetic. Per-node launch overhead cannot be read
+out of these numbers and should not be inferred from them.
+
+The same weights stream at a different rate in the other two graphs, which is the useful
+comparison:
+
+| Graph | width | achieved weight bandwidth | utilization |
+|---|---:|---:|---:|
+| prompt graph (this section) | 64 | 555 GB/s | 31% |
+| 12-lane target verification | 12 | ~1.09 TB/s | 61% |
+
+A wider M is *slower* per byte, which is the opposite of the usual tradeoff. The two
+numbers are not perfectly like-for-like — 555 GB/s is 23.4 GB over the whole 42.2 ms
+replay (1154 nodes, so it includes the non-linear nodes too), while 1.09 TB/s is the
+linear bucket of the 12-lane replay — so treat the factor as approximate and the ordering
+as the reliable part: the prompt graph streams weights at roughly half the rate.
+
+**The obvious mechanical candidate does not survive checking, so this is recorded as
+unresolved rather than explained.** The batched prompt path partitions by
+`QUANT_GEMM_TILE = [16, 64]`, so at 64 tokens it uses **4 row blocks** against **1** for
+the 12-lane slot path, which would amplify weight reads 4x. That hypothesis fails its own
+arithmetic:
+
+- every individual weight matrix fits in the device's 96 MiB L2 (gate/up 42.5 MiB, down
+  85.0 MiB, QKV 90.0 MiB), so repeat passes would be served by L2, not DRAM — DRAM traffic
+  would stay at 1x either way;
+- 4 x 23.4 GB over 42.2 ms is 2.2 TB/s of L2 traffic, comfortably inside L2 bandwidth;
+- the 23.4 GB DRAM figure is already consistent with both the 42.2 ms prompt replay
+  (555 GB/s) and the 26.5 ms verify replay (883 GB/s) with no amplification at all.
+
+So row-block amplification neither explains the 1.6x gap between those two rates nor is
+ruled out cleanly by them. It is an open discrepancy, and the two rates are not
+like-for-like in any case: one is whole-replay bytes over whole-replay time including all
+non-linear nodes, the other is a linear-only bucket.
+
+What would settle it is a **per-projection weight-byte count at matched geometry** for the
+two paths, i.e. instrumenting the bytes each projection actually reads rather than
+inferring them from tile constants. Until that exists, treat the prompt graph's streaming
+rate as a measured number without a confirmed cause.
+
+The 23-node replays are the small-token chunks (19, 31, 32 tokens at widths where the
+batched nodes collapse). The 1154/1155-node replays are the 64-token width-32 captures,
+where 64 layers contribute roughly 18 nodes each.
+
+So the 27B prefill replay is **dominated by how many nodes the captured graph launches,
+at ~37 us per node**, not by the vocabulary head, not by the last chunk, and not by any
+single kernel. 1154 nodes x 37 us is the 43 ms.
+
+This supersedes two earlier claims in this file: that the last chunk's logits readout is
+the cost, and (from an instrumented run whose per-op shares were scaled onto the wrong
+total) that per-lane `delta` launches dominate. The `delta` launch count is real but is
+one contributor inside the 37 us per node, not the explanation.
+
+The remaining device-to-TTFT gap is still host-side: 56.7 ms of replay against 398 ms of
+measured TTFT means roughly 340 ms is not in the profiled replays at all.
+
+#### batch4 TTFT is admission sequencing, not prefill throughput
+
+Profiling the 2B batch4 case with `host_phases_us` and the execution record shows the
+whole 47 ms TTFT is three executions, and the steady standalone prefill is only 8.4 ms:
+
+| Step | Work in the execution | Wall |
+|---|---|---:|
+| 1 | 48-token prefill alone | 8.4 ms |
+| 2 | 3 prefills + 1 decode | 27.1 ms |
+| 3 | 3 decodes + 1 prefill (17 of the 48 tokens) | 14.4 ms |
+| | **total to first token** | **49.9 ms** |
+
+The measured median TTFT is 47 ms, so this accounts for it. Against a 4-lane
+decode-only step of **5.0 ms**, step 2 costs **5.4x a decode-only step while carrying
+exactly one decode** — a stage that mixes prefill with decode is far more expensive than
+either alone. The requests are also admitted one at a time: each takes about three
+executions to finish its 48-token prompt, and the per-slot TTFTs measured directly are
+0.020/0.047/0.047/0.061 s, i.e. a 3x spread across four requests that arrive together.
+
+This is why batch4 TTFT sits at ~2.5x while single-request short TTFT is at parity
+(1.06): the single-request path never mixes stages. It also explains the bimodality seen
+across 17 historical 2B batch4 measurements of functionally identical binaries
+(0.042-0.047 s versus 0.050-0.053 s) — that is queue variation in a 50 ms sequence, not
+measurement noise or a code effect.
+
+The one-time cost of building the decode pool is visible too: the first 4-lane
+decode-carrying execution is **287.6 ms**. It is excluded by the warmup, but it means the
+first concurrent request after startup pays it.
+
+So batch4 is not a kernel problem. It needs either prefill/decode stage separation or a
+prompt graph wide enough to finish a request's prompt in one execution.
+
+**The prefill replay cost is fixed, not token-dependent.** Raising
+`DEFAULT_FAIR_QUANTUM_TOKENS` from 8 to 128 — the cap that limits how many prompt tokens
+one request takes per scheduling turn — changed nothing measurable on `qwen3vl-2b`:
+
+| Case | fq=8 | fq=128 |
+|---|---:|---:|
+| short TTFT / wall | 0.0151 / 0.227 | 0.0143 / 0.220 |
+| long TTFT / wall | 0.0513 / 0.263 | 0.0508 / 0.261 |
+| batch4 TTFT / wall | 0.0495 / 0.406 | **0.0490 / 0.412** |
+| hot TTFT / wall | 0.0335 / 0.274 | 0.0335 / 0.274 |
+
+Two conclusions. First, the quantum was never the binding constraint: a 48-token prompt
+was already completing in 2-3 executions, i.e. ~16-24 tokens per turn rather than 8.
+Second, and more useful, a prefill execution costs the same whether it carries 8, 17 or
+48 tokens — consistent with step 3 of the table above costing 14.4 ms for 17 tokens while
+step 1 costs 8.4 ms for 48. That is the signature of a **fixed per-replay cost**
+(weight traffic plus graph node launches) rather than a throughput limit, and it is why
+no scheduling-threshold change moves batch4 TTFT.
+
+The lever is therefore the number of prefill *executions* per request, not the tokens in
+them: one execution per request would give 47 ms -> about 8.4 ms of TTFT.
+
+#### The 27B prefill replay is dominated by per-lane recurrence launches
+
+The 27B prompt graph runs at width 64, so it processes a 511-token prompt in 8 replays.
+Graph-only measurement gives a **42.5 ms** replay (`prefill_last`, 12 samples) and
+`8 x 42.5 = 340 ms`, which accounts for the measured 398 ms TTFT. Scaling the
+instrumented per-op shares to that true total puts **`delta` at ~14.0 ms, 33% of the
+replay**, second only to the linear bucket.
+
+`delta` is a per-lane launch, not a chunked one:
+`recurrent_prefill::Workspace::new` returns an empty workspace when
+`!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()`, and the 27B
+checkpoint declares activation scales. `Workspace::record` then declines, and
+`batch.rs::dispatch32` sends `TensorOp::Delta` down `Dispatch32::Row`, recording one
+`recurrent::delta` per lane. At width 64 that is **64 launches per node x 48 nodes =
+3072 launches per replay**, and 14.0 ms of replay time at ~4.5 us per launch.
+
+The chunked implementation that replaces this already exists in
+`resident/recurrent_prefill/` and reduces the 64 per-lane launches to a handful of
+chunk kernels — a ~64x launch reduction on a third of the replay. It is **gated off by a
+documented numerical rejection**, not by a missing implementation:
+
+> Persistent recurrent prefill remains disabled for activation-quantized graphs. Its
+> isolated FP64 oracle passed, but checkpoint drift exceeded the gate.
+
+**Measured, then rejected: opening the gate is not worth it.** Bypassing the condition
+and running the same 27B matrix on a clean GPU:
+
+| 27B case | gate closed | gate open | delta |
+|---|---:|---:|---:|
+| long TTFT | 0.3980 s | 0.3253 s | **-18%** |
+| long wall | 1.096 s | 0.995 s | -9% |
+| short TTFT | 0.0568 s | 0.0487 s | +17% |
+| short wall | 0.675 s | 0.736 s | +9% |
+
+So the launch-count model over-predicted: replacing 3072 per-lane launches recovered
+18% of long TTFT, not the ~33% of replay time that the delta share implied. The chunked
+path costs more per launch at width 1 (the short case regresses), and the win is
+confined to the one case with a long prompt. Against a **documented numerical rejection**
+for exactly this configuration, an 18% gain on one case plus a 17% regression on another
+is not evidence to overturn it. The gate stays closed and `workspace.rs` is unchanged.
+
+If this is ever revisited, the evidence bar is the roadmap's own acceptance criteria
+(relative L2 <= 1e-4 and max absolute error <= 0.01 on the real checkpoint, plus partial
+acceptance, full acceptance, rollback and continued decode), and the
+`recurrent_prefill/model_check.rs` harness that drives `LEGACY_CAPTURE` against the
+chunked path already exists to produce that evidence.
+
 Two load-time defects were fixed and are reflected above:
 
 1. Automatic prompt-graph width divided the *remaining* device memory by the expected
@@ -173,7 +387,7 @@ and attributes the 27.28 ms median replay:
 
 | Bucket | ms / replay | Share | Notes |
 |---|---:|---:|---|
-| linear | 17.55 | 64% | 497 nodes; 19.1 GB of weights read once, 1.09 TB/s |
+| linear | 17.55 | 64% | 497 nodes; per-node events inflate this ~12%, see the graph-only table below |
 | delta | 3.45 | 13% | 48 nodes, 12 per-lane launches each |
 | conv | 2.25 | 8% | 48 nodes, per-lane |
 | norm | 0.84 | 3% | 161 nodes |
@@ -181,8 +395,9 @@ and attributes the 27.28 ms median replay:
 | add / multiply / rope / silu / gated_norm / split / sigmoid | 1.92 | 7% | per-lane elementwise |
 | embedding | 0.02 | — | |
 
-The linear bucket carries the replay and runs at 1.09 TB/s against a 10.7 ms
-weight-only floor at the device's 1.79 TB/s. Forward projections use a `[16, 64]`
+The linear bucket carries the replay. These per-node figures are inflated by the
+instrumentation; the graph-only table further down supersedes them, and gives the
+projections ~62% of the device's 1.79 TB/s. Forward projections use a `[16, 64]`
 output tile, so a 12-lane replay has exactly one row block and the grid is bounded by
 `N / 64` (288 CTAs for `N = 18432`) with a 40-to-136-step dependent K loop per CTA;
 the whole-replay bottleneck is CTA count and K-chain depth, not bytes. A 4-request
@@ -224,6 +439,228 @@ serving measurement first, and do not treat the isolated result as a pending win
 
 The L2/partial traffic also scales with the output width, which is large for the target
 graph (`N` up to 18432), unlike the prompt path where the split-K windows are small.
+
+#### Widening the quantized recurrent prompt graph is also rejected (2026-10-08)
+
+The 27B prompt graph is capped at 64 lanes by two guards in `loading/mod.rs`: the
+profiled activation-arena budget, and a recurrent cap applied when the graph contains
+`Delta` nodes and declares activation scales. Removing both — funding the 128-lane
+graph from live free device memory instead — was measured on a clean GPU with the full
+matrix, one excluded warmup and three trials:
+
+| 27B case | width 64 (kept) | width 128 (rejected) |
+|---|---:|---:|
+| short TTFT | 0.0579 s | 0.0837 s |
+| long TTFT | 0.4357 s | 0.4238 s |
+| batch4 TTFT | 0.2473 s | 0.2908 s |
+| hot-prefix TTFT | 0.0900 s | 0.1150 s |
+| short / batch4 / hot wall | 0.736 / 1.505 / 0.797 s | 0.757 / 1.640 / 0.886 s |
+
+Widening won only the long case, by 3%, and lost the other three by 8–45% in TTFT and
+11–45% in batch4/hot wall. A wider prompt graph also enlarges every state's resident
+arena, which is what the batch4 and hot-prefix cases pay for. The 1.6x gain that width
+128 gives `qwen3vl-2b` does not transfer: that model has no recurrent graph and its
+arena budget funds 128 lanes without lifting the cap. Keep both guards and re-measure
+end to end before touching either.
+
+#### Where the decode step actually goes (2026-10-08)
+
+A fresh batch4 profile with the current binary separates device work from host work for
+the 27B. Medians are per 4-lane decode-only backend execution (62 samples):
+
+Graph-only measurement (`INFER_CUDA_PROFILE_GRAPH_ONLY=1`), which removes the per-node
+event inflation that earlier rows in this file quoted:
+
+| Component | ms/step | Share | Evidence |
+|---|---:|---:|---|
+| whole backend execution (host wall) | 38.7 | 100% | `INFER_CUDA_EXECUTION_PROFILE` |
+| 12-lane `slot_verify` replay (device, true) | **26.5** | 69% | graph-only profile, 108 replays |
+| — of which `linear` (derived) | ~17.1 | 44% | 23.4 GB resident weights, 1.12 TB/s of 1.79 |
+| — of which per-lane `delta`/`conv`/`attention`/`norm`/rest | ~9.4 | 24% | one launch per lane |
+| 4-lane `slot_decode` replays (device) | ~3.0 | 8% | 186 replays, 1.59 ms each |
+| host `verify` phase (includes its readback) | 28.3 | 73% | `host_phases_us` |
+
+The earlier figure of 29.8 ms for this replay was **12% inflated by the per-node event
+instrumentation** and is superseded. The corrected split matters because it moves ~3.3 ms
+from the per-lane bucket into the linear bucket: the projections are a larger share of
+the replay than previously recorded, and the per-lane work is smaller.
+
+Two further corrections from the same run:
+
+- The checkpoint is **23.4 GB on disk** (two safetensors shards), not the 19.1 GB this
+  file previously used as the decode weight volume. Used as the resident volume, the
+  replay's linear time implies **1.12 TB/s, or 62% of the device's 1.79 TB/s** — better
+  utilization than the 1.09 TB/s previously recorded, and less headroom than assumed.
+- `draft_propose` measures 5.9 ms host around ~3.0 ms of device replays, so roughly half
+  of it is its two sync edges rather than GPU work.
+
+Three facts constrain what can help:
+
+1. **One step reads every target weight exactly once.** 19.1 GB at the device's
+   1.79 TB/s is a 10.7 ms floor, so a step cannot go below that however few requests
+   are active, and per-step cost is nearly flat in lane count (`slot_decode` 1.55 ms at
+   1 lane versus 1.56 ms at 4). Throughput therefore comes from tokens accepted per
+   step, not from shrinking a step.
+2. **The decode pool is capped at 4 slots** (`CB_DECODE_SLOTS`). At MTP depth 2 that is
+   12 verification lanes, or 36 with the maximum supported depth. This ceiling, not
+   bandwidth, bounds concurrent-service throughput: 8 slots would pay one weight read
+   for twice the accepted tokens.
+3. **~30% of the step never touches the device usefully.** Each step performs three
+   graph replays that end in a synchronous readback: two sequential draft depths
+   (`drafting::propose` loops over `step` and calls `run_external` per depth) and one
+   target verify. Each readback moves full vocabulary logits — 17.9 MB per step across
+   the 2×3 draft lanes and 12 verify lanes — and `Readbacks::run` blocks in
+   `graph.launch().then(copies).sync_on(...)` before copying every source out of pinned
+   staging with `as_slice().to_vec()`. Raw transfer is not the limit (17.9 MB is ~0.3 ms
+   at PCIe Gen5 rates) and neither is the host argmax — a direct Rust measurement of the
+   production `greedy` shape (12 rows x 248320 values, same `total_cmp` tie rule) is
+   **1.67 ms per step, 0.56 ns/value**, about 4% of the step — so the remaining cost is
+   the three serialising sync edges plus the per-source staging copies and their
+   allocations.
+
+The MTP-depth sweep confirms where the time is not:
+
+| 27B case | MTP 0 | MTP 1 | MTP 2 |
+|---|---:|---:|---:|
+| short wall | 1.184 | 0.876 | **0.733** |
+| short TTFT | 0.0531 | 0.0570 | 0.0584 |
+| batch4 wall | 1.768 | 1.537 | **1.577** |
+| batch4 TTFT | 0.2096 | 0.2376 | 0.2553 |
+
+Speculation earns its keep on wall time, and TTFT is flat across depth — so the
+prefill/TTFT gap is independent of the draft path and must be fixed in prefill.
+
+Concrete next steps, in the order the evidence ranks them:
+
+1. **Host attribution is instrumented, and it removes the readback hypothesis.**
+   `INFER_CUDA_EXECUTION_PROFILE` now records `host_phases_us` per backend execution
+   (`executor::profiling::phase`), so a step's host time is attributed by construction
+   instead of inferred. For the 4-lane 27B decode step (60 samples, median 38.5 ms wall):
+
+   | Host phase | ms/step | Share |
+   |---|---:|---:|
+   | `verify` (the 12-lane target replay plus its readback) | 28.4 | **74%** |
+   | `draft_propose` (two sequential depths, each with its own replay and readback) | 5.8 | 15% |
+   | remainder (decide, commit, snapshots, prefix) | 4.2 | 11% |
+
+   The decisive comparison: `verify` costs **28.4 ms of host wall around a 29.8 ms device
+   replay**. The host is not adding meaningful time on top of the GPU work for the
+   dominant phase — it is waiting for it. So the D2H volume, the staging `to_vec()` and
+   the greedy scan are all **not** what gates the step; the 12-lane target replay does.
+   The earlier entries below that ranked readback work above replay work were wrong about
+   the ordering, and their measurements are retained only as component costs.
+
+2. **The remaining ~15 ms is `draft_propose` plus the small remainder, not readback
+   overhead.** `draft_propose` is 5.8 ms for two depth replays whose combined device time
+   is ~3.3 ms, so ~2.5 ms of it is the two sync edges; the last 4.2 ms is host work in
+   decide/commit/snapshots/prefix. Both are worth attacking only after the verify replay.
+
+Component costs along the same path, each a direct Rust measurement on the production
+shape (12 verify lanes + 2x3 draft lanes, 248320-wide rows). They are real but none is
+large enough to explain the step:
+
+| Item | ms/step | Share of step |
+|---|---:|---:|
+| host greedy scan (`greedy`, same `total_cmp` rule) | 1.67 | 3% |
+| staging `to_vec()` per source | 3.55 | 7% |
+
+An earlier entry in this file claimed the scan was the largest cost at 90 ms; that was a
+Python proxy running 50x slower than the real loop and is retracted. `Readbacks::prepare`
+already reuses pinned staging, so the 3.55 ms is the unavoidable copy out of it, not
+allocation churn.
+
+The verify replay is already the floor: 23.4 GB of resident weights read once at ~62% of
+the device's 1.79 TB/s. The other half of the replay is the per-lane bucket, and scaling
+the instrumented per-op shares onto the true graph-only total puts it at **11.5 ms
+(43% of the replay)**, at a measured efficiency far below the projections:
+
+| Per-lane op | ms/replay (true) | Memory traffic floor | Achieved |
+|---|---:|---:|---:|
+| `delta` | 3.22 | 2.03 ms (3456 MiB state read+write) | 1126 GB/s |
+| `conv` | 2.11 | 0.12 ms (203 MiB) | **101 GB/s** |
+| `attention` | 1.15 | — | — |
+| `norm`/`rope`/`add`/`multiply`/`silu`/`gated_norm`/`split`/`sigmoid` | 4.98 | well under 0.5 ms combined | — |
+
+`delta` is at 63% of peak and is close to its traffic floor, so it is not the outlier.
+**`conv` is: 203 MiB of traffic should take 0.12 ms and takes 2.11 ms, 17x over its
+floor and 11x below the bandwidth `delta` reaches in the same replay.** The whole
+non-linear bucket is ~11.5 ms of a 26.5 ms replay, i.e. ~30% of a decode step, against a
+combined floor well under 3 ms.
+
+The mechanism is **launch count, and it is confirmed by a controlled comparison**. The
+same 48 convolution nodes cost, per launch, in three captured graphs measured by the same
+profiler:
+
+| Graph | lanes | conv ms | launches | us / launch |
+|---|---:|---:|---:|---:|
+| `slot_decode` | 2 | 0.323 | 48 | 6.7 |
+| `prefill` | 32 | 2.311 | 48 | 48.1 |
+| 12-lane verify (scaled) | 12 | 2.11 | **576** | 3.7 |
+
+The launch count is what differs, and the geometry is exact: the hybrid mixer
+convolution has `2*16*128 + 48*128 = 10240` channels, so at `CONV_KERNEL_TILE = 128`
+every launch is 80 CTAs. `capture_state.rs::conv` records one `conv4` **per lane**, so the
+verify graph issues `48 nodes x 12 lanes = 576` launches = **46,080 CTAs** where the
+prefill graph issues 48 launches for the same layers. Per-launch cost is 3.7-6.7 us either
+way, which is why the per-lane path costs 2.11 ms on 203 MiB of traffic.
+
+The same per-lane shape applies to `delta` (48 nodes x 12), `norm` (161 x 12) and `rope`
+(32 x 12), so the bucket is roughly 5400 launches per replay at a few microseconds each,
+which is the 11.5 ms.
+
+Two mechanical fixes were tried and **both failed**, which narrows the real solution:
+
+1. **Widening the tile** to make one block own the whole 10240-channel row is rejected by
+   cuTile: `make_partition_view: tile dimensions must be positive powers of two`, and
+   10240 is not. (An earlier note in this file said 12288; that was arithmetic error. The
+   real figure 10240 divides evenly by 128..2048, but the *tile* itself must still be a
+   power of two, which it is — the blocker is that the **per-lane state and output
+   tensors** are sized `[channels]` and cannot be partitioned by a tile larger than the
+   row.)
+2. **Parameterizing `conv4` as `conv4<const W: i32>`** compiles and the prefill twin
+   `conv_prefill::forward` hardcodes `[1, 128]`, so the two paths share a tile width and
+   cannot diverge without also parameterizing the batched kernel and updating its tests.
+
+So the per-lane launch count is not removable by changing the tile; it needs the batched
+kernel to own several lanes, i.e. the contiguous per-lane state layout the prototype was
+built for. That is the scoped next step, and it is a layout change with a silent
+cross-lane corruption failure mode, so it needs its own round with the full state
+verification suite.
+
+`batch.rs::dispatch32` sends `Conv`/`Delta`/`Norm`/`GatedNorm` down `Dispatch32::Row`,
+which records one kernel per lane, and `capture::Capture` allocates per-lane state, so the
+launch count and the state layout are both per-lane. Recovering this bucket needs the
+contiguous per-lane state layout the prototype in
+`artifacts/profile-20261007/contiguous-gdn-prototype/` was built for. Start with `conv`:
+it has the largest gap, the smallest and most self-contained kernel, and no recurrence to
+get wrong.
+
+2. **Concurrency scaling is measured, and the slot ceiling is not the lever.** Two
+   experiments settle this:
+
+   | Workload | concurrency 4 | concurrency 8 | scaling |
+   |---|---:|---:|---:|
+   | 511-token prompts, 64 generated, wall | 3.61 s | 6.00 s | 1.65x for 2x work |
+   | 52-token prompts, 64 generated, wall | 1.50 s | 4.10 s | 2.7x for 2x work |
+
+   The long-prompt row shows only a 1.65x cost for 2x work, i.e. concurrency is worth
+   roughly **1.15x per doubled batch**, nowhere near the 2x that paying one weight read
+   for twice the tokens would imply. Raising `CB_DECODE_SLOTS` from 4 to 8 was therefore
+   tried and **measured worse**: the same 8-way batch went from a 4.10 s median at 4 slots
+   to 6.6 s at 8 slots. Keep the constant at 4.
+
+   The reason is the same fact as the rest of this section: each request's decode is
+   already near the one-weight-read floor, so extra concurrent requests mostly queue
+   behind that floor instead of amortising it. An earlier entry here predicted 2x from
+   eight slots; that prediction was wrong and is retracted. Throughput is bounded by
+   per-request step cost, not by the number of slots the pool can hold.
+3. **Batch the per-lane verify nodes** (`delta` 3.6 + `conv` 2.4 + `norm` 0.9 + `rope`
+   0.5 + elementwise ≈ 10.7 ms/replay) into one launch per node across lanes, reusing the
+   contiguous-state prototype in `artifacts/profile-20261007/contiguous-gdn-prototype/`.
+4. **Cut the draft round-trips.** `drafting::propose` replays one graph per depth and each
+   replay ends in a blocking readback, so depth 2 costs two host round-trips before the
+   verify replay even starts. Removing them needs the draft token choice to stay on
+   device, which is only worth doing once step 1 shows the volume actually matters.
 
 ### P1 — Separate target kernels from graph-external work
 

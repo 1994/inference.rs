@@ -90,6 +90,14 @@ mod device {
     pub const MAX_HIDDEN_SIZE: usize = 32768;
     /// Maximum shared decode slots. Independent of the per-sequence draft depth;
     /// the batched projection kernels handle row tails and reuse weights across slots.
+    ///
+    /// **Measured: raising this to 8 made the same 8-way batch slower, 4.10 s -> 6.6 s.**
+    /// A step does read every target weight once (`slot_decode` costs 1.55 ms at one lane
+    /// and 1.56 ms at four), but extra concurrent requests queue behind that floor rather
+    /// than amortising it: going from 4 to 8 concurrent long prompts cost 1.65x for 2x the
+    /// work. Each slot also keeps a full state set plus its verification checkpoints, so a
+    /// wider pool spends device memory for a throughput gain that was not observed. Do not
+    /// raise this without an end-to-end measurement at the concurrency being targeted.
     pub const CB_DECODE_SLOTS: usize = 4;
     /// Token rows in each slot's KV cache. Sequences admitted above this stay on the
     /// per-sequence serial path; 4096 keeps the pool's upfront allocation (one state set per

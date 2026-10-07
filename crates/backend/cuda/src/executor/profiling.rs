@@ -1,11 +1,61 @@
 //! Opt-in host-side execution evidence; no token contents are recorded.
 use super::CudaBackend;
 use infer_ir::{ExecutionInput, ExecutionTask};
-use std::{io::Write, path::PathBuf, sync::OnceLock, time::Instant};
+use std::{
+    cell::RefCell,
+    io::Write,
+    path::PathBuf,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
 /// Set before process startup to append task grouping and slot occupancy as JSONL.
 const PROFILE_ENV: &str = "INFER_CUDA_EXECUTION_PROFILE";
 static OUTPUT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+thread_local! {
+    /// Host wall time accumulated per named phase while a step is in flight. Only written
+    /// when the execution profile is enabled, so the steady path pays one `Option` check.
+    static PHASES: RefCell<Option<Vec<(&'static str, Duration)>>> = const { RefCell::new(None) };
+}
+
+/// Scratch phase accumulator bound to the calling thread for one step.
+pub(super) struct PhaseScope;
+
+impl PhaseScope {
+    /// Install the accumulator; the caller must hold the guard for the whole step.
+    pub(super) fn install(enabled: bool) -> Option<Self> {
+        if !enabled {
+            return None;
+        }
+        PHASES.with(|phases| *phases.borrow_mut() = Some(Vec::new()));
+        Some(Self)
+    }
+
+    /// Take the accumulated phases, ending the scope.
+    #[expect(
+        clippy::unused_self,
+        reason = "the guard marks scope lifetime; taking the accumulator is a side effect"
+    )]
+    pub(super) fn finish(self) -> Vec<(&'static str, Duration)> {
+        PHASES.with(|phases| phases.borrow_mut().take().unwrap_or_default())
+    }
+}
+
+/// Time one host-side phase. A no-op unless a [`PhaseScope`] is installed.
+pub(super) fn phase<T>(name: &'static str, body: impl FnOnce() -> T) -> T {
+    PHASES.with(|phases| {
+        let mut phases = phases.borrow_mut();
+        let Some(recorded) = phases.as_mut() else {
+            drop(phases);
+            return body();
+        };
+        let started = Instant::now();
+        let value = body();
+        recorded.push((name, started.elapsed()));
+        value
+    })
+}
 
 pub(super) struct StepProfile {
     path: &'static PathBuf,
@@ -54,8 +104,14 @@ impl StepProfile {
         backend: &CudaBackend,
         tasks: &[ExecutionTask],
         outputs: Option<&[infer_ir::TaskOutput]>,
+        phases: Vec<(&'static str, Duration)>,
     ) {
         let elapsed_us = self.started.elapsed().as_micros();
+        let mut by_phase: std::collections::BTreeMap<&'static str, u64> =
+            std::collections::BTreeMap::new();
+        for (name, elapsed) in phases {
+            *by_phase.entry(name).or_default() += u64::try_from(elapsed.as_micros()).unwrap_or(0);
+        }
         let slots: Vec<_> = tasks
             .iter()
             .map(|task| {
@@ -67,6 +123,7 @@ impl StepProfile {
             .collect();
         let line = serde_json::json!({
             "execution_wall_us": elapsed_us,
+            "host_phases_us": by_phase,
             "tasks": self.inputs,
             "slots_after": slots,
             "pool_width": backend.slots.as_ref().map(super::SlotPool::width),
