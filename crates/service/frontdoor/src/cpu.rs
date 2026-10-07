@@ -245,13 +245,13 @@ impl CpuPool {
         let (reply, response) = oneshot::channel();
         self.jobs
             .try_send(Box::new(move || {
-                let _credit = credit;
+                let admission_credit = credit;
                 let result = context
                     .check()
                     .and_then(|()| work(&context))
                     .and_then(|value| context.check().map(|()| value));
                 // Completion must make admission capacity reusable before waking the caller.
-                drop(_credit);
+                drop(admission_credit);
                 let _ = reply.send(result);
             }))
             .map_err(|_| Error::new(ErrorCode::Capacity, "CPU queue unavailable"))?;
