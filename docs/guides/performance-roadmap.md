@@ -374,8 +374,36 @@ per-graph split), or derive the height from the tensor being partitioned
 second is smaller and removes the class of bug entirely, because the tile then cannot
 disagree with the tensor it partitions.
 
-Reverted to `[16, 64]`. The patch above remains a valid prerequisite; the open work is the
-partition source, not the plumbing. It also finally gives
+**The derived-partition version runs, and closes the whole line of attack.** Deriving the
+height from `output.shape()[0]` (largest power-of-two block at most the kernel tile that
+divides the row count) compiles, passes all 27 CUDA host tests, and runs without a launch
+error. Measured against the `[16, 64]` baseline on the same 27B matrix:
+
+| Case | Metric | Baseline | Derived tile | change |
+|---|---|---:|---:|---:|
+| short | TTFT | 0.0568 | 0.0562 | -1.1% |
+| short | wall | 0.6749 | **3.3381** | **+394.6%** |
+| long | TTFT | 0.3980 | 0.3984 | +0.1% |
+| long | wall | 1.0956 | **3.6257** | **+230.9%** |
+
+Two conclusions, and the second retires the idea:
+
+1. **The prompt gain does not survive.** TTFT is flat (-1.1% / +0.1%) where the global
+   `[64, 64]` run measured -7%. The earlier 7% came from the *global* constant, which also
+   changed the layouts of the auxiliary graphs, not from the prompt projection alone.
+2. **The row tile cannot be reduced for decode.** For a decode launch `rows` is 4-12, so
+   the derived height falls to 1-4 and the kernel's `mmaf_scaled` path degrades by 3-4x,
+   which is the +395% wall. The quantized GEMM has a floor at 16 rows; below it the tall
+   partition is not just wasteful, it is much slower.
+
+So the row-block mechanism is real but **not addressable through this tile on this kernel**:
+the prompt graph wants 64 rows and the decode path cannot go below 16, and a single
+workspace serves both in the same program. Closing it needs either two kernels genuinely
+specialised by row count, or a decode path that does not share the quantized GEMM at all.
+
+Reverted to `[16, 64]`. `docs/patches/quant-gemm-row-tile-m.patch` remains a valid
+prerequisite but is **not** a path to the 7% figure, which this measurement attributes to
+the global constant's side effects rather than to removing prompt weight re-reads. It also finally gives
 a coherent account of why split-K regressed: on a memory-bound plan already re-reading
 weights, splitting K adds partial traffic without reducing weight reads.
 
