@@ -158,6 +158,40 @@ Decode (`TPOT`) is at parity for `qwen3vl-2b` (0.99-1.03 on three of four cases)
 1.13-1.27 for the 27B outside batch4. The two largest remaining gaps are 27B long TTFT
 (5.84x) and both models' batch4 TTFT (2.52x), i.e. prefill, not decode.
 
+#### The 22x "cliff" compared two different programs, not two chunk sizes
+
+The 23-node / 1.94 ms and 1154-node / 42.5 ms records do not belong to one program at two
+chunk widths. A model holds **two resident programs**, each with its own prompt graph:
+
+| Program | `prefill_width` | capture | nodes | replay |
+|---|---:|---|---:|---:|
+| target | 64 | `BatchBuilder::build` | 1154 | 42.5 ms |
+| draft (MTP head) | 32 | `BatchBuilder::capture32` | 23 | 1.94 ms |
+
+`prime_draft` chunks by `PREFILL_LANES = 32` (`execution.rs:752`), so the 23-node records
+are **draft KV priming**, and only the 1154-node records are target prefill. The profile
+reports both as `graph = "prefill"` because each program has its own `PrefillProfile`
+writing to the same path.
+
+So the "cliff" was the draft graph measured against the target graph. That is a
+cross-population comparison of the same kind that produced the previous correction — the
+eighth time this session that two numbers from different sources have been combined, and
+the fourth time it has happened across these two graph kinds specifically.
+
+**What actually remains**, with only real target-prefill numbers:
+
+- A 511-token prompt is 8 target replays of 64 tokens at **42.5 ms** each = 340 ms, and the
+  measured TTFT is 398 ms. That is the whole long-prompt cost, confirmed on both the device
+  and host sides.
+- The target replay reads 23.4 GB of resident weights. At the device's 1.79 TB/s that is
+  **13.1 ms**, so 42.5 ms is **3.2x over the memory floor**.
+- The draft program's 1.94 ms for 32 tokens is therefore 1.94 ms for a much smaller
+  network, and says nothing about target prefill cost.
+
+The live question is now narrow and well-posed: **why does the 64-lane target prompt replay
+run at 31% of device bandwidth**, when the same weights stream at 61% in the 12-lane slot
+path. Both are target weights, both are measured, and the gap is 2x.
+
 #### Prefill attribution: the replay is 94% of TTFT (host instrumentation)
 
 `host_phases_us` now covers prefill (`prefill_chunk` around
