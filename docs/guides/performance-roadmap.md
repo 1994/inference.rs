@@ -1,5 +1,68 @@
 # Inference performance roadmap
 
+> ## Final state at round 40 (2026-10-08) — objective NOT met
+>
+> The gate (every workload case for both models within 1.10 of vLLM) is **not** achieved.
+> Definitive run on the current committed tree, full matrix, `--gpu-memory-utilization 0.88`,
+> one excluded warmup and three measured trials; raw reports in `artifacts/perf-r40/`:
+>
+> **Passing** — `qwen3vl-2b` `short` passes all three metrics (wall **0.974**, TTFT 1.005,
+> TPOT **0.975**), and `qwen3vl-2b` TPOT passes on `long` (0.979) and `hot_long` (1.028).
+> `Qwen3.8-27B-NVFP4` `hot_long` passes wall (**0.951**) and TTFT (**0.369**).
+>
+> **Failing, worst first** — 27B `long` TTFT **5.86**, 2B `long` TTFT 3.26, 2B `batch4` TTFT
+> 2.63, 27B `batch4` TTFT 2.45, 2B `hot_long` TTFT 1.87, 27B `batch4` TPOT 1.90, 27B `long`
+> wall 1.76, and the remainder between 1.03 and 1.49.
+>
+> **Where the gap lives.** Two measured quantities, each with a mechanism and each with an
+> identified blocker:
+>
+> 1. **Prepopulated long-prompt TTFT.** A 511-token prompt is 8 target prompt-graph replays
+>    of 64 tokens at **42.5 ms** each = 340 ms against a 398 ms measured TTFT; the host adds
+>    ~3 ms (94% of the execution wall is the replay). The replay streams the 20.16 GiB text
+>    backbone at **505 GB/s (28% of peak)** where the same weights reach **947 GB/s (53%)**
+>    in the 12-lane verify graph, measured in one process with one profiler.
+> 2. **`batch4` TTFT.** It is three executions per request where one would be ~8 ms: a
+>    48-token prefill alone costs 8.4 ms, but a step mixing prefills with decodes costs
+>    27 ms against 5.0 ms for a decode-only step.
+>
+> **What blocks them.** For (1), the row-block mechanism is confirmed — a 64-row quantized
+> GEMM block is loaded once per 16-row block, so the prompt path re-reads each weight four
+> times — but it is **not addressable through `QUANT_GEMM_TILE`**, which is proven by
+> measurement in this file: the global 64-row tile is net-negative (decode wall +20.8%), and
+> deriving the height per tensor is worse (decode wall +394.6%, TTFT gain gone). The kernel
+> has a 16-row floor and the prompt and decode paths share one workspace in one program, so
+> a fix needs two row-specialised kernels or a decode path that does not share the
+> quantized GEMM. For (2), it needs prefill/decode stage separation or a prompt graph that
+> finishes a request's prompt in one execution. Both are larger than one round of
+> implement-and-verify at this repository's correctness bar.
+>
+> **What is landed and verified.** The cross-engine harness (`tools/bench/serve-*.py`)
+> with its canonical matrix and unit tests; opt-in host-phase and per-node profiling
+> (`INFER_CUDA_EXECUTION_PROFILE`, `INFER_CUDA_PREFILL_PROFILE`,
+> `INFER_CUDA_PROFILE_GRAPH_ONLY`) including prefill attribution; `ExecutionProfileInspection`
+> exposed on `/native/v1/runtime`; two load-time defects fixed (prompt-graph width bounded by
+> the arena budget only, and the CUDA prefill chunk taken from the backend's resolved width
+> instead of the generic 64); and `docs/patches/quant-gemm-row-tile-m.patch`, a verified
+> no-op prerequisite for row-specialised kernels.
+>
+> **What was rejected by measurement, so it is not retried.** Split-K on narrow-row
+> projections (1.8x kernel win, 1.8x serving loss); a 128-lane 27B prompt graph; widening the
+> decode slot pool to 8; host readback/scan as the step bottleneck; 128-lane conv tiles;
+> per-lane `delta` launches as the prefill cost; opening the chunked recurrent-prefill
+> numerical gate; raising the fair-quantum; bandwidth as the limiting roofline; and the row
+> tile in both its global and derived forms.
+>
+> **Measurement discipline, learned the hard way.** Nine claims in this file were corrected
+> after publication, most of them by combining two numbers from different populations — a
+> cost measured on one captured graph applied to another graph's event count, a device
+> replay compared against a whole-execution wall, or a draft-head figure used as a target
+> figure. Both the target prompt graph and the MTP-draft prompt graph report
+> `graph = "prefill"` in the same profile file, which makes that error nearly invisible.
+> Check which program, which captured graph and which population produced a number before
+> using it, and prefer a like-for-like re-measurement over a ratio built from two sources.
+
+
 > **Measurement discipline.** This file has repeatedly gone wrong by combining two
 > numbers that came from different populations: a cost measured on one captured graph
 > applied to another graph's event count; a device replay compared with a whole-execution
