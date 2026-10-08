@@ -625,10 +625,17 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    | batch4 | 1.593 → 1.582 | 2.312 → **2.079**（−10.1%） | 1.681 → 1.651 |
    | hot_long | 0.950 → 1.009（+6.2%） | 0.369 → **0.330**（−10.6%） | 1.186 → 1.284（+8.3%） |
 
-   即：**TTFT 全面下降 10–24%**（预填充收益），但 short/hot_long 的 TPOT/wall 反而退 ~8–10%
-   —— 因为 verify 图也用同一个 workspace，同样切到了 chunked。所以默认保持关闭是对的；
-   要用它应当只对**预填充图**开启（把开关放到 BatchBuilder 的 prompt 构建上，而不是整个
-   workspace）。这条留作下一步，另外 token 会变（0/21 与默认一致），属于数值取舍。
+   即：**TTFT 全面下降 10–24%**（预填充收益），但 short/hot_long 的 TPOT/wall 反而退 ~8–10%。
+   后者经 3 轮复测确认不是噪声（short wall 1.084 / TPOT 1.105、hot_long 1.062 / 1.083）。
+
+   **一处纠正**：先前把 TPOT 回退归因于"verify 图也切到了 chunked"是错的。`Workspace::new`
+   只在 `batch.rs:364` 的 `build32` 里被调用，而 `build()` 仅在 `width >= PREFILL_LANES` 时
+   分派到 `build32`（`batch.rs:265`），所以 chunked 路径**本来就只作用于预填充图**；batch/slot/
+   verify 图走 `Workspace::default()`（逐 lane）。因此 short/hot_long 的 wall/TPOT 变化目前
+   **没有解释**，是一个待查项，而不是已知机制。
+
+   默认保持关闭的理由因此收窄为两条：token 会变（0/21 与默认一致，属数值取舍）、以及短序列
+   的 wall/TPOT 回退尚无机制解释。long 用例则是全面变好（TTFT −24%、wall −10%、TPOT −4%）。
 
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
