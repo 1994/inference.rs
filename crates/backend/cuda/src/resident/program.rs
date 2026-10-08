@@ -2,7 +2,7 @@ use super::{ActivationArena, capture};
 use crate::{
     constants::{
         CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, MAX_CAPACITY_TOKENS, MAX_HIDDEN_SIZE,
-        METADATA_FIELDS, PREFILL_LANES,
+        METADATA_FIELDS, MIB, PREFILL_LANES,
     },
     device::{CudaDevice, device_error},
     mlp::ProjectionWeight,
@@ -916,7 +916,12 @@ pub fn allocate_states(
             if total as u64 > budget / F32_BYTES as u64 {
                 return Err(Error::new(
                     infer_core::ErrorCode::Capacity,
-                    "resident F32 state exceeds available device memory minus 1 GiB headroom",
+                    format!(
+                        "resident F32 state exceeds available device memory minus 1 GiB headroom: \
+                         need {} MiB, budget {} MiB",
+                        total as u64 * F32_BYTES as u64 / MIB as u64,
+                        budget / MIB as u64
+                    ),
                 ));
             }
         }

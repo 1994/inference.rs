@@ -1,4 +1,5 @@
 use super::{CudaBackend, CudaTicket, ModelOutput, Sequence, SlotLease, Speculation, prefix};
+use crate::constants::MIB;
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, Result, StateId};
 use infer_ir::{
@@ -190,38 +191,68 @@ impl CudaBackend {
             .max()
             .unwrap_or(1)
             .next_power_of_two();
-        // Reserve the configured capture bucket, not the transient number of
-        // arrivals seen on this tick. Otherwise a two-request first tick fixes
-        // the pool at two slots for the server's entire lifetime.
-        let width = self
+        let Some(pool) = self.create_slot_pool(capacity) else {
+            self.slots_disabled = true;
+            // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and
+            // the fallback is otherwise silent: a caller only sees steps that never batched.
+            tracing::warn!(
+                target: "infer::executor",
+                capacity,
+                last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
+                "CUDA slot pool disabled; decoding one sequence at a time"
+            );
+            return;
+        };
+        for state in self.states.values_mut() {
+            if state.capacity <= capacity
+                && state.speculation.is_some()
+                && state.readout == OutputReadout::Logits
+            {
+                state.program.discard_verification();
+            }
+        }
+        if self.loaded.device().reclaim_barrier().is_err() {
+            self.slots_disabled = true;
+            tracing::warn!(
+                target: "infer::executor",
+                "CUDA slot pool disabled; reclaiming cached prefixes failed"
+            );
+            return;
+        }
+        self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
+        self.slots = Some(pool);
+    }
+
+    /// Widest pool the device can fund, trying every width down to two.
+    ///
+    /// Each attempt that fails is followed by a reclaim so the next one is judged against
+    /// memory that is actually free; a width that cannot fit is worth more to the server than
+    /// no batching at all.
+    fn create_slot_pool(&mut self, capacity: usize) -> Option<SlotPool> {
+        // Reserve the configured capture bucket, not the transient number of arrivals seen on
+        // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
+        let maximum = self
             .maximum_states
             .clamp(2, crate::constants::CB_DECODE_SLOTS);
-        for width in (2..=width).rev() {
+        for width in (2..=maximum).rev() {
             loop {
                 match self.loaded.slot_pool(width, capacity) {
-                    Ok(pool) => {
-                        for state in self.states.values_mut() {
-                            if state.capacity <= capacity
-                                && state.speculation.is_some()
-                                && state.readout == OutputReadout::Logits
-                            {
-                                state.program.discard_verification();
-                            }
-                        }
-                        if self.loaded.device().reclaim_barrier().is_err() {
-                            self.slots_disabled = true;
-                            tracing::warn!(
-                                target: "infer::executor",
-                                "CUDA slot pool disabled; reclaiming cached prefixes failed"
-                            );
-                            return;
-                        }
-                        self.draft_slots = self.prepare_draft_pool(width, capacity);
-                        self.slots = Some(pool);
-                        return;
-                    }
+                    Ok(pool) => return Some(pool),
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);
+                        tracing::debug!(
+                            target: "infer::executor",
+                            width,
+                            capacity,
+                            reclaimable_mib = self
+                                .loaded
+                                .device()
+                                .pool_reclaimable_bytes()
+                                .unwrap_or(0)
+                                / MIB as u64,
+                            %error,
+                            "slot pool attempt failed"
+                        );
                         self.pool_failure_reason = Some(format!("width {width}: {error}"));
                         if !self.reclaim_cached_for_pool(&error) {
                             break;
@@ -230,16 +261,7 @@ impl CudaBackend {
                 }
             }
         }
-        self.slots_disabled = true;
-        // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and the
-        // fallback is otherwise silent: a caller only sees steps that never batched. Say so,
-        // with the reason from the last attempt.
-        tracing::warn!(
-            target: "infer::executor",
-            capacity,
-            last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
-            "CUDA slot pool disabled; decoding one sequence at a time"
-        );
+        None
     }
 
     fn prepare_draft_pool(&mut self, width: usize, capacity: usize) -> Option<SlotPool> {
@@ -259,9 +281,17 @@ impl CudaBackend {
 
     /// Idle programs and cached prefixes must not permanently disable active batching.
     /// Drain deferred frees before retrying the constructor's physical-memory admission.
+    ///
+    /// A driver out-of-memory is admitted here too. Only `Capacity` used to reclaim, so a
+    /// width-4 OOM left the prefix cache in place and the width-3 and width-2 retries then
+    /// failed on numbers that never reflected anything being freed — three refusals in a row
+    /// and the pool was off for the life of the process, with the checkpoint snapshots as the
+    /// only consumer that scales with the verification width.
     fn reclaim_cached_for_pool(&mut self, error: &Error) -> bool {
-        error.code == infer_core::ErrorCode::Capacity
-            && (self.pool.evict() || self.prefix.evict())
+        matches!(
+            error.code,
+            infer_core::ErrorCode::Capacity | infer_core::ErrorCode::Backend
+        ) && (self.pool.evict() || self.prefix.evict())
             && self.loaded.device().reclaim_barrier().is_ok()
     }
 

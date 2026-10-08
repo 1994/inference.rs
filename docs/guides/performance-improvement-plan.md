@@ -566,13 +566,32 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    depth 3 起池化被关掉、以及 DFlash2 在本机不可行的真正原因；KV 不是主项
    （16 层 full attention，capacity 128 时约 16 MB，且有 `kv_scales` 时根本不在此分配）。
 
-   因此 DFlash2 的顺序是：**(1) 让池化在更宽 verify 下装得下** —— 主项是那 151 MB/lane 的
-   F32 Delta 快照，可选路：接受后重建（用一次额外前向换掉快照）、快照降为 BF16/FP8
-   （需过数值门，回滚必须精确）、或宽 verify 时下调 `CB_DECODE_SLOTS`；目标先做到
-   width 4（depth 3）可用并复测；(2) 独立 checkpoint 加载（草稿是另一个 package）；
+   **本轮实测（含一个已修的真 bug）**：一次失败的池化尝试**不会把内存还回来** —— 失败前
+   `free 2476 MiB / pool 6 MiB`，失败后 `free 44 MiB / pool 2438 MiB`。内存进了 device
+   memory pool，而 `cuMemGetInfo` 把 reserve 未用的块算作已用，于是 width 3/2 的重试在
+   "free 只剩 44 MiB"上做准入判断，必然失败，池化被永久关闭。同时 `reclaim_cached_for_pool`
+   只认 `Capacity`，而 driver OOM 是 `Backend`，所以 OOM 之后一次回收都没做。
+
+   落地：回收条件扩到 `Capacity | Backend`；新增 `CudaDevice::pool_reclaimable_bytes()`
+   （pool reserved − used）供诊断；两处拒绝信息带上 MiB；池化被放弃时 warn 出最后一次失败
+   原因。**试过但撤回的两条路**：(i) 把 `available_memory_bytes = free + pool 可回收` 用于
+   准入 —— 语义正确，但实测变成"准入通过、真分配 driver OOM"，depth 3 时好时坏，故撤回
+   以免把干净的 Capacity 拒绝变成硬失败；(ii) `set_release_threshold(0)` —— 驱动是惰性
+   trim，`cuMemGetInfo` 仍然显示 ~0 空闲，无效。
+
+   **结论（本机硬约束）**：verify 4 的 4-slot 池需要约 2.9 GB 而当时只有 2.5 GB，回滚快照
+   就是主项（`slots × (verify−1) × 151 MB`）；即使勉强降到 width 2，4 条序列只有 2 条能
+   入池，实测 depth 3 的 batch4 仍输给 depth 2（TPOT 3.64 vs 1.80，wall 2.685 vs 1.093）。
+   **DFlash2 的 verify 8 需要 4×7×151 MB = 4.23 GB 快照，在这台 31.4 GB 卡上不可行** ——
+   要它成立，必须先让每个 lane 的状态快照不再是 151 MB F32（接受后重建 / 降精度 / 缩小
+   Delta 状态本身），而不是继续调池化参数。基准配置 mtp2 完全不受影响：token 逐字节一致，
+   short/long/hot_long 比值变化 <1%。
+
+   因此 DFlash2 的顺序是：**(1) 降 verify 的 per-lane 状态成本**（接受后重建设为默认）；
+   (2) 独立 checkpoint 加载（草稿是另一个 package）+ 草稿量化（3.85 GB → ~1 GB）；
    (3) DFlash2 IR：fc 融合、5 层双抽头卷积、块内非因果注意力、目标层 hidden 抽头、
-   草稿侧 KV cache；(4) 选择器（码本打分 + 路径遍历）；(5) 块草稿 + 8-lane verify 的
-   engine 集成与实测。注意草稿权重 3.85 GB 会把剩余显存再压掉一截，除非把它也量化。
+   草稿侧 KV cache；(4) 选择器（码本打分 + 路径遍历）；(5) 块草稿 + 8-lane verify 集成与
+   实测。**(1) 之前，(3)-(5) 做完也无法在本机跑起来。**
 
 3. **FP8 精度制度补齐**：128×128 block-scaled（DeepSeek 系与 Flash-Next MTP
    expert 的事实标准）、per-tensor（PLE）、per-channel 三制度进 loader + kernel；

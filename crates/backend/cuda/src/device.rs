@@ -402,6 +402,26 @@ impl CudaDevice {
         Ok((free as u64, total as u64))
     }
 
+    /// Device bytes the allocator can hand out again without asking the driver.
+    ///
+    /// Tensors are allocated with `cuMemAllocAsync` from the device's memory pool, and a freed
+    /// block stays reserved in that pool. `cuMemGetInfo` counts reserved-but-unused blocks as
+    /// used, so a pre-flight admission check against it under-reports what a retry can actually
+    /// obtain; this is the difference.
+    pub(crate) fn pool_reclaimable_bytes(&self) -> Result<u64> {
+        self.stream
+            .device()
+            .bind_to_thread()
+            .map_err(device_error)?;
+        let pool = self
+            .stream
+            .device()
+            .default_mem_pool()
+            .map_err(device_error)?;
+        let stats = pool.mem_stats().map_err(device_error)?;
+        Ok(stats.reserved_current.saturating_sub(stats.used_current))
+    }
+
     // cuda-async frees tensors on a separate deallocator stream. Join it before
     // using driver free-memory queries to admit allocations after cache eviction.
     pub(crate) fn reclaim_barrier(&self) -> Result<()> {
@@ -409,6 +429,11 @@ impl CudaDevice {
             .device()
             .bind_to_thread()
             .map_err(device_error)?;
+        // Tensors come from the device memory pool, and a block returned to the pool keeps
+        // counting as used in `cuMemGetInfo` until the driver trims it. Neither raising the
+        // release threshold nor `cuMemPoolTrimTo` (unbound in cuda-bindings 0.4) gets the memory
+        // back in time, so a failed slot-pool attempt is only visible through
+        // `pool_reclaimable_bytes`; nothing here pretends to make the query honest.
         // SAFETY: the owned device's context is current; this only waits for its work.
         unsafe { self.stream.device().synchronize() }.map_err(device_error)
     }

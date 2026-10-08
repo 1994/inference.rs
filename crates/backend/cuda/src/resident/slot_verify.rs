@@ -6,6 +6,7 @@ use super::{
     fp8_cache::Fp8Caches,
     profile,
 };
+use crate::constants::MIB;
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use cutile::prelude::*;
 use infer_core::{Error, Result};
@@ -78,7 +79,17 @@ impl BatchBuilder<'_> {
                             .and_then(|n| bytes.checked_add(n))
                             .ok_or_else(|| Error::invalid("slot verify checkpoint overflow"))?;
                         if bytes > budget {
-                            return Err(Error::invalid("slot verify checkpoints exceed budget"));
+                            return Err(Error::new(
+                                infer_core::ErrorCode::Capacity,
+                                format!(
+                                    "slot verify checkpoints exceed budget: need {} MiB, \
+                                     budget {} MiB at {} slots x {} lanes",
+                                    bytes / MIB,
+                                    budget / MIB,
+                                    lane_states.len(),
+                                    verify
+                                ),
+                            ));
                         }
                         let shape = source
                             .shape()
