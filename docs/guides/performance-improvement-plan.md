@@ -535,6 +535,33 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
 2. **lowering 重验**：wgmma（sm_90a）与 tcgen05（sm_120）是两条 lowering 路径，
    数值门 + `inspect-cutile-cache.py` SASS 检查全量重跑；TMA 在 Hopper 是主场，
    杠杆 A 的双缓冲方向直接受益；PDL sm_90 原生支持（`mlp/pdl.rs` 无需改动）。
+2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
+   （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
+   并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层
+   （`target_layer_ids [5,19,33,47,61]`）的 hidden 拼接**投回 5120；5 层 Qwen3 骨干
+   （32 heads / 8 kv heads、head_dim 128、滑动窗口 2048、**块内非因果**）；每层两组
+   "双抽头动态卷积" `attention_conv`/`mlp_conv`（`base_kernel [2,2,5120]` +
+   `kernel_projection [1280,5120]`，即 conv_kernel_size 2 × conv_group_size 16）；
+   `candidate_selector`（`hidden_projection [256,5120]` + 两个 `[248320,256]` 码本）在选择
+   器里从 top-16 候选中追踪一条连贯路径。它**没有自己的 embedding / lm_head**，复用目标
+   模型的。`block_size 8` 意味着**每条序列 8 条 verify lane**。
+
+   **前置阻塞已定位（实测）**：我们现在的 verify 宽度上界不是算力而是**显存**。MTP 深度
+   扫描（27B，2 轮，ratio native/vLLM-mtp2）显示 depth 2 最优（short wall 1.140 /
+   TPOT 1.133），depth 3 起 batch4 崩塌（wall 1.110 → 2.679、TPOT 1.775 → 3.715），
+   而 short 几乎不动——这是**池化被静默关闭**：`INFER_CUDA_EXECUTION_PROFILE` 记录
+   `pool_creation_failed`，depth 3 时 width 4 报 `CUDA driver error: out of memory`，
+   width 3/2 报 `Capacity: resident F32 state exceeds available device memory minus 1 GiB
+   headroom`，于是 205 个 step 全部 `pool_disabled`，四条序列退回串行。27B 常驻已 22.9 GiB
+   / 预算 27.7 GiB，恢复池化所需的 checkpoints 是按 lane 逐份的 F32 状态快照。
+
+   因此 DFlash2 的顺序是：**(1) 让池化在更宽 verify 下装得下**（杠杆 C 的 FP8 KV /
+   让回滚 checkpoint 不再按 lane 复制 F32 状态 / 池化前回收前缀缓存），目标先做到
+   width 4（depth 3）可用并复测；(2) 独立 checkpoint 加载（草稿是另一个 package）；
+   (3) DFlash2 IR：fc 融合、5 层双抽头卷积、块内非因果注意力、目标层 hidden 抽头、
+   草稿侧 KV cache；(4) 选择器（码本打分 + 路径遍历）；(5) 块草稿 + 8-lane verify 的
+   engine 集成与实测。注意草稿权重 3.85 GB 会把剩余显存再压掉一截，除非把它也量化。
+
 3. **FP8 精度制度补齐**：128×128 block-scaled（DeepSeek 系与 Flash-Next MTP
    expert 的事实标准）、per-tensor（PLE）、per-channel 三制度进 loader + kernel；
    **FP8 KV（杠杆 C 在本线提前）** —— 141GB 卡 + FP8 KV 是长上下文数据中心标

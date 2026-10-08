@@ -33,6 +33,8 @@ pub struct CudaBackend {
     slots: Option<SlotPool>,
     draft_slots: Option<SlotPool>,
     slots_disabled: bool,
+    /// Reason the last pool attempt failed, reported when batching is given up for good.
+    pool_failure_reason: Option<String>,
     busy: bool,
     fatal: Option<Error>,
 }
@@ -161,6 +163,7 @@ impl CudaBackend {
             slots: None,
             draft_slots: None,
             slots_disabled: false,
+            pool_failure_reason: None,
             busy: false,
             fatal: None,
         })

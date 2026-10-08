@@ -210,6 +210,10 @@ impl CudaBackend {
                         }
                         if self.loaded.device().reclaim_barrier().is_err() {
                             self.slots_disabled = true;
+                            tracing::warn!(
+                                target: "infer::executor",
+                                "CUDA slot pool disabled; reclaiming cached prefixes failed"
+                            );
                             return;
                         }
                         self.draft_slots = self.prepare_draft_pool(width, capacity);
@@ -218,6 +222,7 @@ impl CudaBackend {
                     }
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);
+                        self.pool_failure_reason = Some(format!("width {width}: {error}"));
                         if !self.reclaim_cached_for_pool(&error) {
                             break;
                         }
@@ -226,6 +231,15 @@ impl CudaBackend {
             }
         }
         self.slots_disabled = true;
+        // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and the
+        // fallback is otherwise silent: a caller only sees steps that never batched. Say so,
+        // with the reason from the last attempt.
+        tracing::warn!(
+            target: "infer::executor",
+            capacity,
+            last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
+            "CUDA slot pool disabled; decoding one sequence at a time"
+        );
     }
 
     fn prepare_draft_pool(&mut self, width: usize, capacity: usize) -> Option<SlotPool> {
@@ -234,6 +248,7 @@ impl CudaBackend {
                 Ok(pool) => return pool,
                 Err(error) => {
                     super::profiling::pool_failure("draft", width, capacity, &error);
+                    self.pool_failure_reason = Some(format!("draft width {width}: {error}"));
                     if !self.reclaim_cached_for_pool(&error) {
                         return None;
                     }
