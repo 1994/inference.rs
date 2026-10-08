@@ -95,6 +95,7 @@ impl ProgramWeights {
     ///
     /// A width below `PREFILL_LANES` is not a prompt graph: it is the verification width the
     /// program falls back to.
+    #[must_use]
     pub fn prompt_widths(&self) -> Vec<usize> {
         let mut widths = Vec::with_capacity(2);
         for width in [self.prefill_width, self.narrow_prefill_width] {
@@ -106,11 +107,13 @@ impl ProgramWeights {
     }
 
     /// Widest captured prompt graph, or zero when the program captures none.
+    #[must_use]
     pub fn widest_prompt_width(&self) -> usize {
         self.prompt_widths().into_iter().max().unwrap_or(0)
     }
 
     /// Total prompt lanes across every captured prompt graph.
+    #[must_use]
     pub fn prompt_lane_total(&self) -> usize {
         self.prompt_widths().into_iter().sum()
     }
@@ -758,7 +761,7 @@ impl DeviceProgram {
             self.prompt_batch.as_mut()
         };
         let output = prompt
-            .or_else(|| self.batch.as_mut())
+            .or(self.batch.as_mut())
             .ok_or_else(|| Error::invariant("prefill batch graph"))?
             .run(
                 &self.device,

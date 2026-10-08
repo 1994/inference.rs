@@ -135,10 +135,10 @@ pub(super) fn record(
         (ProjectionWeight::Fp4(..), Some(ActivationQuantization::Fp4(scale))) => {
             workspace.record(scope, weight, scale, input, output, columns)?;
         }
-        (ProjectionWeight::Fp8(..), Some(ActivationQuantization::Fp8Token)) => {
-            workspace.record_fp8(scope, weight, input, output, columns)?;
-        }
-        (ProjectionWeight::Fp8Block(..), Some(ActivationQuantization::Fp8Token)) => {
+        (
+            ProjectionWeight::Fp8(..) | ProjectionWeight::Fp8Block(..),
+            Some(ActivationQuantization::Fp8Token),
+        ) => {
             workspace.record_fp8(scope, weight, input, output, columns)?;
         }
         _ => return Ok(false),
