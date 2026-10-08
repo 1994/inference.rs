@@ -35,7 +35,7 @@ pub fn inspect_model(options: InspectModelOptions) -> Result<()> {
         .map(|i| {
             memory_estimate(
                 &model.model,
-                i.weight_bytes()?,
+                i.declared_weight_bytes()?.unwrap_or(0),
                 context_tokens,
                 sequences,
                 crate::constants::GIB_U64,

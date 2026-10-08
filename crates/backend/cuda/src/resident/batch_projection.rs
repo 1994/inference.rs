@@ -261,7 +261,7 @@ fn record_projection(
                 )?;
                 return Ok(());
             }
-            ProjectionWeight::Fp4(..) => {}
+            ProjectionWeight::Fp4(..) | ProjectionWeight::Fp8Block(..) => {}
         }
     }
     let mut generics = vec![
@@ -270,6 +270,9 @@ fn record_projection(
         columns.to_string(),
     ];
     match weight {
+        ProjectionWeight::Fp8Block(..) => {
+            return Err(error("block FP8 requires the resident FP8 GEMM"));
+        }
         ProjectionWeight::Dense(w) => {
             generics.insert(0, bf16::DTYPE.as_str().into());
             scope.record(

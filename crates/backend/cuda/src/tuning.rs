@@ -84,6 +84,7 @@ pub fn projection_key(weight: &ProjectionWeight) -> Result<(String, usize, usize
     let (encoding, shape, packing) = match weight {
         ProjectionWeight::Dense(w) => ("bf16", w.shape(), 1),
         ProjectionWeight::Fp8(w, _) => ("fp8-channel", w.shape(), 1),
+        ProjectionWeight::Fp8Block(w, _) => ("fp8-block", w.shape(), 1),
         ProjectionWeight::Fp4(w, _, _) => ("nvfp4", w.shape(), 2),
     };
     if shape.len() != 2 {

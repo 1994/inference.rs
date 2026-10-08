@@ -9,6 +9,9 @@ use std::sync::Arc;
 pub enum ProjectionWeight {
     Dense(Arc<Tensor<bf16>>),
     Fp8(Arc<Tensor<f8e4m3fn>>, Arc<Tensor<f32>>),
+    /// Block-scaled FP8: the second tensor holds one scale per output channel per 128-column
+    /// input block, already expanded along rows so the GEMM can index it like a per-channel one.
+    Fp8Block(Arc<Tensor<f8e4m3fn>>, Arc<Tensor<f32>>),
     Fp4(Arc<Tensor<f4e2m1fnx2>>, Arc<Tensor<f8e4m3fn>>, f32),
 }
 
@@ -24,6 +27,14 @@ impl ProjectionWeight {
         let valid = match self {
             Self::Dense(w) => matches(w.shape(), &[rows, columns]),
             Self::Fp8(w, s) => matches(w.shape(), &[rows, columns]) && matches(s.shape(), &[rows]),
+            Self::Fp8Block(w, s) => {
+                columns.is_multiple_of(crate::constants::FP8_BLOCK_COLUMNS)
+                    && matches(w.shape(), &[rows, columns])
+                    && matches!(s.shape(), [r, c]
+                        if usize::try_from(*r).ok() == Some(rows)
+                            && usize::try_from(*c).ok()
+                                == Some(columns / crate::constants::FP8_BLOCK_COLUMNS))
+            }
             Self::Fp4(w, s, g) => {
                 columns.is_multiple_of(crate::constants::NVFP4_GROUP_SIZE)
                     && matches(w.shape(), &[rows, columns / 2])
@@ -66,6 +77,11 @@ impl ProjectionWeight {
                 scope.record(
                     linear::fp8(out.partition([tile.rows()]), input, w, s).generics(generics),
                 )?;
+            }
+            Self::Fp8Block(..) => {
+                return Err(DeviceError::Launch(
+                    "block FP8 requires the resident FP8 GEMM".to_string(),
+                ));
             }
             Self::Fp4(w, s, g) => {
                 generics.extend([

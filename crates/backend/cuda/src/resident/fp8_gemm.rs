@@ -31,6 +31,59 @@ pub(crate) mod kernels {
         scale.store(s);
     }
 
+    /// Block-scaled twin of `quantize`: one scale per `PAD`-sized input block instead of one per
+    /// row, matching a checkpoint that declares `weight_block_size` along the input dimension.
+    #[cutile::entry()]
+    fn quantize_block<const K: i32, const PAD: i32>(
+        output: &mut Tensor<f8e4m3fn, { [1, PAD] }>,
+        scale: &mut Tensor<f32, { [1, 1] }>,
+        input: &Tensor<f32, { [-1, K] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let x = input.partition(shape![1, PAD]).load([pid.0, pid.1]);
+        let maximum: Tile<f32, { [1] }> = reduce_max(absf(x), 1i32);
+        let maximum = maximum.reshape(shape![1, 1]);
+        let s = max_tile(
+            maximum / 448.0f32.broadcast(shape![1, 1]),
+            1.0e-12f32.broadcast(shape![1, 1]),
+        );
+        let x = x / s.broadcast(shape![1, PAD]);
+        let x = min_tile(
+            max_tile(x, (-448.0f32).broadcast(shape![1, PAD])),
+            448.0f32.broadcast(shape![1, PAD]),
+        );
+        let packed: Tile<f8e4m3fn, { [1, PAD] }> = convert_tile(x);
+        output.store(packed);
+        scale.store(s);
+    }
+
+    /// Block-scaled FP8 GEMM: both scales are per 128-element input block, so each K step's
+    /// partial product is scaled before it joins the accumulator. Scaling the operands instead
+    /// would round them through FP8 a second time.
+    #[cutile::entry()]
+    fn matmul_block<const K: i32, const M: i32, const N: i32>(
+        output: &mut Tensor<f32, { [M, N] }>,
+        input: &Tensor<f8e4m3fn, { [-1, K] }>,
+        weight: &Tensor<f8e4m3fn, { [-1, K] }>,
+        input_scale: &Tensor<f32, { [-1, -1] }>,
+        weight_scale: &Tensor<f32, { [-1, -1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![M, 128]);
+        let wp = weight.partition(shape![N, 128]);
+        let xs = input_scale.partition(shape![M, 1]);
+        let ws = weight_scale.partition(shape![N, 1]);
+        let zero: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
+        let mut acc: Tile<f32, { [M, N] }> = zero;
+        for k in 0i32..((K + 127) / 128) {
+            let part = mmaf(xp.load([pid.0, k]), wp.load([pid.1, k]).transpose(), zero);
+            let scale = xs.load([pid.0, k]).broadcast(shape![M, N])
+                * ws.load([pid.1, k]).transpose().broadcast(shape![M, N]);
+            acc = acc + part * scale;
+        }
+        output.store(acc);
+    }
+
     #[cutile::entry()]
     fn matmul<const K: i32, const M: i32, const N: i32>(
         output: &mut Tensor<f32, { [M, N] }>,

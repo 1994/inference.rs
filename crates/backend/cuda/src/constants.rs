@@ -57,6 +57,8 @@ mod device {
             QUANT_GEMM_TILE
         }
     }
+    /// Column block of a block-scaled FP8 GEMM: one scale covers this many input columns.
+    pub const FP8_BLOCK_COLUMNS: usize = 128;
     /// Packed activation codes written by one NVFP4 quantization block.
     pub const NVFP4_QUANT_CODES_TILE: [usize; 2] = [1, 256];
     /// Activation scales written by one NVFP4 quantization block.

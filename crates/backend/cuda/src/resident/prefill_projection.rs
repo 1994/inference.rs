@@ -47,6 +47,9 @@ pub(super) fn record(
     }
     let generics = vec![columns.to_string()];
     match weight {
+        ProjectionWeight::Fp8Block(..) => {
+            return Err(error("block FP8 requires the resident FP8 GEMM"));
+        }
         ProjectionWeight::Dense(w) => {
             scope.record(
                 gemm::dense(

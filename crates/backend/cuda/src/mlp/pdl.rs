@@ -69,6 +69,11 @@ pub(super) fn record_down(
             // SAFETY: same token-ordered activation reads; weights and scales are immutable.
             scope.record(unsafe { launch.programmatic_dependent_launch() })?;
         }
+        ProjectionWeight::Fp8Block(..) => {
+            return Err(DeviceError::Launch(
+                "block FP8 requires the resident FP8 GEMM".to_string(),
+            ));
+        }
         ProjectionWeight::Fp4(w, s, global) => {
             generics.extend([
                 (tile.columns() / 2).to_string(),

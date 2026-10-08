@@ -51,6 +51,15 @@ impl Workspace {
                 .ok_or_else(|| Error::invariant("FP4 input tensor"))?
                 .elements()?;
             if weights.fp8_inputs.contains(&node.inputs[1]) {
+                let block = matches!(
+                    weights.projections.get(&node.inputs[1]),
+                    Some(ProjectionWeight::Fp8Block(..))
+                );
+                let scale_columns = if block {
+                    columns / crate::constants::FP8_BLOCK_COLUMNS
+                } else {
+                    1
+                };
                 for &rows in widths {
                     if rows > 0 && !fp8.contains_key(&(rows, columns)) {
                         fp8.insert(
@@ -59,7 +68,7 @@ impl Workspace {
                                 api::zeros::<f8e4m3fn>(&[rows, columns])
                                     .sync_on(&device.stream)
                                     .map_err(device_error)?,
-                                api::zeros::<f32>(&[rows, 1])
+                                api::zeros::<f32>(&[rows, scale_columns])
                                     .sync_on(&device.stream)
                                     .map_err(device_error)?,
                             ),
@@ -145,33 +154,60 @@ impl Workspace {
         columns: usize,
     ) -> std::result::Result<(), DeviceError> {
         use super::super::{capture::error, fp8_gemm::kernels};
-        let ProjectionWeight::Fp8(w, scale) = weight else {
+        if !matches!(
+            weight,
+            ProjectionWeight::Fp8(..) | ProjectionWeight::Fp8Block(..)
+        ) {
             return Err(error("FP8 workspace weight"));
-        };
+        }
         let rows = usize::try_from(output.shape()[0]).map_err(error)?;
         let (q, qs) = self
             .fp8
             .get_mut(&(rows, columns))
             .ok_or_else(|| error("FP8 quantization workspace missing"))?;
-        scope.record(
-            kernels::quantize(
-                (&mut *q).partition([1, columns.next_power_of_two()]),
-                (&mut *qs).partition([1, 1]),
-                input,
-            )
-            .generics(vec![
-                columns.to_string(),
-                columns.next_power_of_two().to_string(),
-            ]),
-        )?;
         let tile = crate::constants::quant_gemm_tile(rows);
-        scope.record(
-            kernels::matmul(output.partition(tile), &*q, w, &*qs, scale).generics(vec![
-                columns.to_string(),
-                tile[0].to_string(),
-                tile[1].to_string(),
-            ]),
-        )?;
+        let generics = vec![
+            columns.to_string(),
+            tile[0].to_string(),
+            tile[1].to_string(),
+        ];
+        match weight {
+            ProjectionWeight::Fp8Block(w, block_scale) => {
+                scope.record(
+                    kernels::quantize_block(
+                        (&mut *q).partition([1, crate::constants::FP8_BLOCK_COLUMNS]),
+                        (&mut *qs).partition([1, 1]),
+                        input,
+                    )
+                    .generics(vec![
+                        columns.to_string(),
+                        crate::constants::FP8_BLOCK_COLUMNS.to_string(),
+                    ]),
+                )?;
+                scope.record(
+                    kernels::matmul_block(output.partition(tile), &*q, w, &*qs, block_scale)
+                        .generics(generics),
+                )?;
+            }
+            ProjectionWeight::Fp8(w, channel_scale) => {
+                scope.record(
+                    kernels::quantize(
+                        (&mut *q).partition([1, columns.next_power_of_two()]),
+                        (&mut *qs).partition([1, 1]),
+                        input,
+                    )
+                    .generics(vec![
+                        columns.to_string(),
+                        columns.next_power_of_two().to_string(),
+                    ]),
+                )?;
+                scope.record(
+                    kernels::matmul(output.partition(tile), &*q, w, &*qs, channel_scale)
+                        .generics(generics),
+                )?;
+            }
+            _ => return Err(error("FP8 workspace weight")),
+        }
         Ok(())
     }
 }

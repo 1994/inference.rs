@@ -539,6 +539,21 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    expert 的事实标准）、per-tensor（PLE）、per-channel 三制度进 loader + kernel；
    **FP8 KV（杠杆 C 在本线提前）** —— 141GB 卡 + FP8 KV 是长上下文数据中心标
    配。
+
+   **进展：block-128×128 已落地并实测**（`Qwen3-VL-2B-Instruct-FP8`，vLLM 原生
+   `fp8` scheme：`weight_block_size [128,128]`、`weight_scale_inv`、动态 per-token
+   量化）。loader 侧 `normalize_fp8_scheme` 把 vLLM scheme 翻译成内部形状，
+   `WeightEncoding::Fp8Block` 绑定 `weight_scale_inv`，并把每个通道块的 scale 沿
+   行展开，kernel 因此与 per-channel 路径同形；kernel 侧
+   `fp8_gemm::quantize_block`（每 128 列一个 scale）+ `matmul_block`（每个 K step
+   的部分积先乘 `xs[行,k块] * ws[通道块,k块]` 再累加——缩放操作数会二次过 FP8 舍
+   入）。数值门 `fp8_block_mma_matches_independent_block_quantization` 对独立构造
+   的 per-128-block 参考（f64、真值 scale）在 (12,65,512)/(64,129,1024)/(12,256,5120)
+   三形状通过。2B FP8 矩阵（native/vLLM，2 轮）：short wall 1.239 / TTFT **0.749**
+   / TPOT 1.299；long 1.496 / 3.085 / 1.312；batch4 1.666 / 1.251 / **1.750**；
+   hot_long 1.457 / 2.093 / 1.393。**token 与 vLLM 仅 3/21 逐字节一致**：vLLM 走
+   DeepGEMM 的 E8M0 分支（日志 `DeepGEMM E8M0 enabled`）会重编码 fp32 block scale，
+   我们按 checkpoint 原始 fp32 scale 计算；谁更准尚未用 PyTorch 参考裁决。
 4. **委托赛跑扩到 FP8**：cuBLASLt FP8 在 Hopper 极成熟，杠杆 A 的成对测量在
    H200 上预期更多形状判给 cuBLASLt —— 这不丢脸，是赛跑机制按设计工作。
 5. **§六 瀑布按 141GB 重算**：27B FP8 权重 ~27GB，KV/并发余量与 5090 完全不同

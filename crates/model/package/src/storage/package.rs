@@ -263,8 +263,10 @@ pub fn load_shards(root: &Path) -> Result<(Shards, TensorShards)> {
             .values()
             .try_fold(bytes, |sum, shard| sum.checked_add(shard.header_bytes()))
             .ok_or_else(|| Error::invalid("package file size overflow"))?;
-        let declared = index.weight_bytes()?;
-        if bytes != declared && file_bytes != declared {
+        if let Some(declared) = index.declared_weight_bytes()?
+            && bytes != declared
+            && file_bytes != declared
+        {
             return Err(Error::invalid(
                 "HF index total_size disagrees with shard payload",
             ));

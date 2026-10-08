@@ -20,7 +20,10 @@ const NVFP4_WEIGHT_BITS: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WeightEncoding {
     Float,
+    /// Per-output-channel FP8 scales (`weight_scale`).
     Fp8Channel,
+    /// Block-scaled FP8 (`weight_scale_inv`, one scale per 128x128 block).
+    Fp8Block,
     Nvfp4,
 }
 
@@ -41,6 +44,9 @@ pub struct DeviceWeight {
     pub scale: Option<WeightSource>,
     pub global_scale: Option<WeightSource>,
     pub input_global_scale: Option<WeightSource>,
+    /// `[rows, columns]` of one FP8 block-scale group when the checkpoint declares block scales.
+    #[serde(default)]
+    pub weight_block: Option<[usize; 2]>,
     #[serde(default)]
     pub fp8_token_input: bool,
 }
@@ -81,12 +87,17 @@ impl QuantizedPackage {
             &package_path(root, "config.json")?,
             crate::constants::CONFIG_MAX_BYTES,
         )?;
-        let value: serde_json::Value =
+        let mut value: serde_json::Value =
             serde_json::from_slice(&config).map_err(|e| Error::invalid(e.to_string()))?;
         if let Some(quant) = value.get("quantization_config") {
+            if quant["quant_method"] == "fp8" {
+                let normalized = normalize_fp8_scheme(quant)?;
+                value["quantization_config"] = normalized;
+            }
+            let quant = &value["quantization_config"];
             if quant["quant_method"] != "compressed-tensors" {
                 return Err(Error::unsupported(
-                    "only compressed-tensors quantized packages are supported",
+                    "only compressed-tensors or fp8 quantized packages are supported",
                 ));
             }
             validate_groups(quant)?;
@@ -210,10 +221,15 @@ impl QuantizedPackage {
             (self.source(&packed)?, WeightEncoding::Nvfp4)
         } else {
             let data = self.source(name)?;
-            let encoding = if data.dtype == TensorDtype::F8E4m3 {
-                WeightEncoding::Fp8Channel
-            } else {
+            let block = activations::Rule::weight_block_for_module(&self.activation_rules, base)?;
+            // Block scales exist only where the checkpoint stores FP8 bytes: a group target
+            // like `Linear` also names embeddings and norms, which stay in their own dtype.
+            let encoding = if data.dtype != TensorDtype::F8E4m3 {
                 WeightEncoding::Float
+            } else if block.is_some() {
+                WeightEncoding::Fp8Block
+            } else {
+                WeightEncoding::Fp8Channel
             };
             (data, encoding)
         };
@@ -224,8 +240,11 @@ impl QuantizedPackage {
             scale: None,
             global_scale: None,
             input_global_scale: None,
-            fp8_token_input: encoding == WeightEncoding::Fp8Channel
-                && activations::Rule::for_module(&self.activation_rules, base)?,
+            weight_block: activations::Rule::weight_block_for_module(&self.activation_rules, base)?,
+            fp8_token_input: matches!(
+                encoding,
+                WeightEncoding::Fp8Channel | WeightEncoding::Fp8Block
+            ) && activations::Rule::for_module(&self.activation_rules, base)?,
         };
         match encoding {
             WeightEncoding::Float => {
@@ -235,7 +254,7 @@ impl QuantizedPackage {
                     )));
                 }
             }
-            WeightEncoding::Fp8Channel | WeightEncoding::Nvfp4 => {
+            WeightEncoding::Fp8Channel | WeightEncoding::Fp8Block | WeightEncoding::Nvfp4 => {
                 self.bind_scales(base, &mut weight)?;
             }
         }
@@ -246,6 +265,27 @@ impl QuantizedPackage {
         let [rows, columns] = weight.shape.as_slice() else {
             return Err(Error::invalid("quantized weights must be matrices"));
         };
+        if weight.encoding == WeightEncoding::Fp8Block {
+            let [block_rows, block_columns] = weight
+                .weight_block
+                .ok_or_else(|| Error::invalid(format!("{base}: missing FP8 block size")))?;
+            let scale = self.source(&format!("{base}.weight_scale_inv"))?;
+            if weight.data.dtype != TensorDtype::F8E4m3
+                || weight.data.shape != weight.shape
+                || block_rows == 0
+                || block_columns == 0
+                || !rows.is_multiple_of(block_rows)
+                || !columns.is_multiple_of(block_columns)
+                || scale.shape != [rows / block_rows, columns / block_columns]
+                || !scale.dtype.is_host_float()
+            {
+                return Err(Error::invalid(format!(
+                    "{base}: invalid block-scaled FP8 binding"
+                )));
+            }
+            weight.scale = Some(scale);
+            return Ok(());
+        }
         let scale = self.source(&format!("{base}.weight_scale"))?;
         if weight.encoding == WeightEncoding::Fp8Channel {
             if weight.data.shape != weight.shape
@@ -309,6 +349,67 @@ impl QuantizedPackage {
     }
 }
 
+/// Translate vLLM's native `fp8` scheme into the compressed-tensors shape the loader reads.
+///
+/// `activation_scheme: "dynamic"` with per-`weight_block_size` block scales is the `DeepSeek`
+/// convention: one scale per 128x128 weight block and one per 128-element activation block.
+/// The `ignored_layers` list needs no translation because an ignored module stores bf16 weights
+/// and the encoding is derived from the stored dtype.
+fn normalize_fp8_scheme(quant: &serde_json::Value) -> Result<serde_json::Value> {
+    if quant["fmt"] != "e4m3" || quant["activation_scheme"] != "dynamic" {
+        return Err(Error::unsupported("unsupported FP8 checkpoint scheme"));
+    }
+    let block = quant["weight_block_size"]
+        .as_array()
+        .and_then(|sizes| {
+            sizes
+                .iter()
+                .map(|size| size.as_u64().and_then(|n| usize::try_from(n).ok()))
+                .collect::<Option<Vec<_>>>()
+        })
+        .unwrap_or_else(|| vec![FP8_WEIGHT_BITS, FP8_WEIGHT_BITS]);
+    let [block_rows, block_columns] = block.as_slice() else {
+        return Err(Error::invalid(
+            "FP8 weight block size must be two-dimensional",
+        ));
+    };
+    let strategy = if *block_rows == 1 || *block_columns == 1 {
+        "channel"
+    } else {
+        "block"
+    };
+    let mut weights = serde_json::json!({
+        "type": "float",
+        "symmetric": true,
+        "dynamic": false,
+        "num_bits": FP8_WEIGHT_BITS,
+        "strategy": strategy,
+    });
+    let mut activations = serde_json::json!({
+        "type": "float",
+        "num_bits": FP8_WEIGHT_BITS,
+        "strategy": "token",
+        "dynamic": true,
+        "symmetric": true,
+    });
+    if strategy == "block" {
+        weights["block_size"] = serde_json::json!([block_rows, block_columns]);
+        activations["block_size"] = serde_json::json!([1, block_columns]);
+        activations["strategy"] = serde_json::json!("block");
+    }
+    Ok(serde_json::json!({
+        "quant_method": "compressed-tensors",
+        "config_groups": {
+            "group_0": {
+                "format": "float-quantized",
+                "weights": weights,
+                "input_activations": activations,
+                "targets": ["Linear"],
+            }
+        },
+    }))
+}
+
 fn validate_groups(quant: &serde_json::Value) -> Result<()> {
     let groups = quant["config_groups"]
         .as_object()
@@ -323,7 +424,7 @@ fn validate_groups(quant: &serde_json::Value) -> Result<()> {
             && weights["dynamic"] == false
             && ((group["format"] == "float-quantized"
                 && weights["num_bits"] == FP8_WEIGHT_BITS
-                && weights["strategy"] == "channel")
+                && matches!(weights["strategy"].as_str(), Some("channel" | "block")))
                 || (group["format"] == "nvfp4-pack-quantized"
                     && weights["num_bits"] == NVFP4_WEIGHT_BITS
                     && weights["strategy"] == "tensor_group"

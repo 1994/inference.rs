@@ -16,6 +16,7 @@ const NVFP4_DECODE_BUDGET: usize = crate::constants::GIB;
 pub enum Projection {
     Dense(Arc<Tensor<bf16>>),
     Fp8(Arc<Tensor<f8e4m3fn>>, Arc<Tensor<f32>>),
+    Fp8Block(Arc<Tensor<f8e4m3fn>>, Arc<Tensor<f32>>),
     Fp4(Arc<Tensor<f4e2m1fnx2>>, Arc<Tensor<f8e4m3fn>>, f32),
 }
 
@@ -40,6 +41,7 @@ impl Projection {
         match self {
             Self::Dense(w) => ProjectionWeight::Dense(w.clone()),
             Self::Fp8(w, s) => ProjectionWeight::Fp8(w.clone(), s.clone()),
+            Self::Fp8Block(w, s) => ProjectionWeight::Fp8Block(w.clone(), s.clone()),
             Self::Fp4(w, s, g) => ProjectionWeight::Fp4(w.clone(), s.clone(), *g),
         }
     }
@@ -78,6 +80,34 @@ impl Projection {
                 ))
             }
             WeightEncoding::Nvfp4 => Self::load_nvfp4(device, package, weight),
+            WeightEncoding::Fp8Block => {
+                let values = package
+                    .read_view(&weight.data, STAGING)?
+                    .iter()
+                    .copied()
+                    .map(f8e4m3fn)
+                    .collect();
+                let [rows, columns] = weight.shape.as_slice() else {
+                    return Err(Error::invalid("block FP8 weights must be matrices"));
+                };
+                let [block_rows, block_columns] = weight
+                    .weight_block
+                    .ok_or_else(|| Error::invalid("missing FP8 block size"))?;
+                let scaling = floats(package, scale()?)?;
+                let blocks = columns / block_columns;
+                // Expand one scale per output-channel block across its rows so the resident GEMM
+                // indexes the scale exactly like the per-channel path. The block rows are output
+                // channels, so every channel in a block shares one scale.
+                let mut expanded = Vec::with_capacity(rows * blocks);
+                for row in 0..*rows {
+                    let start = (row / block_rows) * blocks;
+                    expanded.extend_from_slice(&scaling[start..start + blocks]);
+                }
+                Ok(Self::Fp8Block(
+                    device.upload(values, &weight.shape)?,
+                    device.upload(expanded, &[*rows, blocks])?,
+                ))
+            }
         }
     }
 
@@ -154,6 +184,9 @@ impl Projection {
             Self::Dense(weights) => device.matvec_tiled(vector, weights.clone(), tile)?,
             Self::Fp8(weights, scales) => {
                 device.fp8_matvec(vector, weights.clone(), scales.clone(), tile)?
+            }
+            Self::Fp8Block(..) => {
+                return Err(Error::unsupported("block FP8 has no host matvec fallback"));
             }
             Self::Fp4(weights, scales, global) => {
                 device.nvfp4_matvec(vector, weights.clone(), scales.clone(), *global, tile)?

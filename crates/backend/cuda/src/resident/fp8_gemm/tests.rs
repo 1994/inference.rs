@@ -133,6 +133,103 @@ fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Block-scaled FP8 must reproduce an independent per-128-block quantization and scaling:
+/// the activation scale is indexed per input block and the weight scale per (channel block,
+/// input block), unlike the per-channel path the other tests cover.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn fp8_block_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std::error::Error>>
+{
+    const BLOCK: usize = 128;
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for (m, n, k) in [(12, 65, 512), (64, 129, 1024), (12, 256, 5120)] {
+        let input: Vec<f32> = (0..m * k)
+            .map(|i| (f32::from(u16::try_from(i * 17 % 131).unwrap()) - 65.0) / 37.0)
+            .collect();
+        let codes: Vec<u8> = (0..n * k)
+            .map(|i| 48 + u8::try_from(i % 16).unwrap() + if i % 3 == 0 { 128 } else { 0 })
+            .collect();
+        let blocks_k = k / BLOCK;
+        let blocks_n = n.div_ceil(BLOCK);
+        let blocks: Vec<f32> = (0..blocks_n * blocks_k)
+            .map(|i| f32::from(u16::try_from(i % 13 + 1).unwrap()) / 11.0)
+            .collect();
+        // The kernel reads one scale per output channel: every row of a channel block shares it.
+        let mut expanded = Vec::with_capacity(n * blocks_k);
+        for row in 0..n {
+            let block = (row / BLOCK).min(blocks_n - 1);
+            expanded.extend_from_slice(&blocks[block * blocks_k..(block + 1) * blocks_k]);
+        }
+        let x = device.upload(input.clone(), &[m, k])?;
+        let w = device.upload(codes.iter().copied().map(f8e4m3fn).collect(), &[n, k])?;
+        let ws = device.upload(expanded, &[n, blocks_k])?;
+        let mut q = api::zeros::<f8e4m3fn>(&[m, k]).sync_on(&device.stream)?;
+        let mut qs = api::zeros::<f32>(&[m, blocks_k]).sync_on(&device.stream)?;
+        kernels::quantize_block(
+            (&mut q).partition([1, BLOCK]),
+            (&mut qs).partition([1, 1]),
+            &x,
+        )
+        .generics(vec![k.to_string(), BLOCK.to_string()])
+        .sync_on(&device.stream)?;
+        let output = kernels::matmul_block(
+            api::zeros::<f32>(&[m, n]).partition([QUANT_TILE_ROWS, QUANT_TILE_COLUMNS]),
+            &q,
+            &w,
+            &qs,
+            &ws,
+        )
+        .generics(tile_generics(k))
+        .first()
+        .unpartition()
+        .sync_on(&device.stream)?;
+        let actual = output.to_host_vec().sync_on(&device.stream)?;
+        let encoded = q.to_host_vec().sync_on(&device.stream)?;
+        let scales = qs.to_host_vec().sync_on(&device.stream)?;
+        for row in 0..m {
+            for block in 0..blocks_k {
+                let span = &input[row * k + block * BLOCK..row * k + (block + 1) * BLOCK];
+                let scale =
+                    (span.iter().copied().map(f32::abs).fold(0.0, f32::max) / 448.0).max(1e-12);
+                assert!(
+                    (scales[row * blocks_k + block] - scale).abs() <= scale * 1e-6,
+                    "row={row} block={block} scale {} != {scale}",
+                    scales[row * blocks_k + block]
+                );
+                for offset in 0..BLOCK {
+                    let expected = quantize(span[offset] / scale);
+                    assert_eq!(
+                        encoded[row * k + block * BLOCK + offset].0,
+                        expected,
+                        "row={row} k={}",
+                        block * BLOCK + offset
+                    );
+                }
+            }
+            for col in 0..n {
+                let channel = col / BLOCK;
+                let expected = (0..k)
+                    .map(|i| {
+                        let block = i / BLOCK;
+                        f64::from(decode(encoded[row * k + i].0))
+                            * f64::from(decode(codes[col * k + i]))
+                            * f64::from(scales[row * blocks_k + block])
+                            * f64::from(blocks[channel * blocks_k + block])
+                    })
+                    .sum::<f64>();
+                assert!(
+                    (f64::from(actual[row * n + col]) - expected).abs()
+                        < expected.abs().mul_add(0.0002, 0.002),
+                    "{m}x{n}x{k} [{row},{col}] {} != {expected}",
+                    actual[row * n + col]
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Split-K over the K axis must reproduce the unsplit kernel exactly, and must be faster
 /// on the narrow-row geometries the verification path actually runs.
 #[test]
