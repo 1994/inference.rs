@@ -224,6 +224,37 @@ tile 常量绑定的是硬件（tensor core MMA 形状、带宽），换 GPU 架
   赛跑进 `tuning.rs` 成对测量，差 <2% 用二进制、差得多留自研。regime 判断【推断】：
   decode（M≤16）带宽 bound 可追平；prefill（M=64，AI≈256 FLOP/B）在分水岭上、部分
   算力 bound，cuBLASLt 可能保有 10–20% kernel 级优势 —— 用系统级优势覆盖，不死磕。
+
+  **实测（2026-10，RTX 5090 / CUDA 13.4，冷 L2 协议）**：`grout` 的做法是**线性层全部
+  交给 cuBLAS**，自己只用 cuTile 写 attention / norm / rope / KV / argmax（`src/cublas.rs`，
+  `gemm_ex` + TN + fp16 in/out；`GROUT_CUBLAS_COMPUTE16` 在 sm_120 上默认用 **fp16 累加**，
+  并带 per-arch/per-shape 的 tuning record）。grout 的对比是同并发下单请求吞吐略胜 vLLM
+  （B200 Qwen3-32B `request_gen_tps` 79.6–80.1 vs 78.8–79.2），**它不是 serving 吞吐引擎**，
+  所以"像 vLLM"= 单请求快路径做到极致，与我们的 batch4/并发格不是同一件事。
+
+  照抄 `杠杆 A` 的委托路做了一次成对测量（同权重布局、不重排、同一 L2 flush 协议）：
+
+  | 形状 (m,n,k) | 我们出厂 tile | 我们最好 tile | cuBLASLt NVFP4 | 倍率 |
+  |---|---|---|---|---|
+  | 12, 17408, 5120 | 0.0630 ms `[16,64]` | 0.0427 `[64,128]` | **0.0369 ms** | 1.71x |
+  | 64, 17408, 5120 | 0.0426 `[64,64]` | 0.0422 `[64,128]` | **0.0389 ms** | 1.10x |
+  | 12, 5120, 17408 | 0.0648 `[16,64]` | 0.0524 `[16,128]` | **0.0389 ms** | 1.67x |
+  | 64, 5120, 17408 | 0.0648 | ~0.053 | **0.0410 ms** | 1.58x |
+
+  即：**窄行（decode/verify）形状赢 1.6–1.7x，prompt（M=64）只赢 1.1x**；TPOT 是最大受益
+  项（verify replay 线性 19.9 → ~12 ms 量级），prefill 收益有限。热 L2 下 cuBLASLt 看着有
+  3x，是 L2 假象，必须用冷 L2 协议比较。
+
+  **落地阻塞点【确证，查 cuBLAS 文档 + 实测】**：`CUBLASLT_MATMUL_MATRIX_SCALE_VEC16_UE4M3`
+  的 scale 不是线性 `[n, k/16]`，而是 **128×64 分块 + swizzle** 布局（"a single tile of
+  scaling factors is applied to a 128x64 block"，offset 公式
+  `(sf_inner + sf_outer*sf_inner_dim)*128`，起始地址 16B 对齐，且**不支持转置**）。用线性
+  scale 布局实测：k=64 全对、k=512 只对一半、n=5120 时只累加了部分 K 块 —— 与文档一致。
+  所以委托实现 = ①加载期把权重 block-scale 重排进该 swizzle；②`quantize` kernel 直接按
+  swizzle 写激活 scale（或再加一个重排 kernel）；③`TN` + `COMPUTE_32F` + `CUDA_R_32F`
+  scale type；④按形状赛跑进 `tuning.rs`。这是有确定规格的工程量，不是未验证假设。
+  FP8 那条更简单：`CUBLASLT_MATMUL_MATRIX_SCALE_OUTER_VEC_32F` 正好是"每行 A 缩放 ×
+  每行 B 缩放"，与 `record_fp8` 的 per-token × per-channel 一一对应，无需 swizzle。
 - **杠杆 B：MTP 融合成一张图 + 动态 lane**。27B 是 4-bit 权重、decode 相对优势却没
   跑赢 2B —— 最可能是三次 replay + 同步 readback 吃掉了量化红利。propose/verify/
   catch_up 一次捕获、设备侧采样与接受判定；按接受率动态调 lane 数。vLLM 的 spec
