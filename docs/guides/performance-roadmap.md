@@ -5,6 +5,8 @@ qwen3vl-2b 的 short/long/batch4/hot_long 四个用例。
 
 **结论：未达成。**
 
+**后续执行计划**：见 [performance-improvement-plan.md](performance-improvement-plan.md)。
+
 ## 一、当前差距
 
 比值 = native / vLLM，**小于 1.0 表示我们更快**。完整矩阵，1 次预热 + 3 次测量，
