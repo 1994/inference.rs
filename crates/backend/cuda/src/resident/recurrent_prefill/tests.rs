@@ -223,3 +223,41 @@ fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
     assert!(worst_out < 0.001, "per-lane output drift {worst_out}");
     Ok(())
 }
+
+/// The chunked Delta writes into a head-major scratch and transposes into the lane-major output.
+/// States come out bit-identical to the per-lane path while the hidden does not, which puts the
+/// output path under suspicion, so pin the transpose on its own.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (lanes, value_heads, dim) = (3_usize, 2_usize, 4_usize);
+    let mut scratch = vec![0.0_f32; value_heads * lanes * dim];
+    for head in 0..value_heads {
+        for lane in 0..lanes {
+            for d in 0..dim {
+                scratch[(head * lanes + lane) * dim + d] = (head * 1000 + lane * 100 + d) as f32;
+            }
+        }
+    }
+    let input = device.upload(scratch, &[value_heads, lanes, dim])?;
+    let mut output = api::zeros::<f32>(&[lanes, value_heads, dim]).sync_on(&device.stream)?;
+    kernels::transpose((&mut output).partition([1, 1, dim]), &input)
+        .generics(vec![dim.to_string()])
+        .sync_on(&device.stream)?;
+    let actual = output.to_host_vec().sync_on(&device.stream)?;
+    for lane in 0..lanes {
+        for head in 0..value_heads {
+            for d in 0..dim {
+                let expected = (head * 1000 + lane * 100 + d) as f32;
+                assert_eq!(
+                    actual[(lane * value_heads + head) * dim + d],
+                    expected,
+                    "lane={lane} head={head} d={d}"
+                );
+            }
+        }
+    }
+    Ok(())
+}

@@ -22,16 +22,23 @@ impl Workspace {
         weights: &ProgramWeights,
         lanes: usize,
     ) -> Result<Self> {
-        // Persistent-state reduction changes FP32 rounding slightly. Activation
-        // quantization can amplify that difference at later block-scale thresholds;
-        // keep the established recurrence until the whole-model gate passes there.
-        // Measured on the 27B NVFP4 with `checkpoint_chunk_recurrence_matches_legacy_logits`
-        // (`INFER_TEST_MODEL`/`INFER_TEST_TOKENS`, width 128): the register-resident recurrence
-        // drifts `hidden relative_l2 = 0.0436, max_abs = 0.499` against the per-lane one. That is
-        // a semantic divergence, not the FP32 re-association it was assumed to be, so this is a
-        // correctness gate and not a precision trade. Forcing the convolution back to per-lane
-        // leaves the drift byte-identical, which puts the defect in the chunked Delta itself even
-        // though `chunk_delta_matches_independent_recurrence` passes the same geometry at 2e-5.
+        // The register-resident recurrence is bit-identical to the per-lane one for a single lane
+        // and rounds differently for a chunk, which is what this gate is about. Measured on the
+        // 27B NVFP4 with `checkpoint_chunk_recurrence_matches_legacy_logits` (51 tokens, width
+        // 128, with a device synchronize before the comparison):
+        //
+        //   first delta state   TensorId(25)  error 9.5e-6
+        //   later delta states              2.4e-3 .. 1.7e-3
+        //   conv states (downstream of it)  2.1e-2 .. 6.5e-2
+        //   one token, same geometry        exactly 0.0 in every state and in the readout
+        //
+        // The lane loop re-associates at f32 level and 64 layers plus activation quantization
+        // amplify that into a different greedy continuation: opening the gate changes all 21 token
+        // sequences of the 27B while cutting long-prompt TTFT by 25%. A test run without the
+        // synchronize reports the amplified end-to-end figure (0.0436 hidden L2) as though it were
+        // the per-layer error. Layouts, metadata, the scratch and its transpose are separately
+        // verified against independent references, so what remains is reproducing the per-lane
+        // store/load sequence exactly inside the lane loop.
         if !weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty() {
             return Ok(Self {
                 lanes,

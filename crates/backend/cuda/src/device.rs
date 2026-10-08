@@ -248,6 +248,34 @@ impl CudaDevice {
             .sync_on(&self.stream)
             .map_err(device_error)
     }
+
+    /// Copy an f32 tensor back without taking ownership, so a borrowed snapshot can be inspected.
+    ///
+    /// # Errors
+    /// Returns a backend error when the device is unbound or the copy fails.
+    #[expect(
+        unsafe_code,
+        reason = "Audited device-to-host copy from a live tensor of known length into a live host slice"
+    )]
+    pub fn read_borrowed(&self, tensor: &Tensor<f32>) -> Result<Vec<f32>> {
+        self.reclaim_barrier()?;
+        let mut host = vec![0.0_f32; tensor.size()];
+        let bytes = tensor
+            .size()
+            .checked_mul(size_of::<f32>())
+            .ok_or_else(|| device_error("readback size overflow"))?;
+        // SAFETY: the device context is current, the tensor owns `size()` f32 elements and the
+        // destination is a live host slice of the same length.
+        let status = unsafe {
+            cuda_core::sys::cuMemcpyDtoH_v2(
+                host.as_mut_ptr().cast(),
+                tensor.device_pointer().cu_deviceptr(),
+                bytes,
+            )
+        };
+        driver_status(status)?;
+        Ok(host)
+    }
 }
 
 #[expect(

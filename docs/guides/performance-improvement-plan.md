@@ -581,6 +581,34 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    常驻显存与池化宽度不变（仍 width 4、0 个 disabled step）。收益远小于 134 ms 的原因是
    priming 与其它请求的 prefill replay 在 GPU 上重叠，只有约 0.3 ms/次落在关键路径上。
 
+   **第 7 轮：把"4.4% 漂移"这个数字本身证伪了，并给出真实的分层误差。**
+   `checkpoint_chunk_recurrence_matches_legacy_logits` 里两次 `prefill_batch` 之后直接比较
+   host 向量；在比较前插一次 `reclaim_barrier()`（device synchronize）后，**单 token 用例
+   全部 state 与 readout 都是 `relative_l2 = 0.00000000`** —— 原来的 0.0436/0.0529 是把
+   放大后的端到端数字当成了逐层误差。加上同步后逐 state 打印，真实情况是：
+
+   | 位置 | 误差 |
+   |---|---|
+   | 第一个 delta state（TensorId(25)） | **9.5e-6** |
+   | 后续 delta states | 2.4e-3 … 1.7e-3 |
+   | 下游 conv states | 2.1e-2 … 6.5e-2 |
+   | 单 token、同几何 | **恰好 0.0**（每个 state 与 readout） |
+
+   即：**单 lane 逐位一致，多 lane chunk 才差**，是 lane 循环里的 f32 重结合，经 64 层 +
+   激活量化放大成不同的贪心续写（端到端 21/21 序列改变、long TTFT −25%）。这一轮同时确认
+   chunked 卷积路径在该模型上**从未被选中**（`weights.constants.contains_key` 命中），
+   所以那些"conv state 漂移"是 delta 漂移的下游后果，不是卷积的问题。
+
+   新增的测试资产（都是这轮或上轮加的、可复用的）：
+   `per_lane_delta_matches_independent_recurrence_at_model_geometry`（补上 shipping 路径
+   从未被测过的模型几何参考）、`chunked_recurrence_matches_per_lane_at_model_geometry`
+   （参数化几何的集成 fixture，~2 s 复现）、`chunk_delta_transpose_permutes_head_and_lane`
+   （scratch→输出的置换）、以及 model_check 里的 device 同步与 state 一致性诊断。
+
+   **结论**：门继续关着是对的，但理由从"语义级 4.4% 偏差"改成"lane 循环的 f32 重结合"。
+   修法是让 chunked kernel 在 lane 循环内逐位复现逐 lane 的 store/load 序列（布局/metadata/
+   scratch/transpose 都已对独立参考验证过），而不是找布局 bug。收益仍是最差格 −25% TTFT。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层

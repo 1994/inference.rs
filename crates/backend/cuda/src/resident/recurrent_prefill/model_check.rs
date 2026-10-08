@@ -51,6 +51,41 @@ fn checkpoint_chunk_recurrence_matches_legacy_logits() -> Result<()> {
     for (chunk, tokens) in tokens.chunks(width).enumerate() {
         let actual = candidate.prefill_batch(tokens, chunk * width, true)?;
         let expected = legacy.prefill_batch(tokens, chunk * width, true)?;
+        // The two captures must agree on state, not only on the readout: when they did not, the
+        // divergence was already in the recurrence and not in whatever consumes it.
+        if chunk == 0 {
+            let mut worst = 0.0_f32;
+            let mut source = "none";
+            for (id, a) in candidate.states() {
+                let Some(b) = legacy.states().get(id) else {
+                    continue;
+                };
+                for (ta, tb) in a.iter().zip(b) {
+                    let va = loaded.device().read_borrowed(ta)?;
+                    let vb = loaded.device().read_borrowed(tb)?;
+                    let error = va
+                        .iter()
+                        .zip(&vb)
+                        .map(|(x, y)| (x - y).abs())
+                        .fold(0.0_f32, f32::max);
+                    if error > worst {
+                        worst = error;
+                        source = match loaded
+                            .graph()
+                            .nodes
+                            .iter()
+                            .find(|n| n.states.contains(id))
+                            .map(|n| &n.op)
+                        {
+                            Some(infer_ir::TensorOp::Delta { .. }) => "delta",
+                            Some(infer_ir::TensorOp::Conv { .. }) => "conv",
+                            _ => "other",
+                        };
+                    }
+                }
+            }
+            eprintln!("state agreement after chunk 0: worst {worst} ({source})");
+        }
         for (a, b) in actual.iter().zip(&expected) {
             compare(&a.0, &b.0, "hidden");
             compare(&a.1, &b.1, "logits");
