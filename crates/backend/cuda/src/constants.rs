@@ -28,8 +28,35 @@ mod device {
     pub const SMALL_GEMV_MAX_ROWS: usize = 4;
     /// Vocabulary-like expansion ratio where narrow-batch GEMV remains useful.
     pub const GEMV_WIDE_OUTPUT_RATIO: usize = 4;
-    /// Output tile shared by the native activation-quantized GEMMs.
+    /// Output tile shared by the native activation-quantized GEMMs on decode-width graphs.
     pub const QUANT_GEMM_TILE: [usize; 2] = [16, 64];
+    /// Row tile for graphs wider than one decode tile.
+    ///
+    /// **Measured (RTX 5090)**: on the 27B long-prompt graph the 64-row tile cut the replay from
+    /// 46.9 ms to 43.1 ms and the prompt `linear` bucket from 27.3 ms to 23.1 ms (serving A/B,
+    /// identical token sequences). The 16-row tile splits a prompt graph into four row blocks
+    /// that each re-read the same weight tile.
+    ///
+    /// **Also measured**: widening the tile globally to `[64, 128]` wins the isolated
+    /// `nvfp4_packed_tile_sweep` kernel benchmark at every row count but loses end to end
+    /// (27B short wall 1.14x -> 1.30x, batch4 TPOT 1.86x -> 2.05x): a single 40-CTA decode
+    /// GEMM cannot fill the device, and a 64-row CTA on a one-row decode wastes 63 rows of
+    /// tensor-core work. Keep the row-dependent split and re-measure serving, not just the
+    /// kernel, before changing either dimension.
+    pub const PROMPT_GEMM_TILE_ROWS: usize = 64;
+    /// Output tile of the activation-quantized GEMM for a graph with `rows` output rows.
+    ///
+    /// Decode-width graphs keep the 16-row tile; wider ones take the prompt tile so one CTA
+    /// covers the whole width and reads each weight once. Selection is a pure function of the
+    /// output row count, so one shared `Workspace` can serve prompt and decode graphs without any
+    /// mutable per-graph state.
+    pub const fn quant_gemm_tile(rows: usize) -> [usize; 2] {
+        if rows > QUANT_GEMM_TILE[0] {
+            [PROMPT_GEMM_TILE_ROWS, QUANT_GEMM_TILE[1]]
+        } else {
+            QUANT_GEMM_TILE
+        }
+    }
     /// Packed activation codes written by one NVFP4 quantization block.
     pub const NVFP4_QUANT_CODES_TILE: [usize; 2] = [1, 256];
     /// Activation scales written by one NVFP4 quantization block.

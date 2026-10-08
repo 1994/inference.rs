@@ -54,8 +54,13 @@ row block，读 1 次。
 
 阻塞点：**kernel 有 16 行下限，而 prompt 与 decode 在同一 program 内共用同一个 workspace。**
 
-> **未做的修法**：两个按行数特化的量化 GEMM（prompt 64 行 / decode 16 行），或让 decode
-> 不再共用该 GEMM。前置补丁已备好（§四）。
+> **已落地的修法**：按行数分派的特化 tile（`quant_gemm_tile`，prompt 64 行 / decode 16 行，
+> `QUANT_GEMM_TILE` + `PROMPT_GEMM_TILE_ROWS`），FP8 路径镜像同修。实测：27B long 的 prompt
+> replay 46.9 → 43.1 ms、`linear` 桶 27.3 → 23.1 ms；服务矩阵 TTFT 比值 short
+> 1.30 → 1.22、long 5.91 → 5.45、batch4 2.53 → 2.39，token 序列逐字节一致。
+> **不要**改成全局宽 tile：隔离 kernel 基准里 `[64, 128]` 每个行数都更快，服务侧却全局回退
+> （short wall 1.14 → 1.30、batch4 TPOT 1.86 → 2.05）—— 单次 40-CTA 的 decode GEMM 填不满
+> 设备，64 行 CTA 在单行 decode 上浪费 63 行 tensor-core 计算。分块改动必须按服务矩阵复测。
 
 ### 2. batch4 TTFT 2.45–2.63x
 
@@ -156,8 +161,9 @@ workspace**，且 kernel 有 **16 行硬下限**。
   `/native/v1/runtime` 暴露 `execution_profile`
 - **两个加载期缺陷已修** —— prompt graph 宽度只受 arena 预算约束（2B 507-token TTFT
   0.0835→0.0542 s）；CUDA prefill chunk 取自后端解析宽度，不再用通用 64
-- **`docs/patches/quant-gemm-row-tile-m.patch`** —— 已验证的 no-op 前置补丁（编译通过、
-  27 个 CUDA host 测试通过），是 §二.1 修法的第一步
+- **按行数分派的量化 GEMM tile** —— 见 §二.1 的实测结论；`packed`（FP4）与 `matmul`（FP8）
+  的 row/column tile 变成 capture 期泛型常量，新增 `nvfp4_packed_tile_sweep` 隔离基准
+  （`--ignored`）。原前置补丁 `docs/patches/quant-gemm-row-tile-m.patch` 已合入并删除
 
 ## 六、测量纪律
 

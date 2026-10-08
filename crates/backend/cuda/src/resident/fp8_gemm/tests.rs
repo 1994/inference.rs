@@ -3,6 +3,20 @@ use crate::device::CudaDevice;
 use cuda_core::f8e4m3fn;
 use cutile::prelude::*;
 
+/// Tile these tests construct their output partition with; the GEMM's `M` and `N` generics and
+/// the partition shape must agree.
+const QUANT_TILE_ROWS: usize = 16;
+const QUANT_TILE_COLUMNS: usize = 64;
+
+/// Generics of the narrow tile above, so each call site stays one line.
+fn tile_generics(k: usize) -> Vec<String> {
+    vec![
+        k.to_string(),
+        QUANT_TILE_ROWS.to_string(),
+        QUANT_TILE_COLUMNS.to_string(),
+    ]
+}
+
 fn decode(code: u8) -> f32 {
     let magnitude = code & 127;
     let exponent = magnitude >> 3;
@@ -74,7 +88,7 @@ fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn std::e
             &qs,
             &ws,
         )
-        .generics(vec![k.to_string()])
+        .generics(tile_generics(k))
         .first()
         .unpartition()
         .sync_on(&device.stream)?;
@@ -174,7 +188,7 @@ fn fp8_small_m_split_k_preserves_values_and_measures_better()
                     &input_scale,
                     &weight_scale,
                 )
-                .generics(vec![k.to_string()]),
+                .generics(tile_generics(k)),
             )?;
             Ok(())
         })?;

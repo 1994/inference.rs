@@ -10,6 +10,9 @@ pub(crate) mod kernels {
         select,
     };
 
+    /// Fused activation quantization, kept at a fixed 16-row tile. The production W4A4 path
+    /// quantizes once per program and then runs the row-tiled [`packed`] kernel; this fused
+    /// variant only backs the fused-versus-separated measurement in `tests`.
     #[cutile::entry()]
     fn matmul<const K: i32>(
         out: &mut Tensor<f32, { [16, 64] }>,
@@ -87,8 +90,8 @@ pub(crate) mod kernels {
     }
 
     #[cutile::entry()]
-    fn packed<const K: i32>(
-        out: &mut Tensor<f32, { [16, 64] }>,
+    fn packed<const K: i32, const M: i32, const N: i32>(
+        out: &mut Tensor<f32, { [M, N] }>,
         input: &Tensor<f4e2m1fnx2, { [-1, -1] }>,
         input_scales: &Tensor<f8e4m3fn, { [-1, -1] }>,
         weight: &Tensor<f4e2m1fnx2, { [-1, -1] }>,
@@ -96,14 +99,14 @@ pub(crate) mod kernels {
         alpha: f32,
     ) {
         let pid = get_tile_block_id();
-        let xp = input.partition(shape![16, 128]);
-        let xs = input_scales.partition(shape![16, 16]);
-        let wp = weight.partition(shape![64, 128]);
-        let sp = scales.partition(shape![64, 16]);
-        let mut acc: Tile<f32, { [16, 64] }> = constant(0.0f32, shape![16, 64]);
+        let xp = input.partition(shape![M, 128]);
+        let xs = input_scales.partition(shape![M, 16]);
+        let wp = weight.partition(shape![N, 128]);
+        let sp = scales.partition(shape![N, 16]);
+        let mut acc: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
         for k in 0i32..((K + 255) / 256) {
-            let x = xp.load([pid.0, k]).unpack(shape![16, 256]);
-            let w = wp.load([pid.1, k]).unpack(shape![64, 256]).transpose();
+            let x = xp.load([pid.0, k]).unpack(shape![M, 256]);
+            let w = wp.load([pid.1, k]).unpack(shape![N, 256]).transpose();
             acc = mmaf_scaled(
                 x,
                 w,
@@ -112,7 +115,7 @@ pub(crate) mod kernels {
                 sp.load([pid.1, k]).transpose(),
             );
         }
-        out.store(acc * alpha.broadcast(shape![16, 64]));
+        out.store(acc * alpha.broadcast(shape![M, N]));
     }
 }
 

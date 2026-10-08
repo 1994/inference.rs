@@ -53,6 +53,14 @@ propose + verify + catch_up **三次 replay**（`executor/execution.rs:481-550`�
 **预期**【待测，条件性】：27B batch4 TPOT 1.897 → ~1.2（回归 batch1 水平）；2B
 batch4 TPOT 1.383 → ~1.0。
 
+**实测（两个实验都做了，假设被否）**：`INFER_CUDA_PREFILL_PROFILE` 数出的每步
+replay 是 2×`slot_decode`（合批 draft propose，各 ~1.6 ms）+ 1×`slot_verify`
+（target 12-lane 前向，~27 ms）；`slot_verify` 里 `linear` 19.9 ms、`delta` 4.2 ms、
+`conv` 2.3 ms。同负载 `--num-speculative-tokens 0` 反而更慢：TPOT 24.3 ms vs 开启
+20.2 ms。**所以 batch4 TPOT 的根因不是"投机三倍化"，关掉投机是净亏损**；瓶颈是
+target 前向本身（杠杆 A 的带宽 + `delta` 延迟），MTP 已经在帮忙（每步 ~1.9 token/lane）。
+自适应 MTP 作为"高并发让位"机制仍可留作长尾保护，但不能当作 TPOT 的修法。
+
 ### ② batch4 TTFT 2.45–2.63x —— 快修 A/B + 结构修 C
 
 **机制链**【确证，来自调度层逐行调查】：
@@ -115,13 +123,27 @@ rows > 16 → 新 [64,64] 特化 kernel（prompt 64 行 → 1 个 row block → 
 同时绕开 RM§3.4 两次失败：clamp 两档不会跌破 kernel 16 行硬下限（避免 +394.6% 的
 mmaf 退化）；按 rows 分派没有共享可变状态（避免"最后写入者赢"）。实现 = 复制
 `packed` kernel 改输出 tile（`nvfp4_gemm.rs:90-116`，约 20 行）+ `workspace.rs:126`
-按 rows 选 partition 常量与 kernel。`docs/patches/quant-gemm-row-tile-m.patch` 是
-已验证的前置。FP8 兄弟 kernel `matmul`（`nvfp4_gemm.rs:14-55`，经 `workspace.rs:167`
-用同一常量）有相同 4x 重读结构，同 PR 镜像修。
+按 rows 选 partition 常量与 kernel。FP8 兄弟 kernel `matmul`（`fp8_gemm.rs:34-59`，经
+`workspace.rs` 的 `record_fp8` 用同一常量）有相同 4x 重读结构，同 PR 镜像修。前置补丁
+`docs/patches/quant-gemm-row-tile-m.patch` 已合入并删除。
 
 **预期**【推断，锚点：prompt replay 42.88ms@505GB/s vs verify 24.71ms@947GB/s，同
 权重同节点数】：单 replay 42.88 → ~24.7ms；27B long TTFT 5.86x → ~3.8x（8×24.7+55
 ≈ 253ms vs vLLM ≈68ms）。单独不到 ≤1.10x。
+
+**实测（已落地）**：修法与预期机制不符。按行数分派落地后，隔离 kernel 基准
+（`nvfp4_packed_tile_sweep`）显示"权重读 4 遍"确实存在（`[16,64]` → `[64,64]` 在
+m=1..64 全部形状上快 1.3–1.5x），但服务侧收益小得多：27B long 的 prompt replay
+46.9 → 43.1 ms（−8%），`linear` 桶 27.3 → 23.1 ms（−15%），TTFT 比值 5.91 → 5.45
+（−8%）；short 1.30 → 1.22，batch4 2.53 → 2.39，wall 回退 0.3–2.8%，token 逐字节
+一致。**不要把 tile 全局放宽到 `[64, 128]`**：隔离基准里它在每个行数都更快
+（0.66–0.87x），服务侧却全局回退（short wall 1.14 → 1.30、batch4 TPOT 1.86 →
+2.05）。隔离 GEMM 基准缺 launch 间隙与并发形状，不能替代服务矩阵。
+
+**否掉的剩余假设**：prompt replay 的其余时间不在权重流量上 —— 同一 replay 里
+`delta`（48 层线性注意力的循环状态）占 16.2 ms，`linear` 只降了 15%；12-lane 的
+target verify 里 `linear` 19.9 ms、`delta` 4.2 ms、`conv` 2.3 ms。带宽只有峰值
+~40–50%，属延迟遮蔽问题（杠杆 A），不是重读问题。
 
 **连锁（③′）：prompt 图宽度分档 —— 必须重测 RM§四 被否的 128-lane 实验**。该实验是
 在坏 GEMM 上做的（128 行 = 8 个 row block = 权重读 8 遍），结论已失效。③ 修好后带

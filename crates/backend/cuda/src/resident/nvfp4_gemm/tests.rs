@@ -3,6 +3,12 @@ use crate::device::CudaDevice;
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
 use cutile::prelude::*;
 
+/// Tile these tests construct their output partition with; the GEMM's `M` and `N` generics and
+/// the partition shape must agree. They stay on the narrow tile the correctness cases were
+/// written against; the shipped tile is exercised end to end by the serving benchmark.
+const QUANT_TILE_ROWS: usize = 16;
+const QUANT_TILE_COLUMNS: usize = 64;
+
 fn fp8(code: u8) -> f32 {
     let exponent = code >> 3;
     let mantissa = f32::from(code & 7);
@@ -79,7 +85,11 @@ fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std:
             &s,
             1.0 / global,
         )
-        .generics(vec![k.to_string()])
+        .generics(vec![
+            k.to_string(),
+            QUANT_TILE_ROWS.to_string(),
+            QUANT_TILE_COLUMNS.to_string(),
+        ])
         .first()
         .unpartition()
         .sync_on(&device.stream)?;
@@ -184,7 +194,11 @@ fn nvfp4_quantization_split_performance() -> Result<(), Box<dyn std::error::Erro
                         &scales,
                         1.0,
                     )
-                    .generics(vec![k.to_string()]),
+                    .generics(vec![
+                        k.to_string(),
+                        QUANT_TILE_ROWS.to_string(),
+                        QUANT_TILE_COLUMNS.to_string(),
+                    ]),
                 )?;
                 Ok(())
             })?;
@@ -211,6 +225,119 @@ fn nvfp4_quantization_split_performance() -> Result<(), Box<dyn std::error::Erro
                 baseline.median_ms() / candidate.median_ms()
             );
         }
+    }
+    Ok(())
+}
+
+/// Rows every sweep variant is benchmarked against, so all tiles read one allocation size.
+const SWEEP_PAD_ROWS: usize = 64;
+/// Production projection shapes the sweep covers: the 27B MLP up/gate and down projections at
+/// single-token, verification and prompt widths.
+const SWEEP_SHAPES: [(usize, usize, usize); 8] = [
+    (1, 17408, 5120),
+    (1, 5120, 5120),
+    (1, 5120, 17408),
+    (4, 17408, 5120),
+    (4, 5120, 17408),
+    (12, 17408, 5120),
+    (12, 5120, 17408),
+    (64, 17408, 5120),
+];
+/// Output tiles the sweep compares against the shipped `[16, 64]`.
+const SWEEP_TILES: [(usize, usize); 4] = [(16, 64), (16, 128), (64, 128), (64, 64)];
+
+/// Tile sweep for the production W4A4 kernel: does a wider output column tile or a taller row
+/// tile lift the weight bandwidth the prompt and slot-verify replays are bound by?
+///
+/// Measured per shape against the shipped `[16, 64]` tile with paired alternation, so a
+/// throttled host cannot flip the ranking. Informational: it prints, it does not assert.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn nvfp4_packed_tile_sweep() -> Result<(), Box<dyn std::error::Error>> {
+    use cutile::bench::BenchOptions;
+    use std::time::Duration;
+    if cfg!(debug_assertions) {
+        return Err("performance measurements require cargo test --release".into());
+    }
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let options = BenchOptions {
+        warmup: Duration::from_millis(50),
+        rep: Duration::from_millis(100),
+        min_reps: 10,
+        max_reps: 100,
+        clear_l2: true,
+    };
+    for (m, n, k) in SWEEP_SHAPES {
+        sweep_shape(&device, &options, (m, n, k))?;
+    }
+    Ok(())
+}
+
+/// One shape's tile comparison, alternating baseline and candidate under `do_bench_paired`.
+fn sweep_shape(
+    device: &CudaDevice,
+    options: &cutile::bench::BenchOptions,
+    (m, n, k): (usize, usize, usize),
+) -> Result<(), Box<dyn std::error::Error>> {
+    use cutile::bench::do_bench_paired;
+    assert!(m <= SWEEP_PAD_ROWS);
+    let input = device.upload(
+        vec![f4e2m1fnx2::from_bits(0x21); SWEEP_PAD_ROWS * k / 2],
+        &[SWEEP_PAD_ROWS, k / 2],
+    )?;
+    let input_scales = device.upload(
+        vec![f8e4m3fn(48); SWEEP_PAD_ROWS * k / 16],
+        &[SWEEP_PAD_ROWS, k / 16],
+    )?;
+    let weight = device.upload(vec![f4e2m1fnx2::from_bits(0x21); n * k / 2], &[n, k / 2])?;
+    let scales = device.upload(vec![f8e4m3fn(48); n * k / 16], &[n, k / 16])?;
+    let mut output = api::zeros::<f32>(&[SWEEP_PAD_ROWS, n]).sync_on(&device.stream)?;
+    let mut tile_graph = |rows: usize, columns: usize| -> Result<CudaGraph<()>, Error> {
+        Ok(CudaGraph::scope(&device.stream, |scope| {
+            scope.record(
+                kernels::packed(
+                    (&mut output).partition([rows, columns]),
+                    &input,
+                    &input_scales,
+                    &weight,
+                    &scales,
+                    1.0,
+                )
+                .generics(vec![
+                    k.to_string(),
+                    rows.to_string(),
+                    columns.to_string(),
+                ]),
+            )?;
+            Ok(())
+        })?)
+    };
+    let baseline = tile_graph(QUANT_TILE_ROWS, QUANT_TILE_COLUMNS)?;
+    for (rows, columns) in SWEEP_TILES {
+        let candidate = tile_graph(rows, columns)?;
+        let (base, cand) = do_bench_paired(
+            &device.stream,
+            options,
+            |_| {
+                baseline
+                    .launch()
+                    .sync_on(&device.stream)
+                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            },
+            |_| {
+                candidate
+                    .launch()
+                    .sync_on(&device.stream)
+                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            },
+        )?;
+        println!(
+            "m{m} n{n} k{k} tile[{rows},{columns}]: base_ms={} cand_ms={} ratio={}",
+            base.median_ms(),
+            cand.median_ms(),
+            cand.median_ms() / base.median_ms()
+        );
     }
     Ok(())
 }

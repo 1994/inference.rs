@@ -121,16 +121,21 @@ impl Workspace {
             )
             .generics(vec![columns.to_string()]),
         )?;
+        let tile = crate::constants::quant_gemm_tile(rows);
         scope.record(
             kernels::packed(
-                output.partition(crate::constants::QUANT_GEMM_TILE),
+                output.partition(tile),
                 &*q,
                 &*qs,
                 w,
                 s,
                 1.0 / (global * scale),
             )
-            .generics(vec![columns.to_string()]),
+            .generics(vec![
+                columns.to_string(),
+                tile[0].to_string(),
+                tile[1].to_string(),
+            ]),
         )?;
         Ok(())
     }
@@ -162,15 +167,13 @@ impl Workspace {
                 columns.next_power_of_two().to_string(),
             ]),
         )?;
+        let tile = crate::constants::quant_gemm_tile(rows);
         scope.record(
-            kernels::matmul(
-                output.partition(crate::constants::QUANT_GEMM_TILE),
-                &*q,
-                w,
-                &*qs,
-                scale,
-            )
-            .generics(vec![columns.to_string()]),
+            kernels::matmul(output.partition(tile), &*q, w, &*qs, scale).generics(vec![
+                columns.to_string(),
+                tile[0].to_string(),
+                tile[1].to_string(),
+            ]),
         )?;
         Ok(())
     }

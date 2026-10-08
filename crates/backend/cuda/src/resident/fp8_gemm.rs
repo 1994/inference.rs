@@ -32,29 +32,29 @@ pub(crate) mod kernels {
     }
 
     #[cutile::entry()]
-    fn matmul<const K: i32>(
-        output: &mut Tensor<f32, { [16, 64] }>,
+    fn matmul<const K: i32, const M: i32, const N: i32>(
+        output: &mut Tensor<f32, { [M, N] }>,
         input: &Tensor<f8e4m3fn, { [-1, K] }>,
         weight: &Tensor<f8e4m3fn, { [-1, K] }>,
         input_scale: &Tensor<f32, { [-1, 1] }>,
         weight_scale: &Tensor<f32, { [-1] }>,
     ) {
         let pid = get_tile_block_id();
-        let xp = input.partition(shape![16, 128]);
-        let wp = weight.partition(shape![64, 128]);
-        let mut acc: Tile<f32, { [16, 64] }> = constant(0.0f32, shape![16, 64]);
+        let xp = input.partition(shape![M, 128]);
+        let wp = weight.partition(shape![N, 128]);
+        let mut acc: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
         for k in 0i32..((K + 127) / 128) {
             acc = mmaf(xp.load([pid.0, k]), wp.load([pid.1, k]).transpose(), acc);
         }
         let xs = input_scale
-            .partition(shape![16, 1])
+            .partition(shape![M, 1])
             .load([pid.0, 0i32])
-            .broadcast(shape![16, 64]);
+            .broadcast(shape![M, N]);
         let ws = weight_scale
-            .partition(shape![64])
+            .partition(shape![N])
             .load([pid.1])
-            .reshape(shape![1, 64])
-            .broadcast(shape![16, 64]);
+            .reshape(shape![1, N])
+            .broadcast(shape![M, N]);
         output.store(acc * xs * ws);
     }
 
