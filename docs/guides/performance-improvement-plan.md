@@ -561,7 +561,18 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    1-D view，`[head]` 索引）与 `recurrent_prefill/workspace.rs:111`（chunked：显式
    `view([lanes, 2*KH+VH, D])`，`[lane, head, 0]` 索引）两处输入 view 的布局假设。
 
-   修好它的收益是明确的（最差格 TTFT −25%），但当前必须保持关闭。
+   **第 6 轮把范围收窄到"capture 的输入绑定"**。(a) cuTile JIT cache 不背锅：`l2_key`
+   是对 tileiras 字节码做 SHA-256，kernel 体一改 key 就变，我这轮的 kernel 编辑都是真生效的。
+   (b) 逐个排除：masked lane 写零（去掉后偏差**逐位相同**）、chunked 卷积（把 delta 换回逐 lane、
+   卷积保持 chunked → **偏差恰好 0.00000000**，即卷积精确等价）、metadata 布局（chunk 的
+   `[position, count, state_offset, 0]` 与逐 lane 的 `state_pos = pos + state_offset` 语义一致）、
+   共享 scratch（改成每个 delta 节点独占 scratch，偏差仍逐位相同）、prefill 宽度（32/64/128
+   三档偏差完全一样）。(c) **新增测试证明两个 kernel 各自都是对的**：
+   `chunk_delta_matches_independent_recurrence` 补上模型几何 (kh16/vh48/dim128/lanes128) 后通过；
+   新增 `per_lane_delta_matches_independent_recurrence_at_model_geometry`（此前**只有 chunked
+   被测过**，shipping 的逐 lane 路径从没在这个几何上对过参考），worst state 6.9e-8、
+   worst out 8.7e-9。既然两边在相同输入下都精确，那 5% 只能来自 **capture 喂进去的输入不同**
+   —— 下一步是 dump chunked capture 的 `qkv/beta/alpha/state` 绑定与逐 lane 路径逐值对比。
 
    **同轮落地的小改动**：MTP 草稿的 priming 过去按固定 `PREFILL_LANES`(32) 切块，
    511-token prompt 变成 16 次 replay/请求（profile 里 64 条 23-node 记录 × 2.1 ms ≈ 134 ms）。
