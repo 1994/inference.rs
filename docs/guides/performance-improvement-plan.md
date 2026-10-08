@@ -535,6 +535,41 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
 2. **lowering 重验**：wgmma（sm_90a）与 tcgen05（sm_120）是两条 lowering 路径，
    数值门 + `inspect-cutile-cache.py` SASS 检查全量重跑；TMA 在 Hopper 是主场，
    杠杆 A 的双缓冲方向直接受益；PDL sm_90 原生支持（`mlp/pdl.rs` 无需改动）。
+2a. **chunked recurrent prefill（本轮实测：奖品很大，但现在是错的）**。27B `long` 用例
+   （4×511 token）的 prefill 是 **~900 ms 设备时间、不是主机开销**：`INFER_CUDA_EXECUTION_PROFILE`
+   显示 `prefill_chunk` 每块 63 ms（mtp0 也 63 ms，所以与投机/readback 无关），
+   `INFER_CUDA_PREFILL_PROFILE` 按算子拆开是 **delta 345.8 ms（38%）+ linear 336.0 ms（37%）**
+   + embedding 93.5 + attention 51.9。delta 是逐 lane 读写整块状态：48 层 × 128 lane ×
+   3.146 MB × 2 = 38.7 GB/块，38.7 GB ÷ 1.79 TB/s = **21.6 ms/块**，与实测 21.6 ms 完全吻合
+   —— 它已经跑在 100% HBM 带宽上，唯一出路是少搬数据（把状态留在寄存器里跨 lane 复用）。
+
+   仓库里正好有这条路（`recurrent_prefill`，状态在寄存器 tile 里跨 lane 迭代），但它对
+   **激活量化的模型被关掉**（`input_scales`/`fp8_inputs` 非空即返回空 workspace）。本轮把门
+   打开实测：**long TTFT 4.565 → 3.433（−25%）、wall 1.621 → 1.460（−10%）、batch4 TTFT
+   1.971 → 1.659（−16%）**，但 **21/21 条 token 序列全部不同**。
+
+   于是用仓库自带的全模型数值门复现：
+   `INFER_TEST_MODEL=/home/r/models/Qwen3.8-27B-NVFP4 INFER_TEST_TOKENS=<json> INFER_TEST_PREFILL_WIDTH=128
+   cargo test --release -p infer-backend-cuda --features cuda checkpoint_chunk_recurrence_matches_legacy_logits -- --ignored`
+   → **`hidden relative_l2=0.0436, max_abs=0.4986`（门限 1e-4 / 1e-2）**。原注释写的是
+   "FP32 rounding slightly"，实测是 **4.4% 的语义级偏差**，所以这是正确性门、不是精度取舍。
+   二分：把卷积强制回逐 lane（`conv_prefill::record` 返回 false）后偏差**逐位相同**
+   （0.04364158），说明卷积路径在该模型上根本没被选中，问题在 **chunked Delta 本身**；
+   而合成测试 `chunk_delta_matches_independent_recurrence` 在同一几何（kh:vh=1:3、dim 128、
+   lanes 128、count<lanes）下 2e-5 通过 —— 所以缺陷在 capture 喂给 kernel 的东西，不在
+   表达式树（两侧逐算子结构一致）。**下一步**：对比 `capture_state.rs:74`（逐 lane：扁平
+   1-D view，`[head]` 索引）与 `recurrent_prefill/workspace.rs:111`（chunked：显式
+   `view([lanes, 2*KH+VH, D])`，`[lane, head, 0]` 索引）两处输入 view 的布局假设。
+
+   修好它的收益是明确的（最差格 TTFT −25%），但当前必须保持关闭。
+
+   **同轮落地的小改动**：MTP 草稿的 priming 过去按固定 `PREFILL_LANES`(32) 切块，
+   511-token prompt 变成 16 次 replay/请求（profile 里 64 条 23-node 记录 × 2.1 ms ≈ 134 ms）。
+   草稿的 prompt 图其实能捕到 128 宽，现在按 `spec.program.prefill_width()` 切块：
+   **long TTFT −1.7%（4 轮 long-only 池化，0.9833）、wall −0.6%，token 4 轮逐字节一致**；
+   常驻显存与池化宽度不变（仍 width 4、0 个 disabled step）。收益远小于 134 ms 的原因是
+   priming 与其它请求的 prefill replay 在 GPU 上重叠，只有约 0.3 ms/次落在关键路径上。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层

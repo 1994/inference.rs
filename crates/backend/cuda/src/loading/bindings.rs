@@ -238,11 +238,12 @@ fn draft_weights(
         .map(|n| n.inputs[1])
         .collect();
     let mut weights = ProgramWeights {
-        // The draft captures the 32-lane prompt graph so priming can run one pass per chunk
-        // instead of one single-token pass per prompt token. It has no verify batch: the
-        // target verifies, the draft only proposes.
+        // The draft captures the widest prompt graph so priming runs one pass per chunk instead
+        // of one single-token pass per prompt token; a 32-lane graph turned a 511-token prompt
+        // into sixteen replays. It has no verify batch: the target verifies, the draft only
+        // proposes.
         batch_width: 0,
-        prefill_width: crate::constants::PREFILL_LANES,
+        prefill_width: crate::constants::MAX_PREFILL_LANES,
         narrow_prefill_width: 0,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),

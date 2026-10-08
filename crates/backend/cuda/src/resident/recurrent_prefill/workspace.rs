@@ -25,6 +25,13 @@ impl Workspace {
         // Persistent-state reduction changes FP32 rounding slightly. Activation
         // quantization can amplify that difference at later block-scale thresholds;
         // keep the established recurrence until the whole-model gate passes there.
+        // Measured on the 27B NVFP4 with `checkpoint_chunk_recurrence_matches_legacy_logits`
+        // (`INFER_TEST_MODEL`/`INFER_TEST_TOKENS`, width 128): the register-resident recurrence
+        // drifts `hidden relative_l2 = 0.0436, max_abs = 0.499` against the per-lane one. That is
+        // a semantic divergence, not the FP32 re-association it was assumed to be, so this is a
+        // correctness gate and not a precision trade. Forcing the convolution back to per-lane
+        // leaves the drift byte-identical, which puts the defect in the chunked Delta itself even
+        // though `chunk_delta_matches_independent_recurrence` passes the same geometry at 2e-5.
         if !weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty() {
             return Ok(Self {
                 lanes,

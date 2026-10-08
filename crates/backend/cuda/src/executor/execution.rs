@@ -791,10 +791,16 @@ impl Sequence {
         };
         let mut previous = std::mem::take(&mut spec.last_hidden);
         let mut result = Ok(());
+        // Chunk by the width the draft graph actually captured, not a fixed constant: the graph
+        // is fixed-width, so a chunk wider than it is rejected and a narrower one wastes a replay.
+        let width = spec
+            .program
+            .prefill_width()
+            .max(crate::constants::PREFILL_LANES);
         let mut start = 0;
         while start < rows.len() {
             let position = rows[start].0;
-            let chunk = &rows[start..(start + crate::constants::PREFILL_LANES).min(rows.len())];
+            let chunk = &rows[start..(start + width).min(rows.len())];
             // A fused draft batch needs contiguous positions; anything else replays token by
             // token through the ordinary single-step path.
             let contiguous = chunk
