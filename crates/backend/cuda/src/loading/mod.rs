@@ -263,6 +263,7 @@ impl LoadedModel {
             } else {
                 crate::constants::MAX_PREFILL_LANES
             };
+            let mut selected = 0usize;
             for width in [
                 crate::constants::MAX_PREFILL_LANES,
                 crate::constants::MID_PREFILL_LANES,
@@ -273,13 +274,31 @@ impl LoadedModel {
                 let needed =
                     crate::resident::arena::ActivationArena::required_bytes(&package.graph, width)?;
                 if needed as u64 <= arena_budget {
-                    weights.prefill_width = width;
+                    selected = width;
                     break;
                 }
+            }
+            // The recurrent cap above is a heuristic for the scalar Delta path, and the arena is
+            // the real bound. Measured on the 27B: a 128-lane prompt graph is numerically
+            // identical to two 64-lane chunks and turns eight replays into four (-13% long-prompt
+            // TTFT), while a 51-token prompt through it costs 24% more. So keep the capped width
+            // as a second, narrow graph and route chunks by length instead of choosing one.
+            if selected != 0 && selected < crate::constants::MAX_PREFILL_LANES {
+                let wide = crate::constants::MAX_PREFILL_LANES;
+                let needed =
+                    crate::resident::arena::ActivationArena::required_bytes(&package.graph, wide)?;
+                if needed as u64 <= arena_budget {
+                    weights.narrow_prefill_width = selected;
+                    selected = wide;
+                }
+            }
+            if selected != 0 {
+                weights.prefill_width = selected;
             }
             tracing::info!(
                 target: "infer::load",
                 prefill_width = weights.prefill_width,
+                narrow_prefill_width = weights.narrow_prefill_width,
                 "prompt graph width selected"
             );
             geometry_phase.finish();

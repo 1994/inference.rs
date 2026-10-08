@@ -172,6 +172,29 @@ target verify 里 `linear` 19.9 ms、`delta` 4.2 ms、`conv` 2.3 ms。带宽只�
 2B long 3.26x → ~1.2x（507 token 从 4 次 replay 到 1 次 512 宽）。**27B long 要到
 ≤1.10x 还需 ②A 把 ~55ms 前后开销砍到 ~18ms 以下 —— 该格需要 ③+③′+②A 同时落地。**
 
+**实测（已落地）**：不对。③′ 的收益**不**来自更宽的 bound，而来自"**按 chunk 长度路由到最窄够用的图**"。
+一次 prompt chunk = 一次固定宽度 replay，成本与 chunk 内 token 数无关，所以
+128 宽图对 511-token prompt 是省 4 次 replay，对 51-token prompt 是白跑 60% 的 lane。
+两次实测：27B 全程 128 宽（`--max-num-batched-tokens 128`）long TTFT 5.72 → 4.98，
+但 short 1.18 → 1.47、batch4 1.95 → 2.41（+24%，与 loading 注释里记的三格回退同源）。
+
+落到 `ProgramWeights::{prefill_width, narrow_prefill_width}` + `DeviceProgram::prompt_narrow`
+后：**捕获宽窄两张 prompt 图，按 chunk 长度选图**（≤ 窄宽走窄图，否则走宽图），
+engine 的 chunk 仍取宽宽（`prefill_chunk_tokens = 128`）。27B 选到
+`prefill_width=128, narrow=64`，2B 仍是单张 128 图（窄宽=宽宽，不额外捕获）。
+实测（4 轮交错 A/B 池化，24 个 wall / 96 个 TTFT·TPOT 样本，token 逐字节一致）：
+
+| 27B 用例 | wall | TTFT | TPOT |
+|---|---|---|---|
+| long | 1.914 → **1.686**（−12%） | 5.973 → **4.717**（−21%） | 1.383 → 1.321（−5%） |
+| batch4 | 1.240 → 1.198（−3%） | 1.953 → 1.972 | 1.980 → **1.837**（−7%） |
+| short | 1.253 → 1.202（−4%） | 1.210 → 1.200 | 1.260 → **1.201**（−5%） |
+| hot_long | 0.992 → 0.992 | 0.368 → 0.366 | 1.249 → 1.244 |
+
+2B 配置完全未变（单图），其 ±5% 摆动即噪声下限。显存：27B 两张图并存后 resident 22.9 GiB /
+state_budget 4.8 GiB，与单张 64 图（23.0 / 4.7）持平，准入并发不变。
+`MAX_PREFILL_LANES` 仍是 128；再宽需要同时放开 `loading/mod.rs` 的宽度白名单。
+
 ### 合成预期（全落地后，推算）
 
 | 用例 | wall 现值 | wall 预期 | 依赖 |

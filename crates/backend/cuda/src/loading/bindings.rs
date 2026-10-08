@@ -87,6 +87,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
             },
         ),
         prefill_width: options.prefill_width,
+        narrow_prefill_width: 0,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,
@@ -242,6 +243,7 @@ fn draft_weights(
         // target verifies, the draft only proposes.
         batch_width: 0,
         prefill_width: crate::constants::PREFILL_LANES,
+        narrow_prefill_width: 0,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: Some(draft_fusion(

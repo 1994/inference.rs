@@ -50,6 +50,7 @@ fn check_projection(
     let mut weights = ProgramWeights {
         batch_width: 3,
         prefill_width: 3,
+        narrow_prefill_width: 0,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,

@@ -75,6 +75,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let weights = ProgramWeights {
         batch_width: 0,
         prefill_width: 1,
+        narrow_prefill_width: 0,
         fusion: Some(FusionWeights {
             projection: crate::mlp::ProjectionWeight::Dense(
                 device.upload(values(32 * 64), &[32, 64])?,

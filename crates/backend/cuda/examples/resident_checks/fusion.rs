@@ -65,6 +65,7 @@ pub fn run(device: &CudaDevice) -> Result<()> {
     let weights = ProgramWeights {
         batch_width: 0,
         prefill_width: 1,
+        narrow_prefill_width: 0,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: Some(FusionWeights {

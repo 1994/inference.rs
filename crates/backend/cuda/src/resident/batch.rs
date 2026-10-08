@@ -89,7 +89,13 @@ pub(super) struct SlotDecodeGraph {
 }
 
 impl BatchBuilder<'_> {
-    pub fn build_pair(&mut self) -> Result<(Option<BatchGraph>, Option<BatchGraph>)> {
+    /// Batch graph plus every prompt graph the program captures, widest last.
+    ///
+    /// A prompt chunk costs one fixed-width replay whatever its token count, so a program may
+    /// capture a second, narrower prompt graph and route short chunks to it.
+    pub fn build_pair(
+        &mut self,
+    ) -> Result<(Option<BatchGraph>, Option<BatchGraph>, Option<BatchGraph>)> {
         if self.weights.batch_width > crate::constants::MAX_VERIFICATION_WIDTH {
             return Err(Error::invalid("verification width exceeds 9"));
         }
@@ -98,19 +104,26 @@ impl BatchBuilder<'_> {
         } else {
             None
         };
-        let prompt = if self.weights.prefill_width >= crate::constants::PREFILL_LANES {
-            self.width = self.weights.prefill_width;
-            Some(self.build()?)
-        } else if self.weights.prefill_width > 1
-            && self.weights.prefill_width != self.weights.batch_width
-        {
+        let wide = self.weights.prefill_width;
+        let narrow = self.weights.narrow_prefill_width;
+        if wide < crate::constants::PREFILL_LANES && wide > 1 && wide != self.weights.batch_width {
             return Err(Error::invalid(
                 "prefill width must match verification width or be 32",
             ));
+        }
+        let prompt_narrow = if narrow >= crate::constants::PREFILL_LANES && narrow < wide {
+            self.width = narrow;
+            Some(self.build()?)
         } else {
             None
         };
-        Ok((batch, prompt))
+        let prompt = if wide >= crate::constants::PREFILL_LANES {
+            self.width = wide;
+            Some(self.build()?)
+        } else {
+            None
+        };
+        Ok((batch, prompt, prompt_narrow))
     }
 
     /// State positions a fused program writes, relative to its `RoPE` positions.

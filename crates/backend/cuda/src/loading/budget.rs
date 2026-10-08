@@ -63,8 +63,7 @@ fn program(
     readout: OutputReadout,
 ) -> Result<u64> {
     let verify = weights.batch_width as u64;
-    let prompt = u64::from(weights.prefill_width >= crate::constants::PREFILL_LANES)
-        * weights.prefill_width as u64;
+    let prompt = weights.prompt_lane_total() as u64;
     let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
     let mut bytes = 0;
     // Split-KV scratch is shared by sequential attention nodes with the same geometry.
@@ -181,8 +180,9 @@ fn projection_workspace(graph: &DataflowGraph, weights: &ProgramWeights) -> Resu
     let mut partials = std::collections::BTreeSet::new();
     let mut quantized = std::collections::BTreeSet::new();
     let mut fp8_quantized = std::collections::BTreeSet::new();
-    let quantized_rows = [1, weights.batch_width, weights.prefill_width]
+    let quantized_rows = [1, weights.batch_width]
         .into_iter()
+        .chain(weights.prompt_widths())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .sum::<usize>() as u64;

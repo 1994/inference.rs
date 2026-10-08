@@ -167,6 +167,9 @@ workspace**，且 kernel 有 **16 行硬下限**。
 - **prompt chunk 原子化** —— 调度不再把 prefill chunk 切成 fair quantum；一次 replay 发
   整块、发不下就整轮推迟（`packing.rs`）。27B/2B batch4 TTFT 各降 ~19%，wall −1.6~−2.2%，
   token 序列不变。见 [performance-improvement-plan.md](performance-improvement-plan.md) §一②
+- **prompt 图宽度分档** —— 宽窄两张 prompt 图并存，按 chunk 长度路由（`ProgramWeights::
+  narrow_prefill_width` + `DeviceProgram::prompt_narrow`）。27B long TTFT −21%、wall −12%，
+  batch4 TPOT −7%、short TPOT −5%，token 序列不变；2B 仍是单张 128 图。见同文档 ③′
 
 ## 六、测量纪律
 

@@ -8,6 +8,7 @@ fn admission_charges_shared_projection_geometry_once() -> Result<()> {
     let mut weights = ProgramWeights {
         batch_width: 3,
         prefill_width: 32,
+        narrow_prefill_width: 0,
         fusion: None,
         projections: BTreeMap::new(),
         fp8_inputs: std::collections::BTreeSet::new(),

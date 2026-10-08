@@ -94,6 +94,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let weights = ProgramWeights {
         batch_width: 3,
         prefill_width: 1,
+        narrow_prefill_width: 0,
         fusion: None,
         embeddings,
         projections: BTreeMap::from([(TensorId::new(11)?, ProjectionWeight::Dense(dense))]),

@@ -67,7 +67,12 @@ impl FusionWorkspace {
 
 pub struct ProgramWeights {
     pub batch_width: usize,
+    /// Widest captured prompt graph.
     pub prefill_width: usize,
+    /// Second, narrower prompt graph captured alongside [`Self::prefill_width`]; zero when the
+    /// program captures one prompt graph. A prompt chunk costs one fixed-width replay, so a
+    /// 51-token prompt wants the narrow graph while a 511-token prompt wants the wide one.
+    pub narrow_prefill_width: usize,
     pub kv_scales: BTreeMap<TensorId, [f32; 2]>,
     pub tiling: BTreeMap<TensorId, LinearTiling>,
     pub fusion: Option<FusionWeights>,
@@ -86,6 +91,30 @@ pub(super) enum ActivationQuantization {
     Fp8Token,
 }
 impl ProgramWeights {
+    /// Prompt graph widths this program captures, widest first; empty when it captures none.
+    ///
+    /// A width below `PREFILL_LANES` is not a prompt graph: it is the verification width the
+    /// program falls back to.
+    pub fn prompt_widths(&self) -> Vec<usize> {
+        let mut widths = Vec::with_capacity(2);
+        for width in [self.prefill_width, self.narrow_prefill_width] {
+            if width >= PREFILL_LANES && !widths.contains(&width) {
+                widths.push(width);
+            }
+        }
+        widths
+    }
+
+    /// Widest captured prompt graph, or zero when the program captures none.
+    pub fn widest_prompt_width(&self) -> usize {
+        self.prompt_widths().into_iter().max().unwrap_or(0)
+    }
+
+    /// Total prompt lanes across every captured prompt graph.
+    pub fn prompt_lane_total(&self) -> usize {
+        self.prompt_widths().into_iter().sum()
+    }
+
     pub(super) fn activation_quantization(&self, id: TensorId) -> Option<ActivationQuantization> {
         self.input_scales
             .get(&id)
@@ -104,6 +133,8 @@ pub struct DeviceProgram {
     batch: Option<super::batch::BatchGraph>,
     last_batch: Option<(usize, usize)>,
     prompt_batch: Option<super::batch::BatchGraph>,
+    /// Second, narrower prompt graph; chunks at most this wide replay here instead.
+    prompt_narrow: Option<super::batch::BatchGraph>,
     graph: CudaGraph<()>,
     readbacks: crate::device::Readbacks,
     prefill: CudaGraph<()>,
@@ -147,11 +178,7 @@ fn retained_tensor_bytes(
     } else {
         0
     };
-    let prompt = if weights.prefill_width >= PREFILL_LANES {
-        weights.prefill_width
-    } else {
-        0
-    };
+    let prompt = weights.prompt_lane_total();
     let activations = activation_bytes as u64 * (1 + verify + prompt) as u64;
     let state_bytes = states
         .values()
@@ -261,7 +288,11 @@ impl DeviceProgram {
             .values()
             .map(|(k, v)| (k.size() + v.size()) as u64)
             .sum::<u64>();
-        let prompt = self.prompt_batch.as_ref().map_or(0, |g| g.width);
+        let prompt: usize = [self.prompt_batch.as_ref(), self.prompt_narrow.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|g| g.width)
+            .sum();
         self.reclaimable_bytes =
             state_bytes + packed_bytes + self.activation_bytes as u64 * (1 + prompt) as u64;
         self.released_verification_bytes = before - self.reclaimable_bytes;
@@ -377,7 +408,7 @@ impl DeviceProgram {
             capacity,
             width: weights.batch_width,
         };
-        let (batch, prompt_batch) = builder.build_pair()?;
+        let (batch, prompt_batch, prompt_narrow) = builder.build_pair()?;
         let hidden = super::batch::take_result(&mut arena, graph.hidden)?;
         let logits = super::batch::take_result(&mut arena, graph.logits)?;
         Ok(Self {
@@ -385,6 +416,7 @@ impl DeviceProgram {
             attention,
             batch,
             prompt_batch,
+            prompt_narrow,
             last_batch: None,
             graph: graph_exec,
             readbacks: crate::device::Readbacks::default(),
@@ -603,9 +635,27 @@ impl DeviceProgram {
 
     #[must_use]
     pub fn prefill_width(&self) -> usize {
-        self.prompt_batch
+        let widest = self
+            .prompt_batch
             .as_ref()
-            .map_or_else(|| self.batch_width(), |p| p.width)
+            .map_or(0, |prompt| prompt.width)
+            .max(self.prompt_narrow.as_ref().map_or(0, |prompt| prompt.width));
+        if widest > 0 {
+            widest
+        } else {
+            self.batch_width()
+        }
+    }
+
+    /// Whether a chunk of `lanes` tokens replays on the narrow prompt graph.
+    ///
+    /// Both captured prompt graphs are fixed width, so the narrow one is preferred whenever the
+    /// chunk fits it: running a 51-token chunk through a 128-lane graph spends 60% of every
+    /// replay on masked rows.
+    fn prefers_narrow_prompt(&self, lanes: usize) -> bool {
+        self.prompt_narrow
+            .as_ref()
+            .is_some_and(|prompt| lanes <= prompt.width)
     }
 
     /// State positions this program writes behind its `RoPE` positions.
@@ -613,6 +663,7 @@ impl DeviceProgram {
         let offset = self
             .prompt_batch
             .as_ref()
+            .or(self.prompt_narrow.as_ref())
             .or(self.batch.as_ref())
             .map_or(0, super::batch::BatchGraph::state_offset);
         usize::try_from(offset.unsigned_abs()).map_err(device_error)
@@ -632,14 +683,17 @@ impl DeviceProgram {
             .len()
             .checked_mul(hidden)
             .ok_or_else(|| Error::invalid("prompt externals"))?;
-        if self.prompt_batch.is_none() || externals.len() != lanes {
-            return Err(Error::invalid("prompt externals or batch graph"));
+        if externals.len() != lanes {
+            return Err(Error::invalid("prompt externals"));
         }
         self.lane_uploads.clear();
-        let batch = self
-            .prompt_batch
-            .take()
-            .ok_or_else(|| Error::invariant("prompt batch graph"))?;
+        let narrow_fits = self.prefers_narrow_prompt(tokens.len());
+        let batch = if narrow_fits {
+            self.prompt_narrow.take()
+        } else {
+            self.prompt_batch.take()
+        }
+        .ok_or_else(|| Error::invariant("prompt batch graph"))?;
         for lane in 0..tokens.len() {
             let slice = externals
                 .get(lane * hidden..(lane + 1) * hidden)
@@ -648,7 +702,11 @@ impl DeviceProgram {
             batch.bind_lane_external(&mut self.lane_external[lane], &uploaded)?;
             self.lane_uploads.push(uploaded);
         }
-        self.prompt_batch = Some(batch);
+        if narrow_fits {
+            self.prompt_narrow = Some(batch);
+        } else {
+            self.prompt_batch = Some(batch);
+        }
         self.prefill_batch_readout(tokens, position, false, false)?;
         Ok(())
     }
@@ -673,7 +731,7 @@ impl DeviceProgram {
         read_hidden: bool,
     ) -> Result<super::BatchOutput> {
         let width = self.prefill_width();
-        if (self.batch.is_none() && self.prompt_batch.is_none())
+        if (self.batch.is_none() && self.prompt_batch.is_none() && self.prompt_narrow.is_none())
             || tokens.is_empty()
             || tokens.len() > width
             || (width < PREFILL_LANES && tokens.len() != width)
@@ -693,10 +751,14 @@ impl DeviceProgram {
         if position.saturating_sub(lag) != self.next_position {
             return Err(Error::invalid("prefill state position"));
         }
-        let output = self
-            .prompt_batch
-            .as_mut()
-            .or(self.batch.as_mut())
+        let lanes = tokens.len();
+        let prompt = if self.prefers_narrow_prompt(lanes) {
+            self.prompt_narrow.as_mut()
+        } else {
+            self.prompt_batch.as_mut()
+        };
+        let output = prompt
+            .or_else(|| self.batch.as_mut())
             .ok_or_else(|| Error::invariant("prefill batch graph"))?
             .run(
                 &self.device,

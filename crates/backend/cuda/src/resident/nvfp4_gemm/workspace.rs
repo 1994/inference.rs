@@ -24,12 +24,9 @@ impl Workspace {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
     ) -> Result<Self> {
-        Self::new(
-            device,
-            graph,
-            weights,
-            &[1, weights.batch_width, weights.prefill_width],
-        )
+        let mut widths = vec![1, weights.batch_width];
+        widths.extend(weights.prompt_widths());
+        Self::new(device, graph, weights, &widths)
     }
 
     pub(crate) fn new(
