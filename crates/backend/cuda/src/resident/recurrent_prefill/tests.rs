@@ -262,16 +262,14 @@ fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// Run the chunked and per-lane recurrences on byte-identical inputs and require the same bits.
-/// The two agree with an f64 reference to 2e-5 but differ from each other by ~1 ULP, which is
-/// enough to change a 64-layer greedy decode; this isolates that difference from the capture so
-/// the lane loop can be fixed against a sub-second test.
-#[test]
-#[ignore = "requires CUDA hardware; run inside safe-run"]
-fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
-    CudaDevice::enable_kernel_cache()?;
-    let device = CudaDevice::new(0)?;
-    let (kh, vh, dim, lanes, count) = (16_usize, 48_usize, 128_usize, 128_usize, 51_usize);
+/// Compare the chunked and per-lane recurrences on byte-identical inputs and report the gap.
+/// Returns `(state_gap, output_gap)` as the worst absolute difference over the chunk.
+fn recurrence_gap(
+    device: &CudaDevice,
+    lanes: usize,
+    count: usize,
+    (kh, vh, dim): (usize, usize, usize),
+) -> Result<(f32, f32), Box<dyn std::error::Error>> {
     let heads = 2 * kh + vh;
     let qkv = values(lanes * heads * dim, 17);
     let beta = values(lanes * vh, 13);
@@ -280,9 +278,8 @@ fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Er
     let bias = values(vh, 5);
     let initial = values(vh * dim * dim, 23);
 
-    // Chunked: one launch over `count` lanes.
     let mut state_c = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
-    let src = device.upload(initial.clone(), &[vh, dim, dim])?;
+    let src = device.upload(initial, &[vh, dim, dim])?;
     api::memcpy(&mut state_c, &src).sync_on(&device.stream)?;
     let mut out_c = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
     let qkv_c = device.upload(qkv.clone(), &[lanes, heads, dim])?;
@@ -309,7 +306,6 @@ fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Er
     ])
     .sync_on(&device.stream)?;
 
-    // Per lane: the shipping kernel, one token at a time.
     let mut state_l = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
     api::memcpy(&mut state_l, &src).sync_on(&device.stream)?;
     let mut expected_out = vec![0.0_f32; vh * lanes * dim];
@@ -345,20 +341,79 @@ fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Er
         .zip(&expected_out)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0_f32, f32::max);
-    eprintln!("chunked vs per-lane output max_abs={out_gap:e} (target: exactly 0)");
     let chunk_state = state_c.to_host_vec().sync_on(&device.stream)?;
     let lane_state = state_l.to_host_vec().sync_on(&device.stream)?;
-    let worst = chunk_state
+    let state_gap = chunk_state
         .iter()
         .zip(&lane_state)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0_f32, f32::max);
-    eprintln!("chunked vs per-lane state max_abs={worst:e} (target: exactly 0)");
-    // The lane loop reproduces the per-lane recurrence to about one ULP instead of exactly, and a
-    // 64-layer greedy decode amplifies that into a different continuation. Track the figure here so
-    // the fix has a sub-second gate; tighten to `assert_eq!(worst, 0.0)` once the loop matches.
+    if std::env::var_os("INFER_GAP_INDEX").is_some() {
+        let differing: Vec<usize> = chunk_out
+            .iter()
+            .zip(&expected_out)
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
+            .collect();
+        eprintln!(
+            "lanes={lanes} count={count} differing_outputs={}/{} first={:?}",
+            differing.len(),
+            chunk_out.len(),
+            differing.iter().take(6).collect::<Vec<_>>()
+        );
+        let state_differing: Vec<usize> = chunk_state
+            .iter()
+            .zip(&lane_state)
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
+            .collect();
+        eprintln!(
+            "  differing_states={}/{} first={:?}",
+            state_differing.len(),
+            chunk_state.len(),
+            state_differing.iter().take(6).collect::<Vec<_>>()
+        );
+    }
+    Ok((state_gap, out_gap))
+}
+
+/// Report the chunked-versus-per-lane gap across geometries so the lane-loop fix has a map of
+/// where the difference enters: a single lane, a masked tail, or a longer chunk.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn chunk_and_per_lane_delta_gap_map() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for (lanes, count) in [
+        (1, 1),
+        (2, 1),
+        (2, 2),
+        (8, 1),
+        (8, 3),
+        (128, 1),
+        (128, 8),
+        (128, 51),
+    ] {
+        let (state, out) = recurrence_gap(&device, lanes, count, (16, 48, 128))?;
+        eprintln!("lanes={lanes} count={count} state_gap={state:e} output_gap={out:e}");
+    }
+    Ok(())
+}
+
+/// The lane loop must reproduce the per-lane recurrence exactly; anything else changes a 64-layer
+/// greedy decode. Track the figure here until it is zero.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (state, out) = recurrence_gap(&device, 128, 51, (16, 48, 128))?;
+    eprintln!("chunked vs per-lane state max_abs={state:e} (target: exactly 0)");
+    eprintln!("chunked vs per-lane output max_abs={out:e} (target: exactly 0)");
     assert!(
-        worst < 1.0e-7 && out_gap < 1.0e-7,
+        state < 1.0e-7 && out < 1.0e-7,
         "chunked and per-lane recurrences differ"
     );
     Ok(())

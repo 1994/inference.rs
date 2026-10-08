@@ -637,6 +637,26 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    默认保持关闭的理由因此收窄为两条：token 会变（0/21 与默认一致，属数值取舍）、以及短序列
    的 wall/TPOT 回退尚无机制解释。long 用例则是全面变好（TTFT −24%、wall −10%、TPOT −4%）。
 
+   **第 9 轮：把"修 lane 循环"这条路彻底关掉。** 新增 `chunk_and_per_lane_delta_gap_map`
+   按几何逐点测两个 kernel 的差：
+
+   | lanes×count | state gap | output gap |
+   |---|---|---|
+   | **1×1** | **2.98e-8** | **7.45e-9** |
+   | 2×1 / 2×2 | 2.98e-8 / 5.96e-8 | 7.45e-9 |
+   | 128×1 / 128×51 | 2.98e-8 / 9.31e-9 | 7.45e-9 |
+
+   **单 lane、单 token 就已经差**，所以不是循环carry、不是 masked lane、不是 chunk 长度。
+   逐元素统计（`INFER_GAP_INDEX=1`）：1×1 时 **6144 个 output 里 4634 个、786432 个 state 里
+   59412 个**在末位不同 —— 大面积末位差，即同一个表达式树在 cuTile 里被收缩/调度成不同指令。
+   已验证与载入形状无关（把 q/k/v/beta 换成与逐 lane 完全相同的扁平 `[D]`/`[1]` 分区+索引，
+   数字一模一样）。**结论：这不是 kernel 源码能修的 bug，需要编译器级开关（例如禁止 FP
+   contraction），或让两条路复用同一个 kernel。** chunked 递推因此作为显式数值选择保留
+   （`INFER_CUDA_CHUNKED_RECURRENT=1`），默认仍是逐 lane。
+
+   收益已实测并记录：long TTFT −24%、wall −10%、TPOT −4%，各用例 TTFT 全面 −10~24%；
+   short/hot_long 的 wall/TPOT 回退 8–10%（机制仍未解释）。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层

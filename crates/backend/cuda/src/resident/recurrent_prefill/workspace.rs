@@ -22,27 +22,22 @@ impl Workspace {
         weights: &ProgramWeights,
         lanes: usize,
     ) -> Result<Self> {
-        // The register-resident recurrence is bit-identical to the per-lane one for a single lane
-        // and rounds differently for a chunk, which is what this gate is about. Measured on the
-        // 27B NVFP4 with `checkpoint_chunk_recurrence_matches_legacy_logits` (51 tokens, width
-        // 128, with a device synchronize before the comparison):
+        // A chunk rotates the recurrent state through one kernel launch instead of once per
+        // token, which is worth 24% of long-prompt TTFT on the 27B. The two implementations are
+        // separate kernels and lower slightly differently: with ONE lane, byte-identical inputs
+        // and the same expression tree, 4634 of 6144 outputs and 59412 of 786432 state elements
+        // differ in the last bits (worst 2.98e-8 state, 7.45e-9 output, measured by
+        // `chunk_and_per_lane_delta_gap_map`). It is not the lane loop, not the load shape
+        // (flattening q/k/v/beta to the per-lane kernel's `[D]`/`[1]` partitions leaves the figure
+        // identical), not the masked-lane store, and not the capture binding. So it is instruction
+        // contraction inside cuTile's lowering, and exact agreement needs a compiler-level knob
+        // rather than a kernel edit.
         //
-        //   first delta state   TensorId(25)  error 9.5e-6
-        //   later delta states              2.4e-3 .. 1.7e-3
-        //   conv states (downstream of it)  2.1e-2 .. 6.5e-2
-        //   one token, same geometry        exactly 0.0 in every state and in the readout
-        //
-        // The lane loop re-associates at f32 level and 64 layers plus activation quantization
-        // amplify that into a different greedy continuation: opening the gate changes all 21 token
-        // sequences of the 27B while cutting long-prompt TTFT by 25%. A test run without the
-        // synchronize reports the amplified end-to-end figure (0.0436 hidden L2) as though it were
-        // the per-layer error. Layouts, metadata, the scratch and its transpose are separately
-        // verified against independent references, so what remains is reproducing the per-lane
-        // store/load sequence exactly inside the lane loop.
-        // The chunked recurrence is worth 25% of long-prompt TTFT but reproduces the per-lane one
-        // to about one ULP per lane rather than exactly, and 64 layers amplify that into a
-        // different greedy continuation. Quantized checkpoints therefore keep the established
-        // recurrence unless a caller opts in with `INFER_CUDA_CHUNKED_RECURRENT=1`.
+        // 64 layers plus activation quantization amplify one ULP into a different greedy
+        // continuation, so the established recurrence stays the default and a quantized checkpoint
+        // only drafts in chunks when a caller asks for it. On the 27B the opt-in measures long
+        // TTFT -24%, long wall -10%, long TPOT -4%, and 10-24% better TTFT everywhere, while
+        // short and hot_long give back 8-10% of wall and TPOT.
         let opted_in = std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
         if !opted_in && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()) {
             return Ok(Self {
