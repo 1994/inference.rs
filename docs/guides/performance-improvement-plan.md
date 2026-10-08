@@ -555,8 +555,20 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    headroom`，于是 205 个 step 全部 `pool_disabled`，四条序列退回串行。27B 常驻已 22.9 GiB
    / 预算 27.7 GiB，恢复池化所需的 checkpoints 是按 lane 逐份的 F32 状态快照。
 
-   因此 DFlash2 的顺序是：**(1) 让池化在更宽 verify 下装得下**（杠杆 C 的 FP8 KV /
-   让回滚 checkpoint 不再按 lane 复制 F32 状态 / 池化前回收前缀缓存），目标先做到
+   **显存账（实测 + 解析）**：27B 是 64 层 = 48 层 `linear_attention` + 16 层
+   `full_attention`，Delta 状态每层 48 个 value head × 128 × 128 × **F32** = 3.15 MB，
+   48 层合计 **151 MB/序列**。池化回滚快照（`slot_verify.rs:51 slot_checkpoints`）
+   只快照 `Conv | LinearAttention`，数量 = `slots × (verify-1)`：
+   verify 3 → 4×2×151 MB = **1.21 GB**，verify 4 → **1.81 GB**，
+   **verify 8（DFlash2）→ 4×7×151 MB = 4.23 GB**。而 27B 常驻后只剩
+   27.7 − 22.9 ≈ **4.8 GiB**，还要容纳 4 份 slot 状态、arena、图和（DFlash2 的）
+   3.85 GB 草稿权重。**8 lane 的 verify 仅回滚快照一项就超过全部余量** —— 这就是
+   depth 3 起池化被关掉、以及 DFlash2 在本机不可行的真正原因；KV 不是主项
+   （16 层 full attention，capacity 128 时约 16 MB，且有 `kv_scales` 时根本不在此分配）。
+
+   因此 DFlash2 的顺序是：**(1) 让池化在更宽 verify 下装得下** —— 主项是那 151 MB/lane 的
+   F32 Delta 快照，可选路：接受后重建（用一次额外前向换掉快照）、快照降为 BF16/FP8
+   （需过数值门，回滚必须精确）、或宽 verify 时下调 `CB_DECODE_SLOTS`；目标先做到
    width 4（depth 3）可用并复测；(2) 独立 checkpoint 加载（草稿是另一个 package）；
    (3) DFlash2 IR：fc 融合、5 层双抽头卷积、块内非因果注意力、目标层 hidden 抽头、
    草稿侧 KV cache；(4) 选择器（码本打分 + 路径遍历）；(5) 块草稿 + 8-lane verify 的
