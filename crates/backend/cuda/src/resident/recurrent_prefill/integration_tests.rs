@@ -209,6 +209,15 @@ fn chunked_recurrence_matches_per_lane_at_model_geometry() -> Result<()> {
             let actual = candidate.prefill_batch(&tokens, position, true)?;
             for (i, &token) in tokens.iter().enumerate() {
                 let expected = reference.step(token, position + i, position + i, None, true)?;
+                let error = actual[i]
+                    .0
+                    .iter()
+                    .zip(&expected.0)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0_f32, f32::max);
+                eprintln!(
+                    "width={width} count={count} lane={i} chunked-vs-per-lane max_abs={error:e}"
+                );
                 close(&actual[i].0, &expected.0);
             }
             position += count;
