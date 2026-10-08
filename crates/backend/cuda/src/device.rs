@@ -144,6 +144,15 @@ fn resident_states(total_memory_bytes: u64) -> usize {
         .clamp(MIN_RESIDENT_STATES, MAX_RESIDENT_STATES)
 }
 mod readback;
+// Exercised by its own device test today; the projection path adopts it in a following change.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "adopted by the projection path in a following change"
+    )
+)]
+pub(crate) mod cublaslt;
 pub(crate) use readback::{ReadbackSource, Readbacks};
 
 #[derive(Clone)]

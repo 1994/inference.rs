@@ -1068,6 +1068,7 @@ dependencies = [
  "infer-spi",
  "infer-state",
  "infer-workloads",
+ "libloading",
  "serde",
  "serde_json",
  "tracing",

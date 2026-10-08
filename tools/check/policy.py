@@ -115,6 +115,7 @@ def check_exceptions():
                         ROOT / "crates/backend/cuda/src/device.rs",
                         ROOT / "tools/bench/attention/src/device.rs",
                         ROOT / "crates/backend/cuda/src/device/readback.rs",
+                        ROOT / "crates/backend/cuda/src/device/cublaslt.rs",
                         ROOT / "crates/backend/cuda/src/mlp/pdl.rs",
                         ROOT / "crates/backend/cuda/src/mlp/pdl_consumers.rs",
                         ROOT / "crates/backend/cuda/src/resident/arena.rs",
