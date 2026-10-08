@@ -313,12 +313,29 @@ impl<'a> BatchBuilder<'a> {
             ExecutionRole::Forward => self.resources.scheduler.forward_chunk_tokens,
             ExecutionRole::Mixed => return None,
         };
-        let quantum = item
+        let chunk = item
             .remaining_tokens
             .min(cap)
-            .saturating_sub(progress.tokens)
-            .min(self.resources.max_num_batched_tokens - self.used_tokens)
-            .min(self.resources.scheduler.fair_quantum_tokens);
+            .saturating_sub(progress.tokens);
+        let budget = self
+            .resources
+            .max_num_batched_tokens
+            .saturating_sub(self.used_tokens);
+        // A prompt chunk is atomic: one captured prompt graph replays at a fixed width, so a
+        // chunk sliced into fair quanta pays a whole replay per slice for no extra progress.
+        // Grant the whole chunk and let fairness order whole chunks between rounds instead of
+        // trimming them; defer the request when this round cannot fund a full chunk. A round
+        // budget smaller than one chunk keeps the fair-quantum split, so a small budget cannot
+        // starve prompt work.
+        let atomic =
+            item.role == ExecutionRole::Prefill && chunk <= self.resources.max_num_batched_tokens;
+        let quantum = match item.role {
+            ExecutionRole::Prefill if atomic && chunk > budget => return None,
+            ExecutionRole::Prefill if atomic => chunk,
+            _ => chunk
+                .min(budget)
+                .min(self.resources.scheduler.fair_quantum_tokens),
+        };
         if quantum == 0 {
             return None;
         }
@@ -333,6 +350,10 @@ impl<'a> BatchBuilder<'a> {
         Some((quantum, rank))
     }
     fn probe(&mut self, index: usize, quantum: usize, rank: Priority) -> Result<Option<Quantum>> {
+        // The descending search tries the whole prompt chunk first, so a round budget that funds
+        // the chunk keeps it atomic. Its floor stays 1 so the singleton-overrun escape still
+        // works when the device budget rejects even a full chunk: a round that can schedule
+        // nothing else must still make progress.
         for tokens in (1..=quantum).rev() {
             if self.probes == self.resources.scheduler.max_planning_probes {
                 return Ok(None);

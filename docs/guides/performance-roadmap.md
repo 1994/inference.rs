@@ -164,6 +164,9 @@ workspace**，且 kernel 有 **16 行硬下限**。
 - **按行数分派的量化 GEMM tile** —— 见 §二.1 的实测结论；`packed`（FP4）与 `matmul`（FP8）
   的 row/column tile 变成 capture 期泛型常量，新增 `nvfp4_packed_tile_sweep` 隔离基准
   （`--ignored`）。原前置补丁 `docs/patches/quant-gemm-row-tile-m.patch` 已合入并删除
+- **prompt chunk 原子化** —— 调度不再把 prefill chunk 切成 fair quantum；一次 replay 发
+  整块、发不下就整轮推迟（`packing.rs`）。27B/2B batch4 TTFT 各降 ~19%，wall −1.6~−2.2%，
+  token 序列不变。见 [performance-improvement-plan.md](performance-improvement-plan.md) §一②
 
 ## 六、测量纪律
 

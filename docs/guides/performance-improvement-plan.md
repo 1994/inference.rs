@@ -108,6 +108,26 @@ prefill token（现默认 64，`runtime/src/config.rs:22`，装不下 4×48）�
 **TPOT 代价门槛**：阶段分离/合并须实测 batch4/hot_long 稳态 TPOT，回退 ≤5% 才合入
 （RM§二.2 的遗留要求）。
 
+**已落地（比 A/C 更前置的一步）：prompt chunk 原子化**。profile 显示真正的浪费不在
+准入，而在调度把 prompt chunk 切碎：`packing.rs` 的 `candidate()` 把 prefill quantum
+再截到 `fair_quantum_tokens`（8），`probe()` 还会递减重试，于是 4 个并发 52-token
+prompt 被切成 11/21/31/41 的碎片，而**每个碎片仍然付一次固定宽度图的完整 replay**
+（`INFER_CUDA_EXECUTION_PROFILE`：base 120 次 prefill chunk 里有 8 次纯碎片）。
+改成 `candidate()` 对 prefill 直接给整块、本轮预算装不下就整轮推迟（不在 token 预算上
+切片）；`probe()` 仍保留自 `quantum` 向下的递减搜索，所以设备预算（`gpu_budget_us`）
+拒绝整块时，单 token 的 overrun 逃生口仍然有效、不会出现空 StepPlan；预算小于一个
+chunk 时也回退旧的 fair-quantum 行为，两种退化路径都不会饿死 prompt。实测：
+
+| 用例 | wall | TTFT | TPOT |
+|---|---|---|---|
+| 27B batch4 | 1.342 → **1.313** | 2.620 → **2.114**（中位 241→194 ms） | 2.148 → 2.086 |
+| 2B batch4 | 1.655 → **1.628** | 2.506 → **2.023**（中位 49→39 ms） | 1.549 → 1.584 |
+
+5 轮交错 A/B（15 个 wall 样本、60 个 TTFT/TPOT 样本），token 序列逐字节一致；profile 里
+prefill chunk 全部是整块（51/52/63/64），碎片 replay 消失。单请求用例（short/long/
+hot_long）行为**可证等价**：预算 64 = 一个 chunk，切与不切发出的 token 数相同，所以只有
+并发 prompt 的场景变化。推迟的 prompt 由既有 aging（20 ms）兜底，不会饿死。
+
 ### ③ 27B long TTFT 5.86x —— 64 行特化 GEMM + 宽度分档连锁
 
 **阻塞的绕法**【确证，重读 `workspace.rs` 后的设计】：不需要给 Workspace 加任何可变

@@ -113,6 +113,64 @@ fn mixed_batch_protects_decode_and_caps_long_prefill() {
     assert_eq!(step.cost.gpu_us, 16);
 }
 #[test]
+fn a_prompt_chunk_is_never_sliced_to_fit_a_round_that_funds_one() {
+    let mut r = resources();
+    r.max_num_batched_tokens = 64;
+    r.scheduler.prefill_chunk_tokens = 64;
+    r.scheduler.fair_quantum_tokens = 8;
+    let step = plan(
+        &[
+            work(1, ExecutionRole::Prefill, 52),
+            work(2, ExecutionRole::Prefill, 52),
+        ],
+        &r,
+        0,
+    )
+    .step
+    .unwrap();
+    // One captured prompt graph replays at a fixed width, so a second chunk cannot ride along
+    // in a round that only has 12 of 64 tokens left: it waits instead of paying a replay for
+    // 12 tokens.
+    assert_eq!(step.work.len(), 1);
+    assert_eq!(step.work[0].role, ExecutionRole::Prefill);
+    assert_eq!(step.work[0].token_count, 52);
+}
+
+#[test]
+fn a_round_that_funds_two_chunks_carries_both_whole() {
+    let mut r = resources();
+    r.max_num_batched_tokens = 128;
+    // The per-round device budget must fund both chunks; the fixture default caps the batch.
+    r.gpu_budget_us = 1_000;
+    r.scheduler.prefill_chunk_tokens = 64;
+    r.scheduler.fair_quantum_tokens = 8;
+    let step = plan(
+        &[
+            work(1, ExecutionRole::Prefill, 52),
+            work(2, ExecutionRole::Prefill, 52),
+        ],
+        &r,
+        0,
+    )
+    .step
+    .unwrap();
+    assert_eq!(step.work.len(), 2);
+    assert!(step.work.iter().all(|w| w.token_count == 52));
+}
+
+#[test]
+fn a_budget_below_one_chunk_still_slices_prompt_work() {
+    let mut r = resources();
+    r.max_num_batched_tokens = 4;
+    r.scheduler.prefill_chunk_tokens = 64;
+    r.scheduler.fair_quantum_tokens = 8;
+    let step = plan(&[work(1, ExecutionRole::Prefill, 52)], &r, 0)
+        .step
+        .unwrap();
+    assert_eq!(step.work[0].token_count, 4);
+}
+
+#[test]
 fn wfq_updates_tenant_service_inside_a_batch() {
     let a = work(1, ExecutionRole::Prefill, 32);
     let mut b = work(2, ExecutionRole::Prefill, 32);
