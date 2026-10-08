@@ -551,9 +551,14 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    的 per-128-block 参考（f64、真值 scale）在 (12,65,512)/(64,129,1024)/(12,256,5120)
    三形状通过。2B FP8 矩阵（native/vLLM，2 轮）：short wall 1.239 / TTFT **0.749**
    / TPOT 1.299；long 1.496 / 3.085 / 1.312；batch4 1.666 / 1.251 / **1.750**；
-   hot_long 1.457 / 2.093 / 1.393。**token 与 vLLM 仅 3/21 逐字节一致**：vLLM 走
-   DeepGEMM 的 E8M0 分支（日志 `DeepGEMM E8M0 enabled`）会重编码 fp32 block scale，
-   我们按 checkpoint 原始 fp32 scale 计算；谁更准尚未用 PyTorch 参考裁决。
+   hot_long 1.457 / 2.093 / 1.393。**token 与 vLLM 仅 3/21 逐字节一致 —— 已裁决，不是我们的 bug**：vLLM 在
+   sm_120 上选 DeepGemmFp8BlockScaledMMKernel 且 `is_deep_gemm_e8m0_used()` 为真，
+   `requant_weight_ue8m0_inplace` 会**用 checkpoint 的 fp32 scale 反量化、再用
+   `per_block_cast_to_fp8(..., use_ue8m0=True)` 重新量化并把新 fp8 权重与 2 的幂
+   scale 原地写回**（`fp8_utils.py:881-945`）。在本 checkpoint 上抽 12 个投影实测：
+   权重相对 Frobenius 变化均值 **2.67%**、最大 2.73%，单权重变化中位数 **2.19%**
+   —— 即 vLLM 评估的是"同一份权重的另一种量化"，多一次 e4m3 舍入 + 2 的幂
+   scale 约束；我们按 checkpoint 原样计算，误差 0。差异来源已定，无需 PyTorch 参考。
 4. **委托赛跑扩到 FP8**：cuBLASLt FP8 在 Hopper 极成熟，杠杆 A 的成对测量在
    H200 上预期更多形状判给 cuBLASLt —— 这不丢脸，是赛跑机制按设计工作。
 5. **§六 瀑布按 141GB 重算**：27B FP8 权重 ~27GB，KV/并发余量与 5090 完全不同
