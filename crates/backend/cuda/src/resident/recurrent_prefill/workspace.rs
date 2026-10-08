@@ -39,7 +39,12 @@ impl Workspace {
         // the per-layer error. Layouts, metadata, the scratch and its transpose are separately
         // verified against independent references, so what remains is reproducing the per-lane
         // store/load sequence exactly inside the lane loop.
-        if !weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty() {
+        // The chunked recurrence is worth 25% of long-prompt TTFT but reproduces the per-lane one
+        // to about one ULP per lane rather than exactly, and 64 layers amplify that into a
+        // different greedy continuation. Quantized checkpoints therefore keep the established
+        // recurrence unless a caller opts in with `INFER_CUDA_CHUNKED_RECURRENT=1`.
+        let opted_in = std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
+        if !opted_in && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()) {
             return Ok(Self {
                 lanes,
                 ..Self::default()

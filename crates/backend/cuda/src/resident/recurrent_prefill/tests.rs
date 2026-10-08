@@ -261,3 +261,105 @@ fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::err
     }
     Ok(())
 }
+
+/// Run the chunked and per-lane recurrences on byte-identical inputs and require the same bits.
+/// The two agree with an f64 reference to 2e-5 but differ from each other by ~1 ULP, which is
+/// enough to change a 64-layer greedy decode; this isolates that difference from the capture so
+/// the lane loop can be fixed against a sub-second test.
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (kh, vh, dim, lanes, count) = (16_usize, 48_usize, 128_usize, 128_usize, 51_usize);
+    let heads = 2 * kh + vh;
+    let qkv = values(lanes * heads * dim, 17);
+    let beta = values(lanes * vh, 13);
+    let alpha = values(lanes * vh, 7);
+    let a_log = values(vh, 3);
+    let bias = values(vh, 5);
+    let initial = values(vh * dim * dim, 23);
+
+    // Chunked: one launch over `count` lanes.
+    let mut state_c = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+    let src = device.upload(initial.clone(), &[vh, dim, dim])?;
+    api::memcpy(&mut state_c, &src).sync_on(&device.stream)?;
+    let mut out_c = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
+    let qkv_c = device.upload(qkv.clone(), &[lanes, heads, dim])?;
+    let beta_c = device.upload(beta.clone(), &[lanes, vh])?;
+    let alpha_c = device.upload(alpha.clone(), &[lanes, vh])?;
+    let a_log_c = device.upload(a_log.clone(), &[vh])?;
+    let bias_c = device.upload(bias.clone(), &[vh])?;
+    let metadata = device.upload(vec![0, i32::try_from(count)?, 0, 0], &[4])?;
+    kernels::delta(
+        (&mut state_c).partition([1, dim, dim]),
+        (&mut out_c).partition([1, lanes, dim]),
+        &qkv_c,
+        &beta_c,
+        &alpha_c,
+        &a_log_c,
+        &bias_c,
+        &metadata,
+    )
+    .generics(vec![
+        kh.to_string(),
+        vh.to_string(),
+        dim.to_string(),
+        lanes.to_string(),
+    ])
+    .sync_on(&device.stream)?;
+
+    // Per lane: the shipping kernel, one token at a time.
+    let mut state_l = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+    api::memcpy(&mut state_l, &src).sync_on(&device.stream)?;
+    let mut expected_out = vec![0.0_f32; vh * lanes * dim];
+    let lane_metadata = device.upload(vec![0, 0, 0, 0], &[4])?;
+    for lane in 0..count {
+        let row = &qkv[lane * heads * dim..(lane + 1) * heads * dim];
+        let qkv_one = device.upload(row.to_vec(), &[heads * dim])?;
+        let beta_one = device.upload(beta[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
+        let alpha_one = device.upload(alpha[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
+        let mut out_one = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
+        crate::resident::recurrent::recurrent::delta(
+            (&mut out_one).partition([1, dim]),
+            (&mut state_l).partition([1, dim, dim]),
+            &qkv_one,
+            &beta_one,
+            &alpha_one,
+            &a_log_c,
+            &bias_c,
+            &lane_metadata,
+        )
+        .generics(vec![kh.to_string(), vh.to_string(), dim.to_string()])
+        .sync_on(&device.stream)?;
+        let lane_out = out_one.to_host_vec().sync_on(&device.stream)?;
+        for head in 0..vh {
+            for d in 0..dim {
+                expected_out[(head * lanes + lane) * dim + d] = lane_out[head * dim + d];
+            }
+        }
+    }
+    let chunk_out = out_c.to_host_vec().sync_on(&device.stream)?;
+    let out_gap = chunk_out
+        .iter()
+        .zip(&expected_out)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    eprintln!("chunked vs per-lane output max_abs={out_gap:e} (target: exactly 0)");
+    let chunk_state = state_c.to_host_vec().sync_on(&device.stream)?;
+    let lane_state = state_l.to_host_vec().sync_on(&device.stream)?;
+    let worst = chunk_state
+        .iter()
+        .zip(&lane_state)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    eprintln!("chunked vs per-lane state max_abs={worst:e} (target: exactly 0)");
+    // The lane loop reproduces the per-lane recurrence to about one ULP instead of exactly, and a
+    // 64-layer greedy decode amplifies that into a different continuation. Track the figure here so
+    // the fix has a sub-second gate; tighten to `assert_eq!(worst, 0.0)` once the loop matches.
+    assert!(
+        worst < 1.0e-7 && out_gap < 1.0e-7,
+        "chunked and per-lane recurrences differ"
+    );
+    Ok(())
+}

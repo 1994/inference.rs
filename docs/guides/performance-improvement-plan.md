@@ -609,6 +609,27 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    修法是让 chunked kernel 在 lane 循环内逐位复现逐 lane 的 store/load 序列（布局/metadata/
    scratch/transpose 都已对独立参考验证过），而不是找布局 bug。收益仍是最差格 −25% TTFT。
 
+   **第 8 轮：先给出可用的开关与实测，再谈 e2e。** 定位到差异是**纯 kernel lowering**：
+   新测试 `chunk_and_per_lane_delta_agree_exactly` 在**逐字节相同输入**上直接跑两个 kernel
+   （无 capture、无 program），state `max_abs = 9.3e-9`、output `7.5e-9`（目标 0），
+   0.67 s 一轮 —— 这就是修 lane 循环的快门。把 q/k/v/beta 改成与逐 lane 完全相同的扁平
+   `[D]`/`[1]` 分区+索引后差异不变，所以不是载入形状，而是循环体本身的收缩/调度。
+
+   在此前提下把 chunked 路径做成**显式 opt-in**（`INFER_CUDA_CHUNKED_RECURRENT=1`，
+   默认仍是逐 lane、逐位不变），27B 两轮实测（ratio native/vLLM）：
+
+   | 用例 | wall | TTFT | TPOT |
+   |---|---|---|---|
+   | long | 1.619 → **1.455**（−10.1%） | 4.513 → **3.411**（−24.4%） | 1.271 → 1.222 |
+   | short | 1.144 → 1.240（+8.4%） | 1.274 → **1.086**（−14.8%） | 1.134 → 1.253（+10.5%） |
+   | batch4 | 1.593 → 1.582 | 2.312 → **2.079**（−10.1%） | 1.681 → 1.651 |
+   | hot_long | 0.950 → 1.009（+6.2%） | 0.369 → **0.330**（−10.6%） | 1.186 → 1.284（+8.3%） |
+
+   即：**TTFT 全面下降 10–24%**（预填充收益），但 short/hot_long 的 TPOT/wall 反而退 ~8–10%
+   —— 因为 verify 图也用同一个 workspace，同样切到了 chunked。所以默认保持关闭是对的；
+   要用它应当只对**预填充图**开启（把开关放到 BatchBuilder 的 prompt 构建上，而不是整个
+   workspace）。这条留作下一步，另外 token 会变（0/21 与默认一致），属于数值取舍。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层
