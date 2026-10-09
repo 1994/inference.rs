@@ -22,7 +22,8 @@ pub(super) fn routes() -> Router<TextState> {
 }
 
 async fn models(State(state): State<TextState>) -> ApiResult<Json<Value>> {
-    let model = state.handle.inspect().await?.model.to_string();
+    // The served name is configuration, not the internal model identity.
+    let model = state.handle.inspect().await?.model_name;
     Ok(Json(json!({"object":"list", "data":[{
         "id":model, "object":"model", "created":0, "owned_by":"inference.rs"
     }]})))

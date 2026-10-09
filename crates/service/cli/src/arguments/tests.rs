@@ -101,3 +101,21 @@ fn deployment_length_limits_are_parsed_as_separate_budgets() {
     assert!(batching.max_model_len.is_none());
     assert!(batching.max_output_tokens.is_none());
 }
+
+#[test]
+fn capacity_and_identity_overrides_are_parsed() {
+    let cli = Cli::try_parse_from([
+        "infer",
+        "./model",
+        "--max-num-seqs",
+        "8",
+        "--served-model-name",
+        "qwen3-8-27b",
+    ])
+    .unwrap();
+    assert_eq!(cli.max_num_seqs, Some(8));
+    assert_eq!(cli.served_model_name.as_deref(), Some("qwen3-8-27b"));
+    let default = Cli::try_parse_from(["infer", "./model"]).unwrap();
+    assert!(default.max_num_seqs.is_none());
+    assert!(default.served_model_name.is_none());
+}

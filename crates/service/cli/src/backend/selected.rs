@@ -557,6 +557,8 @@ mod readout_tests {
                 max_num_batched_tokens: None,
                 max_model_len: None,
                 max_output_tokens: None,
+                max_num_seqs: None,
+                served_model_name: None,
                 upload_staging_mib: None,
                 num_speculative_tokens: 0,
                 gpu_memory_utilization: 0.0,

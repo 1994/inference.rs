@@ -38,6 +38,12 @@ pub struct Cli {
     /// Service cap on generated tokens per request; defaults to the total context.
     #[arg(long, global = true, value_name = "TOKENS")]
     pub(super) max_output_tokens: Option<usize>,
+    /// Cap on sequences the scheduler runs at once; defaults to the runtime batch limit.
+    #[arg(long, global = true, value_name = "SEQUENCES")]
+    pub(super) max_num_seqs: Option<usize>,
+    /// Name clients address this deployment by; defaults to the model identity.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub(super) served_model_name: Option<String>,
     /// Bounded temporary weight upload memory, independent of device residency.
     #[arg(long, global = true)]
     pub(super) upload_staging_mib: Option<usize>,

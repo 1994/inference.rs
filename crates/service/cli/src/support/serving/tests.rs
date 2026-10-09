@@ -10,6 +10,8 @@ const fn selection() -> backend::Selection {
         max_num_batched_tokens: None,
         max_model_len: None,
         max_output_tokens: None,
+        max_num_seqs: None,
+        served_model_name: None,
         upload_staging_mib: None,
         num_speculative_tokens: 0,
         gpu_memory_utilization: 0.9,
@@ -60,6 +62,29 @@ fn explicit_runtime_budget_is_preserved_and_invalid_budget_still_fails() -> Resu
     assert_eq!(engine.config().workspace_bytes, config.workspace_bytes);
     config.workspace_bytes = 1;
     assert!(configured_engine(Some(config), None, Some(&package), 0, selection()).is_err());
+    Ok(())
+}
+
+#[test]
+fn the_served_name_and_sequence_cap_reach_the_engine() -> Result<()> {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let named = backend::Selection {
+        served_model_name: Some("qwen3-8-27b".into()),
+        max_num_seqs: Some(2),
+        ..selection()
+    };
+    let engine = configured_engine(None, None, Some(&package), 0, named)?;
+    assert_eq!(engine.config().max_num_seqs, 2);
+    assert_eq!(engine.inspect().model_name, "qwen3-8-27b");
+    // Without an override the model identity is the served name.
+    let engine = configured_engine(None, None, Some(&package), 0, selection())?;
+    assert_eq!(engine.inspect().model_name, engine.model().id.to_string());
+    // An empty name is a configuration error rather than an unaddressable deployment.
+    let empty = backend::Selection {
+        served_model_name: Some("   ".into()),
+        ..selection()
+    };
+    assert!(configured_engine(None, None, Some(&package), 0, empty).is_err());
     Ok(())
 }
 

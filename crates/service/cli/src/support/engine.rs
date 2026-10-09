@@ -47,10 +47,6 @@ pub fn selected_engine(
     configured_engine(Some(config), model, package, memory_mib, choice)
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Callers hand over a request-local selection that is refined here by struct update, so ownership is the clear contract"
-)]
 pub fn configured_engine(
     config: Option<RuntimeConfig>,
     model: Option<&Path>,
@@ -70,11 +66,19 @@ pub fn configured_engine(
     if let Some(tokens) = choice.max_output_tokens {
         config.max_output_tokens = Some(tokens);
     }
+    if let Some(sequences) = choice.max_num_seqs {
+        config.max_num_seqs = sequences;
+    }
+    if let Some(name) = choice.served_model_name.clone() {
+        config.served_model_name = Some(name);
+    }
+    // The refined selection is the only one the backend sees, and building it here consumes the
+    // caller's value on every path instead of leaving it borrowed in host-only builds.
+    let choice = backend::Selection {
+        block_size: Some(config.block_size),
+        ..choice
+    };
     if let Some(package) = package {
-        let choice = backend::Selection {
-            block_size: Some(config.block_size),
-            ..choice
-        };
         let backend = config
             .cpu
             .placement

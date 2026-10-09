@@ -50,6 +50,9 @@ pub struct RuntimeInspection {
     pub weight_backed_dataflow: bool,
     pub backend: String,
     pub model: ModelId,
+    /// Stable name clients address this deployment by; the model identity unless configured.
+    #[serde(default)]
+    pub model_name: String,
     pub program: ProgramId,
     pub active_requests: usize,
     pub completed_requests: usize,

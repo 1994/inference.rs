@@ -31,10 +31,10 @@ pub(super) async fn generate(
     }
     let max_new_tokens = requested.tokens.min(limits.output_cap);
     let bytes = request.preparation_bytes(max_new_tokens)?;
-    let model = inspection.model;
-    if request.model != model.to_string() {
+    if request.model != inspection.model_name {
         return Err(Error::new(ErrorCode::NotFound, "model is not served; see /v1/models").into());
     }
+    let model = inspection.model;
     // Convert the wire history before consuming a request identity, so a malformed tool round
     // is a parameter error rather than a failed request.
     let messages = if chat {

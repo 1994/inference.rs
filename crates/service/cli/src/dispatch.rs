@@ -20,6 +20,8 @@ pub fn run() {
         max_num_batched_tokens: cli.max_num_batched_tokens,
         max_model_len: cli.max_model_len,
         max_output_tokens: cli.max_output_tokens,
+        max_num_seqs: cli.max_num_seqs,
+        served_model_name: cli.served_model_name.clone(),
         upload_staging_mib: cli.upload_staging_mib,
         num_speculative_tokens: cli.num_speculative_tokens,
         gpu_memory_utilization: cli.gpu_memory_utilization,

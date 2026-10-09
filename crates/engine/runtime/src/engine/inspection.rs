@@ -87,6 +87,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             weight_backed_dataflow: self.backend.weight_backed_dataflow(),
             backend: self.backend.identity().into(),
             model: self.model.id,
+            model_name: self
+                .config
+                .served_model_name
+                .clone()
+                .unwrap_or_else(|| self.model.id.to_string()),
             program: self.program.id,
             active_requests: self
                 .host

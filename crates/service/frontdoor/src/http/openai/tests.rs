@@ -250,3 +250,32 @@ async fn malformed_and_oversized_bodies_use_the_compatibility_error_envelope() {
     }
     handle.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn the_served_name_addresses_the_deployment() {
+    let (handle, assets) = fixture_with(RuntimeConfig {
+        served_model_name: Some("qwen3-8-27b".into()),
+        ..Default::default()
+    });
+    let app = router_with_text(handle.clone(), assets);
+    let (status, models) = call(app.clone(), "/v1/models", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["data"][0]["id"], "qwen3-8-27b");
+    // The internal identity is not addressable once a deployment name is configured.
+    let prompt = "hello world system assistant token8 token13";
+    let (status, _) = call(
+        app.clone(),
+        "/v1/completions",
+        Some(json!({"model":"1", "prompt":prompt, "max_tokens":2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = call(
+        app,
+        "/v1/completions",
+        Some(json!({"model":"qwen3-8-27b", "prompt":prompt, "max_tokens":2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    handle.shutdown().await.unwrap();
+}

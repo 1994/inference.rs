@@ -67,6 +67,10 @@ pub struct RuntimeConfig {
     pub num_gpu_blocks: usize,
     pub block_size: usize,
     pub max_num_seqs: usize,
+    /// Name clients address this deployment by (`--served-model-name`). `None` uses the model
+    /// identity, which is what `/v1/models` and the request `model` field then report.
+    #[serde(default)]
+    pub served_model_name: Option<String>,
     pub max_num_batched_tokens: usize,
     pub gpu_budget_us: u64,
     pub workspace_bytes: u64,
@@ -99,6 +103,7 @@ impl Default for RuntimeConfig {
             num_gpu_blocks: DEFAULT_STATE_PAGES,
             block_size: DEFAULT_PAGE_TOKENS,
             max_num_seqs: DEFAULT_MAX_BATCH,
+            served_model_name: None,
             max_num_batched_tokens: DEFAULT_TOKEN_BUDGET,
             gpu_budget_us: DEFAULT_GPU_BUDGET_US,
             workspace_bytes: DEFAULT_WORKSPACE_BYTES,
@@ -162,6 +167,15 @@ impl RuntimeConfig {
         if self.max_model_len == Some(0) || self.max_output_tokens == Some(0) {
             return Err(Error::invalid(
                 "max-model-len and max-output-tokens must be positive when set",
+            ));
+        }
+        if self
+            .served_model_name
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err(Error::invalid(
+                "served-model-name must not be empty when set",
             ));
         }
         if self.max_num_seqs > infer_gpu_api::MAX_SUBMISSION_BATCH {

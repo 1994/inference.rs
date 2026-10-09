@@ -80,6 +80,10 @@ pub struct Selection {
     pub max_model_len: Option<usize>,
     /// Service cap on generated tokens per request (`--max-output-tokens`).
     pub max_output_tokens: Option<usize>,
+    /// Cap on sequences the scheduler runs at once (`--max-num-seqs`).
+    pub max_num_seqs: Option<usize>,
+    /// Name clients address this deployment by (`--served-model-name`).
+    pub served_model_name: Option<String>,
     pub upload_staging_mib: Option<usize>,
     pub num_speculative_tokens: usize,
     pub gpu_memory_utilization: f64,
