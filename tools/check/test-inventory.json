@@ -9,14 +9,14 @@
     "api": {
       "benches": 0,
       "src_inline": 0,
-      "src_near": 6,
-      "tests": 0
+      "src_near": 0,
+      "tests": 6
     },
     "cli": {
       "benches": 0,
-      "src_inline": 2,
+      "src_inline": 0,
       "src_near": 0,
-      "tests": 15
+      "tests": 17
     },
     "core": {
       "benches": 0,
@@ -26,9 +26,9 @@
     },
     "cuda": {
       "benches": 0,
-      "src_inline": 10,
-      "src_near": 1,
-      "tests": 56
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 67
     },
     "frontdoor": {
       "benches": 0,
@@ -57,8 +57,8 @@
     "observe": {
       "benches": 0,
       "src_inline": 0,
-      "src_near": 8,
-      "tests": 0
+      "src_near": 0,
+      "tests": 8
     },
     "package": {
       "benches": 0,
@@ -69,8 +69,8 @@
     "quality": {
       "benches": 0,
       "src_inline": 0,
-      "src_near": 3,
-      "tests": 0
+      "src_near": 0,
+      "tests": 3
     },
     "runtime": {
       "benches": 0,
@@ -92,9 +92,9 @@
     },
     "state": {
       "benches": 0,
-      "src_inline": 1,
-      "src_near": 5,
-      "tests": 10
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 16
     },
     "workloads": {
       "benches": 0,
@@ -560,6 +560,13 @@
       ]
     },
     {
+      "crate": "cli",
+      "path": "crates/service/cli/tests/unit/backend_selected.rs",
+      "patterns": [
+        "test-backends"
+      ]
+    },
+    {
       "crate": "frontdoor",
       "path": "crates/service/frontdoor/Cargo.toml",
       "patterns": [
@@ -708,14 +715,10 @@
     }
   ],
   "gated": {
-    "all(target_os = \"linux\", feature = \"cuda\"": 24,
-    "all(test, target_os = \"linux\", feature = \"cuda\"": 1,
-    "all(test, target_os = \"macos\"": 1,
-    "feature = \"test-backends\"": 50,
+    "feature = \"test-backends\"": 3,
     "not(feature = \"test-backends\"": 2,
     "target_os = \"linux\"": 3,
-    "target_os = \"macos\"": 23,
-    "target_os=\"macos\"": 1
+    "target_os = \"macos\"": 1
   },
   "ignored_reasons": {
     "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 1,
@@ -734,9 +737,19 @@
   },
   "path_mounts": [
     {
+      "crate": "api",
+      "file": "src/batches.rs",
+      "mount": "../tests/unit/batches.rs"
+    },
+    {
+      "crate": "api",
+      "file": "src/lib.rs",
+      "mount": "../tests/unit/cases.rs"
+    },
+    {
       "crate": "cuda",
       "file": "src/attention/mod.rs",
-      "mount": "gate_check.rs"
+      "mount": "../../tests/unit/attention_gate_check.rs"
     },
     {
       "crate": "cuda",
@@ -756,7 +769,7 @@
     {
       "crate": "cuda",
       "file": "src/device/readback.rs",
-      "mount": "readback_check.rs"
+      "mount": "../../tests/unit/device_readback_check.rs"
     },
     {
       "crate": "cuda",
@@ -821,12 +834,17 @@
     {
       "crate": "cuda",
       "file": "src/resident/metadata.rs",
-      "mount": "metadata_check.rs"
+      "mount": "../../tests/unit/resident_metadata_check.rs"
     },
     {
       "crate": "cuda",
       "file": "src/resident/nvfp4_gemm.rs",
       "mount": "../../tests/unit/resident_nvfp4_gemm.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/prefill_gemm.rs",
+      "mount": "../../tests/unit/resident_prefill_gemm_bench_check.rs"
     },
     {
       "crate": "cuda",
@@ -847,6 +865,11 @@
       "crate": "cuda",
       "file": "src/resident/recurrent_prefill.rs",
       "mount": "../../tests/unit/resident_recurrent_prefill_benchmark_tests.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/recurrent_prefill.rs",
+      "mount": "../../tests/unit/resident_recurrent_prefill_model_check.rs"
     },
     {
       "crate": "cuda",
@@ -881,12 +904,12 @@
     {
       "crate": "cuda",
       "file": "src/vision/mod.rs",
-      "mount": "attention_bench_check.rs"
+      "mount": "../../tests/unit/vision_attention_bench_check.rs"
     },
     {
       "crate": "cuda",
       "file": "src/vision/mod.rs",
-      "mount": "attention_check.rs"
+      "mount": "../../tests/unit/vision_attention_check.rs"
     },
     {
       "crate": "cuda",
@@ -917,6 +940,16 @@
       "crate": "metal",
       "file": "src/executor/submission.rs",
       "mount": "../../tests/unit/executor_submission.rs"
+    },
+    {
+      "crate": "observe",
+      "file": "src/lib.rs",
+      "mount": "../tests/unit/cases.rs"
+    },
+    {
+      "crate": "quality",
+      "file": "src/lib.rs",
+      "mount": "../tests/unit/cases.rs"
     },
     {
       "crate": "runtime",
@@ -957,6 +990,16 @@
       "crate": "scheduler",
       "file": "src/policy/packing.rs",
       "mount": "../../tests/unit/policy_packing.rs"
+    },
+    {
+      "crate": "state",
+      "file": "src/logical/mod.rs",
+      "mount": "../../tests/unit/logical.rs"
+    },
+    {
+      "crate": "state",
+      "file": "src/physical.rs",
+      "mount": "../tests/unit/physical.rs"
     },
     {
       "crate": "workloads",
@@ -1105,6 +1148,16 @@
     },
     {
       "crate": "cli",
+      "file": "src/backend/selected.rs",
+      "mount": "../../tests/unit/backend_selected.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/support/logging.rs",
+      "mount": "../../tests/unit/support_logging.rs"
+    },
+    {
+      "crate": "cli",
       "file": "src/support/memory.rs",
       "mount": "../../tests/unit/support_memory.rs"
     },
@@ -1147,9 +1200,9 @@
   "totals": {
     "all": 427,
     "benches": 0,
-    "src": 36,
-    "src_inline": 13,
-    "src_near": 23,
-    "tests": 391
+    "src": 0,
+    "src_inline": 0,
+    "src_near": 0,
+    "tests": 427
   }
 }

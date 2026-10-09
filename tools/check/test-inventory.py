@@ -23,7 +23,6 @@ import json
 import os
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -284,25 +283,27 @@ def regressions(inventory, recorded, root=REPO_ROOT):
         )
 
     def surface(consumers):
-        counted = Counter()
-        for consumer in consumers:
-            key = (consumer["crate"], tuple(consumer["patterns"]))
-            counted[key] += 1
-        return counted
+        """The dependency surface: which crate depends on which patterns.
 
-    before = surface(recorded["executor_consumers"])
-    after = surface(inventory["executor_consumers"])
-    for key, count in after.items():
-        if count > before.get(key, 0):
-            examples = [
-                consumer["path"]
-                for consumer in inventory["executor_consumers"]
-                if (consumer["crate"], tuple(consumer["patterns"])) == key
-            ][:3]
-            problems.append(
-                f"{key[0]}: {count - before.get(key, 0)} new consumer(s) of a CPU test executor "
-                f"({', '.join(examples)})"
-            )
+        Counting files would flag the migration itself, because moving a block out of a source
+        file turns one consumer into two without adding a dependency.
+        """
+        return {(consumer["crate"], tuple(consumer["patterns"])) for consumer in consumers}
+
+    before, after = (
+        surface(recorded["executor_consumers"]),
+        surface(inventory["executor_consumers"]),
+    )
+    for crate, patterns in sorted(after - before):
+        examples = [
+            consumer["path"]
+            for consumer in inventory["executor_consumers"]
+            if (consumer["crate"], tuple(consumer["patterns"])) == (crate, patterns)
+        ][:3]
+        problems.append(
+            f"{crate}: new dependency on a CPU test executor via {', '.join(patterns)} "
+            f"({', '.join(examples)})"
+        )
     return problems
 
 

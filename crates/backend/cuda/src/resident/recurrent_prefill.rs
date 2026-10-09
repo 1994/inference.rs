@@ -118,6 +118,7 @@ mod integration;
 mod benchmark;
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_recurrent_prefill_model_check.rs"]
 mod model_check;
 
 #[cfg(test)]

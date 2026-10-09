@@ -6,7 +6,7 @@ pub use plan::DenseAttentionPlan;
 pub(crate) use plan::tile_rows;
 
 #[cfg(test)]
-#[path = "gate_check.rs"]
+#[path = "../../tests/unit/attention_gate_check.rs"]
 mod gate;
 
 #[cfg(test)]

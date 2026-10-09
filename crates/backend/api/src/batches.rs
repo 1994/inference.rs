@@ -303,4 +303,5 @@ impl<C> BatchArena<C> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/batches.rs"]
 mod tests;

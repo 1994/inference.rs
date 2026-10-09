@@ -4,7 +4,7 @@ use cutile::prelude::*;
 use infer_core::Result;
 
 #[cfg(test)]
-#[path = "metadata_check.rs"]
+#[path = "../../tests/unit/resident_metadata_check.rs"]
 mod check;
 
 pub(super) fn update(

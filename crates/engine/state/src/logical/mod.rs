@@ -51,4 +51,5 @@ pub struct SequenceStateManager {
     prefixes: Vec<(PrefixKey, Vec<StatePageId>)>,
 }
 #[cfg(test)]
+#[path = "../../tests/unit/logical.rs"]
 mod tests;

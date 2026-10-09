@@ -56,15 +56,5 @@ pub fn human_bytes(bytes: u64) -> String {
 }
 
 #[cfg(all(test, target_os = "linux", feature = "cuda"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sizes_stay_readable() {
-        assert_eq!(human_bytes(0), "0 MiB");
-        assert_eq!(
-            human_bytes(crate::constants::GIB_U64 + crate::constants::GIB_U64 / 2),
-            "1.5 GiB"
-        );
-    }
-}
+#[path = "../../tests/unit/support_logging.rs"]
+mod tests;

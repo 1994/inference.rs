@@ -1,9 +1,9 @@
 //! Vision-modality execution: provider-declared geometry, bound weights, captured programs.
 #[cfg(test)]
-#[path = "attention_bench_check.rs"]
+#[path = "../../tests/unit/vision_attention_bench_check.rs"]
 pub(crate) mod attention_bench;
 #[cfg(test)]
-#[path = "attention_check.rs"]
+#[path = "../../tests/unit/vision_attention_check.rs"]
 mod attention_check;
 pub(crate) mod kernels;
 pub(crate) mod program;

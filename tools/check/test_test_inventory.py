@@ -13,7 +13,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-def inventory(src=10, tests=4, consumers=("a.rs",)):
+def inventory(src=10, tests=4, consumers=("a.rs",), crate="g"):
     return {
         "crates": {"crate-a": {"src_inline": src, "src_near": 0, "tests": tests, "benches": 0}},
         "totals": {
@@ -28,7 +28,7 @@ def inventory(src=10, tests=4, consumers=("a.rs",)):
         "gated": {},
         "path_mounts": [],
         "executor_consumers": [
-            {"path": f"crates/g/{name}", "crate": "g", "patterns": ["test-backends"]}
+            {"path": f"crates/{crate}/{name}", "crate": crate, "patterns": ["test-backends"]}
             for name in consumers
         ],
     }
@@ -221,10 +221,17 @@ class RatchetTest(unittest.TestCase):
         moved = inventory(consumers=("unit/a.rs",))
         self.assertEqual(module.regressions(moved, recorded), [])
 
+    def test_splitting_a_consumer_file_is_not_a_new_dependency(self):
+        # Moving a block out of a source file turns one consumer into two, not into a dependency.
+        recorded = inventory(consumers=("a.rs",))
+        self.assertEqual(
+            module.regressions(inventory(consumers=("a.rs", "unit/a.rs")), recorded), []
+        )
+
     def test_a_new_executor_consumer_is_refused(self):
         recorded = inventory(consumers=("a.rs",))
-        problems = module.regressions(inventory(consumers=("a.rs", "b.rs")), recorded)
-        self.assertTrue(any("new consumer" in problem for problem in problems))
+        problems = module.regressions(inventory(consumers=("a.rs",), crate="h"), recorded)
+        self.assertTrue(any("new dependency" in problem for problem in problems))
 
     def test_the_recorded_tree_passes_its_own_ratchet(self):
         # The committed snapshot must hold for the committed tree, or the gate is red on arrival.

@@ -5,6 +5,7 @@ pub mod export;
 mod metrics;
 mod store;
 #[cfg(test)]
+#[path = "../tests/unit/cases.rs"]
 mod tests;
 pub mod trace;
 mod window;

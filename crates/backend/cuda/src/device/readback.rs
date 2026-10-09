@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 const MAX_READBACK_STAGING_BYTES: usize = 64 * crate::constants::MIB;
 
 #[cfg(test)]
-#[path = "readback_check.rs"]
+#[path = "../../tests/unit/device_readback_check.rs"]
 mod check;
 
 type Buffer = Arc<Mutex<PinnedHostBuffer<f32>>>;

@@ -1,5 +1,6 @@
 //! Prompt GEMM: quantized weights are decoded in tiles, BF16 MMA accumulates in F32.
 #[cfg(test)]
+#[path = "../../tests/unit/resident_prefill_gemm_bench_check.rs"]
 mod bench_check;
 #[cutile::module]
 pub(crate) mod gemm {
