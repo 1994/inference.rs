@@ -8,7 +8,13 @@
 cargo build --locked --release -p infer-cli
 ```
 
-默认构建提供 Metal 路径；Linux CUDA 需要 `cargo build --locked --release -p infer-cli --features cuda` 和 [CUDA 环境](../../crates/backend/cuda/README.md)。`auto` 只选择已启用且可用的 GPU，不会回退到 CPU。本机 CPU 对照需要显式启用 feature：
+直接调用 Cargo 时，feature 仍由调用方负责：Linux CUDA 需要 `--features cuda` 和 [CUDA 环境](../../crates/backend/cuda/README.md)。如果希望按本机平台自动选择生产 backend，使用：
+
+```sh
+make local-build
+```
+
+它在 Linux 上启用 CUDA，在 macOS 上使用 Metal。`auto` 只选择已编译且可用的 GPU，不会回退到 CPU；Cargo 本身不会根据运行时 GPU 自动启用 feature。本机 CPU 对照需要显式启用 feature：
 
 ```sh
 cargo build --locked -p infer-cli --features test-backends

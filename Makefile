@@ -1,6 +1,7 @@
 # Zig cross-platform builds. See docs/guides/packaging.md for artifacts and GPU acceptance.
 .DEFAULT_GOAL := help
 PYTHON ?= python3
+CARGO ?= cargo
 TARGET ?=
 CARGO_ZIGBUILD_VERSION := 0.23.4
 DIST_DIR ?= artifacts/packages
@@ -8,10 +9,11 @@ PACKAGE_FILE ?=
 MODEL ?=
 GOLDEN ?=
 
-.PHONY: help build test package verify-package accept clean-artifacts
+.PHONY: help build local-build test package verify-package accept clean-artifacts
 help:
 	@echo 'Zig target pipelines (Linux/CUDA or macOS/Metal):'
 	@echo '  make build | test | package TARGET=<rust-target>[.<glibc>]'
+	@echo '  make local-build  # native release CLI with the platform backend'
 	@echo '  make package-linux-cuda | package-macos-metal TARGET=<target>'
 	@echo '  make setup-build  # install cargo-zigbuild; requires Zig'
 	@echo '  make verify-package PACKAGE_FILE=/path/to/archive.tar.gz'
@@ -23,6 +25,16 @@ help:
 
 build test package:
 	$(PYTHON) tools/package/package.py $@ --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
+
+# Cargo features are compile-time and cannot be selected by the CLI at runtime. Keep the
+# packaging pipeline above unchanged, but provide a native developer entry point that selects the
+# production backend from the host platform.
+local-build:
+	@case "$$(uname -s)" in \
+		Linux) $(CARGO) build --locked --release -p infer-cli --features cuda ;; \
+		Darwin) $(CARGO) build --locked --release -p infer-cli ;; \
+		*) echo "unsupported host platform: $$(uname -s)" >&2; exit 2 ;; \
+	esac
 
 # Recursive Make expansion is deliberately avoided: each package action sequences
 # target checks -> Zig release -> archive -> integrity/native smoke -> publication.
