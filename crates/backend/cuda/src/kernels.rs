@@ -3,9 +3,17 @@
 pub(crate) mod linear {
     use cutile::core::{
         BroadcastScalar, ElementType, LoadTileLike, Reshape, Shape_1, Shape_2, Shape_3,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tile_1, Tile_2, UnpackF4e2m1fnx2Tile,
+        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tile_1, Tile_2, UnpackF4e2m1fnx2Tile, bf16,
         constant, convert_tile, f4e2m1fnx2, f8e4m3fn, get_tile_block_id, reduce_sum,
     };
+
+    /// Narrow an F32 activation tile to the BF16 a vendor GEMM consumes. Both operands share a
+    /// row-major layout, so this is a straight elementwise conversion over flat tiles.
+    #[cutile::entry()]
+    fn cast_bf16<const B: i32>(out: &mut Tensor<bf16, { [B] }>, x: &Tensor<f32, { [-1] }>) {
+        let narrowed: Tile<bf16, { [B] }> = convert_tile(x.load_like(out));
+        out.store(narrowed);
+    }
 
     #[cutile::entry()]
     fn dense<E: ElementType, const BN: i32, const BK: i32, const K: i32>(

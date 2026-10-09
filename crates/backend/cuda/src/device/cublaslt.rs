@@ -313,24 +313,32 @@ pub struct GemmBf16<'a> {
 impl<'a> GemmBf16<'a> {
     /// Describe `out[m, n] = activations[m, k] * weights[n, k]^T`.
     ///
+    /// The extents are explicit rather than read from the tensor ranks so a flat activation buffer
+    /// works: the cast that produces it writes flat tiles.
+    ///
     /// # Errors
-    /// Rejects operands whose extents disagree.
+    /// Rejects operands whose element counts disagree with the extents.
     pub fn new(
         context: &'a Context,
+        m: i32,
+        n: i32,
+        k: i32,
         activations: &'a Tensor<bf16>,
         weights: &'a Tensor<bf16>,
         out: &'a Tensor<f32>,
     ) -> infer_core::Result<Self> {
-        let [m, k] = activations.shape()[..] else {
-            return Err(infer_core::Error::invalid("cuBLAS activation rank"));
+        let expected = |a: i32, b: i32| usize::try_from(a).ok().zip(usize::try_from(b).ok());
+        let sizes = expected(m, k)
+            .map(|(m, k)| m * k)
+            .zip(expected(n, k).map(|(n, k)| n * k))
+            .zip(expected(m, n).map(|(m, n)| m * n));
+        let Some(((activation_size, weight_size), out_size)) = sizes else {
+            return Err(infer_core::Error::invalid("cuBLAS extent"));
         };
-        let [n, weight_k] = weights.shape()[..] else {
-            return Err(infer_core::Error::invalid("cuBLAS weight rank"));
-        };
-        let [out_m, out_n] = out.shape()[..] else {
-            return Err(infer_core::Error::invalid("cuBLAS output rank"));
-        };
-        if k != weight_k || m != out_m || n != out_n {
+        if activations.size() != activation_size
+            || weights.size() != weight_size
+            || out.size() != out_size
+        {
             return Err(infer_core::Error::invalid("cuBLAS operand shape"));
         }
         Ok(Self {
@@ -485,7 +493,7 @@ mod tests {
         gemm_bf16(&device, &a, &b, &out)?;
         device.reclaim_barrier()?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
-            let op = GemmBf16::new(context, &a, &b, &out)
+            let op = GemmBf16::new(context, m as i32, n as i32, k as i32, &a, &b, &out)
                 .map_err(|error| DeviceError::Internal(error.to_string()))?;
             scope.record(op)?;
             Ok(())
