@@ -45,3 +45,45 @@ fn mode_defaults_and_explicit_zero_overrides_are_distinct() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn every_resolved_parameter_records_the_layer_that_set_it() -> Result<()> {
+    let defaults = GenerationDefaults {
+        base: Sampling {
+            temperature: 1.0,
+            top_p: 0.95,
+            ..Sampling::default()
+        },
+        thinking: true,
+        qwen38: true,
+        sources: BTreeMap::from([
+            ("temperature".to_string(), "package default".to_string()),
+            ("top_p".to_string(), "package default".to_string()),
+        ]),
+    };
+    // The recognized model's non-thinking preset is recorded as its own source.
+    let instruct = defaults.resolve(&SamplingOverrides {
+        enable_thinking: Some(false),
+        ..SamplingOverrides::default()
+    })?;
+    assert_eq!(
+        instruct.sources.get("temperature").map(String::as_str),
+        Some("Qwen3.8 model-card non-thinking recommendation")
+    );
+    // A request field wins and says so, rather than inheriting the preset's description.
+    let overridden = defaults.resolve(&SamplingOverrides {
+        temperature: Some(0.25),
+        ..SamplingOverrides::default()
+    })?;
+    assert_eq!(overridden.sampling.temperature, 0.25);
+    assert_eq!(
+        overridden.sources.get("temperature").map(String::as_str),
+        Some("request override")
+    );
+    // A parameter the request did not touch keeps the package's own description.
+    assert_eq!(
+        overridden.sources.get("top_p").map(String::as_str),
+        Some("package default")
+    );
+    Ok(())
+}

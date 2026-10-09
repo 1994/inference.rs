@@ -139,6 +139,14 @@ pub(super) async fn prepare(
         })?;
     let enable_thinking = resolved.enable_thinking;
     let id = state.handle.allocate_request_id()?;
+    // Which layer produced each effective sampling parameter is the difference between two
+    // apparently identical baselines, so it is recorded per request rather than inferred.
+    tracing::debug!(
+        target: "infer::openai",
+        request = id.get(),
+        sources = ?resolved.sources,
+        "resolved sampling parameters"
+    );
     let encoding = Encoding {
         assets,
         messages,
