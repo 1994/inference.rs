@@ -94,7 +94,7 @@ impl Default for ChatOptions {
     }
 }
 pub struct TextAssets {
-    tokenizer: Tokenizer,
+    tokenizer: std::sync::Arc<Tokenizer>,
     template: Option<String>,
     special: BTreeMap<String, serde_json::Value>,
     pub fingerprint: String,
@@ -102,6 +102,8 @@ pub struct TextAssets {
     pub generation: crate::GenerationDefaults,
     /// Tool-call dialect this package's template asks the model to emit.
     tool_dialect: crate::input::tool::ToolDialect,
+    /// Whether the tokenizer's decoder can be applied to a token sub-list independently.
+    streaming_decode: bool,
 }
 fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -197,20 +199,41 @@ impl TextAssets {
             crate::input::tool::ToolDialect::JsonBlock,
             crate::input::tool::ToolDialect::detect,
         );
+        // Word-piece style decoders insert a separator between consecutive tokens, so decoding
+        // pieces independently loses it. Only byte-level concatenation is decomposable.
+        let streaming_decode = byte_level_decoder(&bytes);
         Ok(Self {
             generation: crate::GenerationDefaults::open(root)?,
-            tokenizer,
+            tokenizer: std::sync::Arc::new(tokenizer),
             template,
             special,
             fingerprint: format!("{:x}", hash.finalize()),
             max_tokens,
             tool_dialect,
+            streaming_decode,
         })
     }
     /// Tool-call dialect bound to this package's template.
     #[must_use]
     pub const fn tool_dialect(&self) -> crate::input::tool::ToolDialect {
         self.tool_dialect
+    }
+    /// Whether this package can publish a stable incremental decode.
+    ///
+    /// False for a tokenizer whose decoder inserts separators between tokens: pieces decoded
+    /// separately would not match the one-shot decode, so the service refuses to stream rather
+    /// than publish text it would have to rewrite.
+    #[must_use]
+    pub const fn supports_streaming_decode(&self) -> bool {
+        self.streaming_decode
+    }
+    /// Create an incremental decoder for one streamed response.
+    #[must_use]
+    pub fn stream_decoder(&self) -> TextStreamDecoder {
+        TextStreamDecoder {
+            tokenizer: std::sync::Arc::clone(&self.tokenizer),
+            pending: Vec::new(),
+        }
     }
     ///
     /// # Errors
@@ -326,5 +349,74 @@ impl TextAssets {
     /// Returns a template, tokenization, or capacity error if chat rendering or encoding fails.
     pub fn encode_chat(&self, messages: &[ChatMessage], options: &ChatOptions) -> Result<Vec<u32>> {
         self.encode(&self.render_chat(messages, options)?, false)
+    }
+}
+
+/// Whether the tokenizer's decoder is a pure byte-level concatenation.
+fn byte_level_decoder(bytes: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        #[serde(default)]
+        decoder: Option<Kind>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Kind {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    serde_json::from_slice::<Probe>(bytes)
+        .ok()
+        .and_then(|probe| probe.decoder)
+        .is_some_and(|decoder| decoder.kind == "ByteLevel")
+}
+
+/// Incremental detokenizer over committed tokens.
+///
+/// A response is published token by token, and a token boundary can fall inside a UTF-8
+/// sequence. The decoder therefore holds the tail of an incomplete sequence until more tokens
+/// arrive, which keeps every published prefix stable: nothing already sent is ever rewritten.
+/// The decode cost is bounded by the bytes of one character rather than by the whole response.
+pub struct TextStreamDecoder {
+    tokenizer: std::sync::Arc<Tokenizer>,
+    /// Tokens whose decoded text is not yet known to be complete.
+    pending: Vec<u32>,
+}
+
+/// Tokens retained before an unfinished character is published anyway.
+///
+/// Four bytes are enough for any UTF-8 sequence; the bound stops a tokenizer that legitimately
+/// emits a replacement character from stalling the stream.
+const MAX_PENDING_TOKENS: usize = 8;
+
+impl TextStreamDecoder {
+    /// Feed one committed token, returning the text that is stable now.
+    ///
+    /// # Errors
+    /// Returns an invalid-input error if the token cannot be decoded.
+    pub fn push(&mut self, token: u32) -> Result<String> {
+        self.pending.push(token);
+        let text = self.decode(&self.pending)?;
+        // A trailing replacement character means the sequence is still incomplete.
+        if text.ends_with('\u{FFFD}') && self.pending.len() < MAX_PENDING_TOKENS {
+            return Ok(String::new());
+        }
+        self.pending.clear();
+        Ok(text)
+    }
+    /// Flush the last tokens at end of stream.
+    ///
+    /// # Errors
+    /// Returns an invalid-input error if the remaining tokens cannot be decoded.
+    pub fn finish(&mut self) -> Result<String> {
+        if self.pending.is_empty() {
+            return Ok(String::new());
+        }
+        let pending = std::mem::take(&mut self.pending);
+        self.decode(&pending)
+    }
+    fn decode(&self, tokens: &[u32]) -> Result<String> {
+        self.tokenizer
+            .decode(tokens, true)
+            .map_err(|e| Error::invalid(e.to_string()))
     }
 }

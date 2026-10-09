@@ -14,10 +14,10 @@ pub use input::prompt::{
     image_token_counts, place_visual_embeddings, placeholders, prepare, require_encoder,
     visual_tokens,
 };
-pub use input::text::{ChatMessage, ChatOptions, TextAssets};
+pub use input::text::{ChatMessage, ChatOptions, TextAssets, TextStreamDecoder};
 pub use input::tool::{
-    ParsedOutput, ParsedToolCall, ToolCall, ToolDialect, parse as parse_model_output,
-    parse_with as parse_model_output_with,
+    OutputStreamParser, ParsedOutput, ParsedToolCall, StreamEvent, ToolCall, ToolDialect, assemble,
+    parse as parse_model_output, parse_with as parse_model_output_with,
 };
 pub use providers::qwen::{QwenProvider, VisionConfig};
 pub use providers::registry::{ModelRegistry, default_registry};

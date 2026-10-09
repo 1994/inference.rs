@@ -1,23 +1,96 @@
 use super::{ApiResult, GenerationRequest, TextState, ToolPolicy};
 use axum::http::HeaderMap;
-use infer_core::{Error, ErrorCode, FinishReason};
+use infer_core::{Error, ErrorCode, FinishReason, RequestId};
 use infer_ir::{CanonicalRequest, RequestInput, Workload, WorkloadOutput};
 use infer_runtime::{CompletedRequest, EngineOutput};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc, sync::atomic::AtomicUsize, sync::atomic::Ordering};
+use tokio::sync::mpsc;
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "The adapter sequences request validation, limit resolution, preparation and delivery in one place so the admitted request has a single owner"
-)]
-pub(super) async fn generate(
-    state: TextState,
-    headers: HeaderMap,
+/// One admitted generation, shared by the complete and the streamed reply so both are produced
+/// from exactly the same validation, limits and preparation.
+pub(super) struct Prepared {
+    pub(super) request: RequestId,
+    pub(super) receiver: mpsc::Receiver<infer_core::Result<EngineOutput>>,
+    pub(super) prompt_tokens: Arc<AtomicUsize>,
+    pub(super) model_name: String,
+    pub(super) created: u64,
+    pub(super) chat: bool,
+    pub(super) policy: ToolPolicy,
+    pub(super) enable_thinking: bool,
+    pub(super) dialect: infer_models::ToolDialect,
+}
+
+/// Everything the preparation closure needs to encode one request.
+struct Encoding {
+    assets: Arc<infer_models::TextAssets>,
+    messages: Option<Vec<infer_models::ChatMessage>>,
+    prompt: Option<String>,
+    tools: Option<Value>,
+    enable_thinking: bool,
+    count: Arc<AtomicUsize>,
+    id: RequestId,
+    model: infer_core::ModelId,
+    max_new_tokens: usize,
+    sampling: infer_ir::Sampling,
+}
+
+impl Encoding {
+    /// Encode the prompt and describe the workload to run over it.
+    fn encode(self, context: &crate::cpu::CpuContext) -> infer_core::Result<CanonicalRequest> {
+        context.check()?;
+        let tokens = if let Some(messages) = self.messages {
+            self.assets.encode_chat(
+                &messages,
+                &infer_models::ChatOptions {
+                    enable_thinking: self.enable_thinking,
+                    tools: self.tools.clone(),
+                    ..Default::default()
+                },
+            )?
+        } else {
+            self.assets
+                .encode(self.prompt.as_deref().unwrap_or_default(), true)?
+        };
+        self.count.store(tokens.len(), Ordering::Relaxed);
+        Ok(CanonicalRequest {
+            id: self.id,
+            model: self.model,
+            session: None,
+            input: RequestInput::Sequence {
+                tokens: tokens.into(),
+                media: vec![],
+            },
+            workload: Workload::Generate {
+                max_new_tokens: self.max_new_tokens,
+            },
+            qos: infer_ir::Qos::default(),
+            sampling: self.sampling,
+            extensions: BTreeMap::new(),
+        })
+    }
+}
+
+/// Validate, price and submit one generation.
+///
+/// # Errors
+/// Returns a parameter, capacity or model-resolution error before a request identity is consumed.
+pub(super) async fn prepare(
+    state: &TextState,
+    headers: &HeaderMap,
     mut request: GenerationRequest,
     chat: bool,
-) -> ApiResult<Value> {
+) -> ApiResult<Prepared> {
     let requested = request.validate(chat)?;
     let policy = request.tool_policy(chat)?;
+    // Streaming publishes text incrementally, so it needs a decoder that never rewrites a
+    // published prefix. Packages without one are refused rather than degraded silently.
+    if request.stream == Some(true) && !state.assets.supports_streaming_decode() {
+        return Err(Error::unsupported(
+            "streaming needs a byte-level tokenizer decoder; this package cannot publish a stable incremental decode",
+        )
+        .into());
+    }
     let inspection = state.handle.inspect().await?;
     let limits = inspection.lengths;
     // An explicit budget over the service cap is a parameter error; an omitted budget uses the
@@ -66,54 +139,60 @@ pub(super) async fn generate(
         })?;
     let enable_thinking = resolved.enable_thinking;
     let id = state.handle.allocate_request_id()?;
-    let mut receiver = state
+    let encoding = Encoding {
+        assets,
+        messages,
+        prompt,
+        tools,
+        enable_thinking,
+        count,
+        id,
+        model,
+        max_new_tokens,
+        sampling: resolved.sampling,
+    };
+    let receiver = state
         .handle
         .submit_preparing(
             id,
             bytes,
-            super::super::trace_parent(&headers),
-            move |context| {
-                context.check()?;
-                let tokens = if let Some(messages) = messages {
-                    assets.encode_chat(
-                        &messages,
-                        &infer_models::ChatOptions {
-                            enable_thinking,
-                            tools: tools.clone(),
-                            ..Default::default()
-                        },
-                    )?
-                } else {
-                    assets.encode(prompt.as_deref().unwrap_or_default(), true)?
-                };
-                count.store(tokens.len(), Ordering::Relaxed);
-                Ok(CanonicalRequest {
-                    id,
-                    model,
-                    session: None,
-                    input: RequestInput::Sequence {
-                        tokens: tokens.into(),
-                        media: vec![],
-                    },
-                    workload: Workload::Generate { max_new_tokens },
-                    qos: infer_ir::Qos::default(),
-                    sampling: resolved.sampling,
-                    extensions: BTreeMap::new(),
-                })
-            },
+            super::super::trace_parent(headers),
+            move |context| encoding.encode(context),
         )
         .await?;
-    while let Some(event) = receiver.recv().await {
+    Ok(Prepared {
+        request: id,
+        receiver,
+        prompt_tokens,
+        model_name: inspection.model_name.clone(),
+        created,
+        chat,
+        policy,
+        enable_thinking,
+        dialect: state.assets.tool_dialect(),
+    })
+}
+
+/// # Errors
+/// Returns a validation, capacity or backend error.
+pub(super) async fn generate(
+    state: TextState,
+    headers: HeaderMap,
+    request: GenerationRequest,
+    chat: bool,
+) -> ApiResult<Value> {
+    let mut prepared = prepare(&state, &headers, request, chat).await?;
+    while let Some(event) = prepared.receiver.recv().await {
         if let EngineOutput::Finished(result) = event? {
             return response(
                 &state,
                 result,
-                prompt_tokens.load(Ordering::Relaxed),
-                &model.to_string(),
-                created,
-                chat,
-                &policy,
-                enable_thinking,
+                prepared.prompt_tokens.load(Ordering::Relaxed),
+                &prepared.model_name,
+                prepared.created,
+                prepared.chat,
+                &prepared.policy,
+                prepared.enable_thinking,
             )
             .await;
         }
@@ -124,7 +203,6 @@ pub(super) async fn generate(
     )
     .into())
 }
-
 #[expect(
     clippy::too_many_arguments,
     reason = "The response assembles one protocol object from the request context it was generated under"
@@ -185,7 +263,7 @@ async fn response(
 /// Returns an invalid-input error when the response must be parsed but its generated region does
 /// not decode in the package dialect.
 fn chat_choice(
-    request: infer_core::RequestId,
+    request: RequestId,
     text: &str,
     dialect: infer_models::ToolDialect,
     policy: &ToolPolicy,
@@ -244,7 +322,7 @@ fn chat_choice(
     Ok(json!({"index":0, "message":message, "finish_reason":finish, "logprobs":null}))
 }
 
-fn finish_reason(reason: &FinishReason) -> infer_core::Result<&'static str> {
+pub(super) fn finish_reason(reason: &FinishReason) -> infer_core::Result<&'static str> {
     match reason {
         FinishReason::Length => Ok("length"),
         FinishReason::Eos | FinishReason::Completed => Ok("stop"),
@@ -274,7 +352,7 @@ mod tests {
 
     fn choice(text: &str, policy: &ToolPolicy, reason: &'static str) -> Value {
         chat_choice(
-            infer_core::RequestId::new(7).unwrap(),
+            RequestId::new(7).unwrap(),
             text,
             ToolDialect::FunctionParameters,
             policy,
@@ -380,7 +458,7 @@ mod tests {
             infer_models::parse_model_output_with(text, ToolDialect::FunctionParameters, None)
                 .unwrap();
         let choice = chat_choice(
-            infer_core::RequestId::new(7).unwrap(),
+            RequestId::new(7).unwrap(),
             text,
             ToolDialect::FunctionParameters,
             &ToolPolicy::Disabled,

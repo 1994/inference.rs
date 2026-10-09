@@ -171,3 +171,111 @@ fn official_qwen_text_parity_when_assets_are_supplied() {
         assert_eq!(assets.encode_chat(&messages, &options).unwrap(), tokens);
     }
 }
+
+#[test]
+fn the_fixture_tokenizer_refuses_streaming_decode() {
+    // Its decoder joins tokens with a separator, so piecewise decoding would not match.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let assets = TextAssets::open(&root, 4096).unwrap();
+    assert!(!assets.supports_streaming_decode());
+}
+
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test fixtures fail the test immediately on unexpected setup or runtime output"
+)]
+/// Write a copy of the fixture tokenizer with a byte-level decoder, which is what the served
+/// packages use and the only decoder that decomposes per token.
+fn byte_level_fixture() -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let mut tokenizer: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("tokenizer.json")).unwrap()).unwrap();
+    let byte_level = serde_json::json!({
+        "type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": true
+    });
+    tokenizer["decoder"] = byte_level.clone();
+    tokenizer["pre_tokenizer"] = byte_level;
+    let package = temp();
+    std::fs::write(
+        package.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer).unwrap(),
+    )
+    .unwrap();
+    package
+}
+
+#[test]
+fn streaming_decode_matches_one_shot_decode_token_for_token() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let ids = TextAssets::open(&fixture, 4096).unwrap();
+    let assets = TextAssets::open(byte_level_fixture(), 4096).unwrap();
+    assert!(assets.supports_streaming_decode());
+    for text in ["hello world system assistant token8 token13", "owner", "a"] {
+        let tokens = ids.encode(text, false).unwrap();
+        let whole = assets.decode(&tokens, true).unwrap();
+        let mut decoder = assets.stream_decoder();
+        let mut streamed = String::new();
+        for token in &tokens {
+            streamed.push_str(&decoder.push(*token).unwrap());
+        }
+        streamed.push_str(&decoder.finish().unwrap());
+        assert_eq!(streamed, whole, "{text:?}");
+    }
+}
+
+#[test]
+fn an_incremental_decode_never_publishes_a_partial_character() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let ids = TextAssets::open(&fixture, 4096).unwrap();
+    let assets = TextAssets::open(byte_level_fixture(), 4096).unwrap();
+    let text = "hello world system assistant token8 token13 hello world system assistant";
+    let tokens = ids.encode(text, false).unwrap();
+    let whole = assets.decode(&tokens, true).unwrap();
+    let mut decoder = assets.stream_decoder();
+    let mut streamed = String::new();
+    for token in &tokens {
+        let piece = decoder.push(*token).unwrap();
+        // Whatever is published must be a prefix of the finished text and already final.
+        assert!(
+            whole.starts_with(&format!("{streamed}{piece}")),
+            "{piece:?}"
+        );
+        streamed.push_str(&piece);
+    }
+    streamed.push_str(&decoder.finish().unwrap());
+    assert_eq!(streamed, whole);
+}
+
+#[test]
+fn streaming_decode_matches_on_the_served_package() {
+    let Ok(root) = std::env::var("INFER_QWEN_TEXT_PACKAGE") else {
+        return;
+    };
+    let assets = TextAssets::open(&root, 262_144).unwrap();
+    assert!(
+        assets.supports_streaming_decode(),
+        "the served packages must be stream-decodable"
+    );
+    let golden: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../examples/qwen3.8-27b/text-golden.json"
+    ))
+    .unwrap();
+    for case in golden["cases"].as_array().unwrap() {
+        for text in [
+            case["rendered"].as_str().unwrap(),
+            "hello world 你好世界 🌍 token8",
+        ] {
+            let tokens = assets.encode(text, false).unwrap();
+            let whole = assets.decode(&tokens, true).unwrap();
+            let mut decoder = assets.stream_decoder();
+            let mut streamed = String::new();
+            for token in &tokens {
+                streamed.push_str(&decoder.push(*token).unwrap());
+            }
+            streamed.push_str(&decoder.finish().unwrap());
+            assert_eq!(streamed, whole, "{text:?}");
+        }
+    }
+}

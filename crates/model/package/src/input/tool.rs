@@ -133,7 +133,284 @@ impl ParsedOutput {
     }
 }
 
+/// One published piece of a model response, in output order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// Assistant text outside the structured regions.
+    Text(String),
+    /// Reasoning text from a leading reasoning block.
+    Reasoning(String),
+    /// A completed tool call.
+    Call(ParsedToolCall),
+}
+
+/// Parser phase for one streamed response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Nothing published yet; deciding between a reasoning block and plain text.
+    Start,
+    Reasoning,
+    Text,
+    Call,
+    Done,
+}
+
+/// Incremental parser for one model response.
+///
+/// `feed` consumes only newly committed text and never revisits it, so parsing a response costs
+/// one pass over its length. Text is published lazily: a trailing whitespace run and a suffix
+/// that could still become a marker are held back. That is what makes the concatenated deltas
+/// equal the non-streaming result exactly, rather than approximately, and it is why
+/// [`parse_with`] is defined as this parser fed the whole response.
+#[derive(Debug, Clone)]
+pub struct OutputStreamParser {
+    dialect: ToolDialect,
+    declared: Option<std::collections::BTreeSet<String>>,
+    phase: Phase,
+    /// Received text not yet published, consumed or held back.
+    buffer: String,
+    /// Bytes at the start of `buffer` already known not to open the closing marker.
+    scanned: usize,
+    /// Calls published so far, bounded by `MAX_TOOL_CALLS`.
+    calls: usize,
+    truncated: bool,
+    text_published: bool,
+    reasoning_published: bool,
+}
+
+impl OutputStreamParser {
+    /// Create a parser for one response.
+    #[must_use]
+    pub const fn new(
+        dialect: ToolDialect,
+        declared: Option<std::collections::BTreeSet<String>>,
+    ) -> Self {
+        Self {
+            dialect,
+            declared,
+            phase: Phase::Start,
+            buffer: String::new(),
+            scanned: 0,
+            calls: 0,
+            truncated: false,
+            text_published: false,
+            reasoning_published: false,
+        }
+    }
+    /// Feed newly committed text and take whatever is now stable.
+    ///
+    /// # Errors
+    /// Returns an invalid-input error when a tool-call body exceeds `MAX_TOOL_ARGUMENT_BYTES` or
+    /// the response publishes more than `MAX_TOOL_CALLS` calls.
+    pub fn feed(&mut self, chunk: &str) -> infer_core::Result<Vec<StreamEvent>> {
+        self.buffer.push_str(chunk);
+        self.drain(false)
+    }
+    /// Finish the response, publishing the remaining stable text and dropping held whitespace.
+    ///
+    /// # Errors
+    /// Returns the same invalid-input errors as [`Self::feed`].
+    pub fn finish(&mut self) -> infer_core::Result<Vec<StreamEvent>> {
+        self.drain(true)
+    }
+    /// True when a structured region opened without closing, so its tail was withheld.
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+    fn drain(&mut self, flush: bool) -> infer_core::Result<Vec<StreamEvent>> {
+        let mut events = Vec::new();
+        loop {
+            let progressed = match self.phase {
+                Phase::Done => break,
+                Phase::Start => self.drain_start(flush),
+                Phase::Reasoning => self.drain_reasoning(flush, &mut events),
+                Phase::Text => self.drain_text(flush, &mut events),
+                Phase::Call => self.drain_call(flush, &mut events)?,
+            };
+            if !progressed {
+                break;
+            }
+        }
+        Ok(events)
+    }
+    /// Decide between a reasoning block and plain text. Returns whether to keep draining.
+    fn drain_start(&mut self, flush: bool) -> bool {
+        // Hold while the buffer could still become the reasoning marker.
+        if !flush && REASONING_OPEN.starts_with(self.buffer.as_str()) {
+            return false;
+        }
+        if self.buffer.starts_with(REASONING_OPEN) {
+            self.buffer.drain(..REASONING_OPEN.len());
+            self.phase = Phase::Reasoning;
+        } else {
+            self.phase = Phase::Text;
+        }
+        true
+    }
+    fn drain_reasoning(&mut self, flush: bool, events: &mut Vec<StreamEvent>) -> bool {
+        let Some(index) = self.buffer.find(REASONING_CLOSE) else {
+            let hold = if flush {
+                trailing_whitespace(&self.buffer)
+            } else {
+                hold_len(&self.buffer, REASONING_CLOSE)
+            };
+            let end = self.buffer.len() - hold;
+            let ready = self.buffer[..end].to_string();
+            self.buffer.drain(..end);
+            self.publish_reasoning(&ready, events);
+            if flush {
+                // A reasoning block that never closed leaves no assistant text.
+                self.truncated = true;
+                self.buffer.clear();
+                self.phase = Phase::Done;
+            }
+            return false;
+        };
+        let head = self.buffer[..index].trim_end().to_string();
+        self.buffer.drain(..index + REASONING_CLOSE.len());
+        self.publish_reasoning(&head, events);
+        self.phase = Phase::Text;
+        true
+    }
+    fn drain_text(&mut self, flush: bool, events: &mut Vec<StreamEvent>) -> bool {
+        if let Some(index) = self.buffer.find(TOOL_CALL_OPEN) {
+            let head = self.buffer[..index].trim_end().to_string();
+            self.buffer.drain(..index + TOOL_CALL_OPEN.len());
+            self.publish_text(&head, events);
+            self.scanned = 0;
+            self.phase = Phase::Call;
+            return true;
+        }
+        let hold = if flush {
+            trailing_whitespace(&self.buffer)
+        } else {
+            hold_len(&self.buffer, TOOL_CALL_OPEN)
+        };
+        let end = self.buffer.len() - hold;
+        let ready = self.buffer[..end].to_string();
+        self.buffer.drain(..end);
+        self.publish_text(&ready, events);
+        if flush {
+            self.buffer.clear();
+            self.phase = Phase::Done;
+        }
+        false
+    }
+    fn drain_call(
+        &mut self,
+        flush: bool,
+        events: &mut Vec<StreamEvent>,
+    ) -> infer_core::Result<bool> {
+        // Resume the scan where the previous feed stopped, keeping one marker's worth of
+        // overlap, so a body fed one byte at a time stays linear.
+        let Some(found) = self.buffer[self.scanned..].find(TOOL_CALL_CLOSE) else {
+            if self.buffer.len() > MAX_TOOL_ARGUMENT_BYTES {
+                return Err(infer_core::Error::invalid(format!(
+                    "tool call arguments exceed {MAX_TOOL_ARGUMENT_BYTES} bytes"
+                )));
+            }
+            if flush {
+                self.truncated = true;
+                self.buffer.clear();
+                self.phase = Phase::Done;
+            } else {
+                let overlap = self.buffer.len().saturating_sub(TOOL_CALL_CLOSE.len() - 1);
+                self.scanned = floor_boundary(&self.buffer, overlap);
+            }
+            return Ok(false);
+        };
+        let index = self.scanned + found;
+        let body = self.buffer[..index].to_string();
+        self.buffer.drain(..index + TOOL_CALL_CLOSE.len());
+        self.scanned = 0;
+        self.phase = Phase::Text;
+        if body.len() > MAX_TOOL_ARGUMENT_BYTES {
+            return Err(infer_core::Error::invalid(format!(
+                "tool call arguments exceed {MAX_TOOL_ARGUMENT_BYTES} bytes"
+            )));
+        }
+        if self.calls >= MAX_TOOL_CALLS {
+            return Err(infer_core::Error::invalid(format!(
+                "response carries more than {MAX_TOOL_CALLS} tool calls"
+            )));
+        }
+        let parsed = match self.dialect {
+            ToolDialect::JsonBlock => parse_json_block(body.trim()),
+            ToolDialect::FunctionParameters => parse_function_block(body.trim()),
+        };
+        match parsed {
+            Some(call)
+                if self
+                    .declared
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&call.name)) =>
+            {
+                self.calls += 1;
+                events.push(StreamEvent::Call(call));
+            }
+            _ => {
+                // Keep an undecodable or undeclared block visible as text rather than
+                // publishing a call the service cannot vouch for.
+                events.push(StreamEvent::Text(format!(
+                    "{TOOL_CALL_OPEN}{body}{TOOL_CALL_CLOSE}"
+                )));
+                self.text_published = true;
+            }
+        }
+        Ok(true)
+    }
+    fn publish_text(&mut self, chunk: &str, events: &mut Vec<StreamEvent>) {
+        let text = if self.text_published {
+            chunk
+        } else {
+            chunk.trim_start()
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.text_published = true;
+        events.push(StreamEvent::Text(text.to_string()));
+    }
+    fn publish_reasoning(&mut self, chunk: &str, events: &mut Vec<StreamEvent>) {
+        let text = if self.reasoning_published {
+            chunk
+        } else {
+            chunk.trim_start()
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.reasoning_published = true;
+        events.push(StreamEvent::Reasoning(text.to_string()));
+    }
+}
+
+/// Assemble published events into the non-streaming result.
+#[must_use]
+pub fn assemble(events: Vec<StreamEvent>, truncated: bool) -> ParsedOutput {
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut calls = Vec::new();
+    for event in events {
+        match event {
+            StreamEvent::Text(text) => content.push_str(&text),
+            StreamEvent::Reasoning(text) => reasoning.push_str(&text),
+            StreamEvent::Call(call) => calls.push(call),
+        }
+    }
+    ParsedOutput {
+        content,
+        reasoning: (!reasoning.is_empty()).then_some(reasoning),
+        calls,
+        truncated,
+    }
+}
+
 /// Split reasoning, tool calls and assistant text out of one completed model response.
+///
+/// This uses the JSON-block dialect; prefer [`parse_with`] with the dialect the package's
+/// template asks for.
 ///
 /// # Errors
 /// Returns an invalid-input error when a tool-call block carries more than
@@ -142,12 +419,12 @@ pub fn parse(text: &str) -> infer_core::Result<ParsedOutput> {
     parse_with(text, ToolDialect::JsonBlock, None)
 }
 
-/// Parse a response in the dialect the package's template asks the model to emit.
+/// Parse a complete response in the dialect the package's template asks the model to emit.
 ///
-/// The scan is single-pass over the response with bounded buffers: each marker is located once,
-/// the argument payload is bounded before it is decoded, and nothing is rewritten in place. A
-/// call whose name is not in `declared` is left in the content as text: the service does not
-/// publish an undeclared call and does not rewrite the model's name into a declared one.
+/// This is [`OutputStreamParser`] fed the whole response at once, so the streamed and complete
+/// forms of one response agree by construction. A call whose name is not in `declared` is left
+/// in the content as text: the service does not publish an undeclared call and does not rewrite
+/// the model's name into a declared one.
 ///
 /// # Errors
 /// Returns an invalid-input error when a tool-call block carries more than
@@ -157,70 +434,56 @@ pub fn parse_with(
     dialect: ToolDialect,
     declared: Option<&std::collections::BTreeSet<String>>,
 ) -> infer_core::Result<ParsedOutput> {
-    let (reasoning, remainder) = split_reasoning(text);
-    let mut content = String::with_capacity(remainder.len());
-    let mut calls = Vec::new();
-    let mut truncated = false;
-    let mut cursor = 0usize;
-    while let Some(open) = remainder[cursor..].find(TOOL_CALL_OPEN) {
-        let open = cursor + open;
-        content.push_str(&remainder[cursor..open]);
-        let body_start = open + TOOL_CALL_OPEN.len();
-        let Some(close) = remainder[body_start..].find(TOOL_CALL_CLOSE) else {
-            // The block never closed. Withhold the tail rather than publishing half a call.
-            truncated = true;
-            cursor = remainder.len();
-            break;
-        };
-        let close = body_start + close;
-        let body = remainder[body_start..close].trim();
-        if body.len() > MAX_TOOL_ARGUMENT_BYTES {
-            return Err(infer_core::Error::invalid(format!(
-                "tool call arguments exceed {MAX_TOOL_ARGUMENT_BYTES} bytes"
-            )));
-        }
-        if calls.len() >= MAX_TOOL_CALLS {
-            return Err(infer_core::Error::invalid(format!(
-                "response carries more than {MAX_TOOL_CALLS} tool calls"
-            )));
-        }
-        // A block that does not decode as the declared dialect is kept as text: the parser does
-        // not guess at a malformed payload.
-        let parsed = match dialect {
-            ToolDialect::JsonBlock => parse_json_block(body),
-            ToolDialect::FunctionParameters => parse_function_block(body),
-        };
-        match parsed {
-            Some(call) if declared.is_none_or(|names| names.contains(&call.name)) => {
-                calls.push(call);
-            }
-            _ => content.push_str(&remainder[open..close + TOOL_CALL_CLOSE.len()]),
-        }
-        cursor = close + TOOL_CALL_CLOSE.len();
-    }
-    content.push_str(&remainder[cursor.min(remainder.len())..]);
-    Ok(ParsedOutput {
-        content: content.trim().to_string(),
-        reasoning,
-        calls,
-        truncated,
-    })
+    let mut parser = OutputStreamParser::new(dialect, declared.cloned());
+    let mut events = parser.feed(text)?;
+    events.extend(parser.finish()?);
+    Ok(assemble(events, parser.truncated()))
 }
 
-/// Extract a leading reasoning block, returning it and the remaining text.
-fn split_reasoning(text: &str) -> (Option<String>, &str) {
-    let Some(open) = text.find(REASONING_OPEN) else {
-        return (None, text);
-    };
-    let body_start = open + REASONING_OPEN.len();
-    let Some(close) = text[body_start..].find(REASONING_CLOSE) else {
-        // An unterminated reasoning block leaves no assistant text to publish.
-        return (Some(text[body_start..].trim().to_string()), "");
-    };
-    let close = body_start + close;
-    let reasoning = text[body_start..close].trim().to_string();
-    let remainder = &text[close + REASONING_CLOSE.len()..];
-    (Some(reasoning), remainder)
+/// Largest char boundary at or below `index`.
+fn floor_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+/// Bytes of trailing whitespace in `text`.
+fn trailing_whitespace(text: &str) -> usize {
+    text.len() - text.trim_end().len()
+}
+
+/// Longest suffix of `text` that is a proper prefix of `marker`.
+fn marker_prefix_len(text: &str, marker: &str) -> usize {
+    let bytes = text.as_bytes();
+    let marker = marker.as_bytes();
+    let max = marker.len().min(bytes.len());
+    (1..=max)
+        .rev()
+        .find(|&len| {
+            text.is_char_boundary(text.len() - len) && bytes[text.len() - len..] == marker[..len]
+        })
+        .unwrap_or(0)
+}
+
+/// Bytes that must stay buffered before the next `feed`.
+///
+/// A marker prefix and any whitespace immediately before it are both held, because that
+/// whitespace is a separator that only becomes real text if the marker never completes.
+fn hold_len(buffer: &str, marker: &str) -> usize {
+    let prefix = marker_prefix_len(buffer, marker);
+    if prefix == 0 {
+        return trailing_whitespace(buffer);
+    }
+    let mut start = buffer.len() - prefix;
+    for (index, ch) in buffer[..start].char_indices().rev() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        start = index;
+    }
+    buffer.len() - start
 }
 
 /// Decode one `<tool_call>` body as `{"name": ..., "arguments": ...}`.
@@ -524,5 +787,137 @@ mod tests {
             ..call
         };
         assert!(malformed.argument_object().is_err());
+    }
+
+    /// Feed `text` in fixed character groups and assemble the result.
+    fn feed_all(text: &str, dialect: ToolDialect, chunk: usize) -> ParsedOutput {
+        let chars: Vec<char> = text.chars().collect();
+        let mut parser = OutputStreamParser::new(dialect, None);
+        let mut events = Vec::new();
+        for piece in chars.chunks(chunk.max(1)) {
+            let piece: String = piece.iter().collect();
+            events.extend(parser.feed(&piece).unwrap());
+        }
+        events.extend(parser.finish().unwrap());
+        assemble(events, parser.truncated())
+    }
+
+    fn samples() -> Vec<(ToolDialect, String)> {
+        let json_call = format!(
+            "{TOOL_CALL_OPEN}{{\"name\":\"a\",\"arguments\":{{\"x\":1}}}}{TOOL_CALL_CLOSE}"
+        );
+        let function_call = format!(
+            "{TOOL_CALL_OPEN}\n<function=b>\n<parameter=k>\nv\n</parameter>\n</function>\n{TOOL_CALL_CLOSE}"
+        );
+        vec![
+            (ToolDialect::JsonBlock, "plain answer".to_string()),
+            (ToolDialect::JsonBlock, "  padded \n\n".to_string()),
+            (ToolDialect::JsonBlock, format!("Sure.\n{json_call}\n")),
+            (ToolDialect::JsonBlock, format!("{json_call}and{json_call}")),
+            (
+                ToolDialect::JsonBlock,
+                format!("{TOOL_CALL_OPEN}{{not json}}{TOOL_CALL_CLOSE}"),
+            ),
+            (
+                ToolDialect::JsonBlock,
+                format!("{TOOL_CALL_OPEN}{{\"name\":\"a\",\"arguments\":{{}}"),
+            ),
+            (
+                ToolDialect::FunctionParameters,
+                format!("Checking.\n{function_call}\nDone."),
+            ),
+            (
+                ToolDialect::FunctionParameters,
+                format!("{TOOL_CALL_OPEN}<function=ping>\n</function>{TOOL_CALL_CLOSE}"),
+            ),
+            (
+                ToolDialect::FunctionParameters,
+                format!("{REASONING_OPEN}weigh it{REASONING_CLOSE}\n\nAnswer."),
+            ),
+            (
+                ToolDialect::FunctionParameters,
+                format!("{REASONING_OPEN}never closed"),
+            ),
+            (ToolDialect::FunctionParameters, String::new()),
+        ]
+    }
+
+    #[test]
+    fn streaming_and_complete_parsing_agree_at_every_chunking() {
+        for (dialect, text) in samples() {
+            let complete = parse_with(&text, dialect, None).unwrap();
+            for chunk in [1usize, 2, 3, 5, 17, 4096] {
+                assert_eq!(
+                    feed_all(&text, dialect, chunk),
+                    complete,
+                    "chunk {chunk} disagreed on {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_marker_split_across_chunks_is_still_one_call() {
+        let text =
+            format!("hi{TOOL_CALL_OPEN}{{\"name\":\"a\",\"arguments\":{{}}}}{TOOL_CALL_CLOSE}");
+        // Feed up to the middle of the opening marker, then the rest.
+        let split = "hi<too".len();
+        let mut parser = OutputStreamParser::new(ToolDialect::JsonBlock, None);
+        let mut events = parser.feed(&text[..split]).unwrap();
+        // The partial marker must be held, not published as text.
+        assert_eq!(events, vec![StreamEvent::Text("hi".into())]);
+        events.extend(parser.feed(&text[split..]).unwrap());
+        events.extend(parser.finish().unwrap());
+        assert_eq!(assemble(events, parser.truncated()).calls.len(), 1);
+    }
+
+    #[test]
+    fn a_call_is_published_as_soon_as_its_block_closes() {
+        let mut parser = OutputStreamParser::new(ToolDialect::JsonBlock, None);
+        let head = format!("{TOOL_CALL_OPEN}{{\"name\":\"a\",\"arguments\":{{}}}}");
+        assert_eq!(parser.feed(&head).unwrap().len(), 0);
+        let events = parser.feed(TOOL_CALL_CLOSE).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], StreamEvent::Call(_)));
+    }
+
+    #[test]
+    fn whitespace_around_a_call_is_never_published() {
+        let mut parser = OutputStreamParser::new(ToolDialect::JsonBlock, None);
+        let mut events = parser.feed("  ").unwrap();
+        events.extend(parser.feed("\n").unwrap());
+        assert_eq!(events.len(), 0);
+        events.extend(parser.feed("answer").unwrap());
+        assert_eq!(events, vec![StreamEvent::Text("answer".into())]);
+        events.extend(parser.finish().unwrap());
+        assert_eq!(assemble(events, parser.truncated()).content, "answer");
+    }
+
+    #[test]
+    fn a_reasoning_block_streams_before_the_answer() {
+        let mut parser = OutputStreamParser::new(ToolDialect::FunctionParameters, None);
+        let mut events = parser.feed(REASONING_OPEN).unwrap();
+        assert!(events.is_empty(), "the marker alone is not reasoning yet");
+        events.extend(parser.feed("why").unwrap());
+        assert_eq!(events, vec![StreamEvent::Reasoning("why".into())]);
+        events.extend(parser.feed(REASONING_CLOSE).unwrap());
+        events.extend(parser.feed("Answer").unwrap());
+        events.extend(parser.finish().unwrap());
+        let parsed = assemble(events, parser.truncated());
+        assert_eq!(parsed.reasoning.as_deref(), Some("why"));
+        assert_eq!(parsed.content, "Answer");
+    }
+
+    #[test]
+    fn an_unterminated_call_is_withheld_without_publishing_partial_arguments() {
+        let mut parser = OutputStreamParser::new(ToolDialect::JsonBlock, None);
+        let mut events = parser.feed("text").unwrap();
+        events.extend(parser.feed(TOOL_CALL_OPEN).unwrap());
+        events.extend(parser.feed("{\"name\":\"a\",").unwrap());
+        events.extend(parser.finish().unwrap());
+        let parsed = assemble(events, parser.truncated());
+        assert_eq!(parsed.content, "text");
+        assert_eq!(parsed.calls.len(), 0);
+        assert!(parsed.truncated);
     }
 }

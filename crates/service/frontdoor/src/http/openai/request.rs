@@ -77,6 +77,15 @@ pub(super) struct GenerationRequest {
     pub tools: Option<Vec<WireTool>>,
     pub tool_choice: Option<WireToolChoice>,
     pub parallel_tool_calls: Option<bool>,
+    pub stream_options: Option<StreamOptions>,
+}
+
+/// Streaming modifiers accepted alongside `stream=true`.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StreamOptions {
+    #[serde(default)]
+    pub include_usage: bool,
 }
 
 impl GenerationRequest {
@@ -106,6 +115,7 @@ impl GenerationRequest {
             || self.tools.is_some()
             || self.tool_choice.is_some()
             || self.parallel_tool_calls.is_some()
+            || self.stream_options.is_some()
         {
             return Err(Error::invalid(
                 "completions require a nonempty string prompt; use max_tokens",
@@ -130,10 +140,11 @@ impl GenerationRequest {
         {
             return Err(Error::invalid("invalid generation parameters"));
         }
-        if self.stream == Some(true) || self.n.is_some_and(|n| n != 1) {
-            return Err(Error::unsupported(
-                "only stream=false and n=1 are supported",
-            ));
+        if self.n.is_some_and(|n| n != 1) {
+            return Err(Error::unsupported("only n=1 is supported"));
+        }
+        if self.stream_options.is_some() && self.stream != Some(true) {
+            return Err(Error::invalid("stream_options requires stream=true"));
         }
         Ok(RequestedOutput { tokens, explicit })
     }

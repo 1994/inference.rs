@@ -2,11 +2,19 @@
 mod error;
 mod execution;
 mod request;
+mod stream;
 #[cfg(test)]
 mod tests;
 
 use super::text::TextState;
-use axum::{Json, Router, extract::State, http::HeaderMap, routing::get, routing::post};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+    routing::get,
+    routing::post,
+};
 use error::ApiError;
 use request::{GenerationRequest, ToolPolicy};
 use serde_json::{Value, json};
@@ -33,20 +41,32 @@ async fn chat(
     State(state): State<TextState>,
     headers: HeaderMap,
     request: Payload,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let Json(request) = request.map_err(ApiError::from)?;
-    execution::generate(state, headers, request, true)
-        .await
-        .map(Json)
+    reply(state, headers, request, true).await
 }
 
 async fn completion(
     State(state): State<TextState>,
     headers: HeaderMap,
     request: Payload,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let Json(request) = request.map_err(ApiError::from)?;
-    execution::generate(state, headers, request, false)
-        .await
-        .map(Json)
+    reply(state, headers, request, false).await
+}
+
+/// Route one validated request to the complete or the streamed reply.
+async fn reply(
+    state: TextState,
+    headers: HeaderMap,
+    request: GenerationRequest,
+    chat: bool,
+) -> ApiResult<Response> {
+    if request.stream == Some(true) {
+        stream::stream(state, headers, request, chat).await
+    } else {
+        execution::generate(state, headers, request, chat)
+            .await
+            .map(|value| Json(value).into_response())
+    }
 }

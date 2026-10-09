@@ -27,6 +27,82 @@ fn fixture_with(config: RuntimeConfig) -> (RuntimeHandle, Arc<infer_models::Text
     (RuntimeHandle::start(engine).unwrap(), assets)
 }
 
+/// Copy the fixture package with a byte-level tokenizer, which is what the served packages use
+/// and the only decoder the streaming path accepts.
+fn streaming_fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let package = std::env::temp_dir().join(format!("infer-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&package).unwrap();
+    for entry in std::fs::read_dir(&root).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), package.join(entry.file_name())).unwrap();
+        }
+    }
+    let mut tokenizer: Value =
+        serde_json::from_slice(&std::fs::read(root.join("tokenizer.json")).unwrap()).unwrap();
+    let byte_level = json!({
+        "type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": true
+    });
+    tokenizer["decoder"] = byte_level.clone();
+    tokenizer["pre_tokenizer"] = byte_level;
+    std::fs::write(
+        package.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer).unwrap(),
+    )
+    .unwrap();
+    let mut model_package = infer_models::ModelPackage::open(&package, ModelId::ONE).unwrap();
+    let backend = HostBackend::from_package(&mut model_package, HostConfig::default()).unwrap();
+    let model = backend.model().clone();
+    let assets = Arc::new(infer_models::TextAssets::open(&package, model.max_sequence).unwrap());
+    assert!(assets.supports_streaming_decode());
+    let mut kernels = KernelRegistry::default();
+    kernels.register(&HostKernels).unwrap();
+    let engine = Engine::new(
+        backend,
+        model,
+        PrecisionPlan::f32(),
+        &kernels,
+        RuntimeConfig::default(),
+    )
+    .unwrap();
+    (RuntimeHandle::start(engine).unwrap(), assets)
+}
+
+/// Read one SSE body into `(event_data, ...)` strings.
+async fn call_stream(app: Router, path: &str, payload: Value) -> (StatusCode, String) {
+    let request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(20), app.oneshot(request))
+        .await
+        .unwrap()
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The `data:` payloads of an event stream.
+fn stream_data(body: &str) -> Vec<Value> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| {
+            if data.trim() == "[DONE]" {
+                Value::String("[DONE]".into())
+            } else {
+                serde_json::from_str(data).unwrap()
+            }
+        })
+        .collect()
+}
+
 async fn call(app: Router, path: &str, payload: Option<Value>) -> (StatusCode, Value) {
     let request = Request::builder().uri(path);
     let request = if let Some(payload) = payload {
@@ -277,5 +353,128 @@ async fn the_served_name_addresses_the_deployment() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn streaming_completions_agree_with_the_complete_reply() {
+    let (handle, assets) = streaming_fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "prompt":"hello world system assistant token8 token13", "max_tokens":5
+    });
+    let (status, complete) = call(app.clone(), "/v1/completions", Some(payload.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{complete}");
+    let mut streamed = payload;
+    streamed["stream"] = json!(true);
+    let (status, body) = call_stream(app, "/v1/completions", streamed).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let chunks = stream_data(&body);
+    assert_eq!(
+        chunks.last(),
+        Some(&Value::String("[DONE]".into())),
+        "{chunks:?}"
+    );
+    let text: String = chunks
+        .iter()
+        .filter_map(|chunk| chunk["choices"][0]["delta"]["text"].as_str())
+        .collect();
+    assert_eq!(text, complete["choices"][0]["text"]);
+    assert_eq!(chunks[0]["object"], "text_completion");
+    // The finish reason is published once, immediately before the terminator.
+    assert_eq!(
+        chunks[chunks.len() - 2]["choices"][0]["finish_reason"],
+        complete["choices"][0]["finish_reason"]
+    );
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn streaming_chat_publishes_role_content_and_finish_in_order() {
+    let (handle, assets) = streaming_fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}],
+        "max_completion_tokens":4, "stream":true
+    });
+    let (status, body) = call_stream(app, "/v1/chat/completions", payload).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let chunks = stream_data(&body);
+    assert_eq!(chunks[0]["choices"][0]["delta"]["role"], "assistant");
+    assert_eq!(chunks[0]["object"], "chat.completion.chunk");
+    let content: String = chunks
+        .iter()
+        .filter_map(|chunk| chunk["choices"][0]["delta"]["content"].as_str())
+        .collect();
+    assert!(!content.is_empty(), "{chunks:?}");
+    assert_eq!(
+        chunks[chunks.len() - 2]["choices"][0]["finish_reason"],
+        "length"
+    );
+    // No content delta may arrive after the finish reason.
+    let finish = chunks.len() - 2;
+    assert!(
+        chunks[..finish]
+            .iter()
+            .all(|chunk| chunk["choices"][0]["finish_reason"].is_null())
+    );
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_streamed_reply_reports_usage_only_when_asked() {
+    let (handle, assets) = streaming_fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let base = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}],
+        "max_completion_tokens":2, "stream":true
+    });
+    let (_, plain) = call_stream(app.clone(), "/v1/chat/completions", base.clone()).await;
+    assert!(
+        stream_data(&plain)
+            .iter()
+            .all(|chunk| chunk["usage"].is_null()),
+        "{plain}"
+    );
+    let mut asked = base;
+    asked["stream_options"] = json!({"include_usage": true});
+    let (_, with_usage) = call_stream(app, "/v1/chat/completions", asked).await;
+    let chunks = stream_data(&with_usage);
+    let usage = &chunks[chunks.len() - 2];
+    assert_eq!(
+        usage["choices"].as_array().unwrap().len(),
+        0,
+        "{with_usage}"
+    );
+    // The prompt was tokenized to four tokens by the byte-level fixture.
+    assert!(usage["usage"]["prompt_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(usage["usage"]["completion_tokens"], 2);
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_package_without_a_streamable_decoder_refuses_streaming() {
+    // The plain fixture joins tokens with a separator, so a partial decode would not match.
+    let (handle, assets) = fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}],
+        "max_completion_tokens":2, "stream":true
+    });
+    let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn stream_options_without_streaming_are_rejected() {
+    let (handle, assets) = fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}],
+        "max_completion_tokens":2, "stream_options":{"include_usage":true}
+    });
+    let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     handle.shutdown().await.unwrap();
 }
