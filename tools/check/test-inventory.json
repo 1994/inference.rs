@@ -1,0 +1,304 @@
+{
+  "crates": {
+    "agent": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 12,
+      "tests": 0
+    },
+    "api": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 6,
+      "tests": 0
+    },
+    "cli": {
+      "benches": 0,
+      "src_inline": 4,
+      "src_near": 9,
+      "tests": 4
+    },
+    "core": {
+      "benches": 0,
+      "src_inline": 11,
+      "src_near": 7,
+      "tests": 0
+    },
+    "cuda": {
+      "benches": 0,
+      "src_inline": 33,
+      "src_near": 34,
+      "tests": 0
+    },
+    "frontdoor": {
+      "benches": 0,
+      "src_inline": 13,
+      "src_near": 37,
+      "tests": 8
+    },
+    "ir": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 3,
+      "tests": 8
+    },
+    "kernel-api": {
+      "benches": 0,
+      "src_inline": 2,
+      "src_near": 5,
+      "tests": 0
+    },
+    "metal": {
+      "benches": 0,
+      "src_inline": 2,
+      "src_near": 1,
+      "tests": 16
+    },
+    "observe": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 8,
+      "tests": 0
+    },
+    "package": {
+      "benches": 0,
+      "src_inline": 62,
+      "src_near": 3,
+      "tests": 15
+    },
+    "quality": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 3,
+      "tests": 0
+    },
+    "runtime": {
+      "benches": 0,
+      "src_inline": 8,
+      "src_near": 5,
+      "tests": 48
+    },
+    "scheduler": {
+      "benches": 0,
+      "src_inline": 1,
+      "src_near": 3,
+      "tests": 30
+    },
+    "spi": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 3,
+      "tests": 0
+    },
+    "state": {
+      "benches": 0,
+      "src_inline": 1,
+      "src_near": 5,
+      "tests": 10
+    },
+    "workloads": {
+      "benches": 0,
+      "src_inline": 1,
+      "src_near": 6,
+      "tests": 0
+    }
+  },
+  "executor_consumers": [
+    "Cargo.toml",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/__init__.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_einsum.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_layers.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_ops.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_other.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_packing.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/torch/_dynamo/backends/onnxrt.py",
+    "artifacts/sglang-compare/lib/python3.12/site-packages/torch/_dynamo/backends/registry.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/__init__.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_einsum.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_layers.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_ops.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_other.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_packing.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/torch/_dynamo/backends/onnxrt.py",
+    "artifacts/vllm-compare/lib/python3.12/site-packages/torch/_dynamo/backends/registry.py",
+    "crates/backend/cuda/Cargo.toml",
+    "crates/backend/cuda/examples/model_smoke/mod.rs",
+    "crates/backend/cuda/examples/model_smoke/mtp.rs",
+    "crates/backend/cuda/examples/resident_checks/batch.rs",
+    "crates/backend/cuda/examples/resident_checks/mod.rs",
+    "crates/backend/cuda/examples/resident_checks/rounded_projection.rs",
+    "crates/backend/kernel-api/Cargo.toml",
+    "crates/engine/runtime/Cargo.toml",
+    "crates/engine/runtime/src/observation/tests.rs",
+    "crates/engine/runtime/tests/capacity.rs",
+    "crates/engine/runtime/tests/checkpoint_owner.rs",
+    "crates/engine/runtime/tests/control_path.rs",
+    "crates/engine/runtime/tests/cpu_storage.rs",
+    "crates/engine/runtime/tests/providers.rs",
+    "crates/engine/runtime/tests/runner.rs",
+    "crates/engine/runtime/tests/scheduling.rs",
+    "crates/foundation/ir/Cargo.toml",
+    "crates/foundation/ir/src/hardware/mod.rs",
+    "crates/foundation/ir/src/lib.rs",
+    "crates/foundation/ir/src/scheduling.rs",
+    "crates/foundation/ir/tests/hardware.rs",
+    "crates/service/agent/Cargo.toml",
+    "crates/service/agent/src/tests.rs",
+    "crates/service/cli/Cargo.toml",
+    "crates/service/cli/src/arguments.rs",
+    "crates/service/cli/src/backend/mod.rs",
+    "crates/service/cli/src/backend/selected.rs",
+    "crates/service/cli/src/backend/testing.rs",
+    "crates/service/cli/src/commands/inference.rs",
+    "crates/service/cli/src/commands/measurement.rs",
+    "crates/service/cli/src/commands/mod.rs",
+    "crates/service/cli/src/commands/options.rs",
+    "crates/service/cli/src/commands/replay.rs",
+    "crates/service/cli/src/commands/server.rs",
+    "crates/service/cli/src/commands/verification.rs",
+    "crates/service/cli/src/constants.rs",
+    "crates/service/cli/src/dispatch.rs",
+    "crates/service/cli/src/main.rs",
+    "crates/service/cli/src/support/agent.rs",
+    "crates/service/cli/src/support/engine.rs",
+    "crates/service/cli/src/support/execution.rs",
+    "crates/service/cli/src/support/fixtures.rs",
+    "crates/service/cli/src/support/json.rs",
+    "crates/service/cli/src/support/mod.rs",
+    "crates/service/cli/src/support/server.rs",
+    "crates/service/cli/src/support/serving.rs",
+    "crates/service/cli/tests/smoke.rs",
+    "crates/service/frontdoor/Cargo.toml",
+    "crates/service/frontdoor/src/actor/tests.rs",
+    "crates/service/frontdoor/src/http/openai/tests.rs",
+    "crates/service/frontdoor/src/http/tests.rs",
+    "crates/service/frontdoor/tests/isolation.rs",
+    "crates/service/frontdoor/tests/output.rs",
+    "crates/testing/cpu/host/Cargo.toml",
+    "crates/testing/cpu/host/src/executor/registry.rs",
+    "crates/testing/cpu/host/tests/hybrid.rs",
+    "crates/testing/cpu/host/tests/provider_graph.rs",
+    "crates/testing/cpu/host/tests/readouts.rs",
+    "crates/testing/cpu/reference/Cargo.toml",
+    "crates/testing/cpu/reference/src/model/registry.rs",
+    "tools/bench/cpu/Cargo.toml",
+    "tools/bench/cpu/src/engine/mod.rs",
+    "tools/check/gate.sh",
+    "tools/check/layout.py",
+    "tools/check/policy.py",
+    "tools/package/test_package.py",
+    "tools/validation/smoke-paged-kv.py"
+  ],
+  "gated": {
+    "all(target_os = \"linux\", feature = \"cuda\"": 25,
+    "all(test, target_os = \"linux\", feature = \"cuda\"": 1,
+    "all(test, target_os = \"macos\"": 1,
+    "any(\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 3,
+    "any(\n    test,\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 2,
+    "any(target_os = \"linux\", target_os = \"macos\"": 1,
+    "feature = \"test-backends\"": 52,
+    "not(all(target_os = \"linux\", feature = \"cuda\"": 1,
+    "not(any(target_os = \"linux\", target_os = \"macos\"": 1,
+    "not(feature = \"test-backends\"": 2,
+    "not(target_os = \"linux\"": 2,
+    "not(target_os = \"macos\"": 1,
+    "target_os = \"linux\"": 9,
+    "target_os = \"macos\"": 25,
+    "target_os=\"macos\"": 1
+  },
+  "ignored_reasons": {
+    "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 1,
+    "requires CUDA hardware; run inside safe-run": 18,
+    "requires CUDA hardware; run under safe-run": 7,
+    "requires CUDA hardware; run under safe-run in release": 1,
+    "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
+    "requires CUDA; run inside safe-run with --test-threads 1": 2,
+    "requires GPU and INFER_ATTENTION_BENCH fixtures; run under tools/bench/safe-run.sh": 1,
+    "requires GPU and INFER_ATTENTION_GATE; use make check-attention": 1,
+    "requires Linux NUMA policy and move_pages query permission; make check-linux-numa": 1,
+    "requires NVIDIA GPU; run under tools/bench/safe-run.sh": 2,
+    "requires a CUDA device; run inside safe-run": 2,
+    "requires a Linux production host with get/set_mempolicy permitted; make check-linux-numa": 1,
+    "requires an NVIDIA GPU; run under tools/bench/safe-run.sh": 4
+  },
+  "path_mounts": [
+    {
+      "crate": "cuda",
+      "file": "src/attention/mod.rs",
+      "mount": "gate_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/attention/mod.rs",
+      "mount": "benchmark_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/attention/mod.rs",
+      "mount": "tests.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/device/readback.rs",
+      "mount": "readback_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/metadata.rs",
+      "mount": "metadata_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/recurrent_prefill.rs",
+      "mount": "recurrent_prefill/integration_tests.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/recurrent_prefill.rs",
+      "mount": "recurrent_prefill/benchmark_tests.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/vision/mod.rs",
+      "mount": "attention_bench_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/vision/mod.rs",
+      "mount": "attention_check.rs"
+    },
+    {
+      "crate": "kernel-api",
+      "file": "src/attention.rs",
+      "mount": "attention_tests.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/placement/native/numa.rs",
+      "mount": "numa_tests.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/arguments.rs",
+      "mount": "arguments/tests.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/support/serving.rs",
+      "mount": "serving/tests.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "src/http/openai/request.rs",
+      "mount": "request/tests.rs"
+    }
+  ],
+  "totals": {
+    "all": 427,
+    "benches": 0,
+    "src": 288,
+    "src_inline": 138,
+    "src_near": 150,
+    "tests": 139
+  }
+}

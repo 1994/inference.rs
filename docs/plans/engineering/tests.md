@@ -4,6 +4,8 @@
 
 整体排期与任务状态见 [路线图](../README.md) 的 E1。本文维护本项设计与验收。
 
+迁移前的用例身份、门控、ignore 原因与两个 CPU 测试执行器的消费者清单由 [测试归属清单](../../research/test-ownership.md) 登记，并作为 `make check` 的棘轮执行。
+
 测试正文统一放在所属 crate 的 `tests/` 中，按功能域组织文件；`src/` 保留产品实现和必要的测试模块挂载声明。保留 Rust 单元测试与集成测试的编译边界，减少重复链接、单用例专属目录和不明确的硬件依赖。
 
 完整 CPU 测试推理执行器按 [删除方案](remove-test-backends.md) 迁移；构建配置、CI 和命令见 [构建与依赖方案](build-and-dependencies.md)。

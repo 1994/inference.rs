@@ -9,9 +9,13 @@ rust_checks() {
     # Collect every bench module: the review found one of them was collected nowhere.
     python3 -m unittest discover -s tools/bench -p 'test_*.py'
     cargo fmt --manifest-path tools/bench/attention/Cargo.toml --check
-    python3 -m unittest discover -s tools/check -p 'test_layout.py'
+    # Collect every check module rather than naming one, for the same reason as tools/bench.
+    python3 -m unittest discover -s tools/check -p 'test_*.py'
     python3 tools/check/layout.py
     python3 tools/check/policy.py
+    # The test-migration ratchet: test bodies only leave src/, and no new consumer of the CPU
+    # test executors appears while E1 proceeds.
+    python3 tools/check/test-inventory.py
     cargo fmt --all --check
     # Isolated production checks prevent test features from merging into the CLI.
     cargo clippy --locked -p infer-cli --no-default-features --all-targets -- -D warnings
