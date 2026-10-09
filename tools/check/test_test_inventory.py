@@ -27,7 +27,10 @@ def inventory(src=10, tests=4, consumers=("a.rs",)):
         "ignored_reasons": {},
         "gated": {},
         "path_mounts": [],
-        "executor_consumers": list(consumers),
+        "executor_consumers": [
+            {"path": f"crates/g/{name}", "crate": "g", "patterns": ["test-backends"]}
+            for name in consumers
+        ],
     }
 
 
@@ -179,6 +182,12 @@ class RatchetTest(unittest.TestCase):
         shrunk = inventory(src=10, tests=2)
         problems = module.regressions(shrunk, recorded)
         self.assertTrue(any("test entries fell" in problem for problem in problems))
+
+    def test_a_relocated_consumer_is_not_a_new_dependency(self):
+        # The migration moves these files by design; only the dependency surface matters.
+        recorded = inventory(consumers=("a.rs",))
+        moved = inventory(consumers=("unit/a.rs",))
+        self.assertEqual(module.regressions(moved, recorded), [])
 
     def test_a_new_executor_consumer_is_refused(self):
         recorded = inventory(consumers=("a.rs",))

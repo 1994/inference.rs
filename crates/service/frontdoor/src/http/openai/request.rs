@@ -449,5 +449,5 @@ pub(super) struct WireToolName {
 }
 
 #[cfg(test)]
-#[path = "request/tests.rs"]
+#[path = "../../../tests/unit/http_openai_request.rs"]
 mod tests;

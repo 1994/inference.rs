@@ -22,6 +22,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -125,15 +126,22 @@ def collect():
     }
     totals["src"] = totals["src_inline"] + totals["src_near"]
     totals["all"] = totals["src"] + totals["tests"] + totals["benches"]
-    consumers = sorted(
-        relative
-        for path in REPO_ROOT.rglob("*")
-        if path.is_file()
-        and path.suffix in (".rs", ".toml", ".sh", ".py")
-        and "target/" not in str(path)
-        and (relative := str(path.relative_to(REPO_ROOT))) not in EXECUTOR_SCAN_EXCLUDED
-        and any(pattern in path.read_text(errors="ignore") for pattern in EXECUTOR_PATTERNS)
-    )
+    # Consumers are recorded by crate and by which patterns they mention, not by path: the
+    # migration moves these files by design, and a relocated consumer is not a new dependency.
+    consumers = []
+    for path in sorted(REPO_ROOT.rglob("*")):
+        if not path.is_file() or path.suffix not in (".rs", ".toml", ".sh", ".py"):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if "target/" in relative or relative in EXECUTOR_SCAN_EXCLUDED:
+            continue
+        text = path.read_text(errors="ignore")
+        patterns = sorted({p for p in EXECUTOR_PATTERNS if p in text})
+        if not patterns:
+            continue
+        parts = Path(relative).parts
+        crate = parts[2] if len(parts) > 2 and parts[0] == "crates" else parts[0]
+        consumers.append({"path": relative, "crate": crate, "patterns": patterns})
     return {
         "crates": inventory,
         "totals": totals,
@@ -227,10 +235,27 @@ def regressions(inventory, recorded, root=REPO_ROOT):
             f"{recorded['totals']['all']}; a smaller corpus is not progress - record where each "
             "removed case went, or re-record deliberately"
         )
-    allowed = set(recorded["executor_consumers"])
-    for path in inventory["executor_consumers"]:
-        if path not in allowed:
-            problems.append(f"{path}: new consumer of a CPU test executor")
+
+    def surface(consumers):
+        counted = Counter()
+        for consumer in consumers:
+            key = (consumer["crate"], tuple(consumer["patterns"]))
+            counted[key] += 1
+        return counted
+
+    before = surface(recorded["executor_consumers"])
+    after = surface(inventory["executor_consumers"])
+    for key, count in after.items():
+        if count > before.get(key, 0):
+            examples = [
+                consumer["path"]
+                for consumer in inventory["executor_consumers"]
+                if (consumer["crate"], tuple(consumer["patterns"])) == key
+            ][:3]
+            problems.append(
+                f"{key[0]}: {count - before.get(key, 0)} new consumer(s) of a CPU test executor "
+                f"({', '.join(examples)})"
+            )
     return problems
 
 

@@ -12,26 +12,26 @@
 | crate | src inline | src near-test | tests/ | benches/ |
 |---|---:|---:|---:|---:|
 | cuda | 33 | 34 | 0 | 0 |
-| frontdoor | 13 | 37 | 8 | 0 |
-| runtime | 8 | 5 | 48 | 0 |
 | cli | 4 | 9 | 4 | 0 |
-| agent | 0 | 12 | 0 | 0 |
 | observe | 0 | 8 | 0 | 0 |
 | kernel-api | 2 | 5 | 0 | 0 |
 | api | 0 | 6 | 0 | 0 |
 | state | 1 | 5 | 10 | 0 |
 | metal | 2 | 1 | 16 | 0 |
 | quality | 0 | 3 | 0 | 0 |
+| runtime | 0 | 0 | 61 | 0 |
 | scheduler | 0 | 0 | 34 | 0 |
 | workloads | 0 | 0 | 7 | 0 |
 | core | 0 | 0 | 18 | 0 |
 | ir | 0 | 0 | 11 | 0 |
 | spi | 0 | 0 | 3 | 0 |
 | package | 0 | 0 | 80 | 0 |
-| **total** | **63** | **125** | **239** | **0** |
+| agent | 0 | 0 | 12 | 0 |
+| frontdoor | 0 | 0 | 58 | 0 |
+| **total** | **42** | **71** | **314** | **0** |
 
-`src` 合计 **188** 个（inline 63 + 就近测试文件 125），
-`tests/` **239** 个。方案要求用例正文最终只存在于 `tests/`，因此这 188 个是本项迁移
+`src` 合计 **113** 个（inline 42 + 就近测试文件 71），
+`tests/` **314** 个。方案要求用例正文最终只存在于 `tests/`，因此这 113 个是本项迁移
 的实际工作量。
 
 ## 门控与 ignore
@@ -54,15 +54,18 @@ ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按
 | 源码 | 52 |
 | 其它（脚本/工具） | 21 |
 
-完整列表见快照的 `executor_consumers`。这些是删除 `crates/testing/cpu/host`、
-`crates/testing/cpu/reference` 与产品 `test-backends` feature 之前必须逐个替换或删除的消费者，
-也是 [E1](../plans/README.md) "消费者替换及测试迁移" 一批的输入。
+完整列表见快照的 `executor_consumers`。消费者按**crate + 提到哪些模式**登记而不是按路径：迁移本来
+就会移动这些文件，搬走一个消费者不算新增依赖；只有同一 crate 里出现新的依赖面才会被门禁拒绝。
+
+这批是删除 `crates/testing/cpu/host`、`crates/testing/cpu/reference` 与产品 `test-backends`
+feature 之前必须逐个替换或删除的消费者，也是 [E1](../plans/README.md) "消费者替换及测试迁移" 一批
+的输入。
 
 ## 门禁拒绝的变化
 
 1. **`src` 里的用例正文增加**：迁移方向是只减不增，基准数只能通过 `--record` 在新一轮迁移后下调。
 2. **`#[path]` 挂载消失或重复**：挂载必须解析到存在且唯一的文件。
-3. **出现新的执行器消费者**：删除过程中不允许新增依赖。
+3. **出现新的执行器消费者**（按依赖面判定，不按路径）。
 4. **收集总数下降**：`--record` 会同时记下新总数，避免"文件少了"被当成进展而丢掉断言。
 5. **集合被静默移出**：`tests/unit|support/` 存在却没有 `autotests = false`，或 `autotests = false`
    而 `tests/*.rs` 没有 `[[test]]` 声明 —— 两者都会让用例从 `cargo test` 里消失而不报错。
@@ -72,18 +75,21 @@ ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按
 | crate | 内容 | 收集数 |
 |---|---|---:|
 | `infer-spi` | 3 个用例移到 `tests/unit/resource.rs` | 3 → 3 |
-| `infer-ir` | `src/state_recipe/tests.rs` 移到 `tests/unit/state_recipe.rs`；补登 `tests/hardware.rs`、`tests/tokens.rs` 两个 `[[test]]` | 28 → 28（含 core） |
-| `infer-core` | 8 个就近测试文件 + 5 个内联 `mod tests` 块移到 `tests/unit/` | 28 → 28（含 ir） |
-| `infer-models`、`infer-scheduler`、`infer-workloads` | 16 个文件（11 + 2 + 3）移到各自 `tests/unit/`，含内联块抽取 | 121 → 121 |
+| `infer-ir` | `src/state_recipe/tests.rs` 移到 `tests/unit/state_recipe.rs`；补登 `hardware`、`tokens` 两个 `[[test]]` | 28 → 28（含 core） |
+| `infer-core` | 8 个就近测试文件 + 5 个内联块移到 `tests/unit/` | 28 → 28（含 ir） |
+| `infer-models`、`infer-scheduler`、`infer-workloads` | 16 个文件（11 + 2 + 3）移到各自 `tests/unit/` | 121 → 121（13 个 target） |
+| `infer-runtime`、`infer-frontdoor`、`infer-agent` | 13 个文件（6 + 6 + 1）移到各自 `tests/unit/` | 131 → 131（16 个 target） |
 
-三个操作要点，后续批次必须照做：
+四个操作要点，后续批次必须照做：
 
 1. **移动后要用 `rustfmt` 直接格式化新文件**：`cargo fmt --all` 会把 `#[path]` 挂载的
    `tests/unit/*.rs` 报进 `--check`，但不会重写它们，必须 `rustfmt --edition 2024 <file>`。
 2. **改 `autotests` 的 crate 要同时登记既有集成 target**，否则用例被静默移出收集（`infer-ir` 实测
    从 28 掉到 20）。
-3. **抽取内联块不能只数花括号**：`input/tool.rs` 的用例正文里含 JSON 字符串，`{`/`}` 会打乱深度，
-   必须按字符串/字符/注释/raw string 跳过。声明也可能是 `pub mod`，不是只有 `mod`。
+3. **抽取内联块不能只数花括号**：`input/tool.rs` 的正文含 JSON 字符串，必须按字符串/字符/注释/raw
+   string 跳过；声明也可能是 `pub mod`。
+4. **挂载重写要按解析结果匹配 `#[path]` 的值**，不能只比对文件名：`request.rs` 用的是
+   `#[path = "request/tests.rs"]`，按 basename 比对会漏掉。
 
 ## 迁移顺序
 

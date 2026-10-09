@@ -5,6 +5,38 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# Case bodies under `tests/` are mounted from their module, so `tests/unit` and
+# `tests/support` must not be auto-discovered as integration targets.
+autotests = false
+
+[[test]]
+name = "capacity"
+path = "tests/capacity.rs"
+
+[[test]]
+name = "checkpoint_owner"
+path = "tests/checkpoint_owner.rs"
+
+[[test]]
+name = "control_path"
+path = "tests/control_path.rs"
+
+[[test]]
+name = "cpu_storage"
+path = "tests/cpu_storage.rs"
+
+[[test]]
+name = "providers"
+path = "tests/providers.rs"
+
+[[test]]
+name = "runner"
+path = "tests/runner.rs"
+
+[[test]]
+name = "scheduling"
+path = "tests/scheduling.rs"
+
 [lints]
 workspace = true
 

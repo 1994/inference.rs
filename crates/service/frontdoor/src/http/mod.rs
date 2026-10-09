@@ -1,6 +1,7 @@
 //! Native JSON, text and observability HTTP adapters.
 //! Native HTTP and SSE adapters backed by a bounded, single-owner engine actor.
 #[cfg(test)]
+#[path = "../../tests/unit/http.rs"]
 mod tests;
 use crate::{RuntimeHandle, cpu};
 use error::HttpResult;
