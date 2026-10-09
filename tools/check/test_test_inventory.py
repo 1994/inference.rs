@@ -119,6 +119,49 @@ class MountTest(unittest.TestCase):
             self.assertTrue(any("times" in problem for problem in problems))
 
 
+class TargetTest(unittest.TestCase):
+    def crate(self, root, name, manifest, files):
+        crate = root / "crates" / "group" / name
+        (crate / "tests").mkdir(parents=True)
+        (crate / "Cargo.toml").write_text(manifest)
+        for path in files:
+            target = crate / "tests" / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("#[test]\nfn a() {}")
+        return crate
+
+    def test_a_helper_directory_without_autotests_off_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.crate(root, "crate-a", '[package]\nname = "crate-a"\n', ["unit/a.rs"])
+            problems = module.check_targets(root)
+            self.assertTrue(any("autotests" in problem for problem in problems))
+
+    def test_an_undeclared_integration_target_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.crate(
+                root,
+                "crate-a",
+                '[package]\nname = "crate-a"\nautotests = false\n',
+                ["hardware.rs"],
+            )
+            problems = module.check_targets(root)
+            self.assertTrue(any("hardware.rs" in problem for problem in problems))
+
+    def test_declared_targets_and_helpers_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.crate(
+                root,
+                "crate-a",
+                '[package]\nname = "crate-a"\nautotests = false\n\n'
+                '[[test]]\nname = "hardware"\npath = "tests/hardware.rs"\n',
+                ["hardware.rs", "unit/a.rs"],
+            )
+            self.assertEqual(module.check_targets(root), [])
+
+
 class RatchetTest(unittest.TestCase):
     def test_growth_in_src_is_refused(self):
         recorded = inventory(src=10)

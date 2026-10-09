@@ -6,6 +6,7 @@
 )]
 mod native;
 #[cfg(test)]
+#[path = "../../tests/unit/placement.rs"]
 mod tests;
 mod topology;
 use crate::{Error, ErrorCode, Result};

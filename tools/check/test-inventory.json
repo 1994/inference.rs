@@ -20,9 +20,9 @@
     },
     "core": {
       "benches": 0,
-      "src_inline": 11,
-      "src_near": 7,
-      "tests": 0
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 18
     },
     "cuda": {
       "benches": 0,
@@ -39,8 +39,8 @@
     "ir": {
       "benches": 0,
       "src_inline": 0,
-      "src_near": 3,
-      "tests": 8
+      "src_near": 0,
+      "tests": 11
     },
     "kernel-api": {
       "benches": 0,
@@ -195,14 +195,11 @@
     "all(test, target_os = \"macos\"": 1,
     "any(\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 3,
     "any(\n    test,\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 2,
-    "any(target_os = \"linux\", target_os = \"macos\"": 1,
     "feature = \"test-backends\"": 52,
     "not(all(target_os = \"linux\", feature = \"cuda\"": 1,
-    "not(any(target_os = \"linux\", target_os = \"macos\"": 1,
     "not(feature = \"test-backends\"": 2,
-    "not(target_os = \"linux\"": 2,
     "not(target_os = \"macos\"": 1,
-    "target_os = \"linux\"": 9,
+    "target_os = \"linux\"": 3,
     "target_os = \"macos\"": 25,
     "target_os=\"macos\"": 1
   },
@@ -274,8 +271,58 @@
     },
     {
       "crate": "core",
+      "file": "src/arena.rs",
+      "mount": "../tests/unit/arena.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/credits.rs",
+      "mount": "../tests/unit/credits.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/event.rs",
+      "mount": "../tests/unit/event.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/map.rs",
+      "mount": "../tests/unit/map.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/placement/mod.rs",
+      "mount": "../../tests/unit/placement.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/placement/native/mask.rs",
+      "mount": "../../../tests/unit/placement_native_mask.rs"
+    },
+    {
+      "crate": "core",
       "file": "src/placement/native/numa.rs",
-      "mount": "numa_tests.rs"
+      "mount": "../../../tests/unit/placement_native_numa_tests.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/placement/native/numa.rs",
+      "mount": "../../../tests/unit/placement_native_numa.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/placement/topology.rs",
+      "mount": "../../tests/unit/placement_topology.rs"
+    },
+    {
+      "crate": "core",
+      "file": "src/set.rs",
+      "mount": "../tests/unit/set.rs"
+    },
+    {
+      "crate": "ir",
+      "file": "src/state_recipe/mod.rs",
+      "mount": "../../tests/unit/state_recipe.rs"
     },
     {
       "crate": "spi",
@@ -301,9 +348,9 @@
   "totals": {
     "all": 427,
     "benches": 0,
-    "src": 285,
-    "src_inline": 138,
-    "src_near": 147,
-    "tests": 142
+    "src": 264,
+    "src_inline": 127,
+    "src_near": 137,
+    "tests": 163
   }
 }

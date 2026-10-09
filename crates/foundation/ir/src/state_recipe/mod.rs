@@ -2,6 +2,7 @@
 mod compile;
 mod layout;
 #[cfg(test)]
+#[path = "../../tests/unit/state_recipe.rs"]
 mod tests;
 use crate::{OutputReadout, StateKind};
 use infer_core::TensorId;

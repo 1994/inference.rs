@@ -14,7 +14,6 @@
 | cuda | 33 | 34 | 0 | 0 |
 | package | 62 | 3 | 15 | 0 |
 | frontdoor | 13 | 37 | 8 | 0 |
-| core | 11 | 7 | 0 | 0 |
 | runtime | 8 | 5 | 48 | 0 |
 | cli | 4 | 9 | 4 | 0 |
 | agent | 0 | 12 | 0 | 0 |
@@ -26,11 +25,14 @@
 | scheduler | 1 | 3 | 30 | 0 |
 | metal | 2 | 1 | 16 | 0 |
 | quality | 0 | 3 | 0 | 0 |
-| ir | 0 | 3 | 8 | 0 |
+| core | 0 | 0 | 18 | 0 |
+| ir | 0 | 0 | 11 | 0 |
 | spi | 0 | 0 | 3 | 0 |
-| **total** | **138** | **147** | **142** | **0** |
+| **total** | **127** | **137** | **163** | **0** |
 
-`src` 合计 **285** 个（inline 138 + 就近测试文件 147），`tests/` **142** 个。
+`src` 合计 **264** 个（inline 127 + 就近测试文件 137），
+`tests/` **163** 个。方案要求用例正文最终只存在于 `tests/`，因此这 264 个是本项迁移
+的实际工作量。
 
 ## 门控与 ignore
 
@@ -46,7 +48,7 @@ ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按
 
 ## CPU 测试执行器的消费者（84 个文件）
 
-| 类别 | 文件 |
+| 类别 | 文件数 |
 |---|---:|
 | manifest | 11 |
 | 源码 | 52 |
@@ -61,13 +63,28 @@ ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按
 1. **`src` 里的用例正文增加**：迁移方向是只减不增，基准数只能通过 `--record` 在新一轮迁移后下调。
 2. **`#[path]` 挂载消失或重复**：挂载必须解析到存在且唯一的文件。
 3. **出现新的执行器消费者**：删除过程中不允许新增依赖。
-4. **收集总数变化未经记录**：`--record` 会同时记下新的总数，避免"文件少了"被当成进展而丢掉断言。
+4. **收集总数下降**：`--record` 会同时记下新总数，避免"文件少了"被当成进展而丢掉断言。
+5. **集合被静默移出**（本轮新增）：`tests/unit|support/` 存在却没有 `autotests = false`，或
+   `autotests = false` 而 `tests/*.rs` 没有 `[[test]]` 声明 —— 两者都会让用例从 `cargo test`
+   里消失而不报错。
+
+## 迁移记录
+
+- **`infer-spi`**：3 个用例移到 `crates/foundation/spi/tests/unit/resource.rs`。
+- **`infer-ir`**：`src/state_recipe/tests.rs` 移到 `tests/unit/state_recipe.rs`。该 crate 本来就有
+  `tests/hardware.rs`、`tests/tokens.rs` 两个平台集成 target，设 `autotests = false` 后必须显式
+  `[[test]]` 声明，否则它们被静默移出收集（实测收集数从 28 掉到 20，正是第 5 条要防的情况）。
+- **`infer-core`**：8 个就近测试文件与 5 个内联 `mod tests` 块移到 `tests/unit/`，模块仍由被测模块
+  用 `#[path]` 挂载；迁移后 `cargo test -p infer-core -p infer-ir` 收集数仍为 28。
+
+两个操作要点，后续批次必须照做：
+
+1. **移动后要用 `rustfmt` 直接格式化新文件**：`cargo fmt --all` 会把 `#[path]` 挂载的
+   `tests/unit/*.rs` 报进 `--check`，但不会重写它们，必须 `rustfmt --edition 2024 <file>`。
+2. **改 `autotests` 的 crate 要同时登记既有集成 target**（见上）。
 
 ## 迁移顺序
 
 按方案与路线图：先 foundation/model/scheduler/workloads，再 runtime/frontdoor/agent，最后 GPU 私有
 测试、examples 与性能场景；每批只改目录与收集，不改数值公式或产品行为。每批完成后用
-`python3 tools/check/test-inventory.py --record` 下调基准并在本文更新表格。
-
-
-已完成的第一批：`infer-spi` 的 3 个用例正文移到 `crates/foundation/spi/tests/unit/resource.rs`，由被测模块用 `#[path]` 挂载，该 crate 设 `autotests = false`；收集数量不变，用例仍编译在原模块的测试子模块里。
+`python3 tools/check/test-inventory.py --record` 下调基准并刷新本文表格。

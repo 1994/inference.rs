@@ -30,6 +30,8 @@ SNAPSHOT = Path(__file__).with_name("test-inventory.json")
 TEST_ENTRY = re.compile(r"#\[(?:tokio::)?test\]")
 # `#[path = "....rs"]` is how a module mounts a test file that lives outside `src/`.
 PATH_MOUNT = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
+# `[[test]] name = "..."` declares an integration target by hand.
+TEST_TARGET = re.compile(r'\[\[test\]\][^\[]*?name\s*=\s*"([^"]+)"', re.DOTALL)
 # Gating attributes that decide whether a case runs by default.
 GATE = re.compile(
     r"#\[(?:cfg\(([^)]*)\)|ignore\s*=\s*\"([^\"]*)\")[^\]]*\]",
@@ -163,9 +165,50 @@ def check_mounts(inventory, root=REPO_ROOT):
     return problems
 
 
+def check_targets(root=REPO_ROOT):
+    """Every test file must actually be collected, and helper files must not be.
+
+    `autotests = false` is required once case bodies or helpers live under `tests/`, but it also
+    switches off discovery of the platform integration tests that live there, so each of those has
+    to be declared. Both mistakes are silent: the first removes targets from the run, the second
+    turns a helper into its own binary.
+    """
+    problems = []
+    for crate in sorted(
+        path for path in (root / "crates").glob("*/*") if (path / "Cargo.toml").is_file()
+    ):
+        manifest = crate / "Cargo.toml"
+        text = manifest.read_text()
+        declared = set(TEST_TARGET.findall(text))
+        off = re.search(r"^autotests\s*=\s*false", text, re.MULTILINE) is not None
+        tests = crate / "tests"
+        helpers = (
+            [
+                path
+                for path in list(tests.glob("unit/*.rs")) + list(tests.glob("support/*.rs"))
+                if (tests / "unit").is_dir() or (tests / "support").is_dir()
+            ]
+            if tests.is_dir()
+            else []
+        )
+        if helpers and not off:
+            problems.append(
+                f"{crate.name}: case bodies under tests/ need `autotests = false`, otherwise "
+                "Cargo builds each of them as its own integration binary"
+            )
+        if off:
+            problems.extend(
+                f"{crate.name}: tests/{path.name} is not declared as a [[test]] target "
+                "while autotests is off, so it is not collected"
+                for path in sorted(tests.glob("*.rs"))
+                if path.stem not in declared
+            )
+    return problems
+
+
 def regressions(inventory, recorded, root=REPO_ROOT):
     """The ratchet: what may not get worse while the migration proceeds."""
-    problems = check_mounts(inventory, root)
+    problems = check_mounts(inventory, root) + check_targets(root)
     if inventory["totals"]["src"] > recorded["totals"]["src"]:
         problems.append(
             "test bodies in src grew to "
