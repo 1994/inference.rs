@@ -14,9 +14,9 @@
     },
     "cli": {
       "benches": 0,
-      "src_inline": 4,
-      "src_near": 9,
-      "tests": 4
+      "src_inline": 2,
+      "src_near": 0,
+      "tests": 15
     },
     "core": {
       "benches": 0,
@@ -44,9 +44,9 @@
     },
     "kernel-api": {
       "benches": 0,
-      "src_inline": 2,
-      "src_near": 5,
-      "tests": 0
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 7
     },
     "metal": {
       "benches": 0,
@@ -708,17 +708,13 @@
     }
   ],
   "gated": {
-    "all(target_os = \"linux\", feature = \"cuda\"": 25,
+    "all(target_os = \"linux\", feature = \"cuda\"": 24,
     "all(test, target_os = \"linux\", feature = \"cuda\"": 1,
     "all(test, target_os = \"macos\"": 1,
-    "any(\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 3,
-    "any(\n    test,\n    target_os = \"macos\",\n    feature = \"test-backends\",\n    all(target_os = \"linux\", feature = \"cuda\"": 2,
-    "feature = \"test-backends\"": 52,
-    "not(all(target_os = \"linux\", feature = \"cuda\"": 1,
+    "feature = \"test-backends\"": 50,
     "not(feature = \"test-backends\"": 2,
-    "not(target_os = \"macos\"": 1,
     "target_os = \"linux\"": 3,
-    "target_os = \"macos\"": 25,
+    "target_os = \"macos\"": 23,
     "target_os=\"macos\"": 1
   },
   "ignored_reasons": {
@@ -785,7 +781,12 @@
     {
       "crate": "kernel-api",
       "file": "src/attention.rs",
-      "mount": "attention_tests.rs"
+      "mount": "../tests/unit/attention_tests.rs"
+    },
+    {
+      "crate": "kernel-api",
+      "file": "src/registry.rs",
+      "mount": "../tests/unit/registry.rs"
     },
     {
       "crate": "runtime",
@@ -965,12 +966,22 @@
     {
       "crate": "cli",
       "file": "src/arguments.rs",
-      "mount": "arguments/tests.rs"
+      "mount": "../tests/unit/arguments.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/backend/mod.rs",
+      "mount": "../../tests/unit/backend_mod.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/support/memory.rs",
+      "mount": "../../tests/unit/support_memory.rs"
     },
     {
       "crate": "cli",
       "file": "src/support/serving.rs",
-      "mount": "serving/tests.rs"
+      "mount": "../../tests/unit/support_serving.rs"
     },
     {
       "crate": "frontdoor",
@@ -1006,9 +1017,9 @@
   "totals": {
     "all": 427,
     "benches": 0,
-    "src": 113,
-    "src_inline": 42,
-    "src_near": 71,
-    "tests": 314
+    "src": 95,
+    "src_inline": 38,
+    "src_near": 57,
+    "tests": 332
   }
 }

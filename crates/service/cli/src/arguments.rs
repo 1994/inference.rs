@@ -113,5 +113,5 @@ impl Cli {
 }
 
 #[cfg(test)]
-#[path = "arguments/tests.rs"]
+#[path = "../tests/unit/arguments.rs"]
 mod tests;

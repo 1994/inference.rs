@@ -51,5 +51,5 @@ pub fn derive_config(
 }
 
 #[cfg(all(test, feature = "test-backends"))]
-#[path = "serving/tests.rs"]
+#[path = "../../tests/unit/support_serving.rs"]
 mod tests;

@@ -12,13 +12,13 @@
 | crate | src inline | src near-test | tests/ | benches/ |
 |---|---:|---:|---:|---:|
 | cuda | 33 | 34 | 0 | 0 |
-| cli | 4 | 9 | 4 | 0 |
 | observe | 0 | 8 | 0 | 0 |
-| kernel-api | 2 | 5 | 0 | 0 |
 | api | 0 | 6 | 0 | 0 |
 | state | 1 | 5 | 10 | 0 |
 | metal | 2 | 1 | 16 | 0 |
 | quality | 0 | 3 | 0 | 0 |
+| cli | 2 | 0 | 15 | 0 |
+| kernel-api | 0 | 0 | 7 | 0 |
 | runtime | 0 | 0 | 61 | 0 |
 | scheduler | 0 | 0 | 34 | 0 |
 | workloads | 0 | 0 | 7 | 0 |
@@ -28,19 +28,30 @@
 | package | 0 | 0 | 80 | 0 |
 | agent | 0 | 0 | 12 | 0 |
 | frontdoor | 0 | 0 | 58 | 0 |
-| **total** | **42** | **71** | **314** | **0** |
+| **total** | **38** | **57** | **332** | **0** |
 
-`src` 合计 **113** 个（inline 42 + 就近测试文件 71），
-`tests/` **314** 个。方案要求用例正文最终只存在于 `tests/`，因此这 113 个是本项迁移
-的实际工作量。
+`src` 合计 **95** 个（inline 38 + 就近测试文件 57），
+`tests/` **332** 个。起始为 288 个正文在 `src`，现已完成 193 个。
+
+### 仍留在 `src` 的 crate
+
+| crate | inline | 就近测试文件 |
+|---|---:|---:|
+| `cuda` | 33 | 34 |
+| `observe` | 0 | 8 |
+| `api` | 0 | 6 |
+| `state` | 1 | 5 |
+| `metal` | 2 | 1 |
+| `quality` | 0 | 3 |
+| `cli` | 2 | 0 |
 
 ## 门控与 ignore
 
 | 类别 | 数量 | 含义 |
 |---|---:|---|
-| `#[cfg(feature = "test-backends")]` | 52 | 只有启用测试后端才编译；删除执行器时必须一并迁移或改写 |
-| `all(target_os = "linux", feature = "cuda")` | 25 | 生产设备用例 |
-| `target_os = "macos"` | 25 | Metal 用例 |
+| `#[cfg(feature = "test-backends")]` | 50 | 只有启用测试后端才编译；删除执行器时必须一并迁移或改写 |
+| `all(target_os = "linux", feature = "cuda")` | 24 | 生产设备用例 |
+| `target_os = "macos"` | 23 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
 ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按方案要求逐条对应，不允许因为换目录
@@ -75,24 +86,24 @@ feature 之前必须逐个替换或删除的消费者，也是 [E1](../plans/REA
 | crate | 内容 | 收集数 |
 |---|---|---:|
 | `infer-spi` | 3 个用例移到 `tests/unit/resource.rs` | 3 → 3 |
-| `infer-ir` | `src/state_recipe/tests.rs` 移到 `tests/unit/state_recipe.rs`；补登 `hardware`、`tokens` 两个 `[[test]]` | 28 → 28（含 core） |
-| `infer-core` | 8 个就近测试文件 + 5 个内联块移到 `tests/unit/` | 28 → 28（含 ir） |
-| `infer-models`、`infer-scheduler`、`infer-workloads` | 16 个文件（11 + 2 + 3）移到各自 `tests/unit/` | 121 → 121（13 个 target） |
-| `infer-runtime`、`infer-frontdoor`、`infer-agent` | 13 个文件（6 + 6 + 1）移到各自 `tests/unit/` | 131 → 131（16 个 target） |
+| `infer-ir` | `state_recipe/tests.rs`；补登 `hardware`、`tokens` 两个 `[[test]]` | 28 → 28（含 core） |
+| `infer-core` | 8 个就近文件 + 5 个内联块 | 28 → 28（含 ir） |
+| `infer-models`、`infer-scheduler`、`infer-workloads` | 16 个文件（11 + 2 + 3） | 121 → 121（13 target） |
+| `infer-runtime`、`infer-frontdoor`、`infer-agent` | 13 个文件（6 + 6 + 1） | 131 → 131（16 target） |
+| `infer-state`、`infer-observe`、`infer-quality`、`infer-gpu-api`、`infer-kernel-api`、`infer-cli` | 10 个文件（2+1+1+2+2+4） | 53 → 53（14 target） |
 
-四个操作要点，后续批次必须照做：
+五个操作要点，后续批次必须照做：
 
-1. **移动后要用 `rustfmt` 直接格式化新文件**：`cargo fmt --all` 会把 `#[path]` 挂载的
-   `tests/unit/*.rs` 报进 `--check`，但不会重写它们，必须 `rustfmt --edition 2024 <file>`。
-2. **改 `autotests` 的 crate 要同时登记既有集成 target**，否则用例被静默移出收集（`infer-ir` 实测
-   从 28 掉到 20）。
-3. **抽取内联块不能只数花括号**：`input/tool.rs` 的正文含 JSON 字符串，必须按字符串/字符/注释/raw
-   string 跳过；声明也可能是 `pub mod`。
-4. **挂载重写要按解析结果匹配 `#[path]` 的值**，不能只比对文件名：`request.rs` 用的是
-   `#[path = "request/tests.rs"]`，按 basename 比对会漏掉。
+1. **移动后要用 `rustfmt` 直接格式化新文件**（`cargo fmt --all` 只报不写）。
+2. **改 `autotests` 的 crate 要同时登记既有集成 target**，否则用例被静默移出收集。
+3. **抽取内联块不能只数花括号**（测试数据里的 JSON 会打乱深度）。
+4. **重写挂载要按解析结果比对 `#[path]` 的值**，不能只比文件名。
+5. **`#[path]` 会把文件位置与模块树解耦**：`kernel-api` 的 `src/attention_tests.rs` 由
+   `src/attention.rs` 挂载，找不到 owner 时要回退到全树扫描 `#[path]` 的解析结果。
 
 ## 迁移顺序
 
-按方案与路线图：先 foundation/model/scheduler/workloads，再 runtime/frontdoor/agent，最后 GPU 私有
-测试、examples 与性能场景；每批只改目录与收集，不改数值公式或产品行为。每批完成后用
+按方案与路线图：foundation/model/scheduler/workloads 与 runtime/frontdoor/agent 已完成；接下来是
+GPU 私有测试（`cuda` 剩 67 个、`metal` 剩 3 个）、examples 与性能场景；之后是删除两个 CPU 测试执行器
+与 `test-backends` feature。每批只改目录与收集，不改数值公式或产品行为；完成后用
 `python3 tools/check/test-inventory.py --record` 下调基准并刷新本文表格。
