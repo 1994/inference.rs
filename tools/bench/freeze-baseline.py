@@ -80,6 +80,17 @@ def require_clean_source(report, role):
         )
 
 
+def require_telemetry(report, role):
+    """A frozen baseline must carry the hardware evidence for its measurement."""
+    telemetry = report.get("telemetry")
+    if not isinstance(telemetry, dict) or not telemetry.get("samples"):
+        raise ValueError(f"{role} report has no hardware telemetry")
+    if not telemetry.get("sha256"):
+        raise ValueError(f"{role} report does not fingerprint its telemetry log")
+    if not any(trial.get("gpu") for trial in report.get("trials", [])):
+        raise ValueError(f"{role} report attributes no device telemetry to its trials")
+
+
 def ratios(result):
     """Paired ratios keyed by case and metric, for comparing two measurement units."""
     return {
@@ -131,6 +142,8 @@ def freeze(args):
     candidate = json.loads(args.candidate.read_text())
     require_clean_source(baseline, "baseline")
     require_clean_source(candidate, "candidate")
+    require_telemetry(baseline, "baseline")
+    require_telemetry(candidate, "candidate")
     # Validity failures raise; a failed performance verdict is a result, not an error.
     result = gate.compare(baseline, candidate, args.max_ratio, args.require_identical_tokens)
     units = reproductions(gate, args, baseline)

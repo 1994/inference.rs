@@ -52,6 +52,7 @@ def report(case="hot_long", concurrency=1, tokens=2, repeats=3, engine="native")
         "identity": identity(engine),
         # Both sides of a pair must have matched the same declared profile.
         "checklist": {"path": "profile.json", "sha256": "checklist-1", "compliant": True},
+        "telemetry": {"log": "run.telemetry.jsonl", "sha256": "telemetry-1", "samples": 40},
         "trials": [
             {
                 "case": case,
@@ -60,6 +61,13 @@ def report(case="hot_long", concurrency=1, tokens=2, repeats=3, engine="native")
                 "concurrency": concurrency,
                 "wall_seconds": 1.0,
                 "prefix_tokens_reused": 20 if case == "hot_long" else 0,
+                "gpu": {
+                    "utilization_gpu_mean": 42.0,
+                    "utilization_gpu_max": 88.0,
+                    "utilization_memory_mean": 30.0,
+                    "sm_clock_mean_mhz": 2400.0,
+                },
+                "server_process": {"cpu_percent_one_core_mean": 120.0},
                 "results": [
                     {
                         "slot": slot,
@@ -149,6 +157,27 @@ class GateTests(unittest.TestCase):
         new["trials"][1]["prefix_tokens_reused"] = 0
         with self.assertRaisesRegex(ValueError, "without observed reuse"):
             module.compare(old, new)
+
+    def test_a_trial_without_hardware_telemetry_is_rejected(self):
+        # A latency difference with no device evidence cannot be attributed to the engine.
+        old, new = report(), report()
+        new["trials"][0]["gpu"] = None
+        with self.assertRaisesRegex(ValueError, "hardware telemetry"):
+            module.compare(old, new)
+        new = report()
+        new["trials"][0]["gpu"].pop("utilization_gpu_mean")
+        with self.assertRaisesRegex(ValueError, "hardware telemetry"):
+            module.compare(old, new)
+
+    def test_the_result_compares_device_utilisation(self):
+        old, new = report(), report()
+        for trial in new["trials"]:
+            trial["gpu"]["utilization_gpu_mean"] = 70.0
+        result = module.compare(old, new)
+        row = next(entry for entry in result["hardware"] if entry["case"] == "hot_long")
+        self.assertEqual(row["baseline_utilization_gpu_mean"], 42.0)
+        self.assertEqual(row["candidate_utilization_gpu_mean"], 70.0)
+        self.assertIn("baseline_sm_clock_mean_mhz", row)
 
     def test_a_truncated_request_is_rejected(self):
         old, new = report(), report()

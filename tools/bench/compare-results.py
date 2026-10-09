@@ -17,6 +17,10 @@ import math
 import statistics
 from pathlib import Path
 
+# Telemetry fields a measured trial must carry; without them a latency difference cannot be read
+# as engine behaviour rather than an idle device or a CPU-bound stall.
+REQUIRED_TELEMETRY = ("utilization_gpu_mean", "utilization_gpu_max", "sm_clock_mean_mhz")
+
 # Per-request latency that must be present and positive; TPOT is optional because a request with
 # one visible token has no inter-token interval.
 REQUIRED_REQUEST_LATENCY = ("ttft_seconds",)
@@ -133,6 +137,12 @@ def measured(report):
                     f"server reported {reported} generated tokens but "
                     f"{len(result['token_ids'])} were streamed"
                 )
+        # Hardware evidence is part of the measurement, not an optional extra.
+        telemetry = trial.get("gpu")
+        if not isinstance(telemetry, dict) or any(
+            telemetry.get(field) is None for field in REQUIRED_TELEMETRY
+        ):
+            raise ValueError(f"measured trial has no complete hardware telemetry: {trial['case']}")
         rows[key] = trial
     if not rows:
         raise ValueError("no measured trials")
@@ -233,6 +243,34 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
                 }
             )
     performance = all(m.get("passed", True) for m in metrics)
+    hardware = []
+    for case in sorted({key[0] for key in old}):
+        sides = [
+            [trial["gpu"] for key, trial in side.items() if key[0] == case] for side in (old, new)
+        ]
+        hardware.append(
+            {
+                "case": case,
+                "baseline_utilization_gpu_mean": statistics.fmean(
+                    entry["utilization_gpu_mean"] for entry in sides[0]
+                ),
+                "candidate_utilization_gpu_mean": statistics.fmean(
+                    entry["utilization_gpu_mean"] for entry in sides[1]
+                ),
+                "baseline_utilization_memory_mean": statistics.fmean(
+                    entry["utilization_memory_mean"] for entry in sides[0]
+                ),
+                "candidate_utilization_memory_mean": statistics.fmean(
+                    entry["utilization_memory_mean"] for entry in sides[1]
+                ),
+                "baseline_sm_clock_mean_mhz": statistics.fmean(
+                    entry["sm_clock_mean_mhz"] for entry in sides[0]
+                ),
+                "candidate_sm_clock_mean_mhz": statistics.fmean(
+                    entry["sm_clock_mean_mhz"] for entry in sides[1]
+                ),
+            }
+        )
     numeric = {
         "required": identical,
         "identical": token_mismatches == 0,
@@ -245,6 +283,7 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
         "token_mismatches": token_mismatches,
         "identical_tokens_required": identical,
         "performance": {"passed": performance, "metrics": metrics},
+        "hardware": hardware,
         "numeric": numeric,
         "quality": {
             "available": False,

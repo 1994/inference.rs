@@ -33,6 +33,7 @@ import math
 import os
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -551,6 +552,21 @@ def wait_ready(args, process, base, log_path, timeout):
     raise RuntimeError(f"startup timeout after {timeout}s; see {log_path}")
 
 
+def attribute_telemetry(report, telemetry):
+    """Attach the hardware evidence for each trial's own window.
+
+    Without this a report can show a latency difference with no way to tell an engine improvement
+    from an idle device or a CPU-bound stall.
+    """
+    samples = telemetry["samples"]
+    for trial in report["trials"]:
+        start, end = trial.get("start_unix"), trial.get("end_unix")
+        if start is None or end is None:
+            continue
+        trial["gpu"] = gpu_summary(samples, start, end)
+        trial["server_process"] = process_summary(samples, start, end)
+
+
 def measure(args, report, base, rows, save):
     counter = iter(range(1, 1_000_000))
     eos = report["eos_tokens"]
@@ -568,19 +584,22 @@ def measure(args, report, base, rows, save):
                     f"{case} repeat {repeat} has {len(group)} requests, expected {expected}"
                 )
             before = read_metrics(args, base)
+            start_unix = time.time()
             started = time.perf_counter()
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(group)) as pool:
                 results = list(
                     pool.map(partial(stream_request, args, base, args.model, eos, counter), group)
                 )
             makespan = time.perf_counter() - started
+            end_unix = time.time()
             trial = {
                 "case": case,
                 "repeat": repeat,
                 "warmup": repeat < 0,
                 "concurrency": len(group),
                 "declared_concurrency": expected,
-                "start_unix": time.time(),
+                "start_unix": start_unix,
+                "end_unix": end_unix,
                 "wall_seconds": makespan,
                 "group_makespan_seconds": makespan,
                 "results": results,
@@ -655,6 +674,188 @@ def workload_matrix(rows, repeats):
     }
 
 
+def require_protected_run():
+    """Refuse to measure outside the repository's memory-limited benchmark scope.
+
+    The plan and the telemetry tool both require it: an unprotected job can push the host into
+    swap, the run is then not comparable to a protected baseline, and the review found the
+    previous numbers had been taken outside it.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_limits", Path(__file__).with_name("check_limits.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.limits()
+    except (RuntimeError, OSError, StopIteration) as error:
+        raise RuntimeError(
+            f"{error}. Measure with: bash tools/bench/safe-run.sh python3 "
+            "tools/bench/serve-compare.py ..."
+        ) from error
+
+
+TELEMETRY_INTERVAL_SECONDS = 0.25
+TELEMETRY_FIELDS = (
+    "timestamp",
+    "index",
+    "utilization.gpu",
+    "utilization.memory",
+    "memory.used",
+    "memory.total",
+    "power.draw",
+    "power.limit",
+    "temperature.gpu",
+    "clocks.current.sm",
+    "clocks.current.memory",
+)
+
+
+def start_telemetry(output, pid, interval=TELEMETRY_INTERVAL_SECONDS):
+    """Attach the repository telemetry tool to the server for the measured window.
+
+    A measurement without hardware evidence cannot show whether a difference came from the engine
+    or from the device, so this is part of the run rather than an optional extra.
+    """
+    monitor = Path(__file__).with_name("hardware-monitor.py")
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(monitor),
+                "--pid",
+                str(pid),
+                "--output",
+                str(output),
+                "--interval",
+                str(interval),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as error:  # pragma: no cover - depends on the host
+        return None, str(error)
+    return process, None
+
+
+def stop_telemetry(process):
+    """Stop the monitor and return anything it complained about."""
+    if process is None:
+        return None
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+        process.kill()
+        process.wait(timeout=10)
+    if process.returncode in (0, None) or process.stderr is None:
+        return None
+    try:
+        return process.stderr.read().strip() or None
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        return None
+
+
+def load_telemetry(path):
+    """Parse the telemetry log into timestamped GPU rows and process samples."""
+    metadata, samples = {}, []
+    text = Path(path).read_text() if Path(path).is_file() else ""
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if entry.get("type") == "metadata":
+            metadata = entry
+        elif entry.get("type") == "sample":
+            fields = metadata.get("gpu_fields") or list(TELEMETRY_FIELDS)
+            rows = []
+            for row in entry.get("gpu") or []:
+                if len(row) != len(fields):
+                    continue
+                record = {}
+                for name, value in zip(fields, row, strict=True):
+                    if name in ("timestamp", "pstate", "clocks_event_reasons.active"):
+                        continue
+                    try:
+                        record[name] = float(value)
+                    except ValueError:
+                        record = None
+                        break
+                if record is not None:
+                    rows.append(record)
+            samples.append(
+                {
+                    "unix_seconds": entry.get("unix_seconds"),
+                    "gpu": rows,
+                    "cpu_percent_one_core": entry.get("cpu_percent_one_core") or {},
+                }
+            )
+    return {"metadata": metadata, "samples": samples}
+
+
+def gpu_summary(samples, start, end):
+    """Telemetry for the busiest device over a window.
+
+    The busiest device is the one whose utilization best explains the window, so a low value is
+    real headroom on the GPU that did the work rather than an idle sibling.
+    """
+    window = [
+        sample
+        for sample in samples
+        if sample["unix_seconds"] is not None and start <= sample["unix_seconds"] <= end
+    ]
+    rows = [row for sample in window for row in sample["gpu"]]
+    if not rows:
+        return None
+    by_device = {}
+    for row in rows:
+        by_device.setdefault(int(row.get("index", 0)), []).append(row)
+    index, device = max(
+        by_device.items(),
+        key=lambda item: statistics.fmean(row.get("utilization.gpu", 0.0) for row in item[1]),
+    )
+
+    def mean(field):
+        return statistics.fmean(row.get(field, 0.0) for row in device)
+
+    def peak(field):
+        return max(row.get(field, 0.0) for row in device)
+
+    return {
+        "device": index,
+        "samples": len(device),
+        "utilization_gpu_mean": mean("utilization.gpu"),
+        "utilization_gpu_max": peak("utilization.gpu"),
+        "utilization_memory_mean": mean("utilization.memory"),
+        "memory_used_max_mib": peak("memory.used"),
+        "power_mean_w": mean("power.draw"),
+        "sm_clock_mean_mhz": mean("clocks.current.sm"),
+        "temperature_max_c": peak("temperature.gpu"),
+    }
+
+
+def process_summary(samples, start, end):
+    """Server process CPU over a window; a busy CPU with an idle GPU explains a stall."""
+    window = [
+        sample
+        for sample in samples
+        if sample["unix_seconds"] is not None
+        and start <= sample["unix_seconds"] <= end
+        and sample["cpu_percent_one_core"]
+    ]
+    if not window:
+        return None
+    totals = [sum(sample["cpu_percent_one_core"].values()) for sample in window]
+    return {
+        "samples": len(window),
+        "cpu_percent_one_core_mean": statistics.fmean(totals),
+        "cpu_percent_one_core_max": max(totals),
+    }
+
+
 def require_cache_switch(args):
     """Refuse a requested cache state the engine cannot actually apply."""
     if args.engine == "native" and not args.prefix_cache:
@@ -666,6 +867,7 @@ def require_cache_switch(args):
 
 def run(args):
     require_cache_switch(args)
+    require_protected_run()
     rows = load_workload(args.inputs, args.repeats, args.max_input_tokens)
     eos = eos_tokens(args.model)
     port = free_port()
@@ -795,7 +997,30 @@ def run(args):
                     raise RuntimeError(
                         "run does not match the experiment checklist: " + "; ".join(mismatches)
                     )
-            measure(args, report, base, rows, save)
+            telemetry_path = Path(f"{stem}.telemetry.jsonl")
+            monitor, monitor_error = start_telemetry(telemetry_path, process.pid)
+            try:
+                measure(args, report, base, rows, save)
+            finally:
+                monitor_error = stop_telemetry(monitor) or monitor_error
+            telemetry = load_telemetry(telemetry_path)
+            attribute_telemetry(report, telemetry)
+            measured_from = min((t["start_unix"] for t in report["trials"]), default=None)
+            measured_to = max((t["end_unix"] for t in report["trials"]), default=None)
+            report["telemetry"] = {
+                "log": telemetry_path.name,
+                "sha256": (sha256_file(telemetry_path) if telemetry_path.is_file() else None),
+                "interval_seconds": TELEMETRY_INTERVAL_SECONDS,
+                "source": "tools/bench/hardware-monitor.py",
+                "error": monitor_error,
+                "samples": len(telemetry["samples"]),
+                "measured_window": (
+                    gpu_summary(telemetry["samples"], measured_from, measured_to)
+                    if measured_from is not None
+                    else None
+                ),
+            }
+            save()
             hot = [t for t in report["trials"] if t["case"] == "hot_long" and not t["warmup"]]
             reused = sum(t["prefix_tokens_reused"] for t in hot)
             report["hot_prefix_tokens_reused"] = reused

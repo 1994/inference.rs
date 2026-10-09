@@ -133,6 +133,22 @@ class FreezeTest(unittest.TestCase):
         self.assertFalse(unit["within_declared_tolerance"])
         self.assertGreater(unit["worst_drift"], 0.01)
 
+    def test_a_baseline_without_hardware_evidence_is_rejected(self):
+        for mutate in (
+            lambda r: r.pop("telemetry"),
+            lambda r: r.update(telemetry={"samples": 0}),
+            lambda r: r.update(telemetry={"samples": 10, "sha256": None}),
+            lambda r: [trial.update(gpu=None) for trial in r["trials"]],
+        ):
+            with self.subTest(mutate=mutate):
+                self.write_reports()
+                report = json.loads(self.baseline_path.read_text())
+                mutate(report)
+                self.baseline_path.write_text(json.dumps(report))
+                with self.assertRaisesRegex(ValueError, "telemetry"):
+                    self.freeze()
+                self.assertFalse((self.directory / "baselines").exists())
+
     def test_a_dirty_source_tree_cannot_be_frozen(self):
         # The revision would not determine the measured binary, so the baseline could not be
         # rebuilt from what it records.

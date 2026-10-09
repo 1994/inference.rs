@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "serve_compare", Path(__file__).with_name("serve-compare.py")
@@ -218,6 +219,16 @@ def elf(section_names):
     sections[base + 0x18 : base + 0x20] = strings_offset.to_bytes(8, "little")
     sections[base + 0x20 : base + 0x28] = len(strings).to_bytes(8, "little")
     return bytes(header) + bytes(sections) + strings
+
+
+class ProtectedRunTest(unittest.TestCase):
+    def test_measuring_outside_the_protected_scope_is_refused(self):
+        # An unprotected job can swap, and the review found the previous numbers had been taken
+        # outside the wrapper, so the harness refuses instead of recording them.
+        with mock.patch.object(module, "Path") as path:
+            path.return_value.with_name.return_value = Path("/nonexistent/check_limits.py")
+            with self.assertRaises((RuntimeError, OSError)):
+                module.require_protected_run()
 
 
 class IdentityTest(unittest.TestCase):
