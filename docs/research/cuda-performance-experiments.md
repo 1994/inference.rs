@@ -818,3 +818,86 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
 ~135GB+）在 H200 上单卡 141GB 是极限、TP=2 稳妥 ——  MoE 前置清单见 §八 阶段 3
 与上一轮评估（grouped GEMM → 混合精度 loader → Qwen Sparse Attention → PLE →
 expert offload）。
+
+## 十、2026-10-09 B3 基线后的实测归因
+
+本节记录首批服务基线（`2b-mtp0-serving-v1`、`27b-mtp0-serving-v1`、`27b-mtp2-serving-v1`）
+签发时的实测归因，用于替换此前的推算锚点。比率方向统一为 **native / vLLM**。
+
+### 服务层结论【确证】
+
+| profile | short | long | batch4 | hot_long | long TTFT | batch4 TTFT |
+|---|---:|---:|---:|---:|---:|---:|
+| 2b-mtp0 | 1.03–1.06 | 1.24–1.26 | 1.56–1.58 | 1.17–1.22 | 3.4–3.5 | 1.8–2.3 |
+| 27b-mtp0 | 1.07–1.12 | 1.28–1.29 | 1.35–1.41 | 1.09–1.13 | 3.9–4.1 | 1.7–2.0 |
+| 27b-mtp2 | 1.26–1.31 | 1.70–1.73 | 3.50–3.56 | 1.05–1.13 | 4.2–4.5 | 7.3–8.1 |
+
+两个独立配对单位结论一致；单位间最差格漂移 12.0–18.6%，接近阈值的格目前不可分辨。
+
+启动时间不属于以上任何数字：vLLM 13.8–39.6 s，native 3.3–5.1 s。vLLM 运行时的整机负载与
+风扇主要由这段启动（CUDA graph capture、inductor 编译、按 0.88 分配 KV）造成。
+
+### 硬件归因【确证】
+
+同一次测量内（active window，仅工作负载运行期间）：
+
+| profile | native GPU 利用率 | vLLM GPU 利用率 | native 进程 CPU | vLLM 进程 CPU |
+|---|---:|---:|---:|---:|
+| 2b-mtp0 | 20.0–20.5% | 10.3–20.0% | 91–92% | 42–44% |
+| 27b-mtp0 | 62.3–63.6% | 56.4–65.9% | 98–99% | 26% |
+| 27b-mtp2 | 54.8–55.0% | 34.9–41.6% | 98% | 30–38% |
+
+**native 的 GPU 利用率不低于 vLLM**，因此"GPU 没吃满"不是差距来源；差距是每步的效率与
+主机侧成本。native 同时占满一个 CPU 核，而 vLLM 只用 26–44%。
+
+### 逐算子设备时间（27B、mtp 0）【确证】
+
+`INFER_CUDA_PREFILL_PROFILE` + `INFER_CUDA_PROFILE_GRAPH_ONLY=1`（仅图边界事件，避免逐节点
+事件自身的开销），同一 profile 的完整矩阵：
+
+| 图 | 每次 replay | 设备时间占比 | 主要算子 |
+|---|---:|---|---|
+| `slot_decode` | 18.69 ms | 5514 ms | linear 17.3 / delta 1.0 / norm 0.8 ms |
+| `prefill` | 142.95 ms | 2573 ms | delta 58.3(41%) / linear 41.3(29%) / attention 37.3(26%) |
+| `prefill_last` | 51.21 ms | 1434 ms | linear 24.5(45%) / delta 19.3(36%) / attention 5.4 ms |
+
+`INFER_CUDA_EXECUTION_PROFILE` 同一轮给出的主机侧单次往返：`prefill_step` 16.09 ms × 761 次，
+`prefill_chunk` 107.95 ms × 38 次。该数值是**包含等待设备的同步往返**，因此不是叠加项——
+它也说明解码路径上主机回读**没有**成为关键路径。
+
+并发确实被合并：181 次调用带 4 条 decode lane（batch4 真批处理），其余单条来自单请求用例。
+
+### 与内存 roofline 的对比【确证】
+
+27B NVFP4 权重 21.81 GiB（23.42 GB）；RTX 5090 峰值带宽 1.79 TB/s。
+
+- 读一遍权重的下限：**13.07 ms/token**。
+- native `slot_decode` 实测 18.69 ms → **1.43× 下限**。
+- 服务层 long 用例：native ≈20.8 ms/token，vLLM ≈17.3 ms/token（1.32× 下限）。
+
+结论：解码已经接近带宽墙，两者相差约 1.2–1.3×，**不是数量级差异**；真正的倍差在
+prompt/prefill 与并发准入上（long TTFT 3.9–4.5x、batch4 1.35–3.56x）。
+
+### 优先顺序【推断】
+
+1. **Delta 的 prefill 占用率**（`recurrent_prefill::delta`，见 §一 与本节 prefill 表）：
+   每个 CTA 为每个 value head 串行处理 LANES 个 token，每次迭代读写整个 D×D=64 KB 状态，
+   网格只有 48 个 CTA（170 SM）。把 value 维切成 S 块是**数值精确**的（列之间互不依赖，
+   归约只发生在 key 维），网格变成 48×S，这是当前 prefill 41% 占比的直接杠杆。
+2. **每 token 的 replay 数**（§〇 结论 1）：prefill 单次 replay 成本与 chunk 内 token 数无关，
+   因此"权重一遍过、token 成批过"仍然成立。
+3. 解码侧：把 greedy 采样搬到设备端、只回传 token，可去掉每步 993 KB 的整词表 D2H 与
+   一次 `to_vec` 主机拷贝；但它不是当前关键路径，收益应低于上面两项，排在后面。
+
+复现命令（必须在受保护范围内）：
+
+```sh
+bash tools/bench/safe-run.sh env \
+    INFER_CUDA_PREFILL_PROFILE=/tmp/ops.jsonl INFER_CUDA_PROFILE_GRAPH_ONLY=1 \
+    INFER_CUDA_EXECUTION_PROFILE=/tmp/steps.jsonl \
+    python3 tools/bench/serve-compare.py --engine native \
+    --model /home/r/models/Qwen3.8-27B-NVFP4 --executable target/release/infer \
+    --inputs artifacts/workloads/Qwen3.8-27B-NVFP4-inputs.json --output-dir artifacts/b3 \
+    --mtp 0 --tokens 64 --gpu-memory-utilization 0.88 --max-model-len 65536 --max-num-seqs 16 \
+    --run-id <新 ID> --profile-id 27b-mtp0
+```
