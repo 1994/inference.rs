@@ -13,9 +13,9 @@ pub(crate) mod kernels {
         reason = "CUDA state kernel binds explicit tensors and the padding metadata"
     )]
     #[cutile::entry()]
-    fn delta<const KH: i32, const VH: i32, const D: i32, const LANES: i32>(
-        state: &mut Tensor<f32, { [1, D, D] }>,
-        out: &mut Tensor<f32, { [1, LANES, D] }>,
+    fn delta<const KH: i32, const VH: i32, const D: i32, const LANES: i32, const SW: i32>(
+        state: &mut Tensor<f32, { [1, D, SW] }>,
+        out: &mut Tensor<f32, { [1, LANES, SW] }>,
         qkv: &Tensor<f32, { [-1, -1, D] }>,
         beta: &Tensor<f32, { [-1, -1] }>,
         alpha: &Tensor<f32, { [-1, -1] }>,
@@ -28,14 +28,20 @@ pub(crate) mod kernels {
         let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
         let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
         let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
-        let mut old = state.load_like(state).reshape(shape![D, D]);
+        // One block of the value dimension. The state's columns are mutually independent - every
+        // reduction below is over the key dimension - so the grid gains SW times more blocks
+        // without changing any summation order.
+        let mut old = state.load_like(state).reshape(shape![D, SW]);
         for lane in 0i32..LANES {
             if lane < count && base + lane + offset >= 0 {
                 let key = pid.0 / (VH / KH);
                 let qp = qkv.partition(shape![1, 1, D]);
                 let mut q = qp.load([lane, key, 0i32]).reshape(shape![D]);
                 let mut k = qp.load([lane, KH + key, 0i32]).reshape(shape![D]);
-                let v = qp.load([lane, 2i32 * KH + pid.0, 0i32]).reshape(shape![D]);
+                let vp = qkv.partition(shape![1, 1, SW]);
+                let v = vp
+                    .load([lane, 2i32 * KH + pid.0, pid.2])
+                    .reshape(shape![SW]);
                 let qs: Tile<f32, { [] }> = reduce_sum(q * q, 0i32);
                 let ks: Tile<f32, { [] }> = reduce_sum(k * k, 0i32);
                 let qs = qs.reshape(shape![1]);
@@ -67,24 +73,24 @@ pub(crate) mod kernels {
                 );
                 let soft = select(large, at, soft);
                 let decay = exp(zero - exp(a_log.partition(shape![1]).load([pid.0])) * soft);
-                let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, D]);
-                let kb = k.reshape(shape![D, 1]).broadcast(shape![D, D]);
-                let predicted: Tile<f32, { [D] }> = reduce_sum(decayed * kb, 0i32);
-                let predicted = predicted.reshape(shape![D]);
-                let diff = (v - predicted) * bt.broadcast(shape![D]);
-                let updated: Tile<f32, { [D, D] }> =
-                    decayed + kb * diff.reshape(shape![1, D]).broadcast(shape![D, D]);
-                let qb = q.reshape(shape![D, 1]).broadcast(shape![D, D]);
-                let result: Tile<f32, { [D] }> = reduce_sum(updated * qb, 0i32);
+                let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+                let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let predicted: Tile<f32, { [SW] }> = reduce_sum(decayed * kb, 0i32);
+                let predicted = predicted.reshape(shape![SW]);
+                let diff = (v - predicted) * bt.broadcast(shape![SW]);
+                let updated: Tile<f32, { [D, SW] }> =
+                    decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+                let qb = q.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let result: Tile<f32, { [SW] }> = reduce_sum(updated * qb, 0i32);
                 old = updated;
-                out.partition_mut(shape![1, 1, D])
-                    .store(result.reshape(shape![1, 1, D]), [0i32, lane, 0i32]);
+                out.partition_mut(shape![1, 1, SW])
+                    .store(result.reshape(shape![1, 1, SW]), [0i32, lane, 0i32]);
             } else {
-                out.partition_mut(shape![1, 1, D])
-                    .store(0.0f32.broadcast(shape![1, 1, D]), [0i32, lane, 0i32]);
+                out.partition_mut(shape![1, 1, SW])
+                    .store(0.0f32.broadcast(shape![1, 1, SW]), [0i32, lane, 0i32]);
             }
         }
-        state.store(old.reshape(shape![1, D, D]));
+        state.store(old.reshape(shape![1, D, SW]));
     }
     #[cutile::entry()]
     fn transpose<const D: i32>(

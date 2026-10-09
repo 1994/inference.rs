@@ -913,22 +913,31 @@ bash tools/bench/safe-run.sh env \
 split 4 相对 split 1 的差为 state 2.98e-8 / out 7.45e-9，与既有 chunked-vs-per-lane 的
 9.31e-9 / 7.45e-9 同量级，属于 cuTile lowering 的末位差，不是数值口径变化。
 
-**性能：没有收益。** 27B、mtp 0，同一 profile 的完整矩阵（图边界事件）：
+**性能：两个核都没有收益。** 27B、mtp 0，同一 profile 的完整矩阵（图边界事件）：
 
-| split | `prefill` 每次 replay | `prefill_last` | `slot_decode` |
-|---:|---:|---:|---:|
-| 1 | 143.60 ms | 51.51 ms | 18.71 ms |
-| 4 | 147.36 ms | 52.74 ms | 18.76 ms |
+| 内核 | split | `prefill` 每次 replay | `prefill_last` | `slot_decode` |
+|---|---:|---:|---:|---:|
+| per-lane | 1 | 143.60 ms | 51.51 ms | 18.71 ms |
+| per-lane | 4 | 147.36 ms | 52.74 ms | 18.76 ms |
+| chunked | 1 | 143.98 ms | 51.46 ms | 18.70 ms |
+| chunked | 4 | 147.64 ms | 52.86 ms | 18.68 ms |
 
-网格从 48 块变到 192 块（170 SM）却不变快，说明这个核**不是**占用率受限。
+网格从 48 块变到 192 块（170 SM）却不变快，说明这个核**不是**占用率受限。逐节点画像还显示
+27B 的 prefill 图每层只有 **一个** delta 节点（1154 节点 / 64 层 ≈ 18 个/层，delta 占 1 个），
+即实际走的是 chunked 核，因此第一次只改 per-lane 核时测到的"无收益"同时意味着改错了核；
+补上 chunked 核后仍是 +2.5%，两条路径一起否定了占用率假设。
 
 **真正的瓶颈是 prompt 图的节点数和每节点开销。** `INFER_CUDA_PREFILL_PROFILE` 的逐节点输出：
 32-lane 的 prefill 图有 **1154 个节点**，单次 replay 119.3 ms，即 **每节点 103 µs**；其中 delta 占
 61.28 ms。按 64 层换算，per-lane 的 prompt token 每层约 **70 µs**，而 vLLM 的 511-token prompt
 TTFT 约 150 ms、即每层每 token 约 5 µs——**差在每层每 token 的固定开销，约 15×**，不在带宽。
 
-因此 prompt 侧的杠杆是**减少每 token 的串行小算子数**（把每层的 conv/delta/norm 等窄算子合并、
-把 32 条 lane 并成更宽的 tile），而不是给单个窄算子加块。§十 推断 1 作为优化方向被这次 A/B 否定，
-保留为实现与复现工具：分块代码在 split=1 时是原有路径，数值已验证，后续若要换 lowering 可直接复用。
+**下一次要测的是 replay 次数，而不是核内并行度。** `prefill` 图在整轮矩阵里只 replay 18 次
+（`prefill_last` 28 次），即一个 prompt 基本由 1–2 次 replay 处理完；`long` 的 TTFT 248 ms 对应
+511 token，约 0.49 ms/token，而 vLLM 同负载约 63 ms、即 0.12 ms/token。所以下一步先量清楚
+「每个 prompt 长度用了多少次 replay、每次 replay 覆盖多少 token、以及单次 replay 里各节点占比」，
+再决定是合并窄算子、加宽 tile，还是减少 replay 次数；在这些数据之前不再改核。
 
-下一轮的目标相应改为：统计每层每 token 的节点构成，找出可合并的连续算子对，按"一次只改一处"做 A/B。
+§十 推断 1 作为优化方向被这次 A/B 否定。分块代码保留：split=1 时是原有路径，数值已验证
+（chunked 在 4 组几何上 split 4 相对单块最差 2.98e-8 state / 1.49e-8 out，per-lane 为
+2.98e-8 / 7.45e-9，都在 f64 参考的 2e-5 之内），后续若要换 lowering 或换 tile 宽度可直接复用。

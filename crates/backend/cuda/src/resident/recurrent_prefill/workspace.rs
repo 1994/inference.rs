@@ -125,10 +125,14 @@ impl Workspace {
             .map(|&x| usize::try_from(x).map_err(error))
             .collect::<std::result::Result<_, _>>()?;
         let mut output = output.reshape(&[self.lanes, value_heads, value_dim])?;
+        // The value dimension may be split so the grid fills the device and each block moves a
+        // quarter of the state per lane. Off by default until the full matrix shows a gain.
+        let block = super::super::capture_state::value_block(value_dim)
+            .map_err(|_| error("chunk delta value split"))?;
         scope.record(
             kernels::delta(
-                state.partition([1, key_dim, value_dim]),
-                (&mut *scratch).partition([1, self.lanes, value_dim]),
+                state.partition([1, key_dim, block]),
+                (&mut *scratch).partition([1, self.lanes, block]),
                 &arena.get(node.inputs[0]).map_err(error)?.view(&[
                     self.lanes,
                     2 * key_heads + value_heads,
@@ -157,6 +161,7 @@ impl Workspace {
                 value_heads.to_string(),
                 key_dim.to_string(),
                 self.lanes.to_string(),
+                block.to_string(),
             ]),
         )?;
         scope.record(

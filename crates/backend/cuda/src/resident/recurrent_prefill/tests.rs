@@ -87,42 +87,69 @@ fn check_case(
             }
         }
     }
-    let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
-    let src = device.upload(initial, &[vh, dim, dim])?;
-    api::memcpy(&mut state, &src).sync_on(&device.stream)?;
-    let mut output = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
     let qkv = device.upload(qkv, &[lanes, 2 * kh + vh, dim])?;
     let beta = device.upload(beta, &[lanes, vh])?;
     let alpha = device.upload(alpha, &[lanes, vh])?;
     let a_log = device.upload(a_log, &[vh])?;
     let bias = device.upload(bias, &[vh])?;
     let metadata = device.upload(vec![0, i32::try_from(count)?, offset, 0], &[4])?;
-    kernels::delta(
-        (&mut state).partition([1, dim, dim]),
-        (&mut output).partition([1, lanes, dim]),
-        &qkv,
-        &beta,
-        &alpha,
-        &a_log,
-        &bias,
-        &metadata,
-    )
-    .generics(vec![
-        kh.to_string(),
-        vh.to_string(),
-        dim.to_string(),
-        lanes.to_string(),
-    ])
-    .sync_on(&device.stream)?;
-    for (actual, reference) in [
-        (state.to_host_vec().sync_on(&device.stream)?, expected),
-        (output.to_host_vec().sync_on(&device.stream)?, outputs),
-    ] {
-        for (a, b) in actual.iter().zip(reference) {
-            assert!(
-                (f64::from(*a) - b).abs() < 0.00002,
-                "{geometry:?} count={count} offset={offset}: {a} != {b}"
+    // The chunk rotates the whole state once per lane, so a value-dimension block leaves each
+    // block a quarter of the traffic per lane. Both widths must match the reference, and the split
+    // must land on the single-block launch to rounding rather than merely inside it.
+    let mut single: Option<(Vec<f32>, Vec<f32>)> = None;
+    for split in [1_usize, 4] {
+        let block = dim / split;
+        let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+        let src = device.upload(initial.clone(), &[vh, dim, dim])?;
+        api::memcpy(&mut state, &src).sync_on(&device.stream)?;
+        let mut output = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
+        kernels::delta(
+            (&mut state).partition([1, dim, block]),
+            (&mut output).partition([1, lanes, block]),
+            &qkv,
+            &beta,
+            &alpha,
+            &a_log,
+            &bias,
+            &metadata,
+        )
+        .generics(vec![
+            kh.to_string(),
+            vh.to_string(),
+            dim.to_string(),
+            lanes.to_string(),
+            block.to_string(),
+        ])
+        .sync_on(&device.stream)?;
+        let actual_state = state.to_host_vec().sync_on(&device.stream)?;
+        let actual_out = output.to_host_vec().sync_on(&device.stream)?;
+        for (actual, reference) in [(&actual_state, &expected), (&actual_out, &outputs)] {
+            for (a, b) in actual.iter().zip(reference) {
+                assert!(
+                    (f64::from(*a) - b).abs() < 0.00002,
+                    "{geometry:?} count={count} offset={offset} split={split}: {a} != {b}"
+                );
+            }
+        }
+        if split == 1 {
+            single = Some((actual_state, actual_out));
+        } else {
+            let (state_ref, out_ref) = single.as_ref().ok_or("single block must run first")?;
+            let state_gap = actual_state
+                .iter()
+                .zip(state_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            let out_gap = actual_out
+                .iter()
+                .zip(out_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            eprintln!(
+                "{geometry:?} split {split}: state {state_gap:e}, out {out_gap:e} against one block"
             );
+            assert!(state_gap < 1.0e-6, "{geometry:?} split moved the state");
+            assert!(out_gap < 1.0e-7, "{geometry:?} split moved the output");
         }
     }
     Ok(())
@@ -343,6 +370,7 @@ fn recurrence_gap(
         vh.to_string(),
         dim.to_string(),
         lanes.to_string(),
+        dim.to_string(),
     ])
     .sync_on(&device.stream)?;
 
