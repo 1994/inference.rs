@@ -232,6 +232,56 @@ class GateTests(unittest.TestCase):
         self.assertFalse(module.compare(old, new)["passed"])
 
 
+class OrientationTest(unittest.TestCase):
+    """The target is native/vLLM <= 1.10x, so the direction must not be guessable."""
+
+    @staticmethod
+    def pair(native_scale=1.0, vllm_scale=1.0):
+        native = report()
+        vllm = report()
+        vllm["identity"] = identity(
+            "vllm",
+            limits={"source": "command line", "max_model_len": 8192},
+            build={"path": "/venv/bin/python", "sha256": "x"},
+        )
+        for trial in native["trials"]:
+            trial["wall_seconds"] *= native_scale
+        for trial in vllm["trials"]:
+            trial["wall_seconds"] *= vllm_scale
+        return native, vllm
+
+    def test_a_slower_engine_under_test_fails_the_target(self):
+        # native is 40% slower than vLLM: it must fail, not pass by inversion.
+        native, vllm = self.pair(native_scale=1.4)
+        result = module.compare(native, vllm)
+        self.assertEqual(result["ratio_orientation"], "native/vllm")
+        self.assertAlmostEqual(result["metrics"][0]["ratio"], 1.4)
+        self.assertFalse(result["passed"])
+        # Writing the arguments the other way round must not change the verdict.
+        swapped = module.compare(vllm, native)
+        self.assertEqual(swapped["ratio_orientation"], "native/vllm")
+        self.assertAlmostEqual(swapped["metrics"][0]["ratio"], 1.4)
+        self.assertFalse(swapped["passed"])
+
+    def test_a_faster_engine_under_test_passes(self):
+        native, vllm = self.pair(native_scale=0.8)
+        self.assertTrue(module.compare(native, vllm)["passed"])
+
+    def test_an_unnamed_reference_is_refused(self):
+        native, sglang = self.pair()
+        sglang["identity"]["engine"] = "sglang"
+        with self.assertRaisesRegex(ValueError, "neither report is the reference"):
+            module.compare(native, sglang)
+
+    def test_a_same_engine_pair_is_an_a_b(self):
+        old, new = report(), report()
+        for trial in new["trials"]:
+            trial["wall_seconds"] *= 1.3
+        result = module.compare(old, new)
+        self.assertEqual(result["ratio_orientation"], "native/baseline")
+        self.assertAlmostEqual(result["metrics"][0]["ratio"], 1.3)
+
+
 class IdentityAlignmentTest(unittest.TestCase):
     def test_a_missing_identity_block_is_rejected(self):
         old, new = report(), report()

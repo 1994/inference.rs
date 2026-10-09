@@ -18,12 +18,24 @@
 | `bench` / `attention` | [attention.sh](bench/attention.sh) | 原生 attention 与 Candle 的独立数值、性能门禁 |
 | `bench` | [check-cuda-service.py](bench/check-cuda-service.py)、[mtp-ab.py](bench/mtp-ab.py) | CUDA 服务与 MTP A/B 验证；参数见 `--help` |
 | `bench` | [serve-workloads.py](bench/serve-workloads.py)、[serve-cases.py](bench/serve-cases.py) | 生成共同 token 输入与选取局部场景；每个用例声明并发 slot，采集端据此校验完整矩阵 |
-| `bench` | [serve-compare.py](bench/serve-compare.py) | 服务采集：记录 release 构建身份、模型制品指纹、硬件、生效配置回读与逐请求计时；每次运行用唯一 `--run-id` 且拒绝覆盖已有报告 |
+| `bench` | [experiment-checklist.py](bench/experiment-checklist.py) | 实验清单：`--init` 由 workload 与模型制品生成 profile，`--check` 校验一次运行，`--compare` 输出两边配置对照表 |
+| `bench` | [serve-compare.py](bench/serve-compare.py) | 服务采集：记录 release 构建身份、模型制品指纹、生效配置回读、逐请求计时与逐轮 GPU/进程遥测；每次运行用唯一 `--run-id` 且拒绝覆盖。必须在 [safe-run.sh](bench/safe-run.sh) 内运行，否则拒绝采集 |
+| `bench` | [freeze-baseline.py](bench/freeze-baseline.py) | 把已过门禁的配对冻结成不可覆盖的基线目录，可用 `--verify` 复核哈希 |
 | `bench` | [compare-results.py](bench/compare-results.py) | 报告门禁：先校验身份、矩阵、缓存复用与计时可用性，再分别给出性能与数值结论；debug 构建、未生效开关和不完整矩阵判为无效而非通过 |
 | `bench` | [hardware-monitor.py](bench/hardware-monitor.py) | 保存 NVIDIA/主机遥测，供独立核查实验环境 |
 | `bench` | [safe-run.sh](bench/safe-run.sh) | GPU 验证任务的内存限额与互斥保护 |
 | `vision` | [图像指南](../docs/guides/vision.md) | 官方参考导出、预处理、视觉塔与端到端 parity |
 | `package` | [package.py](package/package.py) | 根 build.rs 契约、Zig 编译、归档与验收，见 [打包指南](../docs/guides/packaging.md) |
+
+性能采集必须在内存限额与互斥保护内进行，遥测工具也会拒绝其他环境：
+
+```sh
+bash tools/bench/safe-run.sh python3 tools/bench/serve-compare.py --engine native ... \
+    --checklist benchmarks/profiles/27b-mtp0.json --run-id <唯一 ID>
+```
+
+服务的性能门禁是 **native/vLLM ≤ 1.10×**（`compare-results.py` 的 ratio 方向为「被测引擎 / 参考引擎」，
+跨引擎时必须显式给出参考侧；同引擎配对按候选相对基线解释）。
 
 服务检查依赖已构建的 CLI，参数通过各脚本的 `--help` 查看。参考模型导出示例见[微型模型说明](../examples/qwen-hybrid-tiny/README.md)；CPU 基准的计数范围见 [CPU 性能测量](../docs/guides/cpu-performance.md)。
 

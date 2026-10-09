@@ -91,6 +91,28 @@ def align(baseline, candidate):
         )
 
 
+def orientation(baseline, candidate, reference="vllm"):
+    """Order a pair so the ratio is always "engine under test / reference engine".
+
+    The plan's target is `native/vLLM <= 1.10x`: the candidate must not be more than 10% slower
+    than the reference. Which side is which therefore has to be explicit; getting it backwards
+    turns a pass into a failure and hides real regressions behind a faster reference.
+    """
+    left = (baseline.get("identity") or {}).get("engine")
+    right = (candidate.get("identity") or {}).get("engine")
+    if left == right:
+        # An A/B of one engine: the candidate is the later measurement.
+        return candidate, baseline, f"{left}/baseline"
+    if reference not in (left, right):
+        raise ValueError(
+            f"neither report is the reference engine {reference!r} (have {left!r}, {right!r}); "
+            "name the reference side instead of assuming its direction"
+        )
+    if left == reference:
+        return candidate, baseline, f"{right}/{reference}"
+    return baseline, candidate, f"{left}/{reference}"
+
+
 def measured(report):
     """Validate one report and return its measured trials keyed by case and repeat."""
     if report.get("completed") is not True:
@@ -169,7 +191,7 @@ def availability(values):
     return usable
 
 
-def compare(baseline, candidate, max_ratio=1.1, identical=False):
+def compare(baseline, candidate, max_ratio=1.1, identical=False, reference="vllm"):
     for field in ("max_new_tokens", "temperature", "mtp_depth", "eos_tokens"):
         if field not in baseline or baseline[field] != candidate.get(field):
             raise ValueError(f"unaligned or missing workload field: {field}")
@@ -179,7 +201,8 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
     require_release_identity(baseline)
     require_release_identity(candidate)
     align(baseline, candidate)
-    old, new = measured(baseline), measured(candidate)
+    tested_report, fixed_report, label = orientation(baseline, candidate, reference)
+    old, new = measured(fixed_report), measured(tested_report)
     if old.keys() != new.keys():
         raise ValueError("trial sets differ")
     token_mismatches = 0
@@ -203,6 +226,8 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
                 if row[field] != peer[field]:
                     raise ValueError(f"request work differs: {key}, {slot}, {field}")
             token_mismatches += row["token_ids"] != peer["token_ids"]
+    # `old` is the reference side and `new` the engine under test, so every ratio below is
+    # engine-under-test over reference and the threshold reads directly.
     metrics = []
     for case in sorted({key[0] for key in old}):
         groups = [[v for k, v in rows.items() if k[0] == case] for rows in (old, new)]
@@ -287,6 +312,7 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
     passed = performance and (not identical or numeric["identical"])
     return {
         "passed": passed,
+        "ratio_orientation": label,
         "max_latency_ratio": max_ratio,
         "token_mismatches": token_mismatches,
         "identical_tokens_required": identical,
@@ -321,6 +347,11 @@ def main():
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--max-ratio", type=float, default=1.1)
     parser.add_argument("--require-identical-tokens", action="store_true")
+    parser.add_argument(
+        "--reference-engine",
+        default="vllm",
+        help="the side the target is measured against; the ratio is the other side over this one",
+    )
     args = parser.parse_args()
     if not math.isfinite(args.max_ratio) or args.max_ratio <= 0:
         parser.error("--max-ratio must be positive and finite")
@@ -330,6 +361,7 @@ def main():
             json.loads(args.candidate.read_text()),
             args.max_ratio,
             args.require_identical_tokens,
+            args.reference_engine,
         )
     except (ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
