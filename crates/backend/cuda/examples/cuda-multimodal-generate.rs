@@ -40,11 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &std::fs::read(std::path::Path::new(&root).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
-    let message = ChatMessage {
-        role: "user".into(),
-        content: "<|vision_start|><|image_pad|><|vision_end|>Describe this image in a few words."
-            .into(),
-    };
+    let message = ChatMessage::new(
+        "user",
+        "<|vision_start|><|image_pad|><|vision_end|>Describe this image in a few words.",
+    );
     let text = assets.render_chat(&[message], &ChatOptions::default())?;
     let mut program = loaded.sequence(4096)?;
     let mut cases = Vec::new();

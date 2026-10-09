@@ -16,10 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let text = TextAssets::open(&options.model, 4096)?;
     let resolved = text.generation.resolve(&options.sampling())?;
     let input = text.encode_chat(
-        &[ChatMessage {
-            role: "user".into(),
-            content: options.prompt.clone(),
-        }],
+        &[ChatMessage::new("user", options.prompt.clone())],
         &ChatOptions {
             enable_thinking: resolved.enable_thinking,
             ..Default::default()

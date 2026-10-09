@@ -120,6 +120,113 @@
         248068,
         198
       ]
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是一个助手。"
+        },
+        {
+          "role": "user",
+          "content": "北京天气如何？"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "name": "get_weather",
+              "arguments": "{\"city\": \"北京\"}"
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "content": "{\"temp_c\": 21}",
+          "tool_call_id": "call_1"
+        }
+      ],
+      "enable_thinking": false,
+      "rendered": "<|im_start|>system\n你是一个助手。<|im_end|>\n<|im_start|>user\n北京天气如何？<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n<tool_call>\n<function=get_weather>\n<parameter=city>\n北京\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n{\"temp_c\": 21}\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "tokens": [
+        248045,
+        8678,
+        198,
+        133653,
+        110257,
+        1710,
+        248046,
+        198,
+        248045,
+        846,
+        198,
+        98116,
+        101618,
+        97033,
+        10992,
+        248046,
+        198,
+        248045,
+        74455,
+        198,
+        248068,
+        271,
+        248069,
+        271,
+        248058,
+        198,
+        27,
+        1628,
+        27362,
+        67017,
+        29,
+        198,
+        27,
+        15704,
+        28,
+        8656,
+        29,
+        198,
+        98116,
+        198,
+        510,
+        15704,
+        29,
+        198,
+        510,
+        1628,
+        29,
+        198,
+        248059,
+        248046,
+        198,
+        248045,
+        846,
+        198,
+        248066,
+        198,
+        4754,
+        3757,
+        648,
+        763,
+        220,
+        17,
+        16,
+        92,
+        198,
+        248067,
+        248046,
+        198,
+        248045,
+        74455,
+        198,
+        248068,
+        271,
+        248069,
+        271
+      ]
     }
   ]
 }

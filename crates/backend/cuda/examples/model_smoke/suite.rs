@@ -18,10 +18,10 @@ pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
     let mut inputs = Vec::new();
     for record in records {
         inputs.push(text.encode_chat(
-            &[ChatMessage {
-                role: "user".into(),
-                content: record["prompt"].as_str().ok_or("prompt required")?.into(),
-            }],
+            &[ChatMessage::new(
+                "user",
+                record["prompt"].as_str().ok_or("prompt required")?,
+            )],
             &ChatOptions {
                 enable_thinking: resolved.enable_thinking,
                 ..Default::default()

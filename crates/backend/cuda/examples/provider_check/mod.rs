@@ -249,10 +249,7 @@ fn sampling(assets: &TextAssets) -> infer_core::Result<infer_ir::Sampling> {
 
 fn prompt(assets: &TextAssets) -> infer_core::Result<Vec<u32>> {
     let prompt = assets.encode_chat(
-        &[ChatMessage {
-            role: "user".into(),
-            content: "只输出17乘23的结果。".into(),
-        }],
+        &[ChatMessage::new("user", "只输出17乘23的结果。")],
         &ChatOptions {
             enable_thinking: false,
             ..Default::default()

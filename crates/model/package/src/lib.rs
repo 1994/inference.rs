@@ -15,6 +15,10 @@ pub use input::prompt::{
     visual_tokens,
 };
 pub use input::text::{ChatMessage, ChatOptions, TextAssets};
+pub use input::tool::{
+    ParsedOutput, ParsedToolCall, ToolCall, ToolDialect, parse as parse_model_output,
+    parse_with as parse_model_output_with,
+};
 pub use providers::qwen::{QwenProvider, VisionConfig};
 pub use providers::registry::{ModelRegistry, default_registry};
 pub use storage::index::SafetensorsIndex;

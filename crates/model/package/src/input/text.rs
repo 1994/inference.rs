@@ -20,7 +20,62 @@ const TEMPLATE_FUEL: u64 = 100_000;
 #[serde(deny_unknown_fields)]
 pub struct ChatMessage {
     pub role: String,
+    /// Message text. `null` is accepted and stored as empty so an assistant message that only
+    /// calls a tool keeps its nullable content contract.
+    #[serde(default, deserialize_with = "nullable_text")]
     pub content: String,
+    /// Assistant calls, kept so a full tool round can be replayed into the template.
+    #[serde(default)]
+    pub tool_calls: Vec<crate::input::tool::ToolCall>,
+    /// Identifier associating a `tool` result with the assistant call it answers.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+}
+impl ChatMessage {
+    /// A message carrying text only, which is the common case for callers that do not use tools.
+    #[must_use]
+    pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+}
+/// Deserialize a text field that may be `null`.
+fn nullable_text<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Build the template view of the message history.
+///
+/// The wire protocol carries tool arguments as a JSON string, but both shipped templates require
+/// an object: they iterate its entries to render `<parameter=>` blocks. Decoding here keeps the
+/// prompt format and the parser dialect in agreement without changing the published contract.
+fn template_messages(messages: &[ChatMessage]) -> Result<serde_json::Value> {
+    let mut out = Vec::with_capacity(messages.len());
+    for message in messages {
+        let mut calls = Vec::with_capacity(message.tool_calls.len());
+        for call in &message.tool_calls {
+            let arguments = call.argument_object()?;
+            calls.push(serde_json::json!({
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": arguments},
+            }));
+        }
+        out.push(serde_json::json!({
+            "role": message.role,
+            "content": message.content,
+            "tool_calls": calls,
+            "tool_call_id": message.tool_call_id,
+        }));
+    }
+    Ok(serde_json::Value::Array(out))
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -45,6 +100,8 @@ pub struct TextAssets {
     pub fingerprint: String,
     max_tokens: usize,
     pub generation: crate::GenerationDefaults,
+    /// Tool-call dialect this package's template asks the model to emit.
+    tool_dialect: crate::input::tool::ToolDialect,
 }
 fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -136,6 +193,10 @@ impl TextAssets {
             hash.update(&bytes);
             template = Some(String::from_utf8(bytes).map_err(|e| Error::invalid(e.to_string()))?);
         }
+        let tool_dialect = template.as_deref().map_or(
+            crate::input::tool::ToolDialect::JsonBlock,
+            crate::input::tool::ToolDialect::detect,
+        );
         Ok(Self {
             generation: crate::GenerationDefaults::open(root)?,
             tokenizer,
@@ -143,7 +204,13 @@ impl TextAssets {
             special,
             fingerprint: format!("{:x}", hash.finalize()),
             max_tokens,
+            tool_dialect,
         })
+    }
+    /// Tool-call dialect bound to this package's template.
+    #[must_use]
+    pub const fn tool_dialect(&self) -> crate::input::tool::ToolDialect {
+        self.tool_dialect
     }
     ///
     /// # Errors
@@ -189,14 +256,29 @@ impl TextAssets {
             .ok_or_else(|| Error::unsupported("package has no chat template"))?;
         let bytes = messages
             .iter()
-            .try_fold(0usize, |sum, m| sum.checked_add(m.content.len()))
+            .try_fold(0usize, |sum, m| {
+                let calls = m.tool_calls.iter().try_fold(0usize, |calls, call| {
+                    calls
+                        .checked_add(call.id.len())
+                        .and_then(|n| n.checked_add(call.name.len()))
+                        .and_then(|n| n.checked_add(call.arguments.len()))
+                })?;
+                sum.checked_add(m.content.len())
+                    .and_then(|n| n.checked_add(calls))
+                    .and_then(|n| n.checked_add(m.tool_call_id.as_ref().map_or(0, String::len)))
+            })
             .ok_or_else(|| Error::invalid("chat length overflow"))?;
         if messages.is_empty()
             || messages.len() > MAX_CHAT_MESSAGES
             || bytes > TEXT_MAX_BYTES
-            || messages
-                .iter()
-                .any(|m| !["system", "user", "assistant", "tool"].contains(&m.role.as_str()))
+            || messages.iter().any(|m| {
+                !["system", "user", "assistant", "tool"].contains(&m.role.as_str())
+                    // Calls belong to the assistant turn that produced them, and only a `tool`
+                    // result carries the identifier it answers.
+                    || (!m.tool_calls.is_empty() && m.role != "assistant")
+                    || (m.tool_call_id.is_some() && m.role != "tool")
+                    || m.tool_calls.len() > crate::input::tool::MAX_TOOL_CALLS
+            })
         {
             return Err(Error::invalid("invalid/budget-exceeding chat messages"));
         }
@@ -216,10 +298,7 @@ impl TextAssets {
         env.add_template("chat", template)
             .map_err(|e| Error::invalid(e.to_string()))?;
         let mut context = self.special.clone();
-        context.insert(
-            "messages".into(),
-            serde_json::to_value(messages).map_err(|e| Error::invalid(e.to_string()))?,
-        );
+        context.insert("messages".into(), template_messages(messages)?);
         context.insert(
             "add_generation_prompt".into(),
             options.add_generation_prompt.into(),

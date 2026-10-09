@@ -13,10 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cutile::jit_cache::enable_default()?;
     let assets = TextAssets::open(&root, 4096)?;
     let input = assets.encode_chat(
-        &[ChatMessage {
-            role: "user".into(),
-            content: "只输出17乘23的结果。".into(),
-        }],
+        &[ChatMessage::new("user", "只输出17乘23的结果。")],
         &ChatOptions {
             enable_thinking: false,
             ..Default::default()
