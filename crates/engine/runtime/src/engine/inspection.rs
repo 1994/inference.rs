@@ -49,6 +49,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub const fn config(&self) -> &RuntimeConfig {
         &self.config
     }
+    /// Effective single-sequence length limits, resolved once at construction.
+    pub const fn length_limits(&self) -> crate::ResolvedLengthLimits {
+        self.limits
+    }
     pub const fn now_us(&self) -> u64 {
         self.now_us
     }
@@ -107,6 +111,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             kv_cache: self.backend.kv_cache(),
             execution_profile: self.backend.execution_profile(),
             scheduler: self.config.scheduler.clone(),
+            lengths: self.limits,
             queues: self.host.queues.inspect(),
             cpu: crate::CpuRuntimeInspection {
                 config: self.config.cpu.clone(),

@@ -3,6 +3,7 @@ mod config;
 mod constants;
 mod cpu;
 mod engine;
+mod lengths;
 mod observation;
 mod persistence;
 mod pipeline;
@@ -18,6 +19,7 @@ pub use cpu::{CpuRuntimeConfig, CpuRuntimeInspection, OwnerPlacement};
 pub use engine::{
     CompletedRequest, Engine, EngineFault, EngineOutput, InFlight, RuntimeInspection, TenantService,
 };
+pub use lengths::{LengthLimitSources, LimitSource, ResolvedLengthLimits};
 pub use observation::ObservationSnapshot;
 pub use persistence::{ReplayAction, RuntimeSnapshot};
 pub use pipeline::scheduling::index::ReadyWindow as ReadyWorkBuffer;

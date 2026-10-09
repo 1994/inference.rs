@@ -52,6 +52,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         policy: P,
     ) -> Result<Self> {
         config.validate()?;
+        // Resolve the deployment length contract before any resource is planned, so every entry
+        // point, the workload plan and capacity planning share one set of numbers.
+        let limits = crate::ResolvedLengthLimits::resolve(model.max_sequence, &config)?;
         let program = infer_compiler::compile(
             ProgramId::new(1)?,
             infer_compiler::lower(&model, backend.execution_graph(&model)?, precision)?,
@@ -106,6 +109,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             model,
             program,
             config,
+            limits,
             state,
             resource_epoch: 0,
             backend_resource_epoch: 0,

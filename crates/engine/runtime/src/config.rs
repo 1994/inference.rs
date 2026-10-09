@@ -54,6 +54,15 @@ pub struct RuntimeConfig {
     pub cpu: crate::CpuRuntimeConfig,
     pub candidate_limit: usize,
     pub max_request_units: usize,
+    /// Operator-requested single-sequence total context (`--max-model-len`), prompt and output
+    /// together. `None` follows the model's supported ceiling; the effective value is resolved by
+    /// [`crate::ResolvedLengthLimits`], which also rejects a request the model cannot fulfil.
+    #[serde(default)]
+    pub max_model_len: Option<usize>,
+    /// Operator-requested service cap on generated tokens (`--max-output-tokens`). `None` follows
+    /// the effective total context.
+    #[serde(default)]
+    pub max_output_tokens: Option<usize>,
     pub max_input_tokens: usize,
     pub num_gpu_blocks: usize,
     pub block_size: usize,
@@ -84,6 +93,8 @@ impl Default for RuntimeConfig {
             cpu: crate::CpuRuntimeConfig::default(),
             candidate_limit: DEFAULT_CANDIDATE_LIMIT,
             max_request_units: DEFAULT_MAX_REQUEST_UNITS,
+            max_model_len: None,
+            max_output_tokens: None,
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
             num_gpu_blocks: DEFAULT_STATE_PAGES,
             block_size: DEFAULT_PAGE_TOKENS,
@@ -146,6 +157,11 @@ impl RuntimeConfig {
         {
             return Err(Error::invalid(
                 "runtime capacities/timeouts must be positive",
+            ));
+        }
+        if self.max_model_len == Some(0) || self.max_output_tokens == Some(0) {
+            return Err(Error::invalid(
+                "max-model-len and max-output-tokens must be positive when set",
             ));
         }
         if self.max_num_seqs > infer_gpu_api::MAX_SUBMISSION_BATCH {

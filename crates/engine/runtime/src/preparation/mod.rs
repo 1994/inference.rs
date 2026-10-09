@@ -31,6 +31,7 @@ pub struct RequestPreparer {
     program: ProgramId,
     workloads: Arc<dyn WorkloadProvider + Send + Sync>,
     config: RuntimeConfig,
+    limits: crate::ResolvedLengthLimits,
 }
 impl RequestPreparer {
     pub(crate) fn new(
@@ -38,21 +39,30 @@ impl RequestPreparer {
         program: ProgramId,
         workloads: Box<dyn WorkloadProvider + Send + Sync>,
         config: RuntimeConfig,
+        limits: crate::ResolvedLengthLimits,
     ) -> Self {
         Self {
             model: Arc::new(model),
             program,
             workloads: workloads.into(),
             config,
+            limits,
         }
     }
     /// # Errors
     /// Rejects invalid schema, input/plan budgets, unsupported heads or invalid tokens.
     pub fn prepare(&self, request: CanonicalRequest) -> Result<PreparedRequest> {
         request.validate()?;
-        validate_input(&request.input, &self.config)?;
+        validate_input(&request.input, &self.limits)?;
         let plan = self.workloads.plan(&request, &self.model, self.program)?;
-        validate_plan(&request, &plan, &self.model, self.program, &self.config)?;
+        validate_plan(
+            &request,
+            &plan,
+            &self.model,
+            self.program,
+            &self.config,
+            &self.limits,
+        )?;
         let generated = generation_storage(&request)?;
         let tenant = Arc::from(request.qos.tenant.as_str());
         Ok(PreparedRequest {
@@ -65,7 +75,11 @@ impl RequestPreparer {
         })
     }
 }
-pub fn validate_input(input: &RequestInput, config: &RuntimeConfig) -> Result<()> {
+pub fn validate_input(
+    input: &RequestInput,
+    config: &RuntimeConfig,
+    limits: &crate::ResolvedLengthLimits,
+) -> Result<()> {
     let (units, tokens) = match input {
         RequestInput::Sequence { tokens, .. } => (1, tokens.len()),
         RequestInput::Pairs { query, documents } => (
@@ -79,7 +93,7 @@ pub fn validate_input(input: &RequestInput, config: &RuntimeConfig) -> Result<()
                 .ok_or_else(|| Error::invalid("pair token count overflow"))?,
         ),
     };
-    if units > config.max_request_units || tokens > config.max_input_tokens {
+    if units > config.max_request_units || tokens > limits.input_cap {
         return Err(Error::new(
             infer_core::ErrorCode::Capacity,
             "request input exceeds admission budget",
@@ -93,19 +107,25 @@ pub fn validate_plan(
     model: &ModelIr,
     program: ProgramId,
     config: &RuntimeConfig,
+    limits: &crate::ResolvedLengthLimits,
 ) -> Result<()> {
     let tokens = plan
         .units
         .iter()
         .try_fold(0usize, |sum, unit| sum.checked_add(unit.len()));
+    let requested_output = match request.workload {
+        infer_ir::Workload::Generate { max_new_tokens } => max_new_tokens,
+        _ => 0,
+    };
     if plan.request != request.id
         || plan.model != model.id
         || plan.program != program
         || plan.units.is_empty()
         || plan.units.len() > config.max_request_units
-        || tokens.is_none_or(|count| count > config.max_input_tokens)
+        || tokens.is_none_or(|count| count > limits.input_cap)
+        || requested_output > limits.output_cap
         || plan.reserved_tokens == 0
-        || plan.reserved_tokens > model.max_sequence
+        || plan.reserved_tokens > limits.total
         || plan.units.iter().any(|unit| {
             unit.is_empty()
                 || unit.len() > plan.reserved_tokens

@@ -69,6 +69,8 @@ pub struct RuntimeInspection {
     /// Effective load-time graph geometry and speculation depth.
     #[serde(default)]
     pub execution_profile: Option<infer_ir::ExecutionProfileInspection>,
+    /// Effective single-sequence length limits and where each came from.
+    pub lengths: crate::ResolvedLengthLimits,
     pub queues: infer_scheduler::QueueInspection,
     pub cpu: crate::CpuRuntimeInspection,
 }
@@ -112,6 +114,8 @@ pub struct Engine<B: BackendProvider, P: SchedulingPolicy = CostAwarePolicy> {
     pub(crate) model: ModelIr,
     pub(crate) program: ExecutionProgram,
     pub(crate) config: RuntimeConfig,
+    /// Single-sequence length limits resolved once from the model ceiling and service settings.
+    pub(crate) limits: crate::ResolvedLengthLimits,
     pub(crate) state: SequenceStateManager,
     pub(crate) resources_pending: crate::resource::ResourceWaiters,
     pub(crate) resource_epoch: u64,

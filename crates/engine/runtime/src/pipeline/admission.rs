@@ -93,6 +93,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             self.program.id,
             self.fork_workloads()?,
             self.config.clone(),
+            self.limits,
         ))
     }
     /// Admit a CPU-prepared request after checking live resources and request identity.
@@ -349,14 +350,21 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         Ok(())
     }
     fn validate_input_budget(&self, input: &RequestInput) -> Result<()> {
-        crate::preparation::validate_input(input, &self.config)
+        crate::preparation::validate_input(input, &self.config, &self.limits)
     }
     fn validate_workload_plan(
         &self,
         request: &CanonicalRequest,
         plan: &WorkloadPlan,
     ) -> Result<()> {
-        crate::preparation::validate_plan(request, plan, &self.model, self.program.id, &self.config)
+        crate::preparation::validate_plan(
+            request,
+            plan,
+            &self.model,
+            self.program.id,
+            &self.config,
+            &self.limits,
+        )
     }
     fn reserve_execution_state(&mut self, prepared: &PreparedAdmission) -> Result<StateId> {
         let state = self.state.reserve_incremental(
