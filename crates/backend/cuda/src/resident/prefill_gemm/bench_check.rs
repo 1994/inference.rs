@@ -4,11 +4,12 @@
 //! kernel it would replace before any wiring happens. The F32 activation has to be narrowed to
 //! BF16 first, because cuBLAS wants both operands in one type, and that cast is part of the price.
 use super::gemm;
-use crate::device::cublaslt::{GemmBf16, available, context_for};
+use crate::device::cublaslt::{GemmBf16, Support, available};
 use crate::device::{CudaDevice, device_error};
 use crate::kernels::linear::cast_bf16;
 use cutile::half::bf16;
 use cutile::prelude::*;
+use std::sync::Arc;
 
 const CAST_TILE: i32 = 1024;
 
@@ -31,7 +32,11 @@ fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::er
         eprintln!("cuBLAS unavailable; skipping");
         return Ok(());
     }
-    let context = context_for(&device).ok_or("no cuBLAS context")?;
+    let mut support = Support::new_with(&device, true);
+    if !support.is_enabled() {
+        eprintln!("cuBLAS context unavailable; skipping");
+        return Ok(());
+    }
     let m = 128_usize;
     for (n, k) in [(2048_usize, 2048_usize), (12288, 2048), (2048, 8192)] {
         let inputs: Vec<f32> = (0..m * k).map(|i| sample(5, i) * 0.1).collect();
@@ -62,25 +67,31 @@ fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::er
             Ok(())
         })
         .map_err(device_error)?;
+        // cuBLAS does host-side work the first time it sees a configuration and a capturing
+        // stream rejects it, so every shape is warmed here, outside the graph, exactly as the
+        // production path does it. Warming after the capture would not have helped.
+        support.warm(m, &weight, n, k)?;
         let gemm_graph = CudaGraph::scope(&device.stream, |scope| {
             let op = GemmBf16::new(
-                context, m as i32, n as i32, k as i32, &narrowed, &weight, &delegated,
+                Arc::clone(support.context()),
+                m as i32,
+                n as i32,
+                k as i32,
+                &narrowed,
+                &weight,
+                &delegated,
             )
             .map_err(|error| DeviceError::Internal(error.to_string()))?;
             scope.record(op)?;
             Ok(())
         })
         .map_err(device_error)?;
-        // Warm both paths before timing.
+        // Warm the native and cast paths before timing; the vendor one was warmed above.
         kernel_graph
             .launch()
             .sync_on(&device.stream)
             .map_err(device_error)?;
         cast_graph
-            .launch()
-            .sync_on(&device.stream)
-            .map_err(device_error)?;
-        gemm_graph
             .launch()
             .sync_on(&device.stream)
             .map_err(device_error)?;

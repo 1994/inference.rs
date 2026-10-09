@@ -14,7 +14,7 @@ use cutile::cuda_async::error::DeviceError;
 use cutile::{half::bf16, prelude::*};
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 type Handle = *mut c_void;
 type CudaStream = cuda_core::sys::CUstream;
@@ -120,6 +120,8 @@ pub fn available() -> bool {
 
 /// One cuBLAS handle with the `1.0`/`0.0` device scalars every launch needs.
 pub struct Context {
+    ordinal: usize,
+    stream: CudaStream,
     handle: Handle,
     alpha: Tensor<f32>,
     beta: Tensor<f32>,
@@ -140,10 +142,21 @@ unsafe impl Send for Context {}
 // cuBLAS, which serializes its own internal state.
 unsafe impl Sync for Context {}
 
-/// Borrow the process-wide context, creating the handle on first use.
-pub fn context_for(device: &crate::device::CudaDevice) -> Option<&'static Context> {
-    static CONTEXT: OnceLock<Option<Context>> = OnceLock::new();
-    CONTEXT.get_or_init(|| build(device)).as_ref()
+/// Borrow the context for this device and stream, creating it on first use.
+///
+/// A cuBLAS handle belongs to the CUDA device it was created on and launches on the stream it was
+/// bound to, so one handle cannot serve a second device instance. The cache is keyed by both, and
+/// every launch validates that the stream it is handed is the one the handle was built for.
+pub fn context_for(device: &crate::device::CudaDevice) -> Option<Arc<Context>> {
+    static CONTEXTS: OnceLock<Mutex<HashMap<(usize, usize), Arc<Context>>>> = OnceLock::new();
+    let key = (device.ordinal(), device.stream.cu_stream() as usize);
+    let cache = CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(existing) = cache.lock().ok()?.get(&key).cloned() {
+        return Some(existing);
+    }
+    let built = Arc::new(build(device)?);
+    cache.lock().ok()?.insert(key, Arc::clone(&built));
+    Some(built)
 }
 
 /// Destroy a handle, reporting nothing: every caller is already on an error path.
@@ -164,6 +177,8 @@ fn destroy(api: &Api, handle: Handle) {
 )]
 fn build(device: &crate::device::CudaDevice) -> Option<Context> {
     let api = api()?;
+    // cuBLAS creates its handle on the device current for this thread, so bind before creating it.
+    device.stream.device().bind_to_thread().ok()?;
     let mut handle: Handle = std::ptr::null_mut();
     // SAFETY: the handle is created here and owned by the returned context.
     let created = unsafe { (api.create)(&raw mut handle) };
@@ -195,6 +210,8 @@ fn build(device: &crate::device::CudaDevice) -> Option<Context> {
         return None;
     };
     Some(Context {
+        ordinal: device.ordinal(),
+        stream: device.stream.cu_stream(),
         handle,
         alpha,
         beta,
@@ -280,7 +297,7 @@ pub fn gemm_bf16(
     // SAFETY: the three tensors are live for the call and their extents were just checked.
     let status = unsafe {
         launch(
-            context,
+            &context,
             m,
             n,
             k,
@@ -311,7 +328,7 @@ const CAST_TILE: i32 = 1024;
 /// happens while a graph is being built and never while one is being captured.
 pub struct Support {
     device: crate::device::CudaDevice,
-    context: Option<&'static Context>,
+    context: Option<Arc<Context>>,
     activations: HashMap<usize, Tensor<bf16>>,
 }
 
@@ -320,6 +337,12 @@ impl Support {
     /// `INFER_CUBLAS_PROJECTIONS` is set, and off when the toolkit is missing.
     pub fn new(device: &crate::device::CudaDevice) -> Self {
         let enabled = std::env::var_os("INFER_CUBLAS_PROJECTIONS").is_some();
+        Self::new_with(device, enabled)
+    }
+
+    /// Build the support with delegation decided by the caller, for benchmarks and tests that
+    /// must not depend on the environment.
+    pub fn new_with(device: &crate::device::CudaDevice, enabled: bool) -> Self {
         Self {
             device: device.clone(),
             context: enabled.then(|| context_for(device)).flatten(),
@@ -330,6 +353,17 @@ impl Support {
     /// Whether this program delegates at all.
     pub const fn is_enabled(&self) -> bool {
         self.context.is_some()
+    }
+
+    /// The context this support launches through, which a recorded op also needs.
+    ///
+    /// # Panics
+    /// Panics when delegation is disabled; check [`Self::is_enabled`] first.
+    #[must_use]
+    pub fn context(&self) -> &Arc<Context> {
+        self.context
+            .as_ref()
+            .expect("cuBLAS support is disabled, so there is no context to launch through")
     }
 
     /// Run one GEMM per shape on the device stream before any graph captures it.
@@ -348,7 +382,7 @@ impl Support {
         n: usize,
         k: usize,
     ) -> Result<(), DeviceError> {
-        let Some(context) = self.context else {
+        let Some(context) = self.context.clone() else {
             return Ok(());
         };
         if n.saturating_mul(k) < MIN_DELEGATED_WEIGHT_ELEMENTS || m.saturating_mul(k) == 0 {
@@ -373,7 +407,7 @@ impl Support {
         // launch is told about, and the stream belongs to this device.
         let status = unsafe {
             launch(
-                context,
+                &context,
                 m_i,
                 n_i,
                 k_i,
@@ -403,7 +437,7 @@ impl Support {
         out: &Tensor<f32>,
         (m, n, k): (usize, usize, usize),
     ) -> Result<bool, DeviceError> {
-        let Some(context) = self.context else {
+        let Some(context) = self.context.clone() else {
             return Ok(false);
         };
         let activation_elements = m.saturating_mul(k);
@@ -445,7 +479,7 @@ impl Support {
 /// `DeviceOp::execute` runs during capture, which is why the launch takes `alpha` and `beta` from
 /// device memory: anything read from the host at that point would be frozen into the graph.
 pub struct GemmBf16<'a> {
-    context: &'a Context,
+    context: Arc<Context>,
     m: i32,
     n: i32,
     k: i32,
@@ -463,7 +497,7 @@ impl<'a> GemmBf16<'a> {
     /// # Errors
     /// Rejects operands whose element counts disagree with the extents.
     pub fn new(
-        context: &'a Context,
+        context: Arc<Context>,
         m: i32,
         n: i32,
         k: i32,
@@ -506,12 +540,22 @@ impl GraphNode for GemmBf16<'_> {}
 impl DeviceOp for GemmBf16<'_> {
     type Output = ();
 
-    unsafe fn execute(self, _context: &ExecutionContext) -> Result<(), DeviceError> {
-        // SAFETY: the operands are live device tensors whose extents were checked in `new`;
-        // the handle already targets the stream this capture records onto.
+    unsafe fn execute(self, context: &ExecutionContext) -> Result<(), DeviceError> {
+        // A handle belongs to the device it was created on and launches on the stream it was bound
+        // to. Recording it into a graph on another stream would place the GEMM outside that graph's
+        // dependencies, so refuse rather than launch into the wrong stream.
+        let stream = context.get_cuda_stream().cu_stream();
+        if stream != self.context.stream {
+            return Err(DeviceError::Internal(format!(
+                "cuBLAS projection for device {} was built for a different stream than this context",
+                self.context.ordinal
+            )));
+        }
+        // SAFETY: the operands are live device tensors whose extents were checked in `new`, and the
+        // stream matches the one the handle was created for.
         let status = unsafe {
             launch(
-                self.context,
+                &self.context,
                 self.m,
                 self.n,
                 self.k,
@@ -609,6 +653,111 @@ mod tests {
             assert!(
                 f64::from(worst) <= 1.0e-2 * scale.max(1.0),
                 "cuBLAS disagrees with the reference at m={m} n={n} k={k}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A cuBLAS handle belongs to the device and stream it was created on, so two device
+    /// instances on one card must not share one, and a graph recorded on either has to launch
+    /// there and produce the right numbers.
+    #[test]
+    #[ignore = "requires CUDA hardware; run inside safe-run"]
+    fn cublas_context_is_per_device_instance() -> Result<(), Box<dyn std::error::Error>> {
+        CudaDevice::enable_kernel_cache()?;
+        if !available() {
+            eprintln!("cuBLAS unavailable; skipping");
+            return Ok(());
+        }
+        let (m, n, k) = (12_usize, 2048_usize, 2048_usize);
+        let activations: Vec<bf16> = (0..m * k).map(|i| bf16::from_f32(sample(7, i))).collect();
+        let weights: Vec<bf16> = (0..n * k).map(|i| bf16::from_f32(sample(8, i))).collect();
+        let first = CudaDevice::new(0)?;
+        let second = CudaDevice::new(0)?;
+        assert_ne!(
+            first.stream.cu_stream(),
+            second.stream.cu_stream(),
+            "the two instances need their own streams for this check"
+        );
+        let (Some(first_context), Some(second_context)) =
+            (context_for(&first), context_for(&second))
+        else {
+            eprintln!("cuBLAS context unavailable; skipping");
+            return Ok(());
+        };
+        assert!(
+            !Arc::ptr_eq(&first_context, &second_context),
+            "two device instances must not share one handle"
+        );
+        for (device, context) in [(&first, &first_context), (&second, &second_context)] {
+            let a = device.upload(activations.clone(), &[m, k])?;
+            let b = device.upload(weights.clone(), &[n, k])?;
+            let out = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+            // Warm this instance's stream outside capture, as the production path does.
+            #[expect(
+                unsafe_code,
+                reason = "Audited warmup: both operands are tensors uploaded just above with matching extents"
+            )]
+            let warmed = unsafe {
+                launch(
+                    context,
+                    m as i32,
+                    n as i32,
+                    k as i32,
+                    a.device_pointer().cu_deviceptr() as *const c_void,
+                    b.device_pointer().cu_deviceptr() as *const c_void,
+                    out.device_pointer().cu_deviceptr() as *mut c_void,
+                )
+            };
+            warmed.map_err(|code| DeviceError::Internal(format!("cublasGemmEx warmup {code}")))?;
+            device
+                .reclaim_barrier()
+                .map_err(|error| DeviceError::Internal(error.to_string()))?;
+            let graph = CudaGraph::scope(&device.stream, |scope| {
+                let op = GemmBf16::new(
+                    Arc::clone(context),
+                    m as i32,
+                    n as i32,
+                    k as i32,
+                    &a,
+                    &b,
+                    &out,
+                )
+                .map_err(|error| DeviceError::Internal(error.to_string()))?;
+                scope.record(op)?;
+                Ok(())
+            })
+            .map_err(device_error)?;
+            graph
+                .launch()
+                .sync_on(&device.stream)
+                .map_err(device_error)?;
+            device
+                .reclaim_barrier()
+                .map_err(|error| DeviceError::Internal(error.to_string()))?;
+            let actual = out.to_host_vec().sync_on(&device.stream)?;
+            let host_activations: Vec<f32> = activations.iter().map(|v| v.to_f32()).collect();
+            let host_weights: Vec<f32> = weights.iter().map(|v| v.to_f32()).collect();
+            let mut worst = 0.0_f32;
+            let mut scale = 0.0_f64;
+            for i in 0..m {
+                for j in 0..n {
+                    let mut expected = 0.0_f64;
+                    for d in 0..k {
+                        expected += f64::from(host_activations[i * k + d])
+                            * f64::from(host_weights[j * k + d]);
+                    }
+                    scale = scale.max(expected.abs());
+                    worst = worst.max((f64::from(actual[i * n + j]) - expected).abs() as f32);
+                }
+            }
+            eprintln!(
+                "device {}: captured gemm worst {worst:.3e} of {scale:.1}",
+                device.ordinal()
+            );
+            assert!(
+                f64::from(worst) <= 1.0e-2 * scale.max(1.0),
+                "a per-instance cuBLAS context produced wrong output"
             );
         }
         Ok(())

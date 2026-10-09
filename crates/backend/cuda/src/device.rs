@@ -160,6 +160,7 @@ pub struct CudaDevice {
     pub(crate) stream: Arc<cuda_core::Stream>,
     target: crate::target::CudaTarget,
     profile: Arc<OnceLock<DeviceProfile>>,
+    ordinal: usize,
 }
 
 pub(crate) fn device_error(error: impl std::fmt::Display) -> InferError {
@@ -182,7 +183,14 @@ impl CudaDevice {
             stream: device.new_stream().map_err(device_error)?,
             target,
             profile: Arc::new(OnceLock::new()),
+            ordinal,
         })
+    }
+
+    /// Ordinal this instance was created for, which identifies the device a handle belongs to.
+    #[must_use]
+    pub const fn ordinal(&self) -> usize {
+        self.ordinal
     }
 
     /// # Errors

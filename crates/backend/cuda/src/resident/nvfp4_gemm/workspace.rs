@@ -15,7 +15,10 @@ type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 
 pub struct Workspace {
     buffers: BTreeMap<(usize, usize), Quantized>,
-    fp8: BTreeMap<(usize, usize), (Tensor<f8e4m3fn>, Tensor<f32>)>,
+    /// Keyed by `(rows, columns, scale_columns)`: per-channel and block-scaled FP8 share an
+    /// operand geometry but need different activation-scale extents, so geometry alone would let
+    /// whichever projection is visited first decide the layout for the other.
+    fp8: BTreeMap<(usize, usize, usize), (Tensor<f8e4m3fn>, Tensor<f32>)>,
 }
 
 impl Workspace {
@@ -61,9 +64,9 @@ impl Workspace {
                     1
                 };
                 for &rows in widths {
-                    if rows > 0 && !fp8.contains_key(&(rows, columns)) {
+                    if rows > 0 && !fp8.contains_key(&(rows, columns, scale_columns)) {
                         fp8.insert(
-                            (rows, columns),
+                            (rows, columns, scale_columns),
                             (
                                 api::zeros::<f8e4m3fn>(&[rows, columns])
                                     .sync_on(&device.stream)
@@ -161,9 +164,14 @@ impl Workspace {
             return Err(error("FP8 workspace weight"));
         }
         let rows = usize::try_from(output.shape()[0]).map_err(error)?;
+        // The scales layout follows the weight's quantization mode, and the key has to say which.
+        let scale_columns = match weight {
+            ProjectionWeight::Fp8Block(..) => columns / crate::constants::FP8_BLOCK_COLUMNS,
+            _ => 1,
+        };
         let (q, qs) = self
             .fp8
-            .get_mut(&(rows, columns))
+            .get_mut(&(rows, columns, scale_columns))
             .ok_or_else(|| error("FP8 quantization workspace missing"))?;
         let tile = crate::constants::quant_gemm_tile(rows);
         let generics = vec![
