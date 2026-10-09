@@ -12,9 +12,21 @@ pub(super) async fn generate(
     request: GenerationRequest,
     chat: bool,
 ) -> ApiResult<Value> {
-    let max_new_tokens = request.validate(chat)?;
+    let requested = request.validate(chat)?;
+    let inspection = state.handle.inspect().await?;
+    let limits = inspection.lengths;
+    // An explicit budget over the service cap is a parameter error; an omitted budget uses the
+    // bounded default and is only lowered by the cap. Neither silently truncates the prompt.
+    if requested.explicit && requested.tokens > limits.output_cap {
+        return Err(Error::invalid(format!(
+            "requested output of {} tokens exceeds the service output cap {}",
+            requested.tokens, limits.output_cap
+        ))
+        .into());
+    }
+    let max_new_tokens = requested.tokens.min(limits.output_cap);
     let bytes = request.preparation_bytes(max_new_tokens)?;
-    let model = state.handle.inspect().await?.model;
+    let model = inspection.model;
     if request.model != model.to_string() {
         return Err(Error::new(ErrorCode::NotFound, "model is not served; see /v1/models").into());
     }

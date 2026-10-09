@@ -32,6 +32,12 @@ pub struct Cli {
     /// Maximum number of tokens batched together per step.
     #[arg(long, global = true)]
     pub(super) max_num_batched_tokens: Option<usize>,
+    /// Total context per sequence, prompt and output together; defaults to the model limit.
+    #[arg(long, global = true, value_name = "TOKENS")]
+    pub(super) max_model_len: Option<usize>,
+    /// Service cap on generated tokens per request; defaults to the total context.
+    #[arg(long, global = true, value_name = "TOKENS")]
+    pub(super) max_output_tokens: Option<usize>,
     /// Bounded temporary weight upload memory, independent of device residency.
     #[arg(long, global = true)]
     pub(super) upload_staging_mib: Option<usize>,

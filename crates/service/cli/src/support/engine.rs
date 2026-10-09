@@ -59,13 +59,18 @@ pub fn configured_engine(
     choice: backend::Selection,
 ) -> Result<Engine<SelectedBackend>> {
     let automatic = config.is_none();
-    let config = config.unwrap_or_default();
+    let mut config = config.unwrap_or_default();
+    config.block_size = choice.block_size.unwrap_or(config.block_size);
+    if let Some(tokens) = choice.max_num_batched_tokens {
+        config.max_num_batched_tokens = tokens;
+    }
+    if let Some(tokens) = choice.max_model_len {
+        config.max_model_len = Some(tokens);
+    }
+    if let Some(tokens) = choice.max_output_tokens {
+        config.max_output_tokens = Some(tokens);
+    }
     if let Some(package) = package {
-        let mut config = config;
-        config.block_size = choice.block_size.unwrap_or(config.block_size);
-        if let Some(tokens) = choice.max_num_batched_tokens {
-            config.max_num_batched_tokens = tokens;
-        }
         let choice = backend::Selection {
             block_size: Some(config.block_size),
             ..choice
@@ -93,8 +98,6 @@ pub fn configured_engine(
     } else {
         #[cfg(feature = "test-backends")]
         if choice.kind == backend::BackendChoice::TestCpu {
-            let mut config = config;
-            config.block_size = choice.block_size.unwrap_or(config.block_size);
             return new_engine(config, model);
         }
         let _ = model;

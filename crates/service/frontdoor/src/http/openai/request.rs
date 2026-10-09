@@ -6,6 +6,14 @@ const MAX_CHAT_MESSAGES: usize = 256;
 /// Default completion-token budget when a request omits an explicit limit.
 const DEFAULT_MAX_COMPLETION_TOKENS: usize = 16;
 
+/// The generated-token budget a request asked for, before the service cap and remaining
+/// context apply.
+pub(super) struct RequestedOutput {
+    pub(super) tokens: usize,
+    /// True when the client set `max_tokens` or `max_completion_tokens` explicitly.
+    pub(super) explicit: bool,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GenerationRequest {
@@ -27,7 +35,7 @@ pub(super) struct GenerationRequest {
 }
 
 impl GenerationRequest {
-    pub(super) fn validate(&self, chat: bool) -> Result<usize> {
+    pub(super) fn validate(&self, chat: bool) -> Result<RequestedOutput> {
         if self.model.is_empty() {
             return Err(Error::invalid("model must not be empty"));
         }
@@ -58,6 +66,7 @@ impl GenerationRequest {
         if self.max_tokens.is_some() && self.max_completion_tokens.is_some() {
             return Err(Error::invalid("provide only one token limit"));
         }
+        let explicit = self.max_tokens.is_some() || self.max_completion_tokens.is_some();
         let tokens = self
             .max_completion_tokens
             .or(self.max_tokens)
@@ -78,7 +87,7 @@ impl GenerationRequest {
                 "only stream=false and n=1 are supported",
             ));
         }
-        Ok(tokens)
+        Ok(RequestedOutput { tokens, explicit })
     }
 
     pub(super) fn preparation_bytes(&self, generated: usize) -> Result<usize> {

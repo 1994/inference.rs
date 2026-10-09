@@ -95,6 +95,16 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
         let expected =
             self.workloads
                 .plan(&record.request, &snapshot.model, snapshot.program.id)?;
+        // A restored record must still satisfy the length limits resolved for this engine, so a
+        // checkpoint cannot reintroduce a request the current deployment would reject.
+        crate::preparation::validate_plan(
+            &record.request,
+            &record.plan,
+            &snapshot.model,
+            snapshot.program.id,
+            &snapshot.config,
+            &self.limits,
+        )?;
         if id != record.request.id
             || record.plan != expected
             || record.unit > record.plan.units.len()

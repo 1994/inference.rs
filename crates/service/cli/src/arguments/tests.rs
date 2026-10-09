@@ -77,3 +77,27 @@ fn ambiguous_or_missing_launch_input_is_rejected() {
     assert!(Cli::try_parse_from(["infer", "--backend", "cuda", "./model"]).is_ok());
     assert!(Cli::try_parse_from(["infer", "--", "./serve"]).is_ok());
 }
+
+#[test]
+fn deployment_length_limits_are_parsed_as_separate_budgets() {
+    let cli = Cli::try_parse_from([
+        "infer",
+        "./model",
+        "--max-model-len",
+        "8192",
+        "--max-output-tokens",
+        "1024",
+    ])
+    .unwrap();
+    assert_eq!(cli.max_model_len, Some(8192));
+    assert_eq!(cli.max_output_tokens, Some(1024));
+    // Zero is a configuration error the length resolver reports, not a clap special value.
+    let zero = Cli::try_parse_from(["infer", "./model", "--max-model-len", "0"]).unwrap();
+    assert_eq!(zero.max_model_len, Some(0));
+    // The total context and output cap stay distinct from the per-step batching budget.
+    let batching =
+        Cli::try_parse_from(["infer", "./model", "--max-num-batched-tokens", "2048"]).unwrap();
+    assert_eq!(batching.max_num_batched_tokens, Some(2048));
+    assert!(batching.max_model_len.is_none());
+    assert!(batching.max_output_tokens.is_none());
+}

@@ -235,6 +235,7 @@ where
             model: self.model,
             program: self.program,
             config: self.config,
+            limits: self.limits,
             state: self.state,
             resources_pending: self.resources_pending,
             resource_epoch: self.resource_epoch,

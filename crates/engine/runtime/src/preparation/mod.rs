@@ -53,7 +53,7 @@ impl RequestPreparer {
     /// Rejects invalid schema, input/plan budgets, unsupported heads or invalid tokens.
     pub fn prepare(&self, request: CanonicalRequest) -> Result<PreparedRequest> {
         request.validate()?;
-        validate_input(&request.input, &self.limits)?;
+        validate_input(&request.input, &self.config, &self.limits)?;
         let plan = self.workloads.plan(&request, &self.model, self.program)?;
         validate_plan(
             &request,
@@ -117,15 +117,14 @@ pub fn validate_plan(
         infer_ir::Workload::Generate { max_new_tokens } => max_new_tokens,
         _ => 0,
     };
+    // Structural integrity stays a single provider-fault error; the length budgets below get
+    // their own messages so a client can tell an explicit over-budget request from a bad plan.
     if plan.request != request.id
         || plan.model != model.id
         || plan.program != program
         || plan.units.is_empty()
         || plan.units.len() > config.max_request_units
-        || tokens.is_none_or(|count| count > limits.input_cap)
-        || requested_output > limits.output_cap
         || plan.reserved_tokens == 0
-        || plan.reserved_tokens > limits.total
         || plan.units.iter().any(|unit| {
             unit.is_empty()
                 || unit.len() > plan.reserved_tokens
@@ -135,6 +134,25 @@ pub fn validate_plan(
         return Err(Error::invalid(
             "workload provider returned an invalid/budget-exceeding plan",
         ));
+    }
+    let tokens = tokens.ok_or_else(|| Error::invalid("planned token count overflow"))?;
+    if tokens > limits.input_cap {
+        return Err(Error::invalid(format!(
+            "encoded prompt of {tokens} tokens exceeds the input cap {}",
+            limits.input_cap
+        )));
+    }
+    if requested_output > limits.output_cap {
+        return Err(Error::invalid(format!(
+            "requested output of {requested_output} tokens exceeds the output cap {}",
+            limits.output_cap
+        )));
+    }
+    if plan.reserved_tokens > limits.total {
+        return Err(Error::invalid(format!(
+            "prompt {tokens} + output {requested_output} exceeds the total context {}",
+            limits.total
+        )));
     }
     Ok(())
 }

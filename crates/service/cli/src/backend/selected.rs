@@ -555,6 +555,8 @@ mod readout_tests {
                 num_gpu_blocks_override: None,
                 block_size: None,
                 max_num_batched_tokens: None,
+                max_model_len: None,
+                max_output_tokens: None,
                 upload_staging_mib: None,
                 num_speculative_tokens: 0,
                 gpu_memory_utilization: 0.0,

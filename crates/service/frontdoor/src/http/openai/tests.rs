@@ -11,6 +11,10 @@ use tower::ServiceExt;
 use crate::{RuntimeHandle, router_with_text};
 
 fn fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
+    fixture_with(RuntimeConfig::default())
+}
+
+fn fixture_with(config: RuntimeConfig) -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
     let mut package = infer_models::ModelPackage::open(&root, ModelId::ONE).unwrap();
@@ -19,14 +23,7 @@ fn fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
     let assets = Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());
     let mut kernels = KernelRegistry::default();
     kernels.register(&HostKernels).unwrap();
-    let engine = Engine::new(
-        backend,
-        model,
-        PrecisionPlan::f32(),
-        &kernels,
-        RuntimeConfig::default(),
-    )
-    .unwrap();
+    let engine = Engine::new(backend, model, PrecisionPlan::f32(), &kernels, config).unwrap();
     (RuntimeHandle::start(engine).unwrap(), assets)
 }
 
@@ -149,6 +146,64 @@ async fn invalid_and_unsupported_requests_return_errors_without_admission() {
     }
     assert_eq!(handle.inspect().await.unwrap().active_requests, 0);
     assert_eq!(handle.allocate_request_id().unwrap().get(), 1);
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_explicit_output_budget_over_the_service_cap_is_a_parameter_error() {
+    let (handle, assets) = fixture_with(RuntimeConfig {
+        max_model_len: Some(8),
+        max_output_tokens: Some(3),
+        ..Default::default()
+    });
+    let inspection = handle.inspect().await.unwrap();
+    assert_eq!(inspection.lengths.total, 8);
+    assert_eq!(inspection.lengths.output_cap, 3);
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}], "max_completion_tokens":4
+    });
+    let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("output cap"),
+        "{body}"
+    );
+    // The rejected request never consumed a request identity.
+    assert_eq!(handle.allocate_request_id().unwrap().get(), 1);
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn prompt_plus_output_over_the_total_context_is_rejected_after_tokenization() {
+    let (handle, assets) = fixture_with(RuntimeConfig {
+        max_model_len: Some(8),
+        ..Default::default()
+    });
+    let app = router_with_text(handle.clone(), assets);
+    // Six encoded prompt tokens plus a three-token budget exceeds the eight-token total.
+    let payload = json!({
+        "model":"1",
+        "prompt":"hello world system assistant token8 token13",
+        "max_tokens":3
+    });
+    let (status, body) = call(app.clone(), "/v1/completions", Some(payload.clone())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("total context"),
+        "{body}"
+    );
+    // The same prompt fits when the budget leaves room, so the check is not a blanket rejection.
+    let mut fitting = payload;
+    fitting["max_tokens"] = json!(2);
+    let (status, body) = call(app, "/v1/completions", Some(fitting)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     handle.shutdown().await.unwrap();
 }
 

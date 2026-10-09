@@ -76,6 +76,10 @@ pub struct Selection {
     pub num_gpu_blocks_override: Option<usize>,
     pub block_size: Option<usize>,
     pub max_num_batched_tokens: Option<usize>,
+    /// Total context per sequence, prompt and output together (`--max-model-len`).
+    pub max_model_len: Option<usize>,
+    /// Service cap on generated tokens per request (`--max-output-tokens`).
+    pub max_output_tokens: Option<usize>,
     pub upload_staging_mib: Option<usize>,
     pub num_speculative_tokens: usize,
     pub gpu_memory_utilization: f64,

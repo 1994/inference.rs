@@ -18,6 +18,8 @@ pub fn run() {
         num_gpu_blocks_override: cli.num_gpu_blocks_override,
         block_size: cli.block_size,
         max_num_batched_tokens: cli.max_num_batched_tokens,
+        max_model_len: cli.max_model_len,
+        max_output_tokens: cli.max_output_tokens,
         upload_staging_mib: cli.upload_staging_mib,
         num_speculative_tokens: cli.num_speculative_tokens,
         gpu_memory_utilization: cli.gpu_memory_utilization,
