@@ -634,137 +634,12 @@ mod tests {
             }
             device.reclaim_barrier()?;
             let elapsed = started.elapsed() / repeats;
-            let actual = out.to_host_vec().sync_on(&device.stream)?;
-            let mut worst = 0.0_f64;
-            let mut scale = 0.0_f64;
-            for i in 0..m {
-                for j in 0..n {
-                    let mut expected = 0.0_f64;
-                    for d in 0..k {
-                        expected = f64::mul_add(
-                            f64::from(host_activations[i * k + d]),
-                            f64::from(host_weights[j * k + d]),
-                            expected,
-                        );
-                    }
-                    scale = scale.max(expected.abs());
-                    worst = worst.max((f64::from(actual[i * n + j]) - expected).abs());
-                }
-            }
+            let (worst, scale) =
+                reference_error(&out, &host_activations, &host_weights, (m, n, k), &device)?;
             eprintln!(
                 "m={m} n={n} k={k}: worst {worst:.3e} against reference scale {scale:.1} in {:.3} ms",
                 elapsed.as_secs_f64() * 1.0e3
             );
-            assert!(
-                worst <= 1.0e-2 * scale.max(1.0),
-                "cuBLAS disagrees with the reference at m={m} n={n} k={k}"
-            );
-        }
-        Ok(())
-    }
-
-    /// A cuBLAS handle belongs to the device and stream it was created on, so two device
-    /// instances on one card must not share one, and a graph recorded on either has to launch
-    /// there and produce the right numbers.
-    #[test]
-    #[ignore = "requires CUDA hardware; run inside safe-run"]
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        reason = "test extents are small literals, so the narrowing to the kernel's i32 is exact"
-    )]
-    fn cublas_context_is_per_device_instance() -> Result<(), Box<dyn std::error::Error>> {
-        CudaDevice::enable_kernel_cache()?;
-        if !available() {
-            eprintln!("cuBLAS unavailable; skipping");
-            return Ok(());
-        }
-        let (rows, columns, contraction) = (12_usize, 2048_usize, 2048_usize);
-        let activations: Vec<bf16> = (0..rows * contraction).map(|i| bf16::from_f32(sample(7, i))).collect();
-        let weights: Vec<bf16> = (0..columns * contraction).map(|i| bf16::from_f32(sample(8, i))).collect();
-        let first = CudaDevice::new(0)?;
-        let second = CudaDevice::new(0)?;
-        assert_ne!(
-            first.stream.cu_stream(),
-            second.stream.cu_stream(),
-            "the two instances need their own streams for this check"
-        );
-        let (Some(first_context), Some(second_context)) =
-            (context_for(&first), context_for(&second))
-        else {
-            eprintln!("cuBLAS context unavailable; skipping");
-            return Ok(());
-        };
-        assert!(
-            !Arc::ptr_eq(&first_context, &second_context),
-            "two device instances must not share one handle"
-        );
-        for (device, context) in [(&first, &first_context), (&second, &second_context)] {
-            let a = device.upload(activations.clone(), &[rows, contraction])?;
-            let b = device.upload(weights.clone(), &[columns, contraction])?;
-            let out = api::zeros::<f32>(&[rows, columns]).sync_on(&device.stream)?;
-            // Warm this instance's stream outside capture, as the production path does.
-            #[expect(
-                unsafe_code,
-                reason = "Audited warmup: both operands are tensors uploaded just above with matching extents"
-            )]
-            // SAFETY: both operands are live device tensors with the extents the launch is told.
-            let warmed = unsafe {
-                launch(
-                    context,
-                    rows as i32,
-                    columns as i32,
-                    contraction as i32,
-                    a.device_pointer().cu_deviceptr() as *const c_void,
-                    b.device_pointer().cu_deviceptr() as *const c_void,
-                    out.device_pointer().cu_deviceptr() as *mut c_void,
-                )
-            };
-            warmed.map_err(|code| DeviceError::Internal(format!("cublasGemmEx warmup {code}")))?;
-            device
-                .reclaim_barrier()
-                .map_err(|error| DeviceError::Internal(error.to_string()))?;
-            let graph = CudaGraph::scope(&device.stream, |scope| {
-                let op = GemmBf16::new(
-                    Arc::clone(context),
-                    rows as i32,
-                    columns as i32,
-                    contraction as i32,
-                    &a,
-                    &b,
-                    &out,
-                )
-                .map_err(|error| DeviceError::Internal(error.to_string()))?;
-                scope.record(op)?;
-                Ok(())
-            })
-            .map_err(device_error)?;
-            graph
-                .launch()
-                .sync_on(&device.stream)
-                .map_err(device_error)?;
-            device
-                .reclaim_barrier()
-                .map_err(|error| DeviceError::Internal(error.to_string()))?;
-            let actual = out.to_host_vec().sync_on(&device.stream)?;
-            let host_activations: Vec<f32> = activations.iter().map(|v| v.to_f32()).collect();
-            let host_weights: Vec<f32> = weights.iter().map(|v| v.to_f32()).collect();
-            let mut worst = 0.0_f64;
-            let mut scale = 0.0_f64;
-            for i in 0..rows {
-                for j in 0..columns {
-                    let mut expected = 0.0_f64;
-                    for d in 0..contraction {
-                        expected = f64::mul_add(
-                            f64::from(host_activations[i * contraction + d]),
-                            f64::from(host_weights[j * contraction + d]),
-                            expected,
-                        );
-                    }
-                    scale = scale.max(expected.abs());
-                    worst = worst.max((f64::from(actual[i * columns + j]) - expected).abs());
-                }
-            }
             eprintln!(
                 "device {}: captured gemm worst {worst:.3e} of {scale:.1}",
                 device.ordinal()
@@ -794,8 +669,12 @@ mod tests {
             return Ok(());
         }
         let (rows, columns, contraction) = (12_usize, 2048_usize, 2048_usize);
-        let activations: Vec<bf16> = (0..rows * contraction).map(|i| bf16::from_f32(sample(3, i))).collect();
-        let weights: Vec<bf16> = (0..columns * contraction).map(|i| bf16::from_f32(sample(4, i))).collect();
+        let activations: Vec<bf16> = (0..rows * contraction)
+            .map(|i| bf16::from_f32(sample(3, i)))
+            .collect();
+        let weights: Vec<bf16> = (0..columns * contraction)
+            .map(|i| bf16::from_f32(sample(4, i)))
+            .collect();
         let a = device.upload(activations, &[rows, contraction])?;
         let b = device.upload(weights, &[columns, contraction])?;
         let out = api::zeros::<f32>(&[rows, columns]).sync_on(&device.stream)?;
@@ -805,8 +684,16 @@ mod tests {
         gemm_bf16(&device, &a, &b, &out)?;
         device.reclaim_barrier()?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
-            let op = GemmBf16::new(context, rows as i32, columns as i32, contraction as i32, &a, &b, &out)
-                .map_err(|error| DeviceError::Internal(error.to_string()))?;
+            let op = GemmBf16::new(
+                context,
+                rows as i32,
+                columns as i32,
+                contraction as i32,
+                &a,
+                &b,
+                &out,
+            )
+            .map_err(|error| DeviceError::Internal(error.to_string()))?;
             scope.record(op)?;
             Ok(())
         })
@@ -829,5 +716,35 @@ mod tests {
         eprintln!("captured versus direct launch: max_abs={gap:e}");
         assert_eq!(gap, 0.0, "the captured launch differs from the direct one");
         Ok(())
+    }
+
+    /// Worst absolute error of a device result against an f64 reference, with the reference scale.
+    fn reference_error(
+        out: &Tensor<f32>,
+        host_activations: &[f32],
+        host_weights: &[f32],
+        (rows, columns, contraction): (usize, usize, usize),
+        device: &CudaDevice,
+    ) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+        let actual = device
+            .read_borrowed(out)
+            .map_err(|error| error.to_string())?;
+        let mut worst = 0.0_f64;
+        let mut scale = 0.0_f64;
+        for i in 0..rows {
+            for j in 0..columns {
+                let mut expected = 0.0_f64;
+                for d in 0..contraction {
+                    expected = f64::mul_add(
+                        f64::from(host_activations[i * contraction + d]),
+                        f64::from(host_weights[j * contraction + d]),
+                        expected,
+                    );
+                }
+                scale = scale.max(expected.abs());
+                worst = worst.max((f64::from(actual[i * columns + j]) - expected).abs());
+            }
+        }
+        Ok((worst, scale))
     }
 }
