@@ -46,9 +46,9 @@ pub(crate) mod recurrent {
         reason = "CUDA state kernel binds explicit tensors and the padding metadata"
     )]
     #[cutile::entry()]
-    fn delta<const KH: i32, const VH: i32, const D: i32>(
-        out: &mut Tensor<f32, { [1, D] }>,
-        state: &mut Tensor<f32, { [1, D, D] }>,
+    fn delta<const KH: i32, const VH: i32, const D: i32, const SW: i32>(
+        out: &mut Tensor<f32, { [1, 1, SW] }>,
+        state: &mut Tensor<f32, { [1, D, SW] }>,
         qkv: &Tensor<f32, { [-1] }>,
         beta: &Tensor<f32, { [-1] }>,
         alpha: &Tensor<f32, { [-1] }>,
@@ -64,7 +64,11 @@ pub(crate) mod recurrent {
             let qp = qkv.partition(shape![D]);
             let mut q = qp.load([key]);
             let mut k = qp.load([KH + key]);
-            let v = qp.load([2i32 * KH + pid.0]);
+            // One block of the value dimension. The state's columns are mutually independent -
+            // every reduction below is over the key dimension - so splitting them changes no
+            // summation order while giving the grid SW times more blocks to fill the device.
+            let vp = qkv.partition(shape![SW]);
+            let v = vp.load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
             let qs: Tile<f32, { [] }> = reduce_sum(q * q, 0i32);
             let ks: Tile<f32, { [] }> = reduce_sum(k * k, 0i32);
             let qs = qs.reshape(shape![1]);
@@ -90,20 +94,20 @@ pub(crate) mod recurrent {
             );
             let soft = select(large, at, soft);
             let decay = exp(zero - exp(a_log.partition(shape![1]).load([pid.0])) * soft);
-            let old = state.load_like(state).reshape(shape![D, D]);
-            let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, D]);
-            let kb = k.reshape(shape![D, 1]).broadcast(shape![D, D]);
-            let predicted: Tile<f32, { [D] }> = reduce_sum(decayed * kb, 0i32);
-            let predicted = predicted.reshape(shape![D]);
-            let diff = (v - predicted) * bt.broadcast(shape![D]);
-            let updated: Tile<f32, { [D, D] }> =
-                decayed + kb * diff.reshape(shape![1, D]).broadcast(shape![D, D]);
-            let qb = q.reshape(shape![D, 1]).broadcast(shape![D, D]);
-            let result: Tile<f32, { [D] }> = reduce_sum(updated * qb, 0i32);
-            state.store(updated.reshape(shape![1, D, D]));
-            out.store(result.reshape(shape![1, D]));
+            let old = state.load_like(state).reshape(shape![D, SW]);
+            let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+            let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+            let predicted: Tile<f32, { [SW] }> = reduce_sum(decayed * kb, 0i32);
+            let predicted = predicted.reshape(shape![SW]);
+            let diff = (v - predicted) * bt.broadcast(shape![SW]);
+            let updated: Tile<f32, { [D, SW] }> =
+                decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+            let qb = q.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+            let result: Tile<f32, { [SW] }> = reduce_sum(updated * qb, 0i32);
+            state.store(updated.reshape(shape![1, D, SW]));
+            out.store(result.reshape(shape![1, 1, SW]));
         } else {
-            out.store(0.0f32.broadcast(shape![1, D]));
+            out.store(0.0f32.broadcast(shape![1, 1, SW]));
         }
     }
 }

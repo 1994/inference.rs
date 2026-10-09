@@ -5,6 +5,27 @@ use super::{
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 
+/// Value-dimension blocks per head for the per-lane Delta, requested by
+/// `INFER_CUDA_RECURRENT_VALUE_SPLIT`.
+///
+/// One is the established behaviour: one block per value head, each moving the whole state. The
+/// split is read once at capture time, so a run's graphs and its report agree.
+fn value_split() -> usize {
+    std::env::var("INFER_CUDA_RECURRENT_VALUE_SPLIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1)
+}
+
+/// Width of one value-dimension block, rejecting a split that does not divide the dimension.
+pub(super) fn value_block(value_dim: usize) -> Result<usize, DeviceError> {
+    let split = value_split();
+    if split == 0 || !value_dim.is_multiple_of(split) {
+        return Err(error("recurrent value split"));
+    }
+    Ok(value_dim / split)
+}
+
 impl Capture<'_> {
     fn conv(
         &self,
@@ -70,10 +91,17 @@ impl Capture<'_> {
                     return Err(error("resident delta dimensions"));
                 }
                 output = output.reshape(&[value_heads, value_dim])?;
+                // The value dimension may be split so the grid can fill the device: the
+                // established single-block launch is one block per value head, 48 of them on the
+                // 27B against 170 multiprocessors, and each block moves the whole D-by-D state for
+                // every token. Splitting the columns is exact - every reduction is over the key
+                // dimension - and is off by default until the full matrix shows a gain.
+                let block = value_block(value_dim)?;
+                output = output.reshape(&[value_heads, 1, value_dim])?;
                 self.scope.record(
                     recurrent::delta(
-                        (&mut output).partition([1, value_dim]),
-                        (&mut state[0]).partition([1, key_dim, value_dim]),
+                        (&mut output).partition([1, 1, block]),
+                        (&mut state[0]).partition([1, key_dim, block]),
                         &self.input(node.inputs[0])?,
                         &self.input(node.inputs[1])?,
                         &self.input(node.inputs[2])?,
@@ -85,8 +113,10 @@ impl Capture<'_> {
                         key_heads.to_string(),
                         value_heads.to_string(),
                         key_dim.to_string(),
+                        block.to_string(),
                     ]),
                 )?;
+                output = output.reshape(&[value_heads, value_dim])?;
             }
             TensorOp::Attention { .. } => {
                 let keys = state.remove(0);

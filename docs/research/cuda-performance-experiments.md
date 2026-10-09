@@ -901,3 +901,34 @@ bash tools/bench/safe-run.sh env \
     --mtp 0 --tokens 64 --gpu-memory-utilization 0.88 --max-model-len 65536 --max-num-seqs 16 \
     --run-id <新 ID> --profile-id 27b-mtp0
 ```
+
+### 十.1 值维分块的 A/B 与真正的瓶颈【确证】
+
+按 §十 的推断 1，实现了 per-lane Delta 的 value 维分块：状态列互不依赖（归约只在 key 维），
+把 `state`/`out` 按 `[1, D, D/S]`、`[1, 1, D/S]` 分区即可，网格从每 value head 一块变成 S 块。
+切换用 `INFER_CUDA_RECURRENT_VALUE_SPLIT`，默认 1（保持既有行为）。
+
+**数值**（`per_lane_delta_matches_independent_recurrence_at_model_geometry`，kh=16、vh=48、D=128
+的 f64 独立参考）：split 1 最差 state 6.90e-8 / out 8.67e-9；split 4 为 6.71e-8 / 1.04e-8；
+split 4 相对 split 1 的差为 state 2.98e-8 / out 7.45e-9，与既有 chunked-vs-per-lane 的
+9.31e-9 / 7.45e-9 同量级，属于 cuTile lowering 的末位差，不是数值口径变化。
+
+**性能：没有收益。** 27B、mtp 0，同一 profile 的完整矩阵（图边界事件）：
+
+| split | `prefill` 每次 replay | `prefill_last` | `slot_decode` |
+|---:|---:|---:|---:|
+| 1 | 143.60 ms | 51.51 ms | 18.71 ms |
+| 4 | 147.36 ms | 52.74 ms | 18.76 ms |
+
+网格从 48 块变到 192 块（170 SM）却不变快，说明这个核**不是**占用率受限。
+
+**真正的瓶颈是 prompt 图的节点数和每节点开销。** `INFER_CUDA_PREFILL_PROFILE` 的逐节点输出：
+32-lane 的 prefill 图有 **1154 个节点**，单次 replay 119.3 ms，即 **每节点 103 µs**；其中 delta 占
+61.28 ms。按 64 层换算，per-lane 的 prompt token 每层约 **70 µs**，而 vLLM 的 511-token prompt
+TTFT 约 150 ms、即每层每 token 约 5 µs——**差在每层每 token 的固定开销，约 15×**，不在带宽。
+
+因此 prompt 侧的杠杆是**减少每 token 的串行小算子数**（把每层的 conv/delta/norm 等窄算子合并、
+把 32 条 lane 并成更宽的 tile），而不是给单个窄算子加块。§十 推断 1 作为优化方向被这次 A/B 否定，
+保留为实现与复现工具：分块代码在 split=1 时是原有路径，数值已验证，后续若要换 lowering 可直接复用。
+
+下一轮的目标相应改为：统计每层每 token 的节点构成，找出可合并的连续算子对，按"一次只改一处"做 A/B。

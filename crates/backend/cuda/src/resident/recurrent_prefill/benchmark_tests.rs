@@ -41,14 +41,18 @@ fn bench_case(
     let mut old_outputs = Vec::new();
     let mut metadata = Vec::new();
     for lane in 0..lanes {
-        old_outputs.push(api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?);
+        old_outputs.push(
+            api::zeros::<f32>(&[vh, dim])
+                .sync_on(&device.stream)?
+                .reshape(&[vh, 1, dim])?,
+        );
         metadata.push(device.upload(vec![i32::try_from(lane)?, 0, i32::try_from(lane)?, 0], &[4])?);
     }
     let baseline = CudaGraph::scope(&device.stream, |scope| {
         for (lane, output) in old_outputs.iter_mut().enumerate() {
             scope.record(
                 super::super::recurrent::recurrent::delta(
-                    output.partition([1, dim]),
+                    output.partition([1, 1, dim]),
                     (&mut state).partition([1, dim, dim]),
                     &qkv.view(&[lanes * cols])?
                         .slice(std::slice::from_ref(&(lane * cols..(lane + 1) * cols)))?,
@@ -62,7 +66,12 @@ fn bench_case(
                     &bias,
                     &metadata[lane],
                 )
-                .generics(vec![kh.to_string(), vh.to_string(), dim.to_string()]),
+                .generics(vec![
+                    kh.to_string(),
+                    vh.to_string(),
+                    dim.to_string(),
+                    dim.to_string(),
+                ]),
             )?;
         }
         Ok(())

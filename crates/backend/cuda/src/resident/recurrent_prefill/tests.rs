@@ -186,41 +186,81 @@ fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
             outputs[head * dim + col] = (0..dim).map(|row| state[row * dim + col] * q[row]).sum();
         }
     }
-    let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
-    let src = device.upload(initial, &[vh, dim, dim])?;
-    api::memcpy(&mut state, &src).sync_on(&device.stream)?;
-    let mut output = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
+    let mut single_block: Option<(Vec<f32>, Vec<f32>)> = None;
     let qkv = device.upload(qkv, &[(2 * kh + vh) * dim])?;
     let beta = device.upload(beta, &[vh])?;
     let alpha = device.upload(alpha, &[vh])?;
     let a_log = device.upload(a_log, &[vh])?;
     let bias = device.upload(bias, &[vh])?;
     let metadata = device.upload(vec![0, 1, 0, 0], &[4])?;
-    crate::resident::recurrent::recurrent::delta(
-        (&mut output).partition([1, dim]),
-        (&mut state).partition([1, dim, dim]),
-        &qkv,
-        &beta,
-        &alpha,
-        &a_log,
-        &bias,
-        &metadata,
-    )
-    .generics(vec![kh.to_string(), vh.to_string(), dim.to_string()])
-    .sync_on(&device.stream)?;
-    let actual_state = state.to_host_vec().sync_on(&device.stream)?;
-    let actual_out = output.to_host_vec().sync_on(&device.stream)?;
-    let mut worst_state = 0.0_f64;
-    for (a, b) in actual_state.iter().zip(&expected) {
-        worst_state = worst_state.max((f64::from(*a) - b).abs());
+    // One block per value head is the established launch; a split gives the grid that many more
+    // blocks. Both must agree with the reference, and the split must not move the answer.
+    for split in [1_usize, 4] {
+        let block = dim / split;
+        let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+        let src = device.upload(initial.clone(), &[vh, dim, dim])?;
+        api::memcpy(&mut state, &src).sync_on(&device.stream)?;
+        let output = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
+        let mut output = output.reshape(&[vh, 1, dim])?;
+        crate::resident::recurrent::recurrent::delta(
+            (&mut output).partition([1, 1, block]),
+            (&mut state).partition([1, dim, block]),
+            &qkv,
+            &beta,
+            &alpha,
+            &a_log,
+            &bias,
+            &metadata,
+        )
+        .generics(vec![
+            kh.to_string(),
+            vh.to_string(),
+            dim.to_string(),
+            block.to_string(),
+        ])
+        .sync_on(&device.stream)?;
+        let actual_state = state.to_host_vec().sync_on(&device.stream)?;
+        let actual_out = output.to_host_vec().sync_on(&device.stream)?;
+        let mut worst_state = 0.0_f64;
+        for (a, b) in actual_state.iter().zip(&expected) {
+            worst_state = worst_state.max((f64::from(*a) - b).abs());
+        }
+        let mut worst_out = 0.0_f64;
+        for (a, b) in actual_out.iter().zip(&outputs) {
+            worst_out = worst_out.max((f64::from(*a) - b).abs());
+        }
+        eprintln!(
+            "per-lane delta at model geometry, split {split}: worst state {worst_state}, worst out {worst_out}"
+        );
+        assert!(worst_state < 0.001, "per-lane state drift {worst_state}");
+        assert!(worst_out < 0.001, "per-lane output drift {worst_out}");
+        // The split partitions independent columns, so it must land on the single-block launch
+        // to rounding rather than merely inside the f64 reference tolerance. cuTile's lowering
+        // contracts differently for the two partition shapes, so this is a bound and not equality;
+        // the observed figure is printed so a change in it is visible in the test output.
+        if split == 1 {
+            single_block = Some((actual_state, actual_out));
+        } else {
+            let (state_ref, out_ref) = single_block
+                .as_ref()
+                .ok_or("single-block launch did not run first")?;
+            let state_gap = actual_state
+                .iter()
+                .zip(state_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            let out_gap = actual_out
+                .iter()
+                .zip(out_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            eprintln!(
+                "split {split} against the single-block launch: state {state_gap:e}, out {out_gap:e}"
+            );
+            assert!(state_gap < 1.0e-6, "split moved the state by {state_gap:e}");
+            assert!(out_gap < 1.0e-7, "split moved the output by {out_gap:e}");
+        }
     }
-    let mut worst_out = 0.0_f64;
-    for (a, b) in actual_out.iter().zip(&outputs) {
-        worst_out = worst_out.max((f64::from(*a) - b).abs());
-    }
-    eprintln!("per-lane delta at model geometry: worst state {worst_state}, worst out {worst_out}");
-    assert!(worst_state < 0.001, "per-lane state drift {worst_state}");
-    assert!(worst_out < 0.001, "per-lane output drift {worst_out}");
     Ok(())
 }
 
@@ -315,9 +355,10 @@ fn recurrence_gap(
         let qkv_one = device.upload(row.to_vec(), &[heads * dim])?;
         let beta_one = device.upload(beta[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
         let alpha_one = device.upload(alpha[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
-        let mut out_one = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
+        let out_one = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
+        let mut out_one = out_one.reshape(&[vh, 1, dim])?;
         crate::resident::recurrent::recurrent::delta(
-            (&mut out_one).partition([1, dim]),
+            (&mut out_one).partition([1, 1, dim]),
             (&mut state_l).partition([1, dim, dim]),
             &qkv_one,
             &beta_one,
@@ -326,7 +367,12 @@ fn recurrence_gap(
             &bias_c,
             &lane_metadata,
         )
-        .generics(vec![kh.to_string(), vh.to_string(), dim.to_string()])
+        .generics(vec![
+            kh.to_string(),
+            vh.to_string(),
+            dim.to_string(),
+            dim.to_string(),
+        ])
         .sync_on(&device.stream)?;
         let lane_out = out_one.to_host_vec().sync_on(&device.stream)?;
         for head in 0..vh {
