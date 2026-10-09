@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from functools import partial
@@ -44,6 +45,19 @@ from pathlib import Path
 CASES = ["short", "long", "batch4", "hot_long"]
 NATIVE_PREFIX_METRICS = ("prefix_tokens_reused",)
 REFERENCE_PREFIX_METRICS = ("vllm:prefix_cache_hits_total", "sglang:prefix_cache_hits_total")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# Model artifacts whose content decides the input identity. Weight shards are recorded by name
+# and size instead of hashed, because a 27B package is tens of gigabytes.
+MODEL_ARTIFACTS = (
+    "config.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "model.safetensors.index.json",
+    "chat_template.jinja",
+)
+# Debug sections are only emitted for a debug or explicitly unstripped build.
+DEBUG_SECTIONS = (b".debug_info", b".debug_str", b".debug_line")
 
 
 def http(url, payload=None, timeout=600):
@@ -75,6 +89,106 @@ def eos_tokens(model):
     return value if isinstance(value, list) else [value]
 
 
+def git_identity():
+    """Full source revision and whether the measured tree is dirty."""
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = bool(
+            subprocess.check_output(
+                ["git", "-C", str(REPO_ROOT), "status", "--porcelain"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        )
+        return {"revision": revision, "dirty": dirty}
+    except (OSError, subprocess.CalledProcessError):
+        return {"revision": None, "dirty": None}
+
+
+def release_profile():
+    """The workspace release profile, so the recorded build facts are the real ones."""
+    try:
+        manifest = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return manifest.get("profile", {}).get("release", {})
+
+
+def binary_identity(path):
+    """Observable build facts for an engine executable.
+
+    A debug or explicitly unstripped build carries DWARF section names, so their presence is a
+    direct signal that the binary is not a release build. The path is not used as evidence.
+    """
+    data = Path(path).read_bytes()
+    debug_sections = [name.decode() for name in DEBUG_SECTIONS if name in data]
+    return {
+        "path": str(path),
+        "sha256": sha256_bytes(data),
+        "bytes": len(data),
+        "debug_sections": debug_sections,
+        "release_like": not debug_sections,
+    }
+
+
+def hardware_identity():
+    """Device identity and driver, so a different GPU cannot be paired silently."""
+    fields = ["uuid", "name", "driver_version"]
+    try:
+        raw = subprocess.check_output(
+            ["nvidia-smi", f"--query-gpu={','.join(fields)}", "--format=csv,noheader"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return {"devices": []}
+    return {
+        "devices": [
+            dict(zip(fields, [part.strip() for part in line.split(",")], strict=True))
+            for line in raw.splitlines()
+            if line.strip()
+        ]
+    }
+
+
+def model_identity(model):
+    """Fingerprint the artifacts that decide which model is really being measured."""
+    files = {}
+    for name in MODEL_ARTIFACTS:
+        path = Path(model) / name
+        if path.exists():
+            files[name] = sha256_file(path)
+    shards = sorted(Path(model).glob("*.safetensors"))
+    return {
+        "path": str(model),
+        "files": files,
+        "shards": {path.name: path.stat().st_size for path in shards},
+    }
+
+
+def runtime_readback(args, base):
+    """Read the configuration the native server actually applied."""
+    if args.engine != "native":
+        return {"source": "command line", "readback": None}
+    try:
+        with http(base + "/native/v1/runtime", timeout=30) as response:
+            inspection = json.loads(response.read())
+    except (OSError, ValueError, urllib.error.HTTPError) as error:
+        return {"source": "unavailable", "error": repr(error)}
+    return {
+        "source": "native runtime inspection",
+        "readback": {
+            key: inspection.get(key)
+            for key in ("model_name", "lengths", "scheduler", "execution_profile", "kv_cache")
+        },
+    }
+
+
 def native_command(args, port):
     command = [
         str(args.executable),
@@ -85,6 +199,14 @@ def native_command(args, port):
         str(args.mtp),
         "--gpu-memory-utilization",
         str(args.gpu_memory_utilization),
+        # The reference engine is given these; leaving native on its own defaults would compare
+        # two different service constraints. The per-step token budget is deliberately not forced
+        # here: vLLM treats it as a cap while native derives its own chunk and only floors it, so
+        # both sides record their effective value instead of pretending one flag means one thing.
+        "--max-model-len",
+        str(args.max_model_len),
+        "--max-num-seqs",
+        str(args.max_num_seqs),
     ]
     if args.extra:
         command += args.extra
@@ -115,8 +237,7 @@ def vllm_command(args, port):
         "--limit-mm-per-prompt",
         '{"image":0,"video":0}',
     ]
-    if args.prefix_cache:
-        command.append("--enable-prefix-caching")
+    command.append("--enable-prefix-caching" if args.prefix_cache else "--no-enable-prefix-caching")
     if args.mtp:
         command += [
             "--speculative-config",
@@ -213,6 +334,7 @@ def stream_request(args, base, model, eos, counter, row):
     started = time.perf_counter()
     tokens = []
     arrivals = []
+    events = []
     finished = None
     try:
         with http(base + route, payload) as response:
@@ -239,8 +361,10 @@ def stream_request(args, base, model, eos, counter, row):
                     if choices and choices[0].get("finish_reason"):
                         finished = choices[0]["finish_reason"]
                 if new:
+                    at = time.perf_counter() - started
                     tokens.extend(new)
-                    arrivals.extend([time.perf_counter() - started] * len(new))
+                    arrivals.extend([at] * len(new))
+                    events.append({"at_seconds": at, "tokens": len(new)})
     except urllib.error.HTTPError as error:
         raise RuntimeError(error.read().decode()) from error
     elapsed = time.perf_counter() - started
@@ -249,6 +373,10 @@ def stream_request(args, base, model, eos, counter, row):
     if args.engine == "native" and not finished["measurement"]["successful"]:
         raise RuntimeError(f"unsuccessful native measurement: {finished}")
     visible = [(token, at) for token, at in zip(tokens, arrivals, strict=True) if token not in eos]
+    # A single visible token has no inter-token interval, so TPOT is unavailable rather than
+    # invalid; the gate keeps the request and reports the metric as not measurable.
+    tpot = (visible[-1][1] - visible[0][1]) / (len(visible) - 1) if len(visible) > 1 else None
+    finish_reason = finished.get("reason") if isinstance(finished, dict) else finished
     return {
         "case": row["case"],
         "repeat": row["repeat"],
@@ -256,12 +384,18 @@ def stream_request(args, base, model, eos, counter, row):
         "input_tokens": len(row["tokens"]),
         "token_ids": tokens,
         "output_tokens_excluding_eos": len(visible),
+        # Three distinct endpoints, named separately so they cannot be mixed up: the request
+        # wall, the last visible token, and (per trial) the group makespan.
         "wall_seconds": elapsed,
+        "request_wall_seconds": elapsed,
+        "time_to_last_token_seconds": visible[-1][1] if visible else None,
         "ttft_seconds": arrivals[0],
-        "tpot_seconds": (
-            (visible[-1][1] - visible[0][1]) / (len(visible) - 1) if len(visible) > 1 else None
-        ),
+        "tpot_seconds": tpot,
+        "tpot_available": tpot is not None,
         "arrival_seconds": arrivals,
+        "stream_events": events,
+        "finish_reason": finish_reason,
+        "truncated": finish_reason is None,
         "finished": finished,
     }
 
@@ -294,32 +428,46 @@ def measure(args, report, base, rows, save):
     counter = iter(range(1, 1_000_000))
     eos = report["eos_tokens"]
     for case in CASES:
-        if not any(r["case"] == case for r in rows):
+        declared = [r for r in rows if r["case"] == case]
+        if not declared:
             continue
         for repeat in range(-1, args.repeats):
-            group = [r for r in rows if r["case"] == case and r["repeat"] == repeat]
+            group = [r for r in declared if r["repeat"] == repeat]
+            # The workload declares how many requests a case runs together; measuring fewer
+            # would silently turn batch4 into four single-request runs.
+            expected = declared[0]["concurrency"]
+            if len(group) != expected or len({r["slot"] for r in group}) != len(group):
+                raise RuntimeError(
+                    f"{case} repeat {repeat} has {len(group)} requests, expected {expected}"
+                )
             before = read_metrics(args, base)
             started = time.perf_counter()
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(group)) as pool:
                 results = list(
                     pool.map(partial(stream_request, args, base, args.model, eos, counter), group)
                 )
+            makespan = time.perf_counter() - started
             trial = {
                 "case": case,
                 "repeat": repeat,
                 "warmup": repeat < 0,
                 "concurrency": len(group),
+                "declared_concurrency": expected,
                 "start_unix": time.time(),
-                "wall_seconds": time.perf_counter() - started,
+                "wall_seconds": makespan,
+                "group_makespan_seconds": makespan,
                 "results": results,
             }
             time.sleep(1.1)
             trial["metrics_before"] = before
             trial["metrics_after"] = read_metrics(args, base)
+            # Reuse is recorded per trial, so one hit cannot stand in for the whole hot case.
+            trial["prefix_tokens_reused"] = prefix_reuse(args, trial)
             report["trials"].append(trial)
             save()
             outputs = [r["output_tokens_excluding_eos"] for r in results]
-            print(f"{case} {repeat} {trial['wall_seconds']:.3f}s {outputs}", flush=True)
+            reused = trial["prefix_tokens_reused"]
+            print(f"{case} {repeat} {makespan:.3f}s reuse={reused:.0f} {outputs}", flush=True)
 
 
 def load_workload(path, repeats, max_input_tokens=0):
@@ -334,10 +482,28 @@ def load_workload(path, repeats, max_input_tokens=0):
         tokens = row.get("tokens")
         if not isinstance(tokens, list) or not tokens:
             raise SystemExit(f"workload row has no tokens: {row.get('case')}/{row.get('slot')}")
+        if not isinstance(row.get("concurrency"), int) or row["concurrency"] < 1:
+            raise SystemExit(
+                "workload row declares no positive concurrency: "
+                f"{row.get('case')}/{row.get('slot')}"
+            )
         if max_input_tokens and len(tokens) > max_input_tokens:
             raise SystemExit(
                 f"input of {len(tokens)} tokens exceeds --max-input-tokens {max_input_tokens}"
             )
+    for case in CASES:
+        declared = {r["concurrency"] for r in rows if r["case"] == case}
+        if not declared:
+            continue
+        if len(declared) > 1:
+            raise SystemExit(f"{case} declares inconsistent concurrency: {sorted(declared)}")
+        expected = declared.pop()
+        for repeat in range(-1, repeats):
+            count = sum(1 for r in rows if r["case"] == case and r["repeat"] == repeat)
+            if count != expected:
+                raise SystemExit(
+                    f"{case} repeat {repeat} carries {count} slots, expected {expected}"
+                )
     missing = [
         f"{case}:{repeat}"
         for case in CASES
@@ -350,15 +516,88 @@ def load_workload(path, repeats, max_input_tokens=0):
     return rows
 
 
+def workload_matrix(rows, repeats):
+    """The case/slot/repeat matrix the workload declares, so the gate can require all of it."""
+    return {
+        case: {
+            "concurrency": next(r["concurrency"] for r in rows if r["case"] == case),
+            "repeats": repeats,
+        }
+        for case in CASES
+        if any(r["case"] == case for r in rows)
+    }
+
+
+def require_cache_switch(args):
+    """Refuse a requested cache state the engine cannot actually apply."""
+    if args.engine == "native" and not args.prefix_cache:
+        raise RuntimeError(
+            "the native engine cannot disable its prefix cache, so --no-prefix-cache cannot take "
+            "effect; a cold profile is unavailable for this engine version"
+        )
+
+
 def run(args):
+    require_cache_switch(args)
     rows = load_workload(args.inputs, args.repeats, args.max_input_tokens)
     eos = eos_tokens(args.model)
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     command = build_command(args, port)
-    stem = args.output_dir / f"{args.model.name}-mtp{args.mtp}-{args.engine}"
+    name = f"{args.model.name}-mtp{args.mtp}-{args.engine}"
+    run_id = args.run_id or None
+    stem = args.output_dir / (name if run_id is None else f"{name}-{run_id}")
     stem.parent.mkdir(parents=True, exist_ok=True)
     log_path = Path(f"{stem}.server.log")
+    report_path = Path(f"{stem}.json")
+    # Evidence must not be replaced by a later run of the same name.
+    if report_path.exists():
+        raise RuntimeError(
+            f"report {report_path} already exists; pass a unique --run-id or a fresh --output-dir"
+        )
+    build = (
+        binary_identity(args.executable)
+        if args.engine == "native"
+        else {
+            "path": str(args.executable),
+            "sha256": sha256_file(args.executable),
+            "release_like": None,
+        }
+    )
+    profile = release_profile()
+    identity = {
+        "run_id": run_id,
+        "profile_id": args.profile_id,
+        "engine": args.engine,
+        "engine_version": args.engine_version,
+        "source": git_identity(),
+        "release_profile": profile,
+        "build": build,
+        "model": model_identity(args.model),
+        "hand_reported_package_sha256": args.package_sha256,
+        "hardware": hardware_identity(),
+        "limits": (
+            {
+                "source": "declared on the command line, verified after startup",
+                "max_model_len": args.max_model_len,
+                "max_num_seqs": args.max_num_seqs,
+                "max_num_batched_tokens": args.max_num_batched_tokens,
+            }
+            if args.engine != "native"
+            else {
+                "source": "pending native runtime inspection",
+                "max_model_len": args.max_model_len,
+                "max_num_seqs": args.max_num_seqs,
+            }
+        ),
+        "cache": {
+            "requested": bool(args.prefix_cache),
+            "effective": bool(args.prefix_cache),
+        },
+    }
+    # A release identity is verifiable for native through the binary's own sections; a debug or
+    # otherwise unverifiable build must not be recorded as if it were a release.
+    identity["verified"] = args.engine != "native" or build["release_like"] is True
     report = {
         "engine": args.engine,
         "engine_version": args.engine_version,
@@ -369,18 +608,20 @@ def run(args):
         "temperature": 0,
         "eos_tokens": eos,
         "mtp_depth": args.mtp,
-        "prefix_cache_enabled": True,
-        "binary_sha256": sha256_file(args.executable) if args.engine == "native" else None,
+        "prefix_cache_enabled": bool(args.prefix_cache),
+        "binary_sha256": build.get("sha256"),
         "workload_file": str(args.inputs),
         "inputs_sha256": sha256_bytes(json.dumps(rows, sort_keys=True).encode()),
         "gpu_memory_utilization": args.gpu_memory_utilization,
         "allocator_config": os.environ.get("PYTORCH_ALLOC_CONF"),
+        "matrix": workload_matrix(rows, args.repeats),
+        "identity": identity,
         "trials": [],
         "completed": False,
     }
 
     def save():
-        Path(f"{stem}.json").write_text(json.dumps(report, indent=2))
+        report_path.write_text(json.dumps(report, indent=2))
 
     with log_path.open("w") as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -389,12 +630,38 @@ def run(args):
                 args, process, base, log_path, args.startup_timeout
             )
             print(f"ready after {report['startup_seconds']:.1f}s", flush=True)
+            report["config_readback"] = runtime_readback(args, base)
+            if args.engine == "native":
+                readback = (report["config_readback"] or {}).get("readback") or {}
+                lengths = readback.get("lengths") or {}
+                # The CLI values are not the effective configuration; the readback is.
+                report["identity"]["limits"] = {
+                    "source": "native runtime inspection",
+                    "effective_max_model_len": lengths.get("total"),
+                    "effective_input_cap": lengths.get("input_cap"),
+                    "effective_output_cap": lengths.get("output_cap"),
+                    "effective_prefill_width": (readback.get("execution_profile") or {}).get(
+                        "prefill_width"
+                    ),
+                    "declared": report["identity"]["limits"],
+                }
+                if lengths.get("total") != args.max_model_len:
+                    raise RuntimeError(
+                        "native effective context "
+                        f"{lengths.get('total')} differs from the requested {args.max_model_len}"
+                    )
             measure(args, report, base, rows, save)
             hot = [t for t in report["trials"] if t["case"] == "hot_long" and not t["warmup"]]
-            reused = sum(prefix_reuse(args, t) for t in hot)
+            reused = sum(t["prefix_tokens_reused"] for t in hot)
             report["hot_prefix_tokens_reused"] = reused
             if hot and reused <= 0:
                 raise RuntimeError("prefix cache enabled but no actual hot-prefix reuse observed")
+            # Every measured repeat must show reuse; one hit cannot speak for the whole case.
+            cold = [t["repeat"] for t in hot if t["prefix_tokens_reused"] <= 0]
+            if cold:
+                raise RuntimeError(
+                    f"hot_long repeats {cold} reused no prefix even though the cache is enabled"
+                )
             report["completed"] = True
         except Exception as error:
             report["error"] = repr(error)
@@ -434,6 +701,10 @@ def main():
     parser.add_argument("--startup-timeout", type=float, default=900.0)
     parser.add_argument("--engine-version", default=None)
     parser.add_argument("--package-sha256", default=None)
+    parser.add_argument(
+        "--run-id", default=None, help="unique evidence id; reports never overwrite"
+    )
+    parser.add_argument("--profile-id", default=None, help="experiment profile this run belongs to")
     parser.add_argument("--prefix-cache", action="store_true", default=True)
     parser.add_argument("--no-prefix-cache", dest="prefix_cache", action="store_false")
     parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="extra engine flags")

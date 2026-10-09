@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Gate paired serving benchmark JSON reports; lower latency is better.
 
-This checks workload alignment and measured latency, not model quality or
-compute precision. Use --require-identical-tokens for numerical regressions.
+This judges three things separately and never lets one stand in for another:
+
+* alignment - both reports describe the same model artifact, resource limits, cache state and
+  hardware, and both were produced by a verifiable release build;
+* performance - the paired latency ratios against the declared threshold;
+* numeric - whether the two sides produced the same tokens, when the caller requires it.
+
+Task quality is not measured here; a report that passes says nothing about answer quality.
 """
 
 import argparse
@@ -11,44 +17,138 @@ import math
 import statistics
 from pathlib import Path
 
+# Per-request latency that must be present and positive; TPOT is optional because a request with
+# one visible token has no inter-token interval.
+REQUIRED_REQUEST_LATENCY = ("ttft_seconds",)
+
+
+def require_release_identity(report):
+    """Reject a report whose build, model or hardware identity cannot be verified."""
+    identity = report.get("identity")
+    if not isinstance(identity, dict):
+        raise ValueError("report has no identity block")
+    if identity.get("verified") is not True:
+        raise ValueError("report identity is not verified")
+    engine = identity.get("engine")
+    if engine == "native":
+        build = identity.get("build")
+        if not isinstance(build, dict) or build.get("release_like") is not True:
+            raise ValueError("native report was not built as a release binary")
+        if not (identity.get("source") or {}).get("revision"):
+            raise ValueError("native report records no source revision")
+    elif not identity.get("engine_version"):
+        raise ValueError("reference report records no engine version")
+    if not (identity.get("hardware") or {}).get("devices"):
+        raise ValueError("report records no hardware identity")
+    if not isinstance(identity.get("model"), dict) or not identity["model"].get("files"):
+        raise ValueError("report records no model artifact fingerprint")
+
+
+def align(baseline, candidate):
+    """Require the two reports to describe the same experiment conditions."""
+    for field in ("model", "hardware"):
+        if baseline["identity"].get(field) != candidate["identity"].get(field):
+            raise ValueError(f"unaligned {field} identity")
+    left_cache = (baseline["identity"].get("cache") or {}).get("effective")
+    right_cache = (candidate["identity"].get("cache") or {}).get("effective")
+    if left_cache != right_cache:
+        raise ValueError("unaligned prefix cache state")
+    if baseline.get("gpu_memory_utilization") != candidate.get("gpu_memory_utilization"):
+        raise ValueError("unaligned resource constraint: gpu_memory_utilization")
+    left_engine = baseline["identity"].get("engine")
+    right_engine = candidate["identity"].get("engine")
+    if left_engine == right_engine:
+        # An A/B of one engine must hold the serving limits fixed.
+        if baseline["identity"].get("limits") != candidate["identity"].get("limits"):
+            raise ValueError("unaligned serving limits")
+        return
+    # Across engines the internal limits differ by construction, so the shared context ceiling is
+    # checked explicitly and the experiment profile has to name the pairing.
+    profile = baseline["identity"].get("profile_id")
+    if not profile or profile != candidate["identity"].get("profile_id"):
+        raise ValueError("cross-engine comparison needs one shared profile id")
+    native, reference = (baseline, candidate) if left_engine == "native" else (candidate, baseline)
+    total = (native["identity"].get("limits") or {}).get("effective_max_model_len")
+    declared = (reference["identity"].get("limits") or {}).get("max_model_len")
+    if total is None or declared is None or total != declared:
+        raise ValueError(
+            f"context limits are not aligned across engines: native {total}, reference {declared}"
+        )
+
 
 def measured(report):
+    """Validate one report and return its measured trials keyed by case and repeat."""
     if report.get("completed") is not True:
         raise ValueError("benchmark did not complete")
+    matrix = report.get("matrix")
+    if not isinstance(matrix, dict) or not matrix:
+        raise ValueError("report does not declare the measured matrix")
     rows = {}
     for trial in report["trials"]:
         if trial["warmup"]:
             continue
         key = (trial["case"], trial["repeat"])
-        if key in rows or len(trial["results"]) != trial["concurrency"]:
-            raise ValueError("duplicate trial or incomplete concurrency group")
-        for latency in [trial["wall_seconds"]] + [
-            result[field]
-            for result in trial["results"]
-            for field in ("ttft_seconds", "tpot_seconds")
-        ]:
-            if latency is None or not math.isfinite(latency) or latency <= 0:
-                raise ValueError("missing or invalid latency")
+        if key in rows:
+            raise ValueError("duplicate trial")
+        declared = matrix.get(trial["case"])
+        if not isinstance(declared, dict) or "concurrency" not in declared:
+            raise ValueError(f"case is not declared in the matrix: {trial['case']}")
+        expected = declared["concurrency"]
+        # A partially measured concurrency group is not the case it claims to be.
+        if trial["concurrency"] != expected or len(trial["results"]) != expected:
+            raise ValueError(
+                f"{trial['case']} measured {len(trial['results'])} requests, expected {expected}"
+            )
+        makespan = trial.get("wall_seconds")
+        if makespan is None or not math.isfinite(makespan) or makespan <= 0:
+            raise ValueError("missing or invalid group makespan")
+        for result in trial["results"]:
+            if not result.get("finish_reason") or result.get("truncated"):
+                raise ValueError("failed or truncated request")
+            for field in REQUIRED_REQUEST_LATENCY:
+                value = result.get(field)
+                if value is None or not math.isfinite(value) or value <= 0:
+                    raise ValueError("missing or invalid latency")
+            # A single visible token has no inter-token interval; that is unavailable, not bad.
+            tpot = result.get("tpot_seconds")
+            if tpot is not None and (not math.isfinite(tpot) or tpot < 0):
+                raise ValueError("invalid TPOT")
         rows[key] = trial
     if not rows:
         raise ValueError("no measured trials")
-    if any(key[0] == "hot_long" for key in rows) and report.get("hot_prefix_tokens_reused", 0) <= 0:
-        raise ValueError("hot cache workload has no observed prefix reuse")
+    for case, declared in matrix.items():
+        for repeat in range(declared.get("repeats", 0)):
+            if (case, repeat) not in rows:
+                raise ValueError(f"matrix row was not measured: {case}:{repeat}")
+    hot = {key: trial for key, trial in rows.items() if key[0] == "hot_long"}
+    if hot:
+        if report.get("hot_prefix_tokens_reused", 0) <= 0:
+            raise ValueError("hot cache workload has no observed prefix reuse")
+        # Every measured repeat must reuse; a single hit cannot stand for the whole case.
+        cold = sorted(
+            key[1] for key, trial in hot.items() if trial.get("prefix_tokens_reused", 0) <= 0
+        )
+        if cold:
+            raise ValueError(f"hot cache repeats without observed reuse: {cold}")
     return rows
 
 
+def availability(values):
+    """Report a metric's usable samples, and whether it can be judged at all."""
+    usable = [value for value in values if value is not None]
+    return usable
+
+
 def compare(baseline, candidate, max_ratio=1.1, identical=False):
-    for field in (
-        "model",
-        "inputs_sha256",
-        "max_new_tokens",
-        "temperature",
-        "mtp_depth",
-        "prefix_cache_enabled",
-        "eos_tokens",
-    ):
+    for field in ("max_new_tokens", "temperature", "mtp_depth", "eos_tokens"):
         if field not in baseline or baseline[field] != candidate.get(field):
             raise ValueError(f"unaligned or missing workload field: {field}")
+    for field in ("model", "inputs_sha256", "prefix_cache_enabled"):
+        if field not in baseline or baseline[field] != candidate.get(field):
+            raise ValueError(f"unaligned or missing workload field: {field}")
+    require_release_identity(baseline)
+    require_release_identity(candidate)
+    align(baseline, candidate)
     old, new = measured(baseline), measured(candidate)
     if old.keys() != new.keys():
         raise ValueError("trial sets differ")
@@ -73,37 +173,64 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
                 if row[field] != peer[field]:
                     raise ValueError(f"request work differs: {key}, {slot}, {field}")
             token_mismatches += row["token_ids"] != peer["token_ids"]
-    results = []
+    metrics = []
     for case in sorted({key[0] for key in old}):
         groups = [[v for k, v in rows.items() if k[0] == case] for rows in (old, new)]
         if len(groups[0]) < 3:
             raise ValueError(f"at least three measured repeats required: {case}")
         for field in ("wall_seconds", "ttft_seconds", "tpot_seconds"):
-            medians = [
-                statistics.median(
+            samples = [
+                availability(
                     [t[field] for t in group]
                     if field == "wall_seconds"
-                    else [r[field] for t in group for r in t["results"]]
+                    else [r.get(field) for t in group for r in t["results"]]
                 )
                 for group in groups
             ]
+            if not samples[0] or not samples[1]:
+                # No request in the group exposed this metric; report it rather than fail.
+                metrics.append(
+                    {
+                        "case": case,
+                        "metric": field,
+                        "available": False,
+                        "note": "no measured request exposed this metric",
+                    }
+                )
+                continue
+            medians = [statistics.median(values) for values in samples]
             ratio = medians[1] / medians[0]
-            results.append(
+            metrics.append(
                 {
                     "case": case,
                     "metric": field,
+                    "available": True,
+                    "samples": [len(values) for values in samples],
                     "baseline": medians[0],
                     "candidate": medians[1],
                     "ratio": ratio,
                     "passed": ratio <= max_ratio,
                 }
             )
+    performance = all(m.get("passed", True) for m in metrics)
+    numeric = {
+        "required": identical,
+        "identical": token_mismatches == 0,
+        "token_mismatches": token_mismatches,
+    }
+    passed = performance and (not identical or numeric["identical"])
     return {
-        "passed": all(r["passed"] for r in results) and (not identical or token_mismatches == 0),
+        "passed": passed,
         "max_latency_ratio": max_ratio,
         "token_mismatches": token_mismatches,
         "identical_tokens_required": identical,
-        "metrics": results,
+        "performance": {"passed": performance, "metrics": metrics},
+        "numeric": numeric,
+        "quality": {
+            "available": False,
+            "note": "task quality is verified by its own gate, not here",
+        },
+        "metrics": metrics,
     }
 
 

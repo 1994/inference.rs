@@ -17,8 +17,9 @@
 | `bench` | [cuda-baseline.sh](bench/cuda-baseline.sh) | CUDA 投影基线采集，用法见 [CUDA 性能指南](../docs/guides/cuda-performance.md) |
 | `bench` / `attention` | [attention.sh](bench/attention.sh) | 原生 attention 与 Candle 的独立数值、性能门禁 |
 | `bench` | [check-cuda-service.py](bench/check-cuda-service.py)、[mtp-ab.py](bench/mtp-ab.py) | CUDA 服务与 MTP A/B 验证；参数见 `--help` |
-| `bench` | [serve-workloads.py](bench/serve-workloads.py)、[serve-cases.py](bench/serve-cases.py) | 生成共同 token 输入与选取局部场景；正式矩阵由基线方案固定 |
-| `bench` | [serve-compare.py](bench/serve-compare.py)、[compare-results.py](bench/compare-results.py) | 现有服务采集与报告比较；[审查](../docs/reviews/vllm-benchmark-methodology-2026-10-09.md) 所列缺口修正前，成功退出不等于正式基线验收 |
+| `bench` | [serve-workloads.py](bench/serve-workloads.py)、[serve-cases.py](bench/serve-cases.py) | 生成共同 token 输入与选取局部场景；每个用例声明并发 slot，采集端据此校验完整矩阵 |
+| `bench` | [serve-compare.py](bench/serve-compare.py) | 服务采集：记录 release 构建身份、模型制品指纹、硬件、生效配置回读与逐请求计时；每次运行用唯一 `--run-id` 且拒绝覆盖已有报告 |
+| `bench` | [compare-results.py](bench/compare-results.py) | 报告门禁：先校验身份、矩阵、缓存复用与计时可用性，再分别给出性能与数值结论；debug 构建、未生效开关和不完整矩阵判为无效而非通过 |
 | `bench` | [hardware-monitor.py](bench/hardware-monitor.py) | 保存 NVIDIA/主机遥测，供独立核查实验环境 |
 | `bench` | [safe-run.sh](bench/safe-run.sh) | GPU 验证任务的内存限额与互斥保护 |
 | `vision` | [图像指南](../docs/guides/vision.md) | 官方参考导出、预处理、视觉塔与端到端 parity |

@@ -7,6 +7,7 @@ rust_checks() {
     python3 -m unittest discover -s tools/package -p 'test_*.py'
     python3 -m unittest discover -s tools/attention -p 'test_attention_gate.py'
     python3 -m unittest discover -s tools/bench -p 'test_compare_results.py'
+    python3 -m unittest discover -s tools/bench -p 'test_serve_compare.py'
     cargo fmt --manifest-path tools/bench/attention/Cargo.toml --check
     python3 -m unittest discover -s tools/check -p 'test_layout.py'
     python3 tools/check/layout.py

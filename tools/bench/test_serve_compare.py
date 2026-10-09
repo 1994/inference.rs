@@ -24,18 +24,69 @@ def write(rows):
         return Path(handle.name)
 
 
+# The harness reads the declared concurrency from the workload, exactly as serve-workloads.py
+# writes it, so the fixtures must carry it too.
+CONCURRENCY = {"short": 1, "long": 1, "batch4": 4, "hot_long": 1}
+
+
 def complete_rows(repeats=3):
     return [
-        {"case": case, "repeat": repeat, "slot": 0, "tokens": [1, 2, 3]}
+        {
+            "case": case,
+            "repeat": repeat,
+            "slot": slot,
+            "concurrency": CONCURRENCY[case],
+            "tokens": [1, 2, 3],
+        }
         for case in module.CASES
         for repeat in range(-1, repeats)
+        for slot in range(CONCURRENCY[case])
     ]
 
 
 class LoadWorkloadTest(unittest.TestCase):
     def test_complete_workload_passes(self):
         path = write(complete_rows())
-        self.assertEqual(len(module.load_workload(path, 3)), 16)
+        rows = module.load_workload(path, 3)
+        self.assertEqual(len(rows), (1 + 1 + 4 + 1) * 4)
+        self.assertEqual(module.workload_matrix(rows, 3)["batch4"]["concurrency"], 4)
+        path.unlink()
+
+    def test_a_row_without_declared_concurrency_is_rejected(self):
+        rows = complete_rows()
+        del rows[0]["concurrency"]
+        path = write(rows)
+        with self.assertRaises(SystemExit):
+            module.load_workload(path, 3)
+        path.unlink()
+
+    def test_a_single_slot_batch4_group_is_rejected(self):
+        # Four concurrent requests are the point of the case; one slot is not that case.
+        rows = [row for row in complete_rows() if not (row["case"] == "batch4" and row["slot"] > 0)]
+        path = write(rows)
+        with self.assertRaises(SystemExit):
+            module.load_workload(path, 3)
+        path.unlink()
+
+    def test_inconsistent_concurrency_within_a_case_is_rejected(self):
+        rows = complete_rows()
+        for row in rows:
+            if row["case"] == "short" and row["repeat"] == 1:
+                row["concurrency"] = 2
+        path = write(rows)
+        with self.assertRaises(SystemExit):
+            module.load_workload(path, 3)
+        path.unlink()
+
+    def test_a_case_missing_one_slot_of_a_group_is_rejected(self):
+        rows = [
+            row
+            for row in complete_rows()
+            if not (row["case"] == "batch4" and row["repeat"] == 2 and row["slot"] == 3)
+        ]
+        path = write(rows)
+        with self.assertRaises(SystemExit):
+            module.load_workload(path, 3)
         path.unlink()
 
     def test_missing_repeat_is_rejected(self):
@@ -105,6 +156,13 @@ class CommandTest(unittest.TestCase):
         self.assertIn("2", command)
         self.assertNotIn("--enable-prefix-caching", command)
 
+    def test_native_receives_the_same_serving_limits_as_the_reference(self):
+        # Otherwise the comparison would measure two different service constraints.
+        command = module.build_command(self.arguments(), 1234)
+        for flag, value in (("--max-model-len", "8192"), ("--max-num-seqs", "16")):
+            self.assertIn(flag, command, flag)
+            self.assertEqual(command[command.index(flag) + 1], value, flag)
+
     def test_vllm_command_enables_speculation_and_prefix_cache(self):
         arguments = self.arguments(engine="vllm", executable=Path("/venv/bin/python"))
         command = module.build_command(arguments, 1234)
@@ -116,6 +174,52 @@ class CommandTest(unittest.TestCase):
         command = module.build_command(arguments, 1234)
         self.assertIn("--speculative-algorithm", command)
         self.assertIn("NEXTN", command)
+
+    def test_vllm_command_disables_prefix_caching_when_asked(self):
+        arguments = self.arguments(
+            engine="vllm", executable=Path("/venv/bin/python"), prefix_cache=False
+        )
+        command = module.build_command(arguments, 1234)
+        self.assertIn("--no-enable-prefix-caching", command)
+        self.assertNotIn("--enable-prefix-caching", command)
+
+    def test_native_cannot_claim_a_disabled_cache(self):
+        arguments = self.arguments(prefix_cache=False)
+        with self.assertRaises(RuntimeError):
+            module.require_cache_switch(arguments)
+        module.require_cache_switch(self.arguments(prefix_cache=True))
+
+
+class IdentityTest(unittest.TestCase):
+    def test_debug_sections_mark_a_binary_as_not_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = Path(directory) / "debug"
+            debug.write_bytes(b"\x7fELF" + b".debug_info" + b"payload")
+            release = Path(directory) / "release"
+            release.write_bytes(b"\x7fELF" + b"payload")
+            self.assertFalse(module.binary_identity(debug)["release_like"])
+            self.assertIn(".debug_info", module.binary_identity(debug)["debug_sections"])
+            self.assertTrue(module.binary_identity(release)["release_like"])
+            # The identity is a fingerprint, so identical bytes share one.
+            self.assertEqual(
+                module.binary_identity(release)["sha256"],
+                module.sha256_bytes(release.read_bytes()),
+            )
+
+    def test_model_identity_fingerprints_the_artifacts_that_matter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.json").write_text("{}")
+            (root / "tokenizer.json").write_text("{}")
+            (root / "model.safetensors").write_bytes(b"weights")
+            identity = module.model_identity(root)
+            self.assertIn("config.json", identity["files"])
+            self.assertIn("tokenizer.json", identity["files"])
+            self.assertNotIn("golden.json", identity["files"])
+            self.assertEqual(identity["shards"], {"model.safetensors": 7})
+            # Two packages that differ only in weights are not the same artifact.
+            (root / "model.safetensors").write_bytes(b"other")
+            self.assertNotEqual(identity["shards"], module.model_identity(root)["shards"])
 
 
 if __name__ == "__main__":
