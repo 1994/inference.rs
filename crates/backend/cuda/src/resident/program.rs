@@ -143,6 +143,7 @@ pub struct DeviceProgram {
     prefill: CudaGraph<()>,
     metadata: Tensor<i32>,
     nvfp4: super::nvfp4_gemm::Workspace,
+    delegated: crate::device::cublaslt::Support,
     attention: super::attention_decode::Workspace,
     external: Tensor<f32>,
     // Declared after the graphs: the state tensors outlive every capture that references them,
@@ -319,6 +320,7 @@ impl DeviceProgram {
             graph,
             weights,
             nvfp4: &mut self.nvfp4,
+            delegated: Some(&mut self.delegated),
             attention: &mut self.attention,
             states: &mut self.states,
             fp8_states: &mut self.fp8_states,
@@ -356,6 +358,8 @@ impl DeviceProgram {
         let activation_bytes = arena.bytes();
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
         let mut nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights)?;
+        let mut delegated = crate::device::cublaslt::Support::new(device);
+        warm_delegated(&mut delegated, weights);
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
@@ -402,6 +406,7 @@ impl DeviceProgram {
             graph,
             weights,
             nvfp4: &mut nvfp4,
+            delegated: Some(&mut delegated),
             attention: &mut attention,
             states: &mut states,
             fp8_states: &mut fp8_states,
@@ -416,6 +421,7 @@ impl DeviceProgram {
         let logits = super::batch::take_result(&mut arena, graph.logits)?;
         Ok(Self {
             nvfp4,
+            delegated,
             attention,
             batch,
             prompt_batch,
@@ -952,4 +958,31 @@ fn attention_only(graph: &DataflowGraph) -> bool {
             }
         )
     })
+}
+
+/// Exercise every delegated projection shape before a graph records it.
+///
+/// cuBLAS chooses workspace and algorithm the first time it sees a configuration, and a capturing
+/// stream rejects that host-side work, so the warmup has to happen here.
+fn warm_delegated(delegated: &mut crate::device::cublaslt::Support, weights: &ProgramWeights) {
+    if !delegated.is_enabled() {
+        return;
+    }
+    for weight in weights.projections.values() {
+        let ProjectionWeight::Dense(dense) = weight else {
+            continue;
+        };
+        let [rows, columns] = dense.shape()[..] else {
+            continue;
+        };
+        let rows = usize::try_from(rows).unwrap_or(0);
+        let columns = usize::try_from(columns).unwrap_or(0);
+        for width in [
+            weights.batch_width,
+            weights.narrow_prefill_width,
+            weights.prefill_width,
+        ] {
+            let _ = delegated.warm(width, dense, rows, columns);
+        }
+    }
 }

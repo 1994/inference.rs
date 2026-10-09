@@ -53,6 +53,7 @@ pub(super) struct BatchBuilder<'a> {
     pub graph: &'a DataflowGraph,
     pub weights: &'a ProgramWeights,
     pub nvfp4: &'a mut super::nvfp4_gemm::Workspace,
+    pub delegated: Option<&'a mut crate::device::cublaslt::Support>,
     pub attention: &'a mut super::attention_decode::Workspace,
     pub states: &'a mut States,
     pub fp8_states: &'a mut Fp8Caches,
@@ -524,6 +525,7 @@ impl BatchBuilder<'_> {
                             self.weights,
                             partials,
                             self.nvfp4,
+                            self.delegated.as_deref_mut(),
                         )?;
                     }
                     Dispatch32::Batched => {

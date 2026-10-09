@@ -15,6 +15,7 @@ pub(super) fn record(
     weights: &ProgramWeights,
     partials: &mut BTreeMap<usize, Tensor<f32>>,
     nvfp4: &mut super::nvfp4_gemm::Workspace,
+    delegated: Option<&mut crate::device::cublaslt::Support>,
 ) -> Result<(), DeviceError> {
     if weights.constants.contains_key(&node.inputs[0]) {
         return Err(error("prefill32 constant linear input"));
@@ -26,9 +27,9 @@ pub(super) fn record(
         .ok_or_else(|| error("prefill output"))?;
     let flat = output.size();
     let mut output = output.reshape(&[width, flat / width])?;
-    let input = arena.get(node.inputs[0]).map_err(error)?;
-    let columns = input.size() / width;
-    let input = input.view(&[width, columns]).map_err(error)?;
+    let flat_input = arena.get(node.inputs[0]).map_err(error)?;
+    let columns = flat_input.size() / width;
+    let input = flat_input.view(&[width, columns]).map_err(error)?;
     let weight = weights
         .projections
         .get(&node.inputs[1])
@@ -51,6 +52,14 @@ pub(super) fn record(
             return Err(error("block FP8 requires the resident FP8 GEMM"));
         }
         ProjectionWeight::Dense(w) => {
+            // Wide projections are worth a vendor GEMM, square ones are not: `record_dense`
+            // decides from the measured shape table.
+            let rows = flat / width;
+            let dims = (width, rows, columns);
+            if records_vendor_gemm(scope, delegated, flat_input, w, &output, dims)? {
+                arena.buffers[slot] = Some(output.reshape(&[flat])?);
+                return Ok(());
+            }
             scope.record(
                 gemm::dense(
                     (&mut output).partition([
@@ -109,4 +118,19 @@ pub(super) fn record(
     }
     arena.buffers[slot] = Some(output.reshape(&[flat])?);
     Ok(())
+}
+
+/// Whether the vendor GEMM recorded this projection instead of the tile kernel.
+fn records_vendor_gemm(
+    scope: &Scope,
+    delegated: Option<&mut crate::device::cublaslt::Support>,
+    input: &Tensor<f32>,
+    weight: &Tensor<cutile::half::bf16>,
+    output: &Tensor<f32>,
+    (width, rows, columns): (usize, usize, usize),
+) -> Result<bool, DeviceError> {
+    let Some(delegated) = delegated else {
+        return Ok(false);
+    };
+    delegated.record_dense(scope, input, weight, output, (width, rows, columns))
 }

@@ -12,6 +12,7 @@ use cutile::cuda_async::device_future::DeviceFuture;
 use cutile::cuda_async::device_operation::{DeviceOp, ExecutionContext, GraphNode};
 use cutile::cuda_async::error::DeviceError;
 use cutile::{half::bf16, prelude::*};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
@@ -296,7 +297,150 @@ pub fn gemm_bf16(
     })
 }
 
-/// A bf16 projection that can be recorded into a captured graph.
+/// A weight at least this large is worth delegating; the measurement below shows the vendor
+/// kernel losing on 2048x2048 and winning from 2048x8192 upwards.
+const MIN_DELEGATED_WEIGHT_ELEMENTS: usize = 8 * 1024 * 1024;
+
+/// The tile the activation is narrowed in. 1024 measured 5.2 us against 8.1 us at 8192 on the 2B
+/// prompt shapes, because the grid has to fill the device at this size.
+const CAST_TILE: i32 = 1024;
+
+/// Vendor GEMM support for one program: the handle and the BF16 activation scratches.
+///
+/// The scratch is keyed by element count and allocated the first time a shape needs it, which
+/// happens while a graph is being built and never while one is being captured.
+pub struct Support {
+    device: crate::device::CudaDevice,
+    context: Option<&'static Context>,
+    activations: HashMap<usize, Tensor<bf16>>,
+}
+
+impl Support {
+    /// Build the support for one program. Delegation stays off unless
+    /// `INFER_CUBLAS_PROJECTIONS` is set, and off when the toolkit is missing.
+    pub fn new(device: &crate::device::CudaDevice) -> Self {
+        let enabled = std::env::var_os("INFER_CUBLAS_PROJECTIONS").is_some();
+        Self {
+            device: device.clone(),
+            context: enabled.then(|| context_for(device)).flatten(),
+            activations: HashMap::new(),
+        }
+    }
+
+    /// Whether this program delegates at all.
+    pub const fn is_enabled(&self) -> bool {
+        self.context.is_some()
+    }
+
+    /// Run one GEMM per shape on the device stream before any graph captures it.
+    ///
+    /// cuBLAS chooses workspace and algorithm the first time it sees a configuration, and that
+    /// host-side work is rejected while a stream is capturing, so every shape a graph will record
+    /// has to be exercised here first.
+    #[expect(
+        unsafe_code,
+        reason = "Audited warmup launch: both operands are allocated here with the extents the launch is told about"
+    )]
+    pub fn warm(
+        &mut self,
+        m: usize,
+        weight: &Tensor<bf16>,
+        n: usize,
+        k: usize,
+    ) -> Result<(), DeviceError> {
+        let Some(context) = self.context else {
+            return Ok(());
+        };
+        if n.saturating_mul(k) < MIN_DELEGATED_WEIGHT_ELEMENTS || m.saturating_mul(k) == 0 {
+            return Ok(());
+        }
+        let (Ok(m_i), Ok(n_i), Ok(k_i)) = (i32::try_from(m), i32::try_from(n), i32::try_from(k))
+        else {
+            return Ok(());
+        };
+        let activation_elements = m * k;
+        if !self.activations.contains_key(&activation_elements) {
+            let scratch =
+                api::zeros::<bf16>(&[activation_elements]).sync_on(&self.device.stream)?;
+            self.activations.insert(activation_elements, scratch);
+        }
+        let scratch = self
+            .activations
+            .get(&activation_elements)
+            .ok_or_else(|| DeviceError::Internal("cuBLAS scratch".to_string()))?;
+        let out = api::zeros::<f32>(&[m * n]).sync_on(&self.device.stream)?;
+        // SAFETY: both operands are live device tensors allocated just above with the extents the
+        // launch is told about, and the stream belongs to this device.
+        let status = unsafe {
+            launch(
+                context,
+                m_i,
+                n_i,
+                k_i,
+                scratch.device_pointer().cu_deviceptr() as *const c_void,
+                weight.device_pointer().cu_deviceptr() as *const c_void,
+                out.device_pointer().cu_deviceptr() as *mut c_void,
+            )
+        };
+        status
+            .map_err(|code| DeviceError::Internal(format!("cublasGemmEx warmup status {code}")))?;
+        self.device
+            .reclaim_barrier()
+            .map_err(|error| DeviceError::Internal(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Record `out[m, n] = input[m, k] * weight[n, k]^T` through cuBLAS when the shape is one the
+    /// measurement favours, returning whether it did.
+    ///
+    /// # Errors
+    /// Propagates launch failures; a shape that is not worth delegating is not an error.
+    pub fn record_dense(
+        &mut self,
+        scope: &Scope,
+        input: &Tensor<f32>,
+        weight: &Tensor<bf16>,
+        out: &Tensor<f32>,
+        (m, n, k): (usize, usize, usize),
+    ) -> Result<bool, DeviceError> {
+        let Some(context) = self.context else {
+            return Ok(false);
+        };
+        let activation_elements = m.saturating_mul(k);
+        if n.saturating_mul(k) < MIN_DELEGATED_WEIGHT_ELEMENTS
+            || activation_elements == 0
+            || activation_elements % CAST_TILE as usize != 0
+            || input.size() != activation_elements
+        {
+            return Ok(false);
+        }
+        let (Ok(m), Ok(n), Ok(k)) = (i32::try_from(m), i32::try_from(n), i32::try_from(k)) else {
+            return Ok(false);
+        };
+        if !self.activations.contains_key(&activation_elements) {
+            let scratch =
+                api::zeros::<bf16>(&[activation_elements]).sync_on(&self.device.stream)?;
+            self.activations.insert(activation_elements, scratch);
+        }
+        let scratch = self
+            .activations
+            .get_mut(&activation_elements)
+            .ok_or_else(|| DeviceError::Internal("cuBLAS scratch".to_string()))?;
+        scope.record(
+            crate::kernels::linear::cast_bf16(
+                (&mut *scratch).partition([CAST_TILE as usize]),
+                input,
+            )
+            .generics(vec![CAST_TILE.to_string()]),
+        )?;
+        let op = GemmBf16::new(context, m, n, k, scratch, weight, out)
+            .map_err(|error| DeviceError::Internal(error.to_string()))?;
+        scope.record(op)?;
+        Ok(true)
+    }
+}
+
+/// A bf16 projection that can be recorded into a captured graph./// A bf16 projection that can be recorded into a captured graph.
 ///
 /// `DeviceOp::execute` runs during capture, which is why the launch takes `alpha` and `beta` from
 /// device memory: anything read from the host at that point would be frozen into the graph.

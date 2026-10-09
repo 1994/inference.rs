@@ -676,6 +676,33 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    normalized hidden、MLP 的 gate/up 也共享，所以**每层转一次**可把 5.2 µs 摊到 2–3 个投影上，
    这是接线时的正确形态。
 
+   **第 12 轮：接线完成并端到端实测。** 委托按第 11 轮的分档规则接进
+   `prefill_projection::record`（`Support::record_dense`，权重 ≥8M 元素才委托），
+   workspace 照 `nvfp4` 的模式挂在 `BatchBuilder`/`DeviceProgram` 上，激活按元素数惰性分配
+   bf16 scratch。开关 `INFER_CUBLAS_PROJECTIONS=1`，默认关闭。
+
+   接线中发现一个**必须遵守的约束**：cuBLAS 首次遇到某个 configuration 会做 host 侧工作
+   （选 workspace/算法），捕获流会拒绝，所以 `DeviceProgram::new` 里先用 `warm_delegated`
+   把每个 (width, n, k) 在设备流上跑一次再捕获图。否则请求直接失败：
+   `operation not permitted when stream is capturing`。
+
+   2B 两轮交错实测（ratio native/vLLM）：
+
+   | 用例 | wall | TTFT | TPOT |
+   |---|---|---|---|
+   | short | 0.972 → 0.975 | 1.015 → **0.914**（−10.0%） | 0.973 → 0.983 |
+   | long | 1.137 → 1.111 | 3.190 → **2.925**（−8.3%） | 0.983 → 0.979 |
+   | batch4 | 1.430 → 1.428 | 2.151 → **1.921**（−10.7%） | 1.354 → 1.374 |
+   | hot_long | 1.093 → 1.090 | 1.882 → **1.814**（−3.6%） | 1.031 → 1.032 |
+
+   **TTFT 全面下降 3.6–10.7%**，wall/TPOT 基本不动（委托只作用于 MLP 的宽投影，attention 的
+   方阵按测量被排除）。代价是数值：**21 条序列中 16 条与默认逐位相同，5 条不同**（cuBLAS 的
+   累加顺序不同）。因此与 chunked 递推一样保持 opt-in，默认路径不变。
+
+   **需要用户裁决的一点**：目前"性能改动必须 token 逐位一致"是仓库自己设的验收线（见
+   `docs`），但两个已验证的加速（chunked 递推 −24% long TTFT、委托 −4~11% TTFT）都过不了
+   这条线。若改为"logit 级相对误差 + 抽样一致性"这类数值门禁，它们就能成为默认路径。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层

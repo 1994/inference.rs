@@ -162,6 +162,7 @@ impl SlotPool {
                 graph,
                 weights,
                 nvfp4: &mut nvfp4,
+                delegated: None,
                 attention: &mut attention,
                 states: &mut placeholder_states,
                 fp8_states: &mut placeholder_fp8,
