@@ -559,12 +559,18 @@ def attribute_telemetry(report, telemetry):
     from an idle device or a CPU-bound stall.
     """
     samples = telemetry["samples"]
+    windows = [
+        (trial["start_unix"], trial["end_unix"])
+        for trial in report["trials"]
+        if trial.get("start_unix") is not None and trial.get("end_unix") is not None
+    ]
     for trial in report["trials"]:
         start, end = trial.get("start_unix"), trial.get("end_unix")
         if start is None or end is None:
             continue
-        trial["gpu"] = gpu_summary(samples, start, end)
-        trial["server_process"] = process_summary(samples, start, end)
+        trial["gpu"] = gpu_summary(samples, [(start, end)])
+        trial["server_process"] = process_summary(samples, [(start, end)])
+    return windows
 
 
 def measure(args, report, base, rows, save):
@@ -697,7 +703,7 @@ def require_protected_run():
         ) from error
 
 
-TELEMETRY_INTERVAL_SECONDS = 0.25
+TELEMETRY_INTERVAL_SECONDS = 0.1
 TELEMETRY_FIELDS = (
     "timestamp",
     "index",
@@ -796,17 +802,22 @@ def load_telemetry(path):
     return {"metadata": metadata, "samples": samples}
 
 
-def gpu_summary(samples, start, end):
-    """Telemetry for the busiest device over a window.
+def within(sample, windows):
+    """Whether a sample falls inside any of the measurement windows."""
+    return sample["unix_seconds"] is not None and any(
+        start <= sample["unix_seconds"] <= end for start, end in windows
+    )
 
-    The busiest device is the one whose utilization best explains the window, so a low value is
-    real headroom on the GPU that did the work rather than an idle sibling.
+
+def gpu_summary(samples, windows):
+    """Telemetry for the busiest device over the union of the given windows.
+
+    Passing only trial windows measures the device while it is working; passing the whole measured
+    span would dilute the mean with the idle gaps between groups. The busiest device is the one
+    whose utilization best explains the window, so a low value is real headroom on the GPU that
+    did the work rather than an idle sibling.
     """
-    window = [
-        sample
-        for sample in samples
-        if sample["unix_seconds"] is not None and start <= sample["unix_seconds"] <= end
-    ]
+    window = [sample for sample in samples if within(sample, windows)]
     rows = [row for sample in window for row in sample["gpu"]]
     if not rows:
         return None
@@ -837,14 +848,14 @@ def gpu_summary(samples, start, end):
     }
 
 
-def process_summary(samples, start, end):
-    """Server process CPU over a window; a busy CPU with an idle GPU explains a stall."""
+def process_summary(samples, windows):
+    """Server process CPU over the union of the given windows.
+
+    A busy CPU alongside an under-used GPU is what a host-bound step looks like, so it is measured
+    over the same windows as the device.
+    """
     window = [
-        sample
-        for sample in samples
-        if sample["unix_seconds"] is not None
-        and start <= sample["unix_seconds"] <= end
-        and sample["cpu_percent_one_core"]
+        sample for sample in samples if within(sample, windows) and sample["cpu_percent_one_core"]
     ]
     if not window:
         return None
@@ -1004,9 +1015,10 @@ def run(args):
             finally:
                 monitor_error = stop_telemetry(monitor) or monitor_error
             telemetry = load_telemetry(telemetry_path)
-            attribute_telemetry(report, telemetry)
+            windows = attribute_telemetry(report, telemetry)
             measured_from = min((t["start_unix"] for t in report["trials"]), default=None)
             measured_to = max((t["end_unix"] for t in report["trials"]), default=None)
+            span = [(measured_from, measured_to)] if measured_from is not None else []
             report["telemetry"] = {
                 "log": telemetry_path.name,
                 "sha256": (sha256_file(telemetry_path) if telemetry_path.is_file() else None),
@@ -1014,11 +1026,13 @@ def run(args):
                 "source": "tools/bench/hardware-monitor.py",
                 "error": monitor_error,
                 "samples": len(telemetry["samples"]),
-                "measured_window": (
-                    gpu_summary(telemetry["samples"], measured_from, measured_to)
-                    if measured_from is not None
-                    else None
+                # While the workload runs: the answer to "is the device busy during execution".
+                # The span also covers the idle gaps between groups.
+                "active_window": gpu_summary(telemetry["samples"], windows) if windows else None,
+                "active_process": (
+                    process_summary(telemetry["samples"], windows) if windows else None
                 ),
+                "measured_span": gpu_summary(telemetry["samples"], span) if span else None,
             }
             save()
             hot = [t for t in report["trials"] if t["case"] == "hot_long" and not t["warmup"]]

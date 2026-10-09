@@ -244,6 +244,14 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
             )
     performance = all(m.get("passed", True) for m in metrics)
     hardware = []
+    for engine, report in (("baseline", baseline), ("candidate", candidate)):
+        telemetry = report["telemetry"]
+        # The window that covers only the running workload, so the mean is not diluted by the
+        # idle gaps between groups; the span is kept for comparison.
+        if not isinstance(telemetry.get("active_window"), dict):
+            raise ValueError(f"{engine} report does not separate its active measurement window")
+        if telemetry.get("active_process") is None:
+            raise ValueError(f"{engine} report has no server-process telemetry")
     for case in sorted({key[0] for key in old}):
         sides = [
             [trial["gpu"] for key, trial in side.items() if key[0] == case] for side in (old, new)
@@ -283,7 +291,21 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False):
         "token_mismatches": token_mismatches,
         "identical_tokens_required": identical,
         "performance": {"passed": performance, "metrics": metrics},
-        "hardware": hardware,
+        "hardware": {
+            "active_window": {
+                engine: report["telemetry"]["active_window"]
+                for engine, report in (("baseline", baseline), ("candidate", candidate))
+            },
+            "active_process": {
+                engine: report["telemetry"]["active_process"]
+                for engine, report in (("baseline", baseline), ("candidate", candidate))
+            },
+            "measured_span": {
+                engine: report["telemetry"].get("measured_span")
+                for engine, report in (("baseline", baseline), ("candidate", candidate))
+            },
+            "per_case": hardware,
+        },
         "numeric": numeric,
         "quality": {
             "available": False,

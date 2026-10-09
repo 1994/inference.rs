@@ -138,6 +138,7 @@ class FreezeTest(unittest.TestCase):
             lambda r: r.pop("telemetry"),
             lambda r: r.update(telemetry={"samples": 0}),
             lambda r: r.update(telemetry={"samples": 10, "sha256": None}),
+            lambda r: r["telemetry"].pop("active_window"),
             lambda r: [trial.update(gpu=None) for trial in r["trials"]],
         ):
             with self.subTest(mutate=mutate):

@@ -52,7 +52,14 @@ def report(case="hot_long", concurrency=1, tokens=2, repeats=3, engine="native")
         "identity": identity(engine),
         # Both sides of a pair must have matched the same declared profile.
         "checklist": {"path": "profile.json", "sha256": "checklist-1", "compliant": True},
-        "telemetry": {"log": "run.telemetry.jsonl", "sha256": "telemetry-1", "samples": 40},
+        "telemetry": {
+            "log": "run.telemetry.jsonl",
+            "sha256": "telemetry-1",
+            "samples": 40,
+            "active_window": {"samples": 30, "utilization_gpu_mean": 42.0},
+            "active_process": {"samples": 30, "cpu_percent_one_core_mean": 120.0},
+            "measured_span": {"samples": 40, "utilization_gpu_mean": 30.0},
+        },
         "trials": [
             {
                 "case": case,
@@ -174,7 +181,13 @@ class GateTests(unittest.TestCase):
         for trial in new["trials"]:
             trial["gpu"]["utilization_gpu_mean"] = 70.0
         result = module.compare(old, new)
-        row = next(entry for entry in result["hardware"] if entry["case"] == "hot_long")
+        row = next(entry for entry in result["hardware"]["per_case"] if entry["case"] == "hot_long")
+        self.assertEqual(
+            result["hardware"]["active_window"]["baseline"]["utilization_gpu_mean"], 42.0
+        )
+        self.assertEqual(
+            result["hardware"]["active_process"]["candidate"]["cpu_percent_one_core_mean"], 120.0
+        )
         self.assertEqual(row["baseline_utilization_gpu_mean"], 42.0)
         self.assertEqual(row["candidate_utilization_gpu_mean"], 70.0)
         self.assertIn("baseline_sm_clock_mean_mhz", row)

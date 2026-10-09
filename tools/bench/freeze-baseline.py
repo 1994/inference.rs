@@ -89,6 +89,8 @@ def require_telemetry(report, role):
         raise ValueError(f"{role} report does not fingerprint its telemetry log")
     if not any(trial.get("gpu") for trial in report.get("trials", [])):
         raise ValueError(f"{role} report attributes no device telemetry to its trials")
+    if not isinstance(telemetry.get("active_window"), dict):
+        raise ValueError(f"{role} report has no active-window telemetry")
 
 
 def ratios(result):
