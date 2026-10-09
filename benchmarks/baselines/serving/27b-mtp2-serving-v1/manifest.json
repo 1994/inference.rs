@@ -1,0 +1,288 @@
+{
+  "schema": 1,
+  "baseline_id": "27b-mtp2-serving-v1",
+  "profile_id": "27b-mtp2",
+  "created_utc": "2026-10-09T18:07:29Z",
+  "engines": [
+    "native",
+    "vllm"
+  ],
+  "source": {
+    "revision": "2bda8833982ff8987af8c9e16a02e4ff567433d2",
+    "dirty": false
+  },
+  "hardware": {
+    "devices": [
+      {
+        "uuid": "GPU-4114fe32-3d08-a8be-93b6-dee187c64f0d",
+        "name": "NVIDIA GeForce RTX 5090",
+        "driver_version": "615.71.09"
+      }
+    ]
+  },
+  "reports": [
+    {
+      "role": "baseline",
+      "file": "Qwen3.8-27B-NVFP4-mtp2-native-27b-mtp2-native-g1.json",
+      "sha256": "db5b969d544facd46c01d0461f0f6d64f814dc2c66c2addddf0b736444594ff2"
+    },
+    {
+      "role": "candidate",
+      "file": "Qwen3.8-27B-NVFP4-mtp2-vllm-27b-mtp2-vllm-g1.json",
+      "sha256": "31911a6b25809d582e69187e0a7d3bdf188f16ed424b94aed55a1262bcb68d3f"
+    }
+  ],
+  "evidence": [
+    {
+      "file": "Qwen3.8-27B-NVFP4-inputs.json",
+      "sha256": "2d88b924fa4ae3e83a6763e0c2eca986791808cf21ed0e0fcbafbe26b05e6a15"
+    },
+    {
+      "file": "27b-mtp2.json",
+      "sha256": "2af560983cf99556db517ec3201865d90dda05375a9c00c98c3a0ea98136438d"
+    },
+    {
+      "file": "Qwen3.8-27B-NVFP4-mtp2-native-27b-mtp2-native-g1.telemetry.jsonl",
+      "sha256": "601db48119e8e0e59056257bececff6a99a2d1ff88cfe51057fd46bb8b96ba11"
+    },
+    {
+      "file": "Qwen3.8-27B-NVFP4-mtp2-vllm-27b-mtp2-vllm-g1.telemetry.jsonl",
+      "sha256": "83448ff1ac7f3b0ccbaf44996fa1be7051846262aed6824ae059c659e63f036e"
+    },
+    {
+      "file": "Qwen3.8-27B-NVFP4-mtp2-native-27b-mtp2-native-g2.json",
+      "sha256": "39a1c9fb405210e1209665c8a6e057dbb940fc24861eb5da7dbfbdc0b3c65610"
+    },
+    {
+      "file": "Qwen3.8-27B-NVFP4-mtp2-vllm-27b-mtp2-vllm-g2.json",
+      "sha256": "6a131dbdbb18aa54312bacaa4908ac9bc2ad9900ff9e1f0e980fc49088769106"
+    }
+  ],
+  "validity": {
+    "identity_verified": true,
+    "matrix": {
+      "short": {
+        "concurrency": 1,
+        "repeats": 3
+      },
+      "long": {
+        "concurrency": 1,
+        "repeats": 3
+      },
+      "batch4": {
+        "concurrency": 4,
+        "repeats": 3
+      },
+      "hot_long": {
+        "concurrency": 1,
+        "repeats": 3
+      }
+    },
+    "cache_effective": true
+  },
+  "gate": {
+    "max_latency_ratio": 1.1,
+    "passed": false,
+    "performance": {
+      "passed": false,
+      "metrics": [
+        {
+          "case": "batch4",
+          "metric": "wall_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.6790123380005753,
+          "candidate": 2.3760591569998724,
+          "ratio": 3.4992871616978767,
+          "passed": false
+        },
+        {
+          "case": "batch4",
+          "metric": "ttft_seconds",
+          "available": true,
+          "samples": [
+            12,
+            12
+          ],
+          "baseline": 0.08275830100001258,
+          "candidate": 0.6681138485000702,
+          "ratio": 8.073073521651546,
+          "passed": false
+        },
+        {
+          "case": "batch4",
+          "metric": "tpot_seconds",
+          "available": true,
+          "samples": [
+            12,
+            12
+          ],
+          "baseline": 0.009377321777777517,
+          "candidate": 0.016661240769844016,
+          "ratio": 1.7767589898992282,
+          "passed": false
+        },
+        {
+          "case": "hot_long",
+          "metric": "wall_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.711590249999972,
+          "candidate": 0.8059784870001749,
+          "ratio": 1.132644084148436,
+          "passed": false
+        },
+        {
+          "case": "hot_long",
+          "metric": "ttft_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.21570794299987028,
+          "candidate": 0.08414379999976518,
+          "ratio": 0.390082065730031,
+          "passed": true
+        },
+        {
+          "case": "hot_long",
+          "metric": "tpot_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.00785316680952429,
+          "candidate": 0.011423127063492772,
+          "ratio": 1.4545886189045225,
+          "passed": false
+        },
+        {
+          "case": "long",
+          "metric": "wall_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.6424857359997986,
+          "candidate": 1.0923419319997265,
+          "ratio": 1.7001808301625374,
+          "passed": false
+        },
+        {
+          "case": "long",
+          "metric": "ttft_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.0709468620007101,
+          "candidate": 0.3175840799995058,
+          "ratio": 4.476365423975018,
+          "passed": false
+        },
+        {
+          "case": "long",
+          "metric": "tpot_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.009072636984124001,
+          "candidate": 0.012317580920641795,
+          "ratio": 1.357662710653589,
+          "passed": false
+        },
+        {
+          "case": "short",
+          "metric": "wall_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.5857735479994517,
+          "candidate": 0.7395924200000081,
+          "ratio": 1.2625910175116006,
+          "passed": false
+        },
+        {
+          "case": "short",
+          "metric": "ttft_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.03604430099949241,
+          "candidate": 0.054328088000147545,
+          "ratio": 1.50725874808649,
+          "passed": false
+        },
+        {
+          "case": "short",
+          "metric": "tpot_seconds",
+          "available": true,
+          "samples": [
+            3,
+            3
+          ],
+          "baseline": 0.008658500873010896,
+          "candidate": 0.010846694492073088,
+          "ratio": 1.25272199554578,
+          "passed": false
+        }
+      ]
+    },
+    "numeric": {
+      "required": false,
+      "identical": false,
+      "token_mismatches": 21
+    },
+    "quality": {
+      "available": false,
+      "note": "task quality is verified by its own gate, not here"
+    }
+  },
+  "statistical_basis": {
+    "paired_units": 2,
+    "declared_max_drift": 0.2,
+    "note": "The baseline plan asks for at least five independent paired units; this record states how many it actually holds so a consumer can weigh the interval.",
+    "reproductions": [
+      {
+        "unit": 1,
+        "reports": [
+          "Qwen3.8-27B-NVFP4-mtp2-native-27b-mtp2-native-g2.json",
+          "Qwen3.8-27B-NVFP4-mtp2-vllm-27b-mtp2-vllm-g2.json"
+        ],
+        "passed": false,
+        "drift": {
+          "batch4:tpot_seconds": 0.10872472580744698,
+          "batch4:ttft_seconds": 0.09815649782064491,
+          "batch4:wall_seconds": 0.018037868308292182,
+          "hot_long:tpot_seconds": 0.12020474546383218,
+          "hot_long:ttft_seconds": 0.0719431918242905,
+          "hot_long:wall_seconds": 0.07046341215562438,
+          "long:tpot_seconds": 0.035214932806037,
+          "long:ttft_seconds": 0.06757873920307259,
+          "long:wall_seconds": 0.02029104140645588,
+          "short:tpot_seconds": 0.03216329362133408,
+          "short:ttft_seconds": 0.10675971391228599,
+          "short:wall_seconds": 0.03999852300026252
+        },
+        "worst_drift": 0.12020474546383218,
+        "within_declared_tolerance": true
+      }
+    ]
+  }
+}

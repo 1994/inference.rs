@@ -45,11 +45,15 @@ python3 tools/bench/freeze-baseline.py --baseline-id <id> --profile <profile>   
 
 ## 已签发的服务基线
 
-| baseline ID | profile | 模型 | MTP | 配对单位 |
-|---|---|---|---|---|
-| `2b-mtp0-serving-v1` | 2b-mtp0 | qwen3vl-2b | 0 | 待重建 |
-| `27b-mtp0-serving-v1` | 27b-mtp0 | Qwen3.8-27B-NVFP4 | 0 | 待重建 |
-| `27b-mtp2-serving-v1` | 27b-mtp2 | Qwen3.8-27B-NVFP4 | 2 | 待重建 |
+比率方向为 **native / vLLM**（≤1.10 为通过）。三项基线在两次独立配对单位下都得到同一结论：native 在
+组级延迟上慢于 vLLM，`batch4` 与长 prompt 的 TTFT 差距最大；测得退化仍按有效基线签发，`gate.passed`
+如实为 `false`。
+
+| baseline ID | profile | 模型 | MTP | 配对单位 | 最差漂移 | 未通过单元 |
+|---|---|---|---|---|---|---|
+| `2b-mtp0-serving-v1` | 2b-mtp0 | qwen3vl-2b | 0 | 2 | 18.6% | batch4/wall=1.58, batch4/ttft=2.25, batch4/tpot=1.52, hot_long/wall=1.17, hot_long/ttft=1.96, hot_long/tpot=1.11, long/wall=1.24, long/ttft=3.48 |
+| `27b-mtp0-serving-v1` | 27b-mtp0 | Qwen3.8-27B-NVFP4 | 0 | 2 | 16.4% | batch4/wall=1.35, batch4/ttft=1.72, batch4/tpot=1.24, hot_long/wall=1.13, hot_long/tpot=1.15, long/wall=1.29, long/ttft=3.90, long/tpot=1.11 |
+| `27b-mtp2-serving-v1` | 27b-mtp2 | Qwen3.8-27B-NVFP4 | 2 | 2 | 12.0% | batch4/wall=3.50, batch4/ttft=8.07, batch4/tpot=1.78, hot_long/wall=1.13, hot_long/tpot=1.45, long/wall=1.70, long/ttft=4.48, long/tpot=1.36, short/wall=1.26, short/ttft=1.51, short/tpot=1.25 |
 
 ## 与投影基线的区别
 
