@@ -542,3 +542,34 @@ async fn a_disconnected_stream_is_cancelled_and_freed() {
     assert_eq!(handle.inspect().await.unwrap().state.allocated_pages, 0);
     handle.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_tool_round_over_http_returns_a_normal_completion() {
+    let (handle, assets) = fixture();
+    let app = router_with_text(handle.clone(), assets);
+    // The client declares a tool, returns the result of the call it received, and the model
+    // continues in the same conversation.
+    let payload = json!({
+        "model":"1",
+        "messages":[
+            {"role":"user","content":"what is the weather?"},
+            {"role":"assistant","content":null,"tool_calls":[
+                {"id":"call_1","type":"function",
+                 "function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+            ]},
+            {"role":"tool","content":"{\"temp_c\":21}","tool_call_id":"call_1"}
+        ],
+        "tools":[{"type":"function","function":{
+            "name":"get_weather","parameters":{"type":"object"}
+        }}],
+        "max_completion_tokens":3
+    });
+    let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["choices"][0]["message"]["content"].is_string(),
+        "{body}"
+    );
+    assert_eq!(body["choices"][0]["finish_reason"], "length");
+    handle.shutdown().await.unwrap();
+}
