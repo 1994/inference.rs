@@ -12,13 +12,17 @@ use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::BTreeMap;
 
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
+/// Keyed by `(rows, columns, activation-scale columns)`.
+type Fp8Key = (usize, usize, usize);
+/// Quantized activation and its per-token scales.
+type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
     buffers: BTreeMap<(usize, usize), Quantized>,
     /// Keyed by `(rows, columns, scale_columns)`: per-channel and block-scaled FP8 share an
     /// operand geometry but need different activation-scale extents, so geometry alone would let
     /// whichever projection is visited first decide the layout for the other.
-    fp8: BTreeMap<(usize, usize, usize), (Tensor<f8e4m3fn>, Tensor<f32>)>,
+    fp8: BTreeMap<Fp8Key, Fp8Buffers>,
 }
 
 impl Workspace {
