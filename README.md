@@ -79,7 +79,7 @@ cargo build --locked --release -p infer-cli --features cuda
 target/release/infer /path/to/model
 ```
 
-For a native developer build that selects the production backend from the host platform, use `make local-build` (Linux enables CUDA; macOS uses Metal). Direct Cargo builds keep explicit feature selection because Cargo features are compile-time options.
+For a native developer build that selects the production backend from the host platform, use `make local-build` (Linux enables CUDA and adds GCC's standard-header include directory for bindgen; macOS uses Metal). Direct Cargo builds keep explicit feature selection because Cargo features are compile-time options.
 
 Once `infer` is on your `PATH`, the default entry point is simply:
 

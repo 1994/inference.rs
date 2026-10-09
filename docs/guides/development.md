@@ -14,7 +14,7 @@ cargo build --locked --release -p infer-cli
 make local-build
 ```
 
-它在 Linux 上启用 CUDA，在 macOS 上使用 Metal。`auto` 只选择已编译且可用的 GPU，不会回退到 CPU；Cargo 本身不会根据运行时 GPU 自动启用 feature。本机 CPU 对照需要显式启用 feature：
+它在 Linux 上启用 CUDA，在 macOS 上使用 Metal；Linux 还会自动把 GCC 的标准头目录加入 bindgen 的 include 路径。`auto` 只选择已编译且可用的 GPU，不会回退到 CPU；Cargo 本身不会根据运行时 GPU 自动启用 feature。本机 CPU 对照需要显式启用 feature：
 
 ```sh
 cargo build --locked -p infer-cli --features test-backends

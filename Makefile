@@ -31,7 +31,12 @@ build test package:
 # production backend from the host platform.
 local-build:
 	@case "$$(uname -s)" in \
-		Linux) $(CARGO) build --locked --release -p infer-cli --features cuda ;; \
+		Linux) \
+			gcc_include="$$(gcc -print-file-name=include 2>/dev/null)"; \
+			if test -f "$$gcc_include/stddef.h"; then \
+				export BINDGEN_EXTRA_CLANG_ARGS="$${BINDGEN_EXTRA_CLANG_ARGS:-} -isystem $$gcc_include"; \
+			fi; \
+			$(CARGO) build --locked --release -p infer-cli --features cuda ;; \
 		Darwin) $(CARGO) build --locked --release -p infer-cli ;; \
 		*) echo "unsupported host platform: $$(uname -s)" >&2; exit 2 ;; \
 	esac
