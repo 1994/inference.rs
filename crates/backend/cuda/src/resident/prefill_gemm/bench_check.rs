@@ -13,18 +13,27 @@ use std::sync::Arc;
 
 const CAST_TILE: i32 = 1024;
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a benchmark-only generator; the low mantissa bits of the state are not meaningful"
+)]
 fn sample(seed: u64, index: usize) -> f32 {
     let mut state = seed
         .wrapping_add(index as u64)
-        .wrapping_mul(6364136223846793005);
+        .wrapping_mul(6_364_136_223_846_793_005);
     state ^= state >> 33;
-    state = state.wrapping_mul(0xff51afd7ed558ccd);
+    state = state.wrapping_mul(0xff51_afd7_ed55_8ccd);
     state ^= state >> 29;
     ((state >> 40) as f32 / 8_388_608.0) - 1.0
 }
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "benchmark extents are small literals, so the narrowing to the kernel's i32 is exact"
+)]
 fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::error::Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
@@ -73,7 +82,11 @@ fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::er
         support.warm(m, &weight, n, k)?;
         let gemm_graph = CudaGraph::scope(&device.stream, |scope| {
             let op = GemmBf16::new(
-                Arc::clone(support.context()),
+                Arc::clone(
+                    support
+                        .context()
+                        .ok_or_else(|| DeviceError::Internal("no cuBLAS context".to_string()))?,
+                ),
                 m as i32,
                 n as i32,
                 k as i32,

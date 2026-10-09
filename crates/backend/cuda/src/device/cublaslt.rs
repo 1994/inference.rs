@@ -148,10 +148,12 @@ unsafe impl Sync for Context {}
 /// bound to, so one handle cannot serve a second device instance. The cache is keyed by both, and
 /// every launch validates that the stream it is handed is the one the handle was built for.
 pub fn context_for(device: &crate::device::CudaDevice) -> Option<Arc<Context>> {
-    static CONTEXTS: OnceLock<Mutex<HashMap<(usize, usize), Arc<Context>>>> = OnceLock::new();
+    type Cache = Mutex<HashMap<(usize, usize), Arc<Context>>>;
+    static CONTEXTS: OnceLock<Cache> = OnceLock::new();
     let key = (device.ordinal(), device.stream.cu_stream() as usize);
     let cache = CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(existing) = cache.lock().ok()?.get(&key).cloned() {
+    let existing = cache.lock().ok()?.get(&key).cloned();
+    if let Some(existing) = existing {
         return Some(existing);
     }
     let built = Arc::new(build(device)?);
@@ -355,15 +357,11 @@ impl Support {
         self.context.is_some()
     }
 
-    /// The context this support launches through, which a recorded op also needs.
-    ///
-    /// # Panics
-    /// Panics when delegation is disabled; check [`Self::is_enabled`] first.
+    /// The context this support launches through, which a recorded op also needs. `None` when
+    /// delegation is off, so callers check [`Self::is_enabled`] or handle the absence.
     #[must_use]
-    pub fn context(&self) -> &Arc<Context> {
-        self.context
-            .as_ref()
-            .expect("cuBLAS support is disabled, so there is no context to launch through")
+    pub const fn context(&self) -> Option<&Arc<Context>> {
+        self.context.as_ref()
     }
 
     /// Run one GEMM per shape on the device stream before any graph captures it.
@@ -588,12 +586,16 @@ mod tests {
     use super::*;
     use crate::device::{CudaDevice, device_error};
 
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a test-only generator; the low mantissa bits of the state are not meaningful"
+    )]
     fn sample(seed: u64, index: usize) -> f32 {
         let mut state = seed
             .wrapping_add(index as u64)
-            .wrapping_mul(6364136223846793005);
+            .wrapping_mul(6_364_136_223_846_793_005);
         state ^= state >> 33;
-        state = state.wrapping_mul(0xff51afd7ed558ccd);
+        state = state.wrapping_mul(0xff51_afd7_ed55_8ccd);
         state ^= state >> 29;
         ((state >> 40) as f32 / 8_388_608.0) - 1.0
     }
@@ -633,17 +635,20 @@ mod tests {
             device.reclaim_barrier()?;
             let elapsed = started.elapsed() / repeats;
             let actual = out.to_host_vec().sync_on(&device.stream)?;
-            let mut worst = 0.0_f32;
+            let mut worst = 0.0_f64;
             let mut scale = 0.0_f64;
             for i in 0..m {
                 for j in 0..n {
                     let mut expected = 0.0_f64;
                     for d in 0..k {
-                        expected += f64::from(host_activations[i * k + d])
-                            * f64::from(host_weights[j * k + d]);
+                        expected = f64::mul_add(
+                            f64::from(host_activations[i * k + d]),
+                            f64::from(host_weights[j * k + d]),
+                            expected,
+                        );
                     }
                     scale = scale.max(expected.abs());
-                    worst = worst.max((f64::from(actual[i * n + j]) - expected).abs() as f32);
+                    worst = worst.max((f64::from(actual[i * n + j]) - expected).abs());
                 }
             }
             eprintln!(
@@ -651,7 +656,7 @@ mod tests {
                 elapsed.as_secs_f64() * 1.0e3
             );
             assert!(
-                f64::from(worst) <= 1.0e-2 * scale.max(1.0),
+                worst <= 1.0e-2 * scale.max(1.0),
                 "cuBLAS disagrees with the reference at m={m} n={n} k={k}"
             );
         }
@@ -663,15 +668,20 @@ mod tests {
     /// there and produce the right numbers.
     #[test]
     #[ignore = "requires CUDA hardware; run inside safe-run"]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "test extents are small literals, so the narrowing to the kernel's i32 is exact"
+    )]
     fn cublas_context_is_per_device_instance() -> Result<(), Box<dyn std::error::Error>> {
         CudaDevice::enable_kernel_cache()?;
         if !available() {
             eprintln!("cuBLAS unavailable; skipping");
             return Ok(());
         }
-        let (m, n, k) = (12_usize, 2048_usize, 2048_usize);
-        let activations: Vec<bf16> = (0..m * k).map(|i| bf16::from_f32(sample(7, i))).collect();
-        let weights: Vec<bf16> = (0..n * k).map(|i| bf16::from_f32(sample(8, i))).collect();
+        let (rows, columns, contraction) = (12_usize, 2048_usize, 2048_usize);
+        let activations: Vec<bf16> = (0..rows * contraction).map(|i| bf16::from_f32(sample(7, i))).collect();
+        let weights: Vec<bf16> = (0..columns * contraction).map(|i| bf16::from_f32(sample(8, i))).collect();
         let first = CudaDevice::new(0)?;
         let second = CudaDevice::new(0)?;
         assert_ne!(
@@ -690,20 +700,21 @@ mod tests {
             "two device instances must not share one handle"
         );
         for (device, context) in [(&first, &first_context), (&second, &second_context)] {
-            let a = device.upload(activations.clone(), &[m, k])?;
-            let b = device.upload(weights.clone(), &[n, k])?;
-            let out = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+            let a = device.upload(activations.clone(), &[rows, contraction])?;
+            let b = device.upload(weights.clone(), &[columns, contraction])?;
+            let out = api::zeros::<f32>(&[rows, columns]).sync_on(&device.stream)?;
             // Warm this instance's stream outside capture, as the production path does.
             #[expect(
                 unsafe_code,
                 reason = "Audited warmup: both operands are tensors uploaded just above with matching extents"
             )]
+            // SAFETY: both operands are live device tensors with the extents the launch is told.
             let warmed = unsafe {
                 launch(
                     context,
-                    m as i32,
-                    n as i32,
-                    k as i32,
+                    rows as i32,
+                    columns as i32,
+                    contraction as i32,
                     a.device_pointer().cu_deviceptr() as *const c_void,
                     b.device_pointer().cu_deviceptr() as *const c_void,
                     out.device_pointer().cu_deviceptr() as *mut c_void,
@@ -716,9 +727,9 @@ mod tests {
             let graph = CudaGraph::scope(&device.stream, |scope| {
                 let op = GemmBf16::new(
                     Arc::clone(context),
-                    m as i32,
-                    n as i32,
-                    k as i32,
+                    rows as i32,
+                    columns as i32,
+                    contraction as i32,
                     &a,
                     &b,
                     &out,
@@ -738,17 +749,20 @@ mod tests {
             let actual = out.to_host_vec().sync_on(&device.stream)?;
             let host_activations: Vec<f32> = activations.iter().map(|v| v.to_f32()).collect();
             let host_weights: Vec<f32> = weights.iter().map(|v| v.to_f32()).collect();
-            let mut worst = 0.0_f32;
+            let mut worst = 0.0_f64;
             let mut scale = 0.0_f64;
-            for i in 0..m {
-                for j in 0..n {
+            for i in 0..rows {
+                for j in 0..columns {
                     let mut expected = 0.0_f64;
-                    for d in 0..k {
-                        expected += f64::from(host_activations[i * k + d])
-                            * f64::from(host_weights[j * k + d]);
+                    for d in 0..contraction {
+                        expected = f64::mul_add(
+                            f64::from(host_activations[i * contraction + d]),
+                            f64::from(host_weights[j * contraction + d]),
+                            expected,
+                        );
                     }
                     scale = scale.max(expected.abs());
-                    worst = worst.max((f64::from(actual[i * n + j]) - expected).abs() as f32);
+                    worst = worst.max((f64::from(actual[i * columns + j]) - expected).abs());
                 }
             }
             eprintln!(
@@ -756,7 +770,7 @@ mod tests {
                 device.ordinal()
             );
             assert!(
-                f64::from(worst) <= 1.0e-2 * scale.max(1.0),
+                worst <= 1.0e-2 * scale.max(1.0),
                 "a per-instance cuBLAS context produced wrong output"
             );
         }
@@ -767,6 +781,11 @@ mod tests {
     /// its scalars living on the device rather than frozen into the graph.
     #[test]
     #[ignore = "requires CUDA hardware; run inside safe-run"]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "test extents are small literals, so the narrowing to the kernel's i32 is exact"
+    )]
     fn gemm_bf16_replays_inside_a_captured_graph() -> Result<(), Box<dyn std::error::Error>> {
         CudaDevice::enable_kernel_cache()?;
         let device = CudaDevice::new(0)?;
@@ -774,19 +793,19 @@ mod tests {
             eprintln!("cuBLAS unavailable; skipping");
             return Ok(());
         }
-        let (m, n, k) = (12_usize, 2048_usize, 2048_usize);
-        let activations: Vec<bf16> = (0..m * k).map(|i| bf16::from_f32(sample(3, i))).collect();
-        let weights: Vec<bf16> = (0..n * k).map(|i| bf16::from_f32(sample(4, i))).collect();
-        let a = device.upload(activations, &[m, k])?;
-        let b = device.upload(weights, &[n, k])?;
-        let out = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+        let (rows, columns, contraction) = (12_usize, 2048_usize, 2048_usize);
+        let activations: Vec<bf16> = (0..rows * contraction).map(|i| bf16::from_f32(sample(3, i))).collect();
+        let weights: Vec<bf16> = (0..columns * contraction).map(|i| bf16::from_f32(sample(4, i))).collect();
+        let a = device.upload(activations, &[rows, contraction])?;
+        let b = device.upload(weights, &[columns, contraction])?;
+        let out = api::zeros::<f32>(&[rows, columns]).sync_on(&device.stream)?;
         let context = context_for(&device).ok_or("no cuBLAS context")?;
         // cuBLAS does host-side work on the first use of a configuration (workspace and algorithm
         // selection), which a capturing stream rejects; run the shape once before recording it.
         gemm_bf16(&device, &a, &b, &out)?;
         device.reclaim_barrier()?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
-            let op = GemmBf16::new(context, m as i32, n as i32, k as i32, &a, &b, &out)
+            let op = GemmBf16::new(context, rows as i32, columns as i32, contraction as i32, &a, &b, &out)
                 .map_err(|error| DeviceError::Internal(error.to_string()))?;
             scope.record(op)?;
             Ok(())
@@ -798,7 +817,7 @@ mod tests {
             .map_err(device_error)?;
         device.reclaim_barrier()?;
         let captured = out.to_host_vec().sync_on(&device.stream)?;
-        let direct = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+        let direct = api::zeros::<f32>(&[rows, columns]).sync_on(&device.stream)?;
         gemm_bf16(&device, &a, &b, &direct)?;
         device.reclaim_barrier()?;
         let reference = direct.to_host_vec().sync_on(&device.stream)?;
