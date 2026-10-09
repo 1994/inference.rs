@@ -4,6 +4,8 @@
 
 响应格式参考官方 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) 与 [Completions](https://developers.openai.com/api/reference/resources/completions/methods/create)，但兼容范围是明确限定的。
 
+工具调用、文本流式和服务长度配置仍待实施，见 [独立方案](../plans/serving/agent-api.md)。扩展按实际使用场景选择，以下只说明当前能力。
+
 ## 路由
 
 | 方法与路径 | 行为 |
@@ -23,13 +25,20 @@ CLI 样例模型名为 `"1"`，调用方应先查询模型列表。请求未加�
 | `prompt` | 仅 completions，非空字符串 |
 | `max_tokens` | 正整数，默认 16 |
 | `max_completion_tokens` | 仅 chat，与 `max_tokens` 互斥 |
-| `temperature` | 0..2，默认 0（greedy） |
-| `seed` | 非负 u64，默认 0 |
+| `temperature` | 0..2；省略时由模型生成配置与模式预设解析，0 为 greedy |
+| `seed` | 非负 u64；省略时使用解析后的默认值 |
 | `n` | 仅支持 1 |
 | `stream` | 仅支持 false |
-| `top_p` | 仅支持 1 |
+| `top_p` | (0,1]；省略时使用解析后的默认值 |
+| `top_k` | 非负整数，0 禁用过滤；省略时使用模型默认 |
+| `min_p` | 0..1；省略时使用解析后的默认值 |
+| `presence_penalty` | -2..2；省略时使用解析后的默认值 |
+| `repetition_penalty` | 正有限数；省略时使用解析后的默认值 |
+| `enable_thinking` | 布尔值，控制模板与受支持模型的模式预设 |
 
-可选字段允许为 `null`，按未提供处理；模型上下文与运行时预算仍然生效。默认采样不会自动应用包内 EOS，生成通常以 token 上限结束；需要指定 `eos_token` 时使用原生 API。
+可选字段允许为 `null`，按未提供处理。服务已读取包内 `generation_config.json`，并从 generation config / model config 解析 EOS；识别到的模型还会应用模式预设，显式请求字段最后覆盖。模型包配置了 EOS 时会参与停止判断，未配置时不凭空增加 EOS。请求级 `eos_token` 覆盖使用原生 API。
+
+输入与请求输出上限合计不能超过模型上下文，运行时另有输入与资源预算；目前没有统一的部署 `--max-model-len` 入口。不要把当前输出默认 16 当作上下文上限，也不要假设省略采样参数一定得到 greedy。
 
 不支持的字段（如 `tools`、`stop`、`response_format`、`logprobs`）、多模态 content 与批量 prompt 会被拒绝，不会静默忽略。Responses、Embeddings、鉴权、服务端存储与兼容 SSE 均未实现；需要流式 token ID 时可使用原生 SSE。
 

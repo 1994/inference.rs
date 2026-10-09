@@ -1,10 +1,10 @@
-# Inference 性能改进计划
+# CUDA 性能实验记录
 
-**定位**：本文档是 `performance-roadmap.md` 的执行侧续篇。roadmap 回答"差在哪、什么不要
-重试"（现状、根因、§四 已否方向）；本文档回答"做什么、预期多少、怎么验证"。引用
-roadmap 处记为 RM§x。
+**定位**：保留既有 A/B、失败实验、源码调查和已落地改动。本文包含历史假设与早期待办，当前任务状态和执行顺序统一见 [路线图](../plans/README.md)，设计与验收见对应详细方案；正式性能实验统一执行 [性能基线方案](../plans/performance/baseline.md)。引用 [CUDA Serving 历史记录](cuda-serving-baseline.md) 处仍记为 RM§x。
 
-**总目标**：第一阶段 8 格全矩阵 ≤1.10x；第二阶段 TPOT 类指标稳定领先 vLLM 20–30%。
+**历史探索目标**：第一阶段 8 格全矩阵 ≤1.10x；第二阶段 TPOT 类指标稳定领先 vLLM 20–30%。这些是目标，不能作为已取得或可直接承诺的收益。
+
+当前拟议的 recurrent 回滚方案采用保留实际 F32 输入的 Record/Fold，尚未实现；资源与精度边界见 [状态重放方案](../plans/speculation/state-replay.md)、[Infernix 调研](infernix-performance.md)。下文的早期 BF16 记录容量、草稿压缩目标及探索性建议以这些方案的完整报价与验收为准。
 
 **置信度标记**：【确证】= 代码或实测确认；【推断】= 有依据的推理；【待测】= 依赖尚
 未做的实验。推算收益一律以绝对锚点给出，方便下一轮 bench 后用实测替换。
@@ -340,7 +340,7 @@ bound，SM 分区；现 worker 严格单流）；device-side graph launch 零 ho
 | 2 | 全矩阵重测（perf-r41），实测替换 §一 推算表 | 已赢格子（2B short/decode、27B hot_long）零回退 |
 | 3 | 杠杆 A + B | TPOT 格 ×0.7；MTP 接受长度不降 |
 | 4 | ②C lane prefill、③′ 宽度分档（大改动，视阶段 2 结果排期；图资产经 §六 瀑布资助） | ② 的 TPOT ≤5% 回退门槛 |
-| 5 | 调度中程项、杠杆 C、E | p99 与饱和负载 soak（过载面见 [serving-stability.md](serving-stability.md) §五.8） |
+| 5 | 调度中程项、杠杆 C、E | p99 与饱和负载 soak（过载面见 [serving-stability.md](../guides/serving-stability.md) §五.8） |
 | 6 | §七 profile 自适应（auto 默认档） | 同一配置双负载矩阵复测，两侧 ≤5% 差距 |
 | 7 | §八 不变量收口（不建 TP，只收口假设） | 8 条不变量逐项过 review；engine 无直接设备引用、动态决策只经 SignalSnapshot |
 | 8 | §九 H200 接入与 FP8 三制度（与阶段 2–5 可并行，依赖 H200 机型到位） | mma-probe 证据落盘 + wgmma lowering 数值门 + H200 全矩阵基线 |
@@ -510,7 +510,7 @@ EP 等 MoE 落地后再谈。
   加深收益要打同步折扣。
 - 杠杆 B 的图内接受判定天然 rank 一致（logits all-gather 后同 seed 确定性），
   不冲突。
-- 单 rank 故障 = 全组 hang（NCCL 超时）：[serving-stability.md](serving-stability.md)
+- 单 rank 故障 = 全组 hang（NCCL 超时）：[serving-stability.md](../guides/serving-stability.md)
   需补分布式故障章。
 
 **现在不做**：不建 NCCL、不建 rank shell、不写分片实现 —— 只收口假设。
@@ -795,14 +795,15 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    的 per-128-block 参考（f64、真值 scale）在 (12,65,512)/(64,129,1024)/(12,256,5120)
    三形状通过。2B FP8 矩阵（native/vLLM，2 轮）：short wall 1.239 / TTFT **0.749**
    / TPOT 1.299；long 1.496 / 3.085 / 1.312；batch4 1.666 / 1.251 / **1.750**；
-   hot_long 1.457 / 2.093 / 1.393。**token 与 vLLM 仅 3/21 逐字节一致 —— 已裁决，不是我们的 bug**：vLLM 在
+   hot_long 1.457 / 2.093 / 1.393。**历史记录：token 与 vLLM 仅 3/21 逐字节一致，存在权重处理差异**：vLLM 在
    sm_120 上选 DeepGemmFp8BlockScaledMMKernel 且 `is_deep_gemm_e8m0_used()` 为真，
    `requant_weight_ue8m0_inplace` 会**用 checkpoint 的 fp32 scale 反量化、再用
    `per_block_cast_to_fp8(..., use_ue8m0=True)` 重新量化并把新 fp8 权重与 2 的幂
    scale 原地写回**（`fp8_utils.py:881-945`）。在本 checkpoint 上抽 12 个投影实测：
    权重相对 Frobenius 变化均值 **2.67%**、最大 2.73%，单权重变化中位数 **2.19%**
    —— 即 vLLM 评估的是"同一份权重的另一种量化"，多一次 e4m3 舍入 + 2 的幂
-   scale 约束；我们按 checkpoint 原样计算，误差 0。差异来源已定，无需 PyTorch 参考。
+   scale 约束；native 的加载路径保留 checkpoint 的权重与 scale。
+   **2026 年 10 月 9 日审查补充**：保留权重不能证明整模型算术误差为零，抽样权重变化也不能证明所有 token 差异均由再量化导致。本轮未取得原始报告复核历史 dispatch；仍需固定上下文的独立 logits/state 对照与任务质量验收，不能仅据该差异排除实现问题。具体边界见 [对比方法审查](../reviews/vllm-benchmark-methodology-2026-10-09.md)。
 4. **委托赛跑扩到 FP8**：cuBLASLt FP8 在 Hopper 极成熟，杠杆 A 的成对测量在
    H200 上预期更多形状判给 cuBLASLt —— 这不丢脸，是赛跑机制按设计工作。
 5. **§六 瀑布按 141GB 重算**：27B FP8 权重 ~27GB，KV/并发余量与 5090 完全不同

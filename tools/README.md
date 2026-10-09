@@ -1,6 +1,6 @@
 # 工具导航
 
-统一入口是仓库根目录的 `make check`，各分项见[质量门禁](../docs/guides/quality-gates.md)。工具输出写入 `artifacts/`，不进入产品运行依赖。
+统一入口是仓库根目录的 `make check`，各分项见[质量门禁](../docs/guides/quality-gates.md)。运行暂存写入 `artifacts/`，不进入产品运行依赖；已验收基线按 [性能基线方案](../docs/plans/performance/baseline.md) 持久保存。
 
 | 目录 | 入口 | 用途 |
 |---|---|---|
@@ -17,6 +17,9 @@
 | `bench` | [cuda-baseline.sh](bench/cuda-baseline.sh) | CUDA 投影基线采集，用法见 [CUDA 性能指南](../docs/guides/cuda-performance.md) |
 | `bench` / `attention` | [attention.sh](bench/attention.sh) | 原生 attention 与 Candle 的独立数值、性能门禁 |
 | `bench` | [check-cuda-service.py](bench/check-cuda-service.py)、[mtp-ab.py](bench/mtp-ab.py) | CUDA 服务与 MTP A/B 验证；参数见 `--help` |
+| `bench` | [serve-workloads.py](bench/serve-workloads.py)、[serve-cases.py](bench/serve-cases.py) | 生成共同 token 输入与选取局部场景；正式矩阵由基线方案固定 |
+| `bench` | [serve-compare.py](bench/serve-compare.py)、[compare-results.py](bench/compare-results.py) | 现有服务采集与报告比较；[审查](../docs/reviews/vllm-benchmark-methodology-2026-10-09.md) 所列缺口修正前，成功退出不等于正式基线验收 |
+| `bench` | [hardware-monitor.py](bench/hardware-monitor.py) | 保存 NVIDIA/主机遥测，供独立核查实验环境 |
 | `bench` | [safe-run.sh](bench/safe-run.sh) | GPU 验证任务的内存限额与互斥保护 |
 | `vision` | [图像指南](../docs/guides/vision.md) | 官方参考导出、预处理、视觉塔与端到端 parity |
 | `package` | [package.py](package/package.py) | 根 build.rs 契约、Zig 编译、归档与验收，见 [打包指南](../docs/guides/packaging.md) |
@@ -29,3 +32,5 @@ make clean-artifacts                              # 实际删除
 ```
 
 清理会移除历史验收输出、调试日志与可重建的 golden Python 环境，但保留文档链接的证据及其 summary 日志、顶层模型文件与模型 / tokenizer 包。参考导出环境按样例说明重新创建；普通 Rust / Metal 验证直接使用已提交的 golden。
+
+正式基线不能依赖清理脚本对文档链接的保留策略；清理前须确认已按基线方案保存完整证据与内容哈希。

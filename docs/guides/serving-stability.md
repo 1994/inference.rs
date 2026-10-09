@@ -1,7 +1,6 @@
 # Serving 稳定性现状与生产差距
 
-**定位**：与 `performance-roadmap.md`（性能现状）、`performance-improvement-plan.md`（性能
-计划）并列的第三轴：稳定性。本文档结论全部来自逐行代码调查，标记【确证】（代码确证）
+**定位**：与 [CUDA Serving 历史记录](../research/cuda-serving-baseline.md)、[CUDA 性能实验记录](../research/cuda-performance-experiments.md) 分别描述性能和稳定性；后续工作以 [路线图](../plans/README.md) 的范围和顺序为准，正式性能验收按 [基线方案](../plans/performance/baseline.md) 执行。本文档结论全部来自逐行代码调查，标记【确证】（代码确证）
 /【推断】。
 
 **总评**：稳定性骨架是生产级的 —— 全链路有界队列、防饥饿、断连干净、无 panic 路径、
@@ -85,7 +84,7 @@ Failed 并通知客户端）；`ttft_slo_us`/`tpot_slo_us` **只参与排序、�
 | 5 | TTFT/TPOT SLO 强制执行（现仅排序） | `ready.rs:131-143` 的 latency_deadline 消费方 | P2 |
 | 6 | **隔离不可恢复**：引擎重建路径（或文档化编排要求） | `observation/mod.rs:309-328`、`pipeline/admission.rs:228-232` | P1 |
 | 7 | 排队可见性：queue position / ETA（响应头或轮询端点） | actor 队列深度已在手，暴露即可 | P2 |
-| 8 | **过载 soak 测试缺失**：429 风暴下延迟/拒绝率回归 | 新增端到端测试；并入性能计划 §四 阶段 5 | P1 |
+| 8 | **过载 soak 测试缺失**：429 风暴下延迟/拒绝率回归 | 按 [测试组织方案](../plans/engineering/tests.md) 登记端到端场景；负载与指标执行 [基线方案](../plans/performance/baseline.md#服务矩阵与判定范围) | P1 |
 
 ## 六、测试覆盖现状
 

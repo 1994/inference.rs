@@ -2,6 +2,8 @@
 
 所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV、依赖安全与四平台打包结果，见 [打包指南](packaging.md)。
 
+本文描述现有门禁。正式测试与服务对比的共同要求见 [性能基线方案](../plans/performance/baseline.md)；release 构建身份、当前 native/vLLM 配置和证据校验仍待接入，现有 gate 成功退出不代表已通过该契约。入口与测试收集的调整见 [工程方案](../plans/engineering/build-and-dependencies.md)。
+
 ## 检查项
 
 | 范围 | 要求 |

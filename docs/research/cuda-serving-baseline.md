@@ -1,16 +1,22 @@
-# Inference 性能现状
+# CUDA Serving 历史矩阵与瓶颈记录
+
+定位：历史服务矩阵、根因与已否决尝试。本文包含不同实验阶段的结果，不代表最新完整矩阵；后续顺序与任务状态统一见 [路线图](../plans/README.md)。
+
+正式测量与基线验收统一见 [性能基线方案](../plans/performance/baseline.md)。以下保留各阶段条件和数字，不提供新的 baseline ID，也不承担当前验收门槛。
 
 **目标**：native CUDA serving 延迟对齐 vLLM/SGLang（≤1.10x），覆盖 Qwen3.8-27B-NVFP4 与
 qwen3vl-2b 的 short/long/batch4/hot_long 四个用例。
 
 **结论：未达成。**
 
-**后续执行计划**：见 [performance-improvement-plan.md](performance-improvement-plan.md)。
+**实验依据**：见 [CUDA 性能实验记录](cuda-performance-experiments.md)。
 
-## 一、当前差距
+## 一、历史矩阵与当时判断
 
 比值 = native / vLLM，**小于 1.0 表示我们更快**。完整矩阵，1 次预热 + 3 次测量，
 `--gpu-memory-utilization 0.88`，原始报告在 `artifacts/perf-r40/`。
+
+2026 年 10 月 9 日 [对比方法审查](../reviews/vllm-benchmark-methodology-2026-10-09.md) 未在当前工作区找到该目录，无法独立复核配置与逐请求数据。以下保留历史记录；配置身份、接口工作量与统计存在缺口，不作为 `7c79d99` 的当前精确差距。
 
 | 用例 | wall | TTFT | TPOT | |
 |---|---:|---:|---:|---|
@@ -23,11 +29,11 @@ qwen3vl-2b 的 short/long/batch4/hot_long 四个用例。
 | 27B long | 1.761 | **5.863** | 1.272 | |
 | 27B batch4 | 1.201 | **2.451** | **1.897** | |
 
-**解码已追平**：2B 四个用例中三个 TPOT 持平，27B 在 1.14–1.27。差距集中在 **prefill**，
-以及**并发负载下的 decode**。
+**当时的观察**：2B 三个用例的 TPOT 接近，27B 单并发用例为 1.14–1.27，batch4 为 1.897。
+记录提示 **prefill** 与**并发负载下的 decode** 值得优先调查，不能据此宣称当前解码全面追平。
 
 **生产优先级**：27B batch4 TPOT 1.897 > 两个 batch4 TTFT ≈2.5 > 2B batch4 TPOT 1.383。
-TPOT 是每 token、每请求都交的税，直接等于吞吐差距；TTFT 只影响首次响应感受。
+这里的 TPOT 是每请求平均出 token 时间，不直接等于总吞吐差距。固定同等输出工作量的请求组应看总 token/group wall；持续负载另测吞吐、排队、尾延迟与 goodput。TTFT 对应的 prefill 与排队也会影响整体容量。
 
 ## 二、两个瓶颈
 
@@ -166,7 +172,7 @@ workspace**，且 kernel 有 **16 行硬下限**。
   （`--ignored`）。原前置补丁 `docs/patches/quant-gemm-row-tile-m.patch` 已合入并删除
 - **prompt chunk 原子化** —— 调度不再把 prefill chunk 切成 fair quantum；一次 replay 发
   整块、发不下就整轮推迟（`packing.rs`）。27B/2B batch4 TTFT 各降 ~19%，wall −1.6~−2.2%，
-  token 序列不变。见 [performance-improvement-plan.md](performance-improvement-plan.md) §一②
+  token 序列不变。见 [CUDA 性能实验记录](cuda-performance-experiments.md) §一②
 - **prompt 图宽度分档** —— 宽窄两张 prompt 图并存，按 chunk 长度路由（`ProgramWeights::
   narrow_prefill_width` + `DeviceProgram::prompt_narrow`）。27B long TTFT −21%、wall −12%，
   batch4 TPOT −7%、short TPOT −5%，token 序列不变；2B 仍是单张 128 图。见同文档 ③′

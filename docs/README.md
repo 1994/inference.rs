@@ -2,6 +2,14 @@
 
 文档说明当前接口、操作方法与能力边界。实现细节以源码为准，命令参数以 `--help` 为准。
 
+## 后续工作
+
+先读 [工程整理与推理优化路线图](plans/README.md)。该页统一维护 P0–P3 优先级、任务编号、启动条件、并行范围与完成标准；按任务进入详细方案，不必逐份阅读历史研究。工程基础、Agent 服务、推测解码与 CUDA 性能方案归档在 `plans/` 的对应分组。
+
+Agent 接入、tool parser、文本流式、max length 和实用配置的缺口与设计见 [Agent 工具调用与服务配置方案](plans/serving/agent-api.md)。该方案按实际使用场景取舍，借鉴 vLLM/SGLang 的机制；当前接口范围仍以使用文档与源码为准。
+
+准备测试或性能对比时，先读 [性能基线与 vLLM 对齐方案](plans/performance/baseline.md)。release、当前配置对齐、矩阵、计时统计和证据规则只在该文维护；模块方案补充自己的接口与数值/资源验收。基线验收完成前，历史矩阵只用于调查线索。
+
 ## 使用与开发
 
 | 文档 | 内容 |
@@ -14,14 +22,15 @@
 | [OpenAI 兼容接口](guides/openai-api.md) | 路由、参数与错误约定 |
 | [Linux 放置](guides/linux.md) | cpuset、NUMA 与硬件验收 |
 
-## 测试与性能
+## 测试与测量
 
 | 文档 | 内容 |
 |---|---|
 | [质量门禁](guides/quality-gates.md) | 本地/CI 检查、Attention 对照与验收要求 |
 | [CPU 性能测量](guides/cpu-performance.md) | 分配计数、延迟与测量范围 |
-| [CUDA 性能测量](guides/cuda-performance.md) | 算子/模型/服务基线、能力探针与调优 |
-| [性能优化后续计划](guides/performance-roadmap.md) | 当前差距、优化顺序、数值与服务性能验收门禁 |
+| [CUDA 性能测量](guides/cuda-performance.md) | 现有算子/模型/服务工具、能力探针与测量边界 |
+| [性能基线与 vLLM 对齐方案](plans/performance/baseline.md) | 待实施的统一测试条件、比较与验收契约 |
+| [Serving 稳定性调查](guides/serving-stability.md) | 稳定性机制、接口和生产差距调查 |
 | [工具导航](../tools/README.md) | 门禁、参考导出与基准入口 |
 
 ## 架构
@@ -38,9 +47,20 @@
 | [Agent](architecture/agent.md) | JSON-RPC 诊断与配置实验 |
 | [架构决策](adr/README.md) | 已采纳决策及其理由 |
 
+## 审查与研究
+
+| 文档 | 内容 |
+|---|---|
+| [近期 CUDA 提交审查](reviews/cuda-commits-2026-10-09.md) | 源码缺陷、优化判断与验证范围 |
+| [vLLM 对比测试审查](reviews/vllm-benchmark-methodology-2026-10-09.md) | 配置、计时、数值与统计缺口；历史差距的可信范围 |
+| [Infernix 性能调研](research/infernix-performance.md) | 参考机制、精度变化与收益估算 |
+| [CUDA Serving 历史记录](research/cuda-serving-baseline.md) | 既有服务矩阵与瓶颈调查；不作为当前已验收基线 |
+| [CUDA 性能实验记录](research/cuda-performance-experiments.md) | 历史 A/B、失败实验与测量条件 |
+
 ## 维护约定
 
-- 使用方法写入指南，跨模块契约写入架构；同一事实只在一个主文档维护，其余链接引用。
-- 文档跟随代码更新，不保留会话交接、逐轮进度、过时计划、待办清单和重复状态总表；历史通过 Git 查询。
-- 原始日志、临时报告和 profiler 输出放入 `artifacts/`；可复用的机器可读基线与数据集定义放入 `benchmarks/`。保留验收门槛与已知限制，不把单机实验写成通用性能承诺。
+- 已实现的使用方法写入 `guides/`，跨模块契约写入 `architecture/`，已采纳决策写入 `adr/`。
+- 待实施工作归入 `plans/`；任务状态、依赖和全局顺序只在路线图维护，详细方案维护本项设计与验收。性能与测试的共同条件由基线方案维护；同一规则由一个主文档维护，其余链接引用。
+- 审查与研究分别归入 `reviews/`、`research/`，保留源码基点与实验条件。已完成工作更新当前使用/架构文档并更新路线图，历史实验不再承担当前排期。
+- 运行暂存、临时报告和 profiler 输出放入 `artifacts/`；已验收基线的 manifest、输入、原始样本和可复算汇总持久保存，不能只有 `artifacts/` 副本。具体留存与更新按基线方案执行；现有 `benchmarks/` 微基准保持各自测量范围。
 - 删除或移动文档时修复链接，并运行 `python3 tools/check/layout.py`。

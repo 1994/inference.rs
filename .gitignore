@@ -3,6 +3,7 @@ target/
 
 # Generated reports, model downloads and local caches.
 /artifacts/
+.archify/
 .cache/
 .ruff_cache/
 /models/

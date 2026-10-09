@@ -2,6 +2,8 @@
 
 CUDA 执行器使用原生 Rust/cuTile kernel 和设备驻留图。测量按算子、执行图、模型和服务分层；算子加速不能替代完整模型数值、状态与服务验收。构建要求见 [CUDA 后端](../../crates/backend/cuda/README.md)。
 
+本文说明现有工具和测量边界。正式测试与性能工作的 release、当前 native/vLLM 配置对齐和基线验收统一按 [性能基线方案](../plans/performance/baseline.md) 执行；自动校验仍待实施。现有服务对比有 [已审查缺口](../reviews/vllm-benchmark-methodology-2026-10-09.md)，历史矩阵不作为当前已验收 baseline。
+
 ## 投影基线
 
 ```sh
@@ -32,7 +34,7 @@ bash tools/bench/safe-run.sh target/release/examples/cuda-model-smoke \
 | 完整模型 | TTFT、TPOT、有效 tokens/s、峰值显存、MTP 接受率 |
 | 并发服务 | 到达率、并发、拒绝/取消、P95/P99、满足 SLO 的 goodput |
 
-`safe-run.sh` 默认限制任务主机内存为 32 GiB、禁用任务 swap，并要求限额之外保留至少 16 GiB 可用内存；`--memory-gib` 可降低限额。报告与 profiler 输出放在 `artifacts/`，不写入使用文档作为逐轮日志。
+`safe-run.sh` 默认限制任务主机内存为 32 GiB、禁用任务 swap，并要求限额之外保留至少 16 GiB 可用内存；`--memory-gib` 可降低限额。报告与 profiler 输出先放在 `artifacts/`；正式基线按 [证据留存规则](../plans/performance/baseline.md#证据保留与基线更新) 持久保存，不写入使用文档作为逐轮日志。
 
 ## 通用 Attention 对照
 
@@ -52,7 +54,7 @@ MLP 的 `MlpConfig.pdl` 默认关闭，仅控制 SiLU×up → down projection �
 
 1. 候选先校验独立参考、尾块、非整除维度与状态语义，再测量。
 2. 按实际 dtype、shape、layout、执行阶段和设备测量；prefill、decode、MTP 不共享未经验证的性能结论。
-3. 记录代码、二进制、设备、驱动、Toolkit、构建模式、模型与输入指纹；冷/热缓存和 debug/release 分开。
+3. 构建身份、配置对齐、冷/热条件、采样统计与证据按性能基线方案核验。
 4. 搜索结束后独立 A/B 复测，不能用最快一次样本替换默认实现。
 5. 用 profiler 定位访存、提交、occupancy 或 spill，再决定融合与流水化；功能边界由通用 API 保持。
 6. 解码 slot 数与 KV 容量改变会影响常驻显存、准入与并发，必须连同完整服务负载重测。

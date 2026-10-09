@@ -2,6 +2,8 @@
 
 本页说明如何构建、运行和调试 inference.rs。环境要求与最低版本见 [README](../../README.md)，模型包格式见[模型执行](model-execution.md)。
 
+以下为现有入口；构建与测试的后续收敛见 [工程方案](../plans/engineering/build-and-dependencies.md)。正式测试、设备验收和性能对比执行 [共同 release 与基线要求](../plans/performance/baseline.md)，不能把现有门禁通过当作服务基线已经验收。
+
 ## 构建
 
 ```sh
@@ -17,7 +19,7 @@ make local-build
 它在 Linux 上启用 CUDA，在 macOS 上使用 Metal；Linux 还会自动把 GCC 的标准头目录加入 bindgen 的 include 路径。`auto` 只选择已编译且可用的 GPU，不会回退到 CPU；Cargo 本身不会根据运行时 GPU 自动启用 feature。本机 CPU 对照需要显式启用 feature：
 
 ```sh
-cargo build --locked -p infer-cli --features test-backends
+cargo build --locked --release -p infer-cli --features test-backends
 ```
 
 完整检查见 `make check`，提交前至少运行 `make check-rust`。
