@@ -1,8 +1,11 @@
 mod backend;
+mod kernels;
 use crate::allocator::{self, Counts};
-use infer_backend_reference::{ReferenceKernels, ReferenceModel};
 use infer_core::{Error, ModelId, RequestId, Result};
-use infer_ir::{CanonicalRequest, PrecisionPlan};
+use infer_ir::{
+    BackboneKind, CanonicalRequest, DType, FeedForward, Head, Mixer, Modality, ModelIr,
+    PositionSpec, PrecisionPlan, StateKind, StateRequirement,
+};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig};
 use serde::Serialize;
@@ -15,12 +18,60 @@ pub struct Case {
     completion: Counts,
     cancellation: Counts,
 }
+/// The protocol scene's model: an explicit descriptor with the dimensions the benchmark has
+/// always measured, so its allocation profile stays comparable. The backend is a device-contract
+/// double that computes nothing, so the kernels below are declarations and no weights are loaded.
+fn protocol_model() -> ModelIr {
+    // Two attention layers, hidden 8, intermediate 16, vocabulary 32.
+    const HIDDEN: usize = 8;
+    const LAYERS: usize = 2;
+    const KV_ELEMENTS_PER_HEAD: usize = 2;
+    ModelIr {
+        id: ModelId::ONE,
+        backbone: BackboneKind::Decoder,
+        vocab_size: 32,
+        hidden_size: HIDDEN,
+        max_sequence: 32768,
+        mixers: vec![
+            Mixer::Attention {
+                query_heads: 1,
+                kv_heads: 1,
+                head_dim: HIDDEN,
+                sliding_window: None,
+                output_gate: false,
+                qk_norm: false,
+            };
+            LAYERS
+        ],
+        feed_forward: FeedForward::Dense { intermediate: 16 },
+        position: PositionSpec {
+            rope_theta: 10_000.0,
+            rotary_fraction: 1.0,
+            multimodal_sections: vec![],
+            interleaved: false,
+        },
+        norm_epsilon: 1e-5,
+        norm_weight_offset: 0.0,
+        heads: vec![Head::LanguageModel, Head::Embedding],
+        modalities: vec![Modality::Text],
+        state: (0..LAYERS)
+            .map(|layer| StateRequirement {
+                layer,
+                kind: StateKind::AttentionKv,
+                dtype: DType::F32,
+                elements: HIDDEN * KV_ELEMENTS_PER_HEAD,
+                per_token: true,
+            })
+            .collect(),
+        tied_embeddings: false,
+    }
+}
+
 fn engine(requests: usize, batch: usize) -> Result<Engine<backend::Backend>> {
-    let mut model = ReferenceModel::fixture(ModelId::ONE, 7).ir;
-    model.max_sequence = 32768;
+    let model = protocol_model();
     let backend = backend::Backend::new(requests, batch, model.vocab_size)?;
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&kernels::DeclaredKernels)?;
     Engine::new(
         backend,
         model,

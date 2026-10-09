@@ -1,5 +1,5 @@
 //! A persistent device-contract double isolates Engine CPU allocations from native driver allocations.
-use infer_core::{Error, Result, StateId, map::BoundedMap};
+use infer_core::{DeviceId, Error, Result, StateId, map::BoundedMap};
 use infer_ir::{
     DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, ModelOutput, OutputReadout,
     StepPlan, TaskOutput,
@@ -41,7 +41,34 @@ impl BackendProvider for Backend {
         "persistent-device-contract-double"
     }
     fn capabilities(&self) -> DeviceCapabilities {
-        infer_ir::testing::reference_capabilities()
+        // A planning sample, not a claim that a device exists: this backend is a device-contract
+        // double that runs no model, and the engine only reads the descriptor to plan.
+        DeviceCapabilities {
+            backend: infer_ir::DeviceBackend::Cuda(infer_ir::NvidiaCapabilities {
+                architecture: infer_ir::NvidiaArchitecture {
+                    compute_major: 12,
+                    compute_minor: 0,
+                    multiprocessors: 170,
+                },
+                tensor_core_generation: Some(5),
+                warp_size: 32,
+                graphs: true,
+                tma: true,
+                clusters: true,
+                pinned_transfer: true,
+                cuda_ipc: true,
+                nvlink: false,
+                gpu_direct: false,
+            }),
+            device: DeviceId::ONE,
+            // These three match what this backend reported before, so the measured allocation
+            // profile stays comparable.
+            compute_dtypes: vec![infer_ir::DType::F32],
+            memory_bytes: 0,
+            unified_memory: true,
+            profiling: false,
+            speculation: infer_ir::SpeculationCapability::default(),
+        }
     }
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
         infer_model_recipes::decoder::lower(model)
@@ -51,12 +78,6 @@ impl BackendProvider for Backend {
     }
     fn supports_recompute_preemption(&self) -> bool {
         true
-    }
-    fn completion_timing(&self, _: &Ticket) -> Option<infer_ir::ExecutionTiming> {
-        Some(infer_ir::ExecutionTiming {
-            elapsed_us: 1,
-            source: infer_ir::TimingSource::CpuWall,
-        })
     }
     fn begin_resource(
         &mut self,

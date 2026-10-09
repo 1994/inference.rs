@@ -42,14 +42,11 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（69 个文件）
+## 执行器消费者与删除归属（67 个文件）
 
-| 归属 | 数量 | 该归属下断言的去向 |
-|---|---:|---|
 | `protocol` | 15 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
 | `numeric` | 8 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
-| `benchmark` | 2 | CPU benchmark：保留正式 CPU 协议与分配测量，明确排除模型执行 |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
 | `plumbing` | 12 | 构建与 feature 接线：manifest、IR feature、门禁与打包脚本 |
 
@@ -61,6 +58,83 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 `numeric`（CUDA examples 的 host 对照、CPU benchmark、Metal 验收对测试版 CLI 的调用），最后删
 `fixture` 与 `plumbing`。`infer-backend-host`/`infer-backend-reference`、`test-backends`、
 `TestCpu` 的残留只允许出现在明确拒绝它们的回归测试与历史说明里。
+
+## 门禁拒绝的变化
+
+1. **`src` 里的用例正文增加**（迁移方向只减不增）。
+2. **`#[path]` 挂载消失或重复**。
+3. **测试文件没有任何模块挂载**：`tests.rs`、`*_tests.rs`、`*_check.rs` 的用例会静默不运行。
+4. **出现新的执行器依赖面**，或**消费者没有删除归属**。
+5. **收集总数下降**：`--record` 会同时记下新总数，避免"文件少了"被当成进展而丢掉断言。
+6. **集合被静默移出**：`tests/unit|support/` 存在却没有 `autotests = false`，或 `autotests = false`
+   而 `tests/*.rs` 没有 `[[test]]` 声明。
+
+## 迁移记录
+
+| crate | 文件 | 收集数 |
+|---|---|---:|
+| `infer-spi` | 1 | 3 → 3 |
+| `infer-ir` | 1（另补登 `hardware`、`tokens` 两个 `[[test]]`） | 28 → 28（含 core） |
+| `infer-core` | 13 | 28 → 28（含 ir） |
+| `infer-models`、`infer-scheduler`、`infer-workloads` | 16（11 + 2 + 3） | 121 → 121（13 target） |
+| `infer-runtime`、`infer-frontdoor`、`infer-agent` | 13（6 + 6 + 1） | 131 → 131（16 target） |
+| `infer-state`、`infer-observe`、`infer-quality`、`infer-gpu-api`、`infer-kernel-api`、`infer-cli` | 12（2+1+1+2+2+4） | 46 → 46（12 target） |
+| `infer-backend-cuda`、`infer-backend-metal` | 36（33 + 3） | 67 → 67（`--features cuda --lib --list`） |
+
+六个操作要点，后续批次沿用：
+
+1. **移动后要用 `rustfmt` 直接格式化新文件**（`cargo fmt --all` 只报不写）。
+2. **改 `autotests` 的 crate 要同时登记既有集成 target**，否则用例被静默移出收集。
+3. **抽取内联块不能只数花括号**（测试数据里的 JSON 会打乱深度）。
+4. **重写挂载要按解析结果比对 `#[path]` 的值**，不能只比文件名。
+5. **`#[path]` 会把文件位置与模块树解耦**，找不到 owner 时要回退到全树扫描解析结果。
+6. **内联块的 `cfg` 可能是 `all(test, ...)`**，抽取时要保留原属性并把 `#[path]` 插在 `mod` 前。
+
+## 待处理的既有 lint：`check-cuda` 的 clippy
+
+`make check-cuda` 跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`，
+迁移前后都报同样 11 条（用 `git worktree` 在迁移前 HEAD 实测 12 条错误），全部在
+`resident/recurrent_prefill` 的测试正文里：5 条 `too_many_lines`、2 条 `float_cmp`、
+2 条 `redundant_clone`、2 条 `cast_precision_loss`。`policy.py` 禁止豁免 `too_many_lines`，那 5 条
+只能拆函数；其余按其建议改。独立一批，不改断言。
+
+## benchmark 消费者已替换：声明式协议桩的形状
+
+`benchmark` 归属（`tools/bench/cpu` 的 2 个文件）已经改完，是 67 个消费者里第一个真正落地的，
+表格里因此不再有这一行。它同时回答了两轮尝试暴露的契约问题，做法可复用到 `protocol` 归属：
+
+| 原来借用的东西 | 替换成 | 为什么是诚实的 |
+|---|---|---|
+| `ReferenceModel::fixture(..).ir` | 显式 `ModelIr` 描述符（2 层 attention、hidden 8、intermediate 16、vocab 32、`max_sequence` 32768，与原来同尺寸） | 只声明协议用到的图元数据，不加载权重、不执行算子 |
+| `ReferenceKernels` | `DeclaredKernels`：只列出模型会 lower 到的 15 个 `Operation`，`estimated_ns`/`workspace_bytes` 是声明值，无任何执行逻辑 | 引擎要用注册表校验计划，声明支持不等于实现推理 |
+| `infer_ir::testing::reference_capabilities()` | 显式 CUDA `DeviceCapabilities` 样例（`compute_dtypes`/`memory_bytes`/`unified_memory` 保持原值） | 方案要求"只验证元数据与选择规则，不宣称设备存在" |
+| `completion_timing()` 上报 `CpuWall` | **不再上报计时**（trait 默认返回 `None`） | 见下 |
+
+最后一行是上一轮那个卡点的答案。[scheduling.rs](../../crates/foundation/ir/src/scheduling.rs) 的
+`ExecutionTiming::matches_backend` 只接受 `(Cuda, CudaGpu)`、`(Metal, MetalGpu)` 与被删除的
+`(TestCpu, CpuWall)`，[feedback.rs](../../crates/engine/runtime/src/pipeline/scheduling/feedback.rs)
+又用它和 `q.backend != self.program.backend` 一起校验成本反馈。既然这个替身**什么都不执行**，
+它就不该上报任何计时：报 `CpuWall` 会因为 `TestCpu` 被删而失效，报设备计时则是伪造设备遥测。
+不再上报后引擎走静态成本模型，替身也不需要时间来源——这样"非设备后端种类"这个契约问题就不必
+靠新增枚举变体来解决。
+
+**验证**：`cargo run --locked --release` 的输出与替换前**逐字段一致**（忽略 `*_ns` 墙钟），即分配
+计数、stage 分解与请求口径都没变；`cargo fmt --check` 与严格 clippy（`-D warnings`）通过；
+`infer-backend-reference` 从 manifest 与 `Cargo.lock` 中消失。
+
+### 对 `protocol` 归属的要求
+
+同样三件事：显式模型描述符、声明的 kernel 集合、显式 capability 样例；需要成本反馈的场景让替身
+不上报计时。`protocol` 的 15 个消费者里，`runtime/tests/{control_path,scheduling}.rs` 已有包装
+`ReferenceBackend` 的装饰器桩，替换时把装饰器改为包装声明式替身即可，断言不需要改写。
+
+## 跨消费者共享还是各自持有
+
+方案要求"公共 helper 只复用样例、脚本、票据和断言；实际 SPI adapter 放在需要它的测试 suite 或
+开发 benchmark 中"，且"不为少量 helper 新增 Cargo crate"。本轮按这条执行：`DeclaredKernels`、
+`protocol_model()` 与 capability 样例都放在 `tools/bench/cpu/src/engine/` 内，还没有第二个消费者
+需要它们。等 `protocol` 归属的第一个消费者真正需要同一份替身时再抽共享测试源文件，而不是提前建
+crate。
 
 ## 门禁拒绝的变化
 

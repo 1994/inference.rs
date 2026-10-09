@@ -613,22 +613,6 @@
     },
     {
       "crate": "tools",
-      "path": "tools/bench/cpu/Cargo.toml",
-      "patterns": [
-        "infer-backend-reference"
-      ],
-      "role": "benchmark"
-    },
-    {
-      "crate": "tools",
-      "path": "tools/bench/cpu/src/engine/mod.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "benchmark"
-    },
-    {
-      "crate": "tools",
       "path": "tools/check/gate.sh",
       "patterns": [
         "test-backends"
