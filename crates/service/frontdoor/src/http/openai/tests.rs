@@ -30,9 +30,14 @@ fn fixture_with(config: RuntimeConfig) -> (RuntimeHandle, Arc<infer_models::Text
 /// Copy the fixture package with a byte-level tokenizer, which is what the served packages use
 /// and the only decoder the streaming path accepts.
 fn streaming_fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let package = std::env::temp_dir().join(format!("infer-stream-{}", std::process::id()));
+    let package = std::env::temp_dir().join(format!(
+        "infer-stream-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&package).unwrap();
     for entry in std::fs::read_dir(&root).unwrap() {
         let entry = entry.unwrap();
@@ -476,5 +481,64 @@ async fn stream_options_without_streaming_are_rejected() {
     });
     let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_long_chat_history_is_rejected_by_the_prompt_budget() {
+    let (handle, assets) = fixture_with(RuntimeConfig {
+        // A single short message fits; a many-turn history does not.
+        max_model_len: Some(24),
+        ..Default::default()
+    });
+    let app = router_with_text(handle.clone(), assets);
+    let short = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello world"}], "max_tokens":2
+    });
+    let (status, body) = call(app.clone(), "/v1/chat/completions", Some(short)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Tool definitions and a full round both add to the encoded prompt, so extra turns consume
+    // the same budget a longer prompt would.
+    let mut messages = vec![json!({"role":"user","content":"hello world system"})];
+    for _ in 0..8 {
+        messages.push(json!({"role":"assistant","content":"token8 token13 hello world"}));
+        messages.push(json!({"role":"user","content":"token8 token13 hello world"}));
+    }
+    let long = json!({"model":"1", "messages":messages, "max_tokens":2});
+    let (status, body) = call(app, "/v1/chat/completions", Some(long)).await;
+    // An oversized prompt is a capacity rejection, not a silent truncation.
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_disconnected_stream_is_cancelled_and_freed() {
+    let (handle, assets) = streaming_fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({
+        "model":"1", "messages":[{"role":"user","content":"hello"}],
+        "max_completion_tokens":8, "stream":true
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // Dropping the body closes the stream while the engine is still generating.
+    drop(response);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if handle.inspect().await.unwrap().active_requests == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(handle.inspect().await.unwrap().state.allocated_pages, 0);
     handle.shutdown().await.unwrap();
 }

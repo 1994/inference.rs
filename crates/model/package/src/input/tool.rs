@@ -839,6 +839,31 @@ mod tests {
                 format!("{REASONING_OPEN}never closed"),
             ),
             (ToolDialect::FunctionParameters, String::new()),
+            // Ordinary text that resembles a marker must stay text.
+            (
+                ToolDialect::JsonBlock,
+                "use <tool_call> in prose, not </tool_call>".to_string(),
+            ),
+            (
+                ToolDialect::JsonBlock,
+                "a <tool_cal> typo and a trailing <tool_call".to_string(),
+            ),
+            (
+                ToolDialect::FunctionParameters,
+                format!("```json\n{json_call}\n```"),
+            ),
+            // Escapes and nesting inside the argument payload.
+            (
+                ToolDialect::JsonBlock,
+                format!(
+                    "{TOOL_CALL_OPEN}{{\"name\":\"f\",\"arguments\":{{\"q\":\"a\\\"b\",\"n\":[1,{{\"k\":\"v\"}}]}}}}{TOOL_CALL_CLOSE}"
+                ),
+            ),
+            // A truncated payload must not be repaired into a call.
+            (
+                ToolDialect::JsonBlock,
+                format!("{TOOL_CALL_OPEN}{{\"name\":\"f\",\"arguments\":{{\"a\":1}}"),
+            ),
         ]
     }
 
@@ -919,5 +944,86 @@ mod tests {
         assert_eq!(parsed.content, "text");
         assert_eq!(parsed.calls.len(), 0);
         assert!(parsed.truncated);
+    }
+
+    #[test]
+    fn ordinary_text_that_resembles_a_marker_is_not_a_call() {
+        for text in [
+            "a </tool_call> without an opener",
+            "a <tool_cal> typo",
+            "a <tool_call without a closing bracket",
+            "plain < and > characters",
+            "use <tool_call> in prose, closed by </tool_call>",
+        ] {
+            let parsed = parse_with(text, ToolDialect::JsonBlock, None).unwrap();
+            assert_eq!(parsed.calls.len(), 0, "{text}");
+            assert!(!parsed.truncated, "{text}");
+            // Whatever is not a call stays available as text.
+            assert!(!parsed.content.is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_bare_opener_withholds_the_tail_instead_of_publishing_half_a_call() {
+        // An opener with no closer is indistinguishable from a truncated call, so the tail is
+        // withheld and reported rather than published as text that might be half a call.
+        let parsed = parse_with(
+            "the <tool_call> tag appears in documentation",
+            ToolDialect::JsonBlock,
+            None,
+        )
+        .unwrap();
+        assert_eq!(parsed.calls.len(), 0);
+        assert!(parsed.truncated);
+        assert_eq!(parsed.content, "the");
+    }
+
+    #[test]
+    fn a_marker_inside_a_code_fence_is_still_a_call() {
+        // The dialect is not markdown-aware: a well-formed block is a call wherever it appears.
+        let text = format!(
+            "```json\n{TOOL_CALL_OPEN}{{\"name\":\"f\",\"arguments\":{{}}}}{TOOL_CALL_CLOSE}\n```"
+        );
+        let parsed = parse_with(&text, ToolDialect::JsonBlock, None).unwrap();
+        assert_eq!(parsed.calls.len(), 1);
+    }
+
+    #[test]
+    fn escaped_and_nested_arguments_survive_verbatim() {
+        let body = r#"{"name":"f","arguments":{"q":"a\"b","path":"C:\\tmp","n":[1,{"k":"v"}]}}"#;
+        let text = format!("{TOOL_CALL_OPEN}{body}{TOOL_CALL_CLOSE}");
+        let parsed = parse_with(&text, ToolDialect::JsonBlock, None).unwrap();
+        assert_eq!(parsed.calls.len(), 1);
+        let arguments: serde_json::Value =
+            serde_json::from_str(&parsed.calls[0].arguments).unwrap();
+        assert_eq!(arguments["q"], "a\"b");
+        assert_eq!(arguments["path"], "C:\\tmp");
+        assert_eq!(arguments["n"][1]["k"], "v");
+    }
+
+    #[test]
+    fn an_unbalanced_payload_is_never_repaired() {
+        for body in [
+            r#"{"name":"f","arguments":{"a":1"#,
+            r#"{"name":"f","arguments":{"a":}}}"#,
+            r#"{"name":"f","arguments":}}"#,
+        ] {
+            let text = format!("{TOOL_CALL_OPEN}{body}{TOOL_CALL_CLOSE}");
+            let parsed = parse_with(&text, ToolDialect::JsonBlock, None).unwrap();
+            assert_eq!(parsed.calls.len(), 0, "{body}");
+            assert!(parsed.content.contains(TOOL_CALL_OPEN), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_utf8_character_split_across_chunks_is_reassembled_in_the_call() {
+        let text = format!(
+            "{TOOL_CALL_OPEN}{{\"name\":\"f\",\"arguments\":{{\"city\":\"北京\"}}}}{TOOL_CALL_CLOSE}"
+        );
+        let complete = parse_with(&text, ToolDialect::JsonBlock, None).unwrap();
+        assert_eq!(feed_all(&text, ToolDialect::JsonBlock, 1), complete);
+        let arguments: serde_json::Value =
+            serde_json::from_str(&complete.calls[0].arguments).unwrap();
+        assert_eq!(arguments["city"], "北京");
     }
 }
