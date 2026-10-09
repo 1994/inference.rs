@@ -3,6 +3,20 @@ title = "Source credential gate"
 [extend]
 useDefault = true
 
+# Generated build products and local acceptance artifacts are not project sources. This entry
+# applies to every rule and is the repository's existing policy.
+#
+# The second pattern is the benchmark evidence's false positive. Each profile and report pins the
+# model artifacts it was measured against by their SHA-256, so a line reads
+# `"tokenizer.json": "<64 hex>"`. gitleaks' generic-api-key rule sees the `token` keyword beside a
+# high-entropy value and reports a key that does not exist.
+#
+# The pattern is matched against the whole line and requires an artifact filename that ends in
+# `.json` followed by exactly 64 hex characters, so no real credential can hide behind it. This
+# gitleaks version has no per-rule allowlist at the top level, so the two conditions share one
+# entry; they are alternatives, and neither weakens the other.
 [allowlist]
-description = "Generated build products and local acceptance artifacts are not project sources"
+description = "Build products, local artifacts, and model artifact digests in generated evidence"
 paths = ['(^|/)target/', '(^|/)artifacts/']
+regexTarget = "line"
+regexes = ['''"[A-Za-z0-9_.-]+\.json"\s*:\s*"[0-9a-f]{64}"''']
