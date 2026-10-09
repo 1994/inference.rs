@@ -62,9 +62,9 @@
     },
     "package": {
       "benches": 0,
-      "src_inline": 62,
-      "src_near": 3,
-      "tests": 15
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 80
     },
     "quality": {
       "benches": 0,
@@ -80,9 +80,9 @@
     },
     "scheduler": {
       "benches": 0,
-      "src_inline": 1,
-      "src_near": 3,
-      "tests": 30
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 34
     },
     "spi": {
       "benches": 0,
@@ -98,9 +98,9 @@
     },
     "workloads": {
       "benches": 0,
-      "src_inline": 1,
-      "src_near": 6,
-      "tests": 0
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 7
     }
   },
   "executor_consumers": [
@@ -270,6 +270,31 @@
       "mount": "attention_tests.rs"
     },
     {
+      "crate": "scheduler",
+      "file": "src/cost/summary.rs",
+      "mount": "../../tests/unit/cost_summary.rs"
+    },
+    {
+      "crate": "scheduler",
+      "file": "src/policy/packing.rs",
+      "mount": "../../tests/unit/policy_packing.rs"
+    },
+    {
+      "crate": "workloads",
+      "file": "src/lib.rs",
+      "mount": "../tests/unit/cases.rs"
+    },
+    {
+      "crate": "workloads",
+      "file": "src/sampling.rs",
+      "mount": "../tests/unit/sampling.rs"
+    },
+    {
+      "crate": "workloads",
+      "file": "src/speculative.rs",
+      "mount": "../tests/unit/speculative.rs"
+    },
+    {
       "crate": "core",
       "file": "src/arena.rs",
       "mount": "../tests/unit/arena.rs"
@@ -330,6 +355,61 @@
       "mount": "../tests/unit/resource.rs"
     },
     {
+      "crate": "package",
+      "file": "src/generation/mod.rs",
+      "mount": "../../tests/unit/generation.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/input/image.rs",
+      "mount": "../../tests/unit/input_image.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/input/mrope.rs",
+      "mount": "../../tests/unit/input_mrope.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/input/prompt.rs",
+      "mount": "../../tests/unit/input_prompt.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/input/tool.rs",
+      "mount": "../../tests/unit/input_tool.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/input/vision.rs",
+      "mount": "../../tests/unit/input_vision.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/providers/qwen.rs",
+      "mount": "../../tests/unit/providers_qwen.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/providers/registry.rs",
+      "mount": "../../tests/unit/providers_registry.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/storage/mod.rs",
+      "mount": "../../tests/unit/storage_shards_tests.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/storage/quantized/activations.rs",
+      "mount": "../../../tests/unit/storage_quantized_activations.rs"
+    },
+    {
+      "crate": "package",
+      "file": "src/storage/quantized.rs",
+      "mount": "../../tests/unit/storage_quantized.rs"
+    },
+    {
       "crate": "cli",
       "file": "src/arguments.rs",
       "mount": "arguments/tests.rs"
@@ -348,9 +428,9 @@
   "totals": {
     "all": 427,
     "benches": 0,
-    "src": 264,
-    "src_inline": 127,
-    "src_near": 137,
-    "tests": 163
+    "src": 188,
+    "src_inline": 63,
+    "src_near": 125,
+    "tests": 239
   }
 }

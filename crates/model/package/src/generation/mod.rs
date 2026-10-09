@@ -1,6 +1,7 @@
 //! Model generation defaults with explicit, per-field request overrides.
 mod read;
 #[cfg(test)]
+#[path = "../../tests/unit/generation.rs"]
 mod tests;
 use infer_core::Result;
 use infer_ir::Sampling;

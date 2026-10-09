@@ -692,4 +692,5 @@ fn validate_ready(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/policy_packing.rs"]
 mod tests;
