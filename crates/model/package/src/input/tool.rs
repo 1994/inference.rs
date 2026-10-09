@@ -192,7 +192,7 @@ pub fn parse_with(
         };
         match parsed {
             Some(call) if declared.is_none_or(|names| names.contains(&call.name)) => {
-                calls.push(call)
+                calls.push(call);
             }
             _ => content.push_str(&remainder[open..close + TOOL_CALL_CLOSE.len()]),
         }
@@ -266,7 +266,7 @@ fn parse_function_block(body: &str) -> Option<ParsedToolCall> {
         let close = body[value_start..].find("</parameter>")? + value_start;
         let raw = body[value_start..close]
             .strip_prefix('\n')
-            .unwrap_or(&body[value_start..close]);
+            .unwrap_or_else(|| &body[value_start..close]);
         let raw = raw.strip_suffix('\n').unwrap_or(raw);
         if arguments.contains_key(key) {
             // A duplicate parameter would silently drop one value; refuse the block instead.
@@ -358,14 +358,14 @@ mod tests {
     fn an_unterminated_block_is_withheld_instead_of_repaired() {
         let parsed = parse("answer<tool_call>{\"name\":\"a\",\"arguments\":{}").unwrap();
         assert_eq!(parsed.content, "answer");
-        assert!(parsed.calls.is_empty());
+        assert_eq!(parsed.calls.len(), 0);
         assert!(parsed.truncated);
     }
 
     #[test]
     fn a_malformed_payload_stays_text() {
         let parsed = parse("<tool_call>{not json}</tool_call>").unwrap();
-        assert!(parsed.calls.is_empty());
+        assert_eq!(parsed.calls.len(), 0);
         assert!(parsed.content.contains(TOOL_CALL_OPEN));
         assert!(!parsed.truncated);
     }
@@ -379,7 +379,7 @@ mod tests {
             r#"[{"name":"f"}]"#,
         ] {
             let text = format!("{TOOL_CALL_OPEN}{body}{TOOL_CALL_CLOSE}");
-            assert!(parse(&text).unwrap().calls.is_empty(), "{body}");
+            assert_eq!(parse(&text).unwrap().calls.len(), 0, "{body}");
         }
     }
 
@@ -396,14 +396,15 @@ mod tests {
         let text = format!("{REASONING_OPEN}still going");
         let parsed = parse(&text).unwrap();
         assert_eq!(parsed.reasoning.as_deref(), Some("still going"));
-        assert!(parsed.content.is_empty());
+        assert_eq!(parsed.content, "");
     }
 
     #[test]
     fn ordinary_text_is_returned_unchanged() {
         let parsed = parse("plain answer").unwrap();
         assert_eq!(parsed.content, "plain answer");
-        assert!(parsed.reasoning.is_none() && parsed.calls.is_empty());
+        assert!(parsed.reasoning.is_none());
+        assert_eq!(parsed.calls.len(), 0);
     }
 
     #[test]
@@ -420,7 +421,7 @@ mod tests {
             "<tool_call>{\"name\":\"declared\",\"arguments\":{}}</tool_call>",
             "<tool_call>{\"name\":\"invented\",\"arguments\":{}}</tool_call>"
         );
-        let declared = ["declared".to_string()].into_iter().collect();
+        let declared = std::iter::once("declared".to_string()).collect();
         let parsed = parse_with(text, ToolDialect::JsonBlock, Some(&declared)).unwrap();
         assert_eq!(
             parsed
@@ -491,7 +492,7 @@ mod tests {
         ] {
             let text = format!("{TOOL_CALL_OPEN}{body}{TOOL_CALL_CLOSE}");
             let parsed = parse_with(&text, ToolDialect::FunctionParameters, None).unwrap();
-            assert!(parsed.calls.is_empty(), "{body}");
+            assert_eq!(parsed.calls.len(), 0, "{body}");
             assert!(
                 parsed.content.contains(FUNCTION_MARKER)
                     || parsed.content.contains(PARAMETER_MARKER)
@@ -502,20 +503,12 @@ mod tests {
     #[test]
     fn a_json_block_is_not_a_function_block_and_the_reverse() {
         let json = "<tool_call>{\"name\":\"f\",\"arguments\":{\"k\":1}}</tool_call>";
-        assert!(
-            parse_with(json, ToolDialect::FunctionParameters, None)
-                .unwrap()
-                .calls
-                .is_empty()
-        );
+        let parsed = parse_with(json, ToolDialect::FunctionParameters, None).unwrap();
+        assert_eq!(parsed.calls.len(), 0);
         let function =
             "<tool_call><function=f>\n<parameter=k>\n1\n</parameter>\n</function></tool_call>";
-        assert!(
-            parse_with(function, ToolDialect::JsonBlock, None)
-                .unwrap()
-                .calls
-                .is_empty()
-        );
+        let parsed = parse_with(function, ToolDialect::JsonBlock, None).unwrap();
+        assert_eq!(parsed.calls.len(), 0);
     }
 
     #[test]

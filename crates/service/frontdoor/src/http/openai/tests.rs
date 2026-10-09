@@ -132,7 +132,18 @@ async fn invalid_and_unsupported_requests_return_errors_without_admission() {
             StatusCode::BAD_REQUEST,
         ),
         ("prompt", json!("hello"), StatusCode::BAD_REQUEST),
-        ("tools", json!([]), StatusCode::BAD_REQUEST),
+        // An empty declaration is a valid request with no tools; a malformed one is not.
+        ("tools", json!("not-a-list"), StatusCode::BAD_REQUEST),
+        (
+            "tools",
+            json!([{"type": "function"}]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "tool_choice",
+            json!("required"),
+            StatusCode::NOT_IMPLEMENTED,
+        ),
         ("max_completion_tokens", json!(3), StatusCode::BAD_REQUEST),
     ];
     for (field, value, expected) in cases {

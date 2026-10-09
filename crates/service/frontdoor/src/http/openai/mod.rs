@@ -8,7 +8,7 @@ mod tests;
 use super::text::TextState;
 use axum::{Json, Router, extract::State, http::HeaderMap, routing::get, routing::post};
 use error::ApiError;
-use request::GenerationRequest;
+use request::{GenerationRequest, ToolPolicy};
 use serde_json::{Value, json};
 
 type ApiResult<T> = Result<T, ApiError>;
