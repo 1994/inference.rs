@@ -137,7 +137,7 @@ impl ParsedOutput {
 ///
 /// # Errors
 /// Returns an invalid-input error when a tool-call block carries more than
-/// [`MAX_TOOL_CALLS`] calls or an argument payload above [`MAX_TOOL_ARGUMENT_BYTES`].
+/// `MAX_TOOL_CALLS` calls or an argument payload above `MAX_TOOL_ARGUMENT_BYTES`.
 pub fn parse(text: &str) -> infer_core::Result<ParsedOutput> {
     parse_with(text, ToolDialect::JsonBlock, None)
 }
@@ -151,7 +151,7 @@ pub fn parse(text: &str) -> infer_core::Result<ParsedOutput> {
 ///
 /// # Errors
 /// Returns an invalid-input error when a tool-call block carries more than
-/// [`MAX_TOOL_CALLS`] calls or an argument payload above [`MAX_TOOL_ARGUMENT_BYTES`].
+/// `MAX_TOOL_CALLS` calls or an argument payload above `MAX_TOOL_ARGUMENT_BYTES`.
 pub fn parse_with(
     text: &str,
     dialect: ToolDialect,
