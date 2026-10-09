@@ -305,6 +305,11 @@ def prefix_reuse(args, trial):
     return total
 
 
+def _seconds(microseconds):
+    """Convert an optional microsecond reading to seconds."""
+    return None if microseconds is None else microseconds / 1_000_000
+
+
 def stream_request(args, base, model, eos, counter, row):
     if args.engine == "native":
         payload = {
@@ -377,6 +382,19 @@ def stream_request(args, base, model, eos, counter, row):
     # invalid; the gate keeps the request and reports the metric as not measurable.
     tpot = (visible[-1][1] - visible[0][1]) / (len(visible) - 1) if len(visible) > 1 else None
     finish_reason = finished.get("reason") if isinstance(finished, dict) else finished
+    # The server's own view of the same request, recorded next to the client's so client latency
+    # and engine phases are never conflated.
+    measurement = (finished or {}).get("measurement") if isinstance(finished, dict) else None
+    server = (
+        {
+            "ttft_seconds": _seconds(measurement.get("ttft_us")),
+            "e2e_seconds": _seconds(measurement.get("e2e_us")),
+            "max_tpot_seconds": _seconds(measurement.get("max_tpot_us")),
+            "output_tokens": measurement.get("output_tokens"),
+        }
+        if measurement
+        else None
+    )
     return {
         "case": row["case"],
         "repeat": row["repeat"],
@@ -396,6 +414,7 @@ def stream_request(args, base, model, eos, counter, row):
         "stream_events": events,
         "finish_reason": finish_reason,
         "truncated": finish_reason is None,
+        "server_measurement": server,
         "finished": finished,
     }
 

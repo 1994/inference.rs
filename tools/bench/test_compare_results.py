@@ -68,6 +68,11 @@ def report(case="hot_long", concurrency=1, tokens=2, repeats=3, engine="native")
                         "tpot_seconds": 0.9 if tokens > 1 else None,
                         "finish_reason": "length",
                         "truncated": False,
+                        "server_measurement": {
+                            "ttft_seconds": 0.05,
+                            "e2e_seconds": 0.5,
+                            "output_tokens": tokens,
+                        },
                     }
                     for slot in range(concurrency)
                 ],
@@ -93,6 +98,7 @@ class GateTests(unittest.TestCase):
         old, new = report(), report()
         new["trials"][0]["results"][0]["output_tokens_excluding_eos"] = 1
         new["trials"][0]["results"][0]["token_ids"] = [1]
+        new["trials"][0]["results"][0]["server_measurement"]["output_tokens"] = 1
         with self.assertRaisesRegex(ValueError, "request work differs"):
             module.compare(old, new)
 
@@ -150,6 +156,12 @@ class GateTests(unittest.TestCase):
         new = report()
         new["trials"][0]["results"][0]["finish_reason"] = None
         with self.assertRaises(ValueError):
+            module.compare(old, new)
+
+    def test_a_server_that_reports_more_tokens_than_it_streamed_is_rejected(self):
+        old, new = report(), report()
+        new["trials"][0]["results"][0]["server_measurement"]["output_tokens"] = 5
+        with self.assertRaisesRegex(ValueError, "were streamed"):
             module.compare(old, new)
 
     def test_a_matrix_row_that_was_never_measured_is_rejected(self):

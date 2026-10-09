@@ -113,6 +113,15 @@ def measured(report):
             tpot = result.get("tpot_seconds")
             if tpot is not None and (not math.isfinite(tpot) or tpot < 0):
                 raise ValueError("invalid TPOT")
+            # When the engine reports its own view, it must agree with what was streamed: a
+            # server that generated more than it delivered measured a truncated request.
+            server = result.get("server_measurement")
+            reported = None if server is None else server.get("output_tokens")
+            if reported is not None and reported != len(result["token_ids"]):
+                raise ValueError(
+                    f"server reported {reported} generated tokens but "
+                    f"{len(result['token_ids'])} were streamed"
+                )
         rows[key] = trial
     if not rows:
         raise ValueError("no measured trials")
