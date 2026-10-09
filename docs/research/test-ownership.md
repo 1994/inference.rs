@@ -131,7 +131,7 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 Error { code: InvalidInput, message: "cost feedback does not match loaded program/budgets" }
 ```
 
-原因在 [scheduling.rs](../../../crates/foundation/ir/src/scheduling.rs) 的 `ExecutionTiming::matches_backend`：
+原因在 [scheduling.rs](../../crates/foundation/ir/src/scheduling.rs) 的 `ExecutionTiming::matches_backend`：
 
 ```rust
 match (backend, self.source) {
