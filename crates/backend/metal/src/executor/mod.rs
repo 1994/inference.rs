@@ -9,6 +9,7 @@ mod provider;
 mod setup;
 mod state;
 #[cfg(test)]
+#[path = "../../tests/unit/executor_state_tests.rs"]
 mod state_tests;
 mod submission;
 use crate::{MetalKernels, device::MetalDevice};

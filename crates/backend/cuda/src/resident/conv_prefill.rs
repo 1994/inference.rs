@@ -179,4 +179,5 @@ pub(super) fn record(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_conv_prefill.rs"]
 mod tests;

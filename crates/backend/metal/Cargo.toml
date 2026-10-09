@@ -5,6 +5,30 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# Case bodies under `tests/` are mounted from their module, so `tests/unit` and
+# `tests/support` must not be auto-discovered as integration targets.
+autotests = false
+
+[[test]]
+name = "forward"
+path = "tests/forward.rs"
+
+[[test]]
+name = "golden"
+path = "tests/golden.rs"
+
+[[test]]
+name = "paging"
+path = "tests/paging.rs"
+
+[[test]]
+name = "retention"
+path = "tests/retention.rs"
+
+[[test]]
+name = "runtime"
+path = "tests/runtime.rs"
+
 [lints]
 workspace = true
 

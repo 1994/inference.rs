@@ -144,6 +144,7 @@ pub(crate) mod kernels {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_attention_decode.rs"]
 mod tests;
 
 mod workspace;

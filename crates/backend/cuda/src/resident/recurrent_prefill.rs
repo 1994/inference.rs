@@ -103,17 +103,18 @@ pub(crate) mod kernels {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_recurrent_prefill.rs"]
 mod tests;
 
 mod workspace;
 pub use workspace::Workspace;
 
 #[cfg(test)]
-#[path = "recurrent_prefill/integration_tests.rs"]
+#[path = "../../tests/unit/resident_recurrent_prefill_integration_tests.rs"]
 mod integration;
 
 #[cfg(test)]
-#[path = "recurrent_prefill/benchmark_tests.rs"]
+#[path = "../../tests/unit/resident_recurrent_prefill_benchmark_tests.rs"]
 mod benchmark;
 
 #[cfg(test)]

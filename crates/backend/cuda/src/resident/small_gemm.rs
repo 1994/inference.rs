@@ -57,4 +57,5 @@ pub(crate) mod kernels {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_small_gemm.rs"]
 mod tests;

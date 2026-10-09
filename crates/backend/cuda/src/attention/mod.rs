@@ -13,5 +13,5 @@ mod gate;
 #[path = "benchmark_check.rs"]
 pub(crate) mod benchmark;
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "../../tests/unit/attention.rs"]
 mod tests;

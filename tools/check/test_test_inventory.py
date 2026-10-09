@@ -165,6 +165,38 @@ class TargetTest(unittest.TestCase):
             self.assertEqual(module.check_targets(root), [])
 
 
+class OrphanTest(unittest.TestCase):
+    def build(self, directory, declared, files):
+        root = Path(directory)
+        crate = root / "crates" / "group" / "crate-a" / "src"
+        (crate / "deep").mkdir(parents=True)
+        (root / "crates" / "group" / "crate-a" / "Cargo.toml").write_text("[package]\n")
+        (crate / "lib.rs").write_text(declared)
+        for path in files:
+            (crate / path).write_text("#[test]\nfn a() {}")
+        return root
+
+    def test_a_test_file_no_module_mounts_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.build(directory, "", ["orphan_tests.rs"])
+            problems = module.check_orphans(root)
+            self.assertTrue(any("never run" in problem for problem in problems))
+
+    def test_a_conventionally_mounted_file_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.build(directory, "#[cfg(test)]\nmod orphan_tests;\n", ["orphan_tests.rs"])
+            self.assertEqual(module.check_orphans(root), [])
+
+    def test_a_path_mounted_file_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.build(
+                directory,
+                '#[cfg(test)]\n#[path = "deep/cases_tests.rs"]\nmod cases;\n',
+                ["deep/cases_tests.rs"],
+            )
+            self.assertEqual(module.check_orphans(root), [])
+
+
 class RatchetTest(unittest.TestCase):
     def test_growth_in_src_is_refused(self):
         recorded = inventory(src=10)

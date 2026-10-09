@@ -147,4 +147,5 @@ pub(super) fn record(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_nvfp4_gemm.rs"]
 mod tests;

@@ -458,4 +458,5 @@ fn verify_lanes(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/resident_slot_verify.rs"]
 mod tests;

@@ -201,4 +201,5 @@ pub struct DraftSnapshot {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/executor_prefix_state.rs"]
 mod tests;

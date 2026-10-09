@@ -20,6 +20,7 @@ Run with `--record` to accept the current tree as the new baseline after a delib
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -173,6 +174,52 @@ def check_mounts(inventory, root=REPO_ROOT):
     return problems
 
 
+def check_orphans(root=REPO_ROOT):
+    """Every test file must be reachable as a module, or its cases never run.
+
+    A file named `tests.rs`, `*_tests.rs` or `*_check.rs` can sit next to the code it tests and be
+    silently omitted from the module tree, which no compiler warning reports: the cases simply do
+    not exist. The plan asks for the mount path to exist and be unique, and this is the half of
+    that rule which a missing declaration would break.
+    """
+    problems = []
+    for crate in sorted(
+        path for path in (root / "crates").glob("*/*") if (path / "Cargo.toml").is_file()
+    ):
+        src = crate / "src"
+        for path in sorted(src.rglob("*.rs")):
+            name = path.name
+            if not (name == "tests.rs" or name.endswith(("_tests.rs", "_check.rs"))):
+                continue
+            text = path.read_text(errors="ignore")
+            if not TEST_ENTRY.search(text):
+                continue
+            parent, stem = path.parent, path.stem
+            candidates = (
+                [src / "lib.rs"]
+                if parent == src
+                else [parent.parent / f"{parent.name}.rs", parent / "mod.rs"]
+            )
+            mounted = any(
+                re.search(rf"(?:pub\s+)?mod\s+{re.escape(stem)}\s*;", candidate.read_text())
+                for candidate in candidates
+                if candidate.is_file()
+            )
+            if not mounted:
+                wanted = os.path.normpath(path)
+                mounted = any(
+                    os.path.normpath(candidate.parent / value) == wanted
+                    for candidate in src.rglob("*.rs")
+                    for value in PATH_MOUNT.findall(candidate.read_text())
+                )
+            if not mounted:
+                problems.append(
+                    f"{crate.name}: {path.relative_to(crate)} is a test file no module mounts, so "
+                    "its cases never run"
+                )
+    return problems
+
+
 def check_targets(root=REPO_ROOT):
     """Every test file must actually be collected, and helper files must not be.
 
@@ -216,7 +263,7 @@ def check_targets(root=REPO_ROOT):
 
 def regressions(inventory, recorded, root=REPO_ROOT):
     """The ratchet: what may not get worse while the migration proceeds."""
-    problems = check_mounts(inventory, root) + check_targets(root)
+    problems = check_mounts(inventory, root) + check_targets(root) + check_orphans(root)
     if inventory["totals"]["src"] > recorded["totals"]["src"]:
         problems.append(
             "test bodies in src grew to "

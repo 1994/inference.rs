@@ -11,14 +11,14 @@
 
 | crate | src inline | src near-test | tests/ | benches/ |
 |---|---:|---:|---:|---:|
-| cuda | 33 | 34 | 0 | 0 |
+| cuda | 10 | 1 | 56 | 0 |
 | observe | 0 | 8 | 0 | 0 |
 | api | 0 | 6 | 0 | 0 |
 | state | 1 | 5 | 10 | 0 |
-| metal | 2 | 1 | 16 | 0 |
 | quality | 0 | 3 | 0 | 0 |
 | cli | 2 | 0 | 15 | 0 |
 | kernel-api | 0 | 0 | 7 | 0 |
+| metal | 0 | 0 | 19 | 0 |
 | runtime | 0 | 0 | 61 | 0 |
 | scheduler | 0 | 0 | 34 | 0 |
 | workloads | 0 | 0 | 7 | 0 |
@@ -28,20 +28,19 @@
 | package | 0 | 0 | 80 | 0 |
 | agent | 0 | 0 | 12 | 0 |
 | frontdoor | 0 | 0 | 58 | 0 |
-| **total** | **38** | **57** | **332** | **0** |
+| **total** | **13** | **23** | **391** | **0** |
 
-`src` 合计 **95** 个（inline 38 + 就近测试文件 57），
-`tests/` **332** 个。起始为 288 个正文在 `src`，现已完成 193 个。
+`src` 合计 **36** 个（inline 13 + 就近测试文件 23），
+`tests/` **391** 个。起始为 288 个正文在 `src`，现已完成 252 个。
 
 ### 仍留在 `src` 的 crate
 
 | crate | inline | 就近测试文件 |
 |---|---:|---:|
-| `cuda` | 33 | 34 |
+| `cuda` | 10 | 1 |
 | `observe` | 0 | 8 |
 | `api` | 0 | 6 |
 | `state` | 1 | 5 |
-| `metal` | 2 | 1 |
 | `quality` | 0 | 3 |
 | `cli` | 2 | 0 |
 
@@ -76,10 +75,12 @@ feature 之前必须逐个替换或删除的消费者，也是 [E1](../plans/REA
 
 1. **`src` 里的用例正文增加**：迁移方向是只减不增，基准数只能通过 `--record` 在新一轮迁移后下调。
 2. **`#[path]` 挂载消失或重复**：挂载必须解析到存在且唯一的文件。
-3. **出现新的执行器消费者**（按依赖面判定，不按路径）。
-4. **收集总数下降**：`--record` 会同时记下新总数，避免"文件少了"被当成进展而丢掉断言。
-5. **集合被静默移出**：`tests/unit|support/` 存在却没有 `autotests = false`，或 `autotests = false`
-   而 `tests/*.rs` 没有 `[[test]]` 声明 —— 两者都会让用例从 `cargo test` 里消失而不报错。
+3. **测试文件没有任何模块挂载**：`tests.rs`、`*_tests.rs`、`*_check.rs` 里的用例会静默不运行，
+   编译器不会报错。
+4. **出现新的执行器消费者**（按依赖面判定，不按路径）。
+5. **收集总数下降**：`--record` 会同时记下新总数，避免"文件少了"被当成进展而丢掉断言。
+6. **集合被静默移出**：`tests/unit|support/` 存在却没有 `autotests = false`，或 `autotests = false`
+   而 `tests/*.rs` 没有 `[[test]]` 声明。
 
 ## 迁移记录
 
@@ -91,19 +92,32 @@ feature 之前必须逐个替换或删除的消费者，也是 [E1](../plans/REA
 | `infer-models`、`infer-scheduler`、`infer-workloads` | 16 个文件（11 + 2 + 3） | 121 → 121（13 target） |
 | `infer-runtime`、`infer-frontdoor`、`infer-agent` | 13 个文件（6 + 6 + 1） | 131 → 131（16 target） |
 | `infer-state`、`infer-observe`、`infer-quality`、`infer-gpu-api`、`infer-kernel-api`、`infer-cli` | 10 个文件（2+1+1+2+2+4） | 53 → 53（14 target） |
+| `infer-backend-cuda`、`infer-backend-metal` | 29 个文件（26 + 3） | 67 → 67（`--features cuda --lib --list`） |
 
-五个操作要点，后续批次必须照做：
+六个操作要点，后续批次必须照做：
 
 1. **移动后要用 `rustfmt` 直接格式化新文件**（`cargo fmt --all` 只报不写）。
 2. **改 `autotests` 的 crate 要同时登记既有集成 target**，否则用例被静默移出收集。
 3. **抽取内联块不能只数花括号**（测试数据里的 JSON 会打乱深度）。
 4. **重写挂载要按解析结果比对 `#[path]` 的值**，不能只比文件名。
-5. **`#[path]` 会把文件位置与模块树解耦**：`kernel-api` 的 `src/attention_tests.rs` 由
-   `src/attention.rs` 挂载，找不到 owner 时要回退到全树扫描 `#[path]` 的解析结果。
+5. **`#[path]` 会把文件位置与模块树解耦**：找不到 owner 时要回退到全树扫描 `#[path]` 的解析结果。
+6. **迁移不改测试正文**：`infer-backend-cuda` 在 `--features cuda` 下的 lint 发现与本次迁移无关，
+   迁移前后同一份正文、同样 11 条。分开处理，逐条记录在下面。
+
+### 待处理的既有 lint：`check-cuda` 的 clippy
+
+`make check-cuda` 会跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`。
+在迁移前后都一样报 11 条（用 `git worktree` 在迁移前的 HEAD 上实测同样 12 条错误、EXIT=101），
+全部落在 `resident/recurrent_prefill` 的测试正文里：5 条 `too_many_lines`、2 条 `float_cmp`、
+2 条 `redundant_clone`、2 条 `cast_precision_loss`。
+
+`tools/check/policy.py` 明确禁止豁免 `clippy::too_many_lines`（"strict lint checks cannot be waived"），
+所以这 5 条只能拆函数，不能加 `#[expect]`；其余 4 类按其建议改（去掉多余 clone、按位比较浮点、避免
+精度丢失的转换）。这是独立一批，不与目录迁移混做，且不改变任何断言。
 
 ## 迁移顺序
 
-按方案与路线图：foundation/model/scheduler/workloads 与 runtime/frontdoor/agent 已完成；接下来是
-GPU 私有测试（`cuda` 剩 67 个、`metal` 剩 3 个）、examples 与性能场景；之后是删除两个 CPU 测试执行器
-与 `test-backends` feature。每批只改目录与收集，不改数值公式或产品行为；完成后用
-`python3 tools/check/test-inventory.py --record` 下调基准并刷新本文表格。
+按方案与路线图：foundation/model/scheduler/workloads、runtime/frontdoor/agent 与 GPU 私有测试已完成；
+接下来是 examples 与性能场景；之后是删除两个 CPU 测试执行器与 `test-backends` feature。每批只改目录
+与收集，不改数值公式或产品行为；完成后用 `python3 tools/check/test-inventory.py --record` 下调基准
+并刷新本文表格。
