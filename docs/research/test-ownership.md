@@ -121,3 +121,35 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 结论：`benchmark`/`protocol` 的替换不是逐文件改写，而是先落一个**声明式协议桩**（capability
 样例 + kernel 声明 + 脚本化完成结果），再让这些消费者改用它。这也说明"先清点、再替换"的顺序是
 对的：这两点在删除 `TestCpu` 与 `testing` 模块之前必须先定，否则消费者没有可声明的后端身份。
+
+### 第二轮实测：还缺一个"非设备"后端种类，否则成本反馈无法通过校验
+
+把 capability 换成 CUDA 样例、并补上声明的 kernel 集合之后，bench 越过了"没有可用 kernel"，
+随即失败在：
+
+```
+Error { code: InvalidInput, message: "cost feedback does not match loaded program/budgets" }
+```
+
+原因在 [scheduling.rs](../../../crates/foundation/ir/src/scheduling.rs) 的 `ExecutionTiming::matches_backend`：
+
+```rust
+match (backend, self.source) {
+    (BackendKind::Cuda, TimingSource::CudaGpu)
+    | (BackendKind::Metal, TimingSource::MetalGpu) => true,
+    #[cfg(feature = "test-backends")]
+    (BackendKind::TestCpu, TimingSource::CpuWall) => true,
+    _ => false,
+}
+```
+
+也就是说**删除 `TestCpu` 之后，没有任何 backend 种类接受 `CpuWall` 计时**。而 CPU benchmark 的
+全部意义就是测量 CPU 墙钟下的协议与分配（它的完成计时必然报 `CpuWall`），`feedback.rs` 又会用
+`q.backend != self.program.backend` 与 `timing.matches_backend(...)` 双重校验。结果是：一个
+"不执行模型、只测主机侧协议"的后端既不能声明 CUDA/Metal（会要求设备计时，等于伪造设备遥测），
+也不能在删掉 `TestCpu` 之后通过成本反馈校验。
+
+这不是某个消费者的局部问题，而是删除方案需要一个明确决定：要么保留一个**不带 `test-backends`
+feature 的非设备种类**（它不再是产品可选后端，只是协议/基准的身份），要么让 `CpuWall` 对某个
+声明的非设备种类合法。方案完成条件里的"实现和 manifest 不再包含 `TestCpu`"在这一条解决之前无法
+落地，因此 E1 的删除半段建议先补这个契约，再逐消费者替换。
