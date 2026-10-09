@@ -703,6 +703,24 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    `docs`），但两个已验证的加速（chunked 递推 −24% long TTFT、委托 −4~11% TTFT）都过不了
    这条线。若改为"logit 级相对误差 + 抽样一致性"这类数值门禁，它们就能成为默认路径。
 
+   **第 13 轮：一个不改数值的加速（27B long TTFT −4.3%）。** 先给两个模型做了分桶剖析
+   （2B：linear 53%、attention 32%；解码每 token 要读 4 GB bf16 权重，实测 3.1 ms/token
+   对带宽下限 2.2 ms，vLLM 也在同一水平，没有余量）。真正可下手的是**提示图宽度**：
+
+   仓库里已有的记录（`loading/mod.rs`）本来就写着"128-lane 提示图与两个 64-lane chunk
+   **数值完全一致**，并把八次 replay 变成四次（long TTFT −13%）"。因为 key/value 一律过 KV
+   cache、prompt GEMM 逐元素只在 K 上累加，所以**加宽 chunk 是数值中性的**。于是把
+   `MAX_PREFILL_LANES=128` 之上加了一级 `WIDE_PREFILL_LANES=256`：
+
+   - 27B（量化 recurrent）：`prefill_width=256, narrow=64`（arena 361/503 MiB），
+     **long TTFT 0.3061 → 0.2929（−4.3%）、wall −1.0%**，两轮 **3/3 序列逐位相同**。
+   - 2B（dense）：256 实测**无收益**（long TTFT 0.999、short 1.007），因此 dense 模型的
+     阶梯仍止于 128，只有量化 recurrent 模型才拿这一级——这也解释了为什么原先的注释里
+     只有 64→128 有收益。
+
+   宽度选择逻辑抽成了 `select_prompt_width`，并写明"arena 是真正的约束，这个 cap 只是阶梯
+   上限"。这轮没有触碰任何数值路径，默认矩阵因此净赚。
+
 2b. **DFlash2 草稿模型（已调研 + 已下载，未实现）**：`z-lab/Qwen3.8-27B-DFlash2`
    （1.924B / 81 个 BF16 张量 / 3.849 GB，已下载到 `/home/r/models/Qwen3.8-27B-DFlash2`
    并校验张量可读）。结构：`fc.weight [5120,25600]` 把 **5 个目标层

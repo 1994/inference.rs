@@ -64,6 +64,7 @@ impl LoadOptions {
             crate::constants::PREFILL_LANES,
             crate::constants::MID_PREFILL_LANES,
             crate::constants::MAX_PREFILL_LANES,
+            crate::constants::WIDE_PREFILL_LANES,
         ]
         .contains(&self.prefill_width)
             || self.verification_width > crate::constants::MAX_VERIFICATION_WIDTH
@@ -249,52 +250,25 @@ impl LoadedModel {
             // cases (short TTFT 0.058 -> 0.084 s, batch4 0.247 -> 0.291 s, hot-prefix
             // 0.090 -> 0.115 s) while the long case barely moved (0.436 -> 0.424 s). Do not
             // widen a quantized recurrent prompt graph without an end-to-end measurement.
-            let arena_budget = profile.arena_budget_bytes();
             // Quantized recurrent graphs keep the scalar Delta path for numerical
             // stability. Limit their prompt graph size while sharing projection loads.
-            let recurrent_limit = if package
+            // The arena is the real bound; this is only a cap for the ladder below. Quantized
+            // recurrent graphs stay at the established width, dense ones may take the wide rung
+            // when the arena has room for it.
+            let quantized_recurrent = package
                 .graph
                 .nodes
                 .iter()
                 .any(|node| matches!(node.op, infer_ir::TensorOp::Delta { .. }))
-                && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty())
-            {
-                crate::constants::MID_PREFILL_LANES
-            } else {
-                crate::constants::MAX_PREFILL_LANES
-            };
-            let mut selected = 0usize;
-            for width in [
-                crate::constants::MAX_PREFILL_LANES,
-                crate::constants::MID_PREFILL_LANES,
-            ]
-            .into_iter()
-            .filter(|&width| width <= recurrent_limit)
-            {
-                let needed =
-                    crate::resident::arena::ActivationArena::required_bytes(&package.graph, width)?;
-                if needed as u64 <= arena_budget {
-                    selected = width;
-                    break;
-                }
-            }
-            // The recurrent cap above is a heuristic for the scalar Delta path, and the arena is
-            // the real bound. Measured on the 27B: a 128-lane prompt graph is numerically
-            // identical to two 64-lane chunks and turns eight replays into four (-13% long-prompt
-            // TTFT), while a 51-token prompt through it costs 24% more. So keep the capped width
-            // as a second, narrow graph and route chunks by length instead of choosing one.
-            if selected != 0 && selected < crate::constants::MAX_PREFILL_LANES {
-                let wide = crate::constants::MAX_PREFILL_LANES;
-                let needed =
-                    crate::resident::arena::ActivationArena::required_bytes(&package.graph, wide)?;
-                if needed as u64 <= arena_budget {
-                    weights.narrow_prefill_width = selected;
-                    selected = wide;
-                }
-            }
-            if selected != 0 {
-                weights.prefill_width = selected;
-            }
+                && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty());
+            // One request owns one arena, so the width decision is bounded by the profiled
+            // activation-arena budget, not by a fixed share of total memory.
+            select_prompt_width(
+                &package.graph,
+                quantized_recurrent,
+                profile.arena_budget_bytes(),
+                &mut weights,
+            )?;
             tracing::info!(
                 target: "infer::load",
                 prefill_width = weights.prefill_width,
@@ -509,4 +483,60 @@ mod tests {
             .is_err()
         );
     }
+}
+
+/// Pick the prompt graph width from the arena budget.
+///
+/// A wider prompt graph is arithmetically identical to several narrower chunks: keys and values
+/// always pass through the cache, and the prompt GEMM accumulates per element over K. It is also
+/// fewer replays, which is where the measured gains come from. The 256-lane rung is only offered
+/// to quantized recurrent models, where it measured -4.4% long-prompt TTFT with identical tokens;
+/// on the dense models it measured neutral on the long case and 1.3% worse on the short one.
+fn select_prompt_width(
+    graph: &DataflowGraph,
+    quantized_recurrent: bool,
+    arena_budget: u64,
+    weights: &mut ProgramWeights,
+) -> Result<()> {
+    let recurrent_limit = if quantized_recurrent {
+        crate::constants::MID_PREFILL_LANES
+    } else {
+        crate::constants::MAX_PREFILL_LANES
+    };
+    let mut selected = 0usize;
+    for width in [
+        crate::constants::MAX_PREFILL_LANES,
+        crate::constants::MID_PREFILL_LANES,
+    ]
+    .into_iter()
+    .filter(|&width| width <= recurrent_limit)
+    {
+        let needed = crate::resident::arena::ActivationArena::required_bytes(graph, width)?;
+        if needed as u64 <= arena_budget {
+            selected = width;
+            break;
+        }
+    }
+    if selected != 0 && selected < crate::constants::MAX_PREFILL_LANES {
+        let rungs: &[usize] = if quantized_recurrent {
+            &[
+                crate::constants::WIDE_PREFILL_LANES,
+                crate::constants::MAX_PREFILL_LANES,
+            ]
+        } else {
+            &[crate::constants::MAX_PREFILL_LANES]
+        };
+        for &wide in rungs {
+            let needed = crate::resident::arena::ActivationArena::required_bytes(graph, wide)?;
+            if needed as u64 <= arena_budget {
+                weights.narrow_prefill_width = selected;
+                selected = wide;
+                break;
+            }
+        }
+    }
+    if selected != 0 {
+        weights.prefill_width = selected;
+    }
+    Ok(())
 }

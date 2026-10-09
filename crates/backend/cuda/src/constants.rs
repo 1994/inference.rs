@@ -81,6 +81,13 @@ mod device {
     pub const PREFILL_LANES: usize = 32;
     /// Largest automatically selected prompt batch, bounded by the activation budget.
     pub const MAX_PREFILL_LANES: usize = 128;
+    /// Rung above `MAX_PREFILL_LANES`, taken only when the activation arena has room.
+    ///
+    /// A wider prompt graph is arithmetically identical to several narrower chunks because keys and
+    /// values always pass through the cache and the GEMM accumulates per element over K, and the
+    /// measured history agrees: 128 lanes matched two 64-lane chunks exactly and cut long-prompt
+    /// TTFT 13% by turning eight replays into four.
+    pub const WIDE_PREFILL_LANES: usize = 256;
     /// Column tile of the batched prefill GEMM.
     pub const PREFILL_GEMM_TILE_N: usize = 64;
     /// K tile of the batched prefill GEMM: columns of input per loop iteration.
