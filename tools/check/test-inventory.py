@@ -51,6 +51,38 @@ EXECUTOR_SCAN_EXCLUDED = (
     "tools/check/test-inventory.py",
     "tools/check/test_test_inventory.py",
 )
+# Vendored environments and local acceptance output are not project sources, the same way
+# `.gitignore` and the credential gate treat them.
+SCAN_EXCLUDED_PREFIXES = ("artifacts/", "target/", "dist/")
+SCAN_EXCLUDED_PARTS = ("site-packages", "node_modules")
+
+# What each consumer needs the executor for, which decides where its assertions go when the
+# executors are deleted. `plumbing` is build and feature wiring rather than a scene.
+ROLE_RULES = (
+    (r"^crates/testing/cpu/", "fixture"),
+    (r"^crates/foundation/ir/", "plumbing"),
+    (r"^crates/backend/kernel-api/Cargo\.toml$", "plumbing"),
+    (r"^crates/backend/cuda/Cargo\.toml$", "plumbing"),
+    (r"^tools/validation/", "protocol"),
+    (r"^tools/check/", "plumbing"),
+    (r"^tools/package/", "plumbing"),
+    (r"^Cargo\.toml$", "plumbing"),
+    (r"^tools/bench/cpu/", "benchmark"),
+    (r"^crates/backend/cuda/examples/", "numeric"),
+    (r"^crates/engine/runtime/tests/(cpu_storage|checkpoint_owner|runner)\.rs$", "numeric"),
+    (r"^crates/engine/runtime/", "protocol"),
+    (r"^crates/service/frontdoor/", "protocol"),
+    (r"^crates/service/agent/", "protocol"),
+    (r"^crates/service/cli/", "service"),
+)
+
+
+def role(path):
+    """The removal plan's classification for one consumer, or None if it needs a decision."""
+    for pattern, name in ROLE_RULES:
+        if re.search(pattern, path):
+            return name
+    return None
 
 
 def crates():
@@ -133,7 +165,11 @@ def collect():
         if not path.is_file() or path.suffix not in (".rs", ".toml", ".sh", ".py"):
             continue
         relative = str(path.relative_to(REPO_ROOT))
-        if "target/" in relative or relative in EXECUTOR_SCAN_EXCLUDED:
+        if relative in EXECUTOR_SCAN_EXCLUDED:
+            continue
+        if relative.startswith(SCAN_EXCLUDED_PREFIXES) or any(
+            part in relative for part in SCAN_EXCLUDED_PARTS
+        ):
             continue
         text = path.read_text(errors="ignore")
         patterns = sorted({p for p in EXECUTOR_PATTERNS if p in text})
@@ -141,7 +177,9 @@ def collect():
             continue
         parts = Path(relative).parts
         crate = parts[2] if len(parts) > 2 and parts[0] == "crates" else parts[0]
-        consumers.append({"path": relative, "crate": crate, "patterns": patterns})
+        consumers.append(
+            {"path": relative, "crate": crate, "patterns": patterns, "role": role(relative)}
+        )
     return {
         "crates": inventory,
         "totals": totals,
@@ -290,6 +328,12 @@ def regressions(inventory, recorded, root=REPO_ROOT):
         """
         return {(consumer["crate"], tuple(consumer["patterns"])) for consumer in consumers}
 
+    for consumer in inventory["executor_consumers"]:
+        if consumer.get("role") is None:
+            problems.append(
+                f"{consumer['path']}: consumer of a CPU test executor with no removal role; add "
+                "it to ROLE_RULES so the worklist stays complete"
+            )
     before, after = (
         surface(recorded["executor_consumers"]),
         surface(inventory["executor_consumers"]),

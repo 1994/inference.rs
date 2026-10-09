@@ -110,266 +110,176 @@
       "patterns": [
         "infer-backend-host",
         "infer-backend-reference"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/__init__.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_einsum.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_layers.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_ops.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_other.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_packing.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/torch/_dynamo/backends/onnxrt.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/sglang-compare/lib/python3.12/site-packages/torch/_dynamo/backends/registry.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/__init__.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_einsum.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_layers.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_ops.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_other.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/einops/tests/test_packing.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/torch/_dynamo/backends/onnxrt.py",
-      "patterns": [
-        "test_backends"
-      ]
-    },
-    {
-      "crate": "artifacts",
-      "path": "artifacts/vllm-compare/lib/python3.12/site-packages/torch/_dynamo/backends/registry.py",
-      "patterns": [
-        "test_backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/Cargo.toml",
       "patterns": [
         "infer-backend-host"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/examples/model_smoke/mod.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/examples/model_smoke/mtp.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/examples/resident_checks/batch.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/examples/resident_checks/mod.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "cuda",
       "path": "crates/backend/cuda/examples/resident_checks/rounded_projection.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "kernel-api",
       "path": "crates/backend/kernel-api/Cargo.toml",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/Cargo.toml",
       "patterns": [
         "infer-backend-reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/capacity.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/checkpoint_owner.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/control_path.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/cpu_storage.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/providers.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/runner.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "numeric"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/scheduling.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/unit/observation.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "ir",
       "path": "crates/foundation/ir/Cargo.toml",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "ir",
       "path": "crates/foundation/ir/src/hardware/mod.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "ir",
       "path": "crates/foundation/ir/src/lib.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "ir",
       "path": "crates/foundation/ir/src/scheduling.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "ir",
       "path": "crates/foundation/ir/tests/hardware.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "agent",
@@ -377,14 +287,16 @@
       "patterns": [
         "infer-backend-reference",
         "test-backends"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "agent",
       "path": "crates/service/agent/tests/unit/cases.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "cli",
@@ -393,21 +305,24 @@
         "infer-backend-host",
         "infer-backend-reference",
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/arguments.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/backend/mod.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
@@ -416,91 +331,104 @@
         "infer_backend_host",
         "infer_backend_reference",
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/backend/testing.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/inference.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/measurement.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/mod.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/options.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/replay.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/server.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/commands/verification.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/constants.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/dispatch.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/main.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/agent.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
@@ -508,63 +436,72 @@
       "patterns": [
         "infer_backend_reference",
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/execution.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/fixtures.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/json.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/mod.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/server.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/src/support/serving.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/tests/smoke.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "cli",
       "path": "crates/service/cli/tests/unit/backend_selected.rs",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "service"
     },
     {
       "crate": "frontdoor",
@@ -572,28 +509,32 @@
       "patterns": [
         "infer-backend-host",
         "infer-backend-reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "frontdoor",
       "path": "crates/service/frontdoor/tests/isolation.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "frontdoor",
       "path": "crates/service/frontdoor/tests/output.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "frontdoor",
       "path": "crates/service/frontdoor/tests/unit/actor.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "frontdoor",
@@ -601,14 +542,16 @@
       "patterns": [
         "infer_backend_host",
         "infer_backend_reference"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "frontdoor",
       "path": "crates/service/frontdoor/tests/unit/http_openai.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "protocol"
     },
     {
       "crate": "cpu",
@@ -616,35 +559,40 @@
       "patterns": [
         "infer-backend-host",
         "test-backends"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
       "path": "crates/testing/cpu/host/src/executor/registry.rs",
       "patterns": [
         "infer-backend-host"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
       "path": "crates/testing/cpu/host/tests/hybrid.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
       "path": "crates/testing/cpu/host/tests/provider_graph.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
       "path": "crates/testing/cpu/host/tests/readouts.rs",
       "patterns": [
         "infer_backend_host"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
@@ -652,35 +600,40 @@
       "patterns": [
         "infer-backend-reference",
         "test-backends"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "cpu",
       "path": "crates/testing/cpu/reference/src/model/registry.rs",
       "patterns": [
         "infer-backend-reference"
-      ]
+      ],
+      "role": "fixture"
     },
     {
       "crate": "tools",
       "path": "tools/bench/cpu/Cargo.toml",
       "patterns": [
         "infer-backend-reference"
-      ]
+      ],
+      "role": "benchmark"
     },
     {
       "crate": "tools",
       "path": "tools/bench/cpu/src/engine/mod.rs",
       "patterns": [
         "infer_backend_reference"
-      ]
+      ],
+      "role": "benchmark"
     },
     {
       "crate": "tools",
       "path": "tools/check/gate.sh",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "tools",
@@ -688,7 +641,8 @@
       "patterns": [
         "infer-backend-host",
         "infer-backend-reference"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "tools",
@@ -697,21 +651,24 @@
         "infer-backend-host",
         "infer-backend-reference",
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "tools",
       "path": "tools/package/test_package.py",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "plumbing"
     },
     {
       "crate": "tools",
       "path": "tools/validation/smoke-paged-kv.py",
       "patterns": [
         "test-backends"
-      ]
+      ],
+      "role": "protocol"
     }
   ],
   "gated": {

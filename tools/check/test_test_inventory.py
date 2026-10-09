@@ -28,7 +28,12 @@ def inventory(src=10, tests=4, consumers=("a.rs",), crate="g"):
         "gated": {},
         "path_mounts": [],
         "executor_consumers": [
-            {"path": f"crates/{crate}/{name}", "crate": crate, "patterns": ["test-backends"]}
+            {
+                "path": f"crates/{crate}/{name}",
+                "crate": crate,
+                "patterns": ["test-backends"],
+                "role": "protocol",
+            }
             for name in consumers
         ],
     }
@@ -195,6 +200,45 @@ class OrphanTest(unittest.TestCase):
                 ["deep/cases_tests.rs"],
             )
             self.assertEqual(module.check_orphans(root), [])
+
+
+class RoleTest(unittest.TestCase):
+    def test_every_role_is_reachable_from_a_path(self):
+        for path, expected in (
+            ("crates/testing/cpu/host/tests/hybrid.rs", "fixture"),
+            ("crates/foundation/ir/Cargo.toml", "plumbing"),
+            ("tools/check/gate.sh", "plumbing"),
+            ("crates/engine/runtime/tests/control_path.rs", "protocol"),
+            ("crates/engine/runtime/tests/checkpoint_owner.rs", "numeric"),
+            ("crates/service/frontdoor/tests/isolation.rs", "protocol"),
+            ("crates/service/cli/tests/smoke.rs", "service"),
+            ("crates/backend/cuda/examples/model_smoke/mod.rs", "numeric"),
+            ("tools/bench/cpu/src/engine/mod.rs", "benchmark"),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(module.role(path), expected)
+
+    def test_an_unknown_consumer_has_no_role(self):
+        self.assertIsNone(module.role("crates/somewhere/new_tests.rs"))
+
+    def test_an_unclassified_consumer_is_reported(self):
+        recorded = inventory()
+        current = inventory()
+        current["executor_consumers"][0]["role"] = None
+        problems = module.regressions(current, recorded)
+        self.assertTrue(any("no removal role" in problem for problem in problems))
+
+    def test_vendored_paths_are_not_consumers(self):
+        for path in (
+            "artifacts/sglang-compare/lib/python3.12/site-packages/einops/tests/test_ops.py",
+            "artifacts/perf/report.py",
+            "target/debug/build/x.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(
+                    path.startswith(module.SCAN_EXCLUDED_PREFIXES)
+                    or any(part in path for part in module.SCAN_EXCLUDED_PARTS)
+                )
 
 
 class RatchetTest(unittest.TestCase):
