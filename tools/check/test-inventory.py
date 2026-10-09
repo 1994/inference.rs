@@ -178,6 +178,12 @@ def regressions(inventory, recorded, root=REPO_ROOT):
             "src_near", 0
         ):
             problems.append(f"{crate}: test bodies in src grew")
+    if inventory["totals"]["all"] < recorded["totals"]["all"]:
+        problems.append(
+            f"collected test entries fell to {inventory['totals']['all']} from "
+            f"{recorded['totals']['all']}; a smaller corpus is not progress - record where each "
+            "removed case went, or re-record deliberately"
+        )
     allowed = set(recorded["executor_consumers"])
     for path in inventory["executor_consumers"]:
         if path not in allowed:
@@ -231,9 +237,11 @@ def main():
     for problem in problems:
         print(problem, file=sys.stderr)
     if not args.json and not args.table and not problems:
+        delta = inventory["totals"]["all"] - recorded["totals"]["all"]
+        note = "" if delta == 0 else f"; {delta:+d} since the snapshot"
         print(
             f"{inventory['totals']['all']} test entries "
-            f"({inventory['totals']['src']} still in src); ratchet holds"
+            f"({inventory['totals']['src']} still in src){note}; ratchet holds"
         )
     return 1 if problems else 0
 

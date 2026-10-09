@@ -27,12 +27,10 @@
 | metal | 2 | 1 | 16 | 0 |
 | quality | 0 | 3 | 0 | 0 |
 | ir | 0 | 3 | 8 | 0 |
-| spi | 0 | 3 | 0 | 0 |
-| **total** | **138** | **150** | **139** | **0** |
+| spi | 0 | 0 | 3 | 0 |
+| **total** | **138** | **147** | **142** | **0** |
 
-`src` 合计 **288** 个（inline 138 + 就近测试文件 150），
-`tests/` **139** 个。方案要求用例正文最终只存在于 `tests/`，因此这 288 个
-是本项迁移的实际工作量。
+`src` 合计 **285** 个（inline 138 + 就近测试文件 147），`tests/` **142** 个。
 
 ## 门控与 ignore
 
@@ -70,3 +68,6 @@ ignore 原因原文全部记录在快照的 `ignored_reasons` 里，迁移时按
 按方案与路线图：先 foundation/model/scheduler/workloads，再 runtime/frontdoor/agent，最后 GPU 私有
 测试、examples 与性能场景；每批只改目录与收集，不改数值公式或产品行为。每批完成后用
 `python3 tools/check/test-inventory.py --record` 下调基准并在本文更新表格。
+
+
+已完成的第一批：`infer-spi` 的 3 个用例正文移到 `crates/foundation/spi/tests/unit/resource.rs`，由被测模块用 `#[path]` 挂载，该 crate 设 `autotests = false`；收集数量不变，用例仍编译在原模块的测试子模块里。

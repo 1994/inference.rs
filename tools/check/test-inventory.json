@@ -87,8 +87,8 @@
     "spi": {
       "benches": 0,
       "src_inline": 0,
-      "src_near": 3,
-      "tests": 0
+      "src_near": 0,
+      "tests": 3
     },
     "state": {
       "benches": 0,
@@ -278,6 +278,11 @@
       "mount": "numa_tests.rs"
     },
     {
+      "crate": "spi",
+      "file": "src/resource.rs",
+      "mount": "../tests/unit/resource.rs"
+    },
+    {
       "crate": "cli",
       "file": "src/arguments.rs",
       "mount": "arguments/tests.rs"
@@ -296,9 +301,9 @@
   "totals": {
     "all": 427,
     "benches": 0,
-    "src": 288,
+    "src": 285,
     "src_inline": 138,
-    "src_near": 150,
-    "tests": 139
+    "src_near": 147,
+    "tests": 142
   }
 }

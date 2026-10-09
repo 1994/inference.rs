@@ -131,6 +131,12 @@ class RatchetTest(unittest.TestCase):
         moved = inventory(src=6, tests=8)
         self.assertEqual(module.regressions(moved, recorded), [])
 
+    def test_losing_cases_is_refused_until_the_destination_is_recorded(self):
+        recorded = inventory(src=10, tests=4)
+        shrunk = inventory(src=10, tests=2)
+        problems = module.regressions(shrunk, recorded)
+        self.assertTrue(any("test entries fell" in problem for problem in problems))
+
     def test_a_new_executor_consumer_is_refused(self):
         recorded = inventory(consumers=("a.rs",))
         problems = module.regressions(inventory(consumers=("a.rs", "b.rs")), recorded)
