@@ -1,0 +1,182 @@
+"""A run must prove it matched the profile it claims, not just that it completed."""
+
+import copy
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "experiment_checklist", Path(__file__).with_name("experiment-checklist.py")
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+gate_spec = importlib.util.spec_from_file_location(
+    "gate_fixture", Path(__file__).with_name("test_compare_results.py")
+)
+gate = importlib.util.module_from_spec(gate_spec)
+gate_spec.loader.exec_module(gate)
+
+
+def checklist():
+    return {
+        "schema": 1,
+        "profile_id": "fixture-v1",
+        "model": {"path": "fixture", "files": {"config.json": "aaa"}},
+        "numeric": {"weights": "nvfp4", "activation": "fp8", "kv": "model default"},
+        "quality": {"gate": "own gate", "required": False},
+        "resources": {
+            "gpu_memory_utilization": 0.88,
+            "max_model_len": 8192,
+            "max_num_seqs": 16,
+        },
+        "cache": {"prefix_cache": True},
+        "workload": {
+            "inputs_sha256": "same-input",
+            "max_new_tokens": 2,
+            "temperature": 0,
+            "mtp_depth": 2,
+            "eos_tokens": [9],
+            "matrix": {"hot_long": {"concurrency": 1, "repeats": 3}},
+        },
+        "engines": {"native": {}, "vllm": {"version": "0.31.0"}},
+        "measurement": {"repeats": 3, "max_ratio": 1.1, "require_identical_tokens": False},
+    }
+
+
+def native_report():
+    report = gate.report()
+    report["matrix"] = {"hot_long": {"concurrency": 1, "repeats": 3}}
+    report["identity"]["limits"] = {
+        "source": "native runtime inspection",
+        "effective_max_model_len": 8192,
+        "effective_input_cap": 8192,
+        "effective_output_cap": 8192,
+    }
+    return report
+
+
+def reference_report():
+    report = copy.deepcopy(native_report())
+    report["identity"] = gate.identity(
+        "vllm",
+        limits={
+            "source": "declared on the command line",
+            "max_model_len": 8192,
+            "max_num_seqs": 16,
+            "max_num_batched_tokens": 2048,
+        },
+        build={"path": "/venv/bin/python", "sha256": "x"},
+        engine_version="0.31.0",
+    )
+    return report
+
+
+class ValidateTest(unittest.TestCase):
+    def test_a_missing_section_is_rejected_rather_than_defaulted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for section in module.REQUIRED_SECTIONS:
+                document = checklist()
+                del document[section]
+                path = Path(directory) / "c.json"
+                path.write_text(json.dumps(document))
+                with self.subTest(section=section), self.assertRaises(ValueError):
+                    module.load(path)
+
+    def test_a_well_formed_checklist_loads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "c.json"
+            path.write_text(json.dumps(checklist()))
+            self.assertEqual(module.load(path)["profile_id"], "fixture-v1")
+
+
+class CheckRunTest(unittest.TestCase):
+    def test_a_matching_run_has_no_mismatches(self):
+        self.assertEqual(module.check_run(checklist(), native_report()), [])
+        self.assertEqual(module.check_run(checklist(), reference_report()), [])
+
+    def test_each_declared_condition_is_compared(self):
+        for mutate in (
+            lambda r: r.update(model="elsewhere"),
+            lambda r: r["identity"]["model"]["files"].update({"config.json": "bbb"}),
+            lambda r: r.update(gpu_memory_utilization=0.5),
+            lambda r: r.update(prefix_cache_enabled=False),
+            lambda r: r.update(max_new_tokens=8),
+            lambda r: r.update(temperature=1),
+            lambda r: r.update(mtp_depth=0),
+            lambda r: r.update(eos_tokens=[7]),
+            lambda r: r.update(inputs_sha256="other"),
+            lambda r: r.update(matrix={"hot_long": {"concurrency": 2, "repeats": 3}}),
+            lambda r: r["identity"]["limits"].update({"effective_max_model_len": 4096}),
+        ):
+            with self.subTest(mutate=mutate):
+                report = native_report()
+                mutate(report)
+                self.assertTrue(module.check_run(checklist(), report))
+
+    def test_the_reference_side_is_checked_against_its_own_declared_limits(self):
+        report = reference_report()
+        report["identity"]["limits"]["max_num_seqs"] = 4
+        self.assertTrue(module.check_run(checklist(), report))
+        report = reference_report()
+        report["identity"]["engine_version"] = "0.30.0"
+        self.assertTrue(module.check_run(checklist(), report))
+
+
+class ComparisonTableTest(unittest.TestCase):
+    def test_aligned_engines_produce_an_aligned_table(self):
+        rows = module.comparison_table([native_report(), reference_report()])
+        by_item = {row["item"]: row for row in rows}
+        for item in ("model", "prefix cache", "mtp depth", "output tokens", "workload inputs"):
+            self.assertTrue(by_item[item]["aligned"], item)
+        # The context ceiling is read back on one side and declared on the other, and still has to
+        # agree; the engine version legitimately differs.
+        self.assertTrue(by_item["context ceiling"]["aligned"])
+        self.assertFalse(by_item["engine version"]["aligned"])
+
+    def test_a_different_context_ceiling_is_visible_in_the_table(self):
+        report = reference_report()
+        report["identity"]["limits"]["max_model_len"] = 4096
+        rows = module.comparison_table([native_report(), report])
+        ceiling = next(row for row in rows if row["item"] == "context ceiling")
+        self.assertFalse(ceiling["aligned"])
+        self.assertIn("native", ceiling["values"])
+        self.assertIn("vllm", ceiling["values"])
+
+    def test_two_reports_from_one_engine_are_rejected(self):
+        with self.assertRaises(ValueError):
+            module.comparison_table([native_report(), native_report()])
+
+
+class GateChecklistTest(unittest.TestCase):
+    def test_the_gate_requires_both_sides_to_share_a_checklist(self):
+        old, new = native_report(), reference_report()
+        del new["checklist"]
+        with self.assertRaisesRegex(ValueError, "checklist"):
+            gate.module.compare(old, new)
+
+    def test_a_noncompliant_run_never_passes_the_gate(self):
+        old, new = native_report(), reference_report()
+        old["checklist"] = {"sha256": "c", "compliant": True}
+        new["checklist"] = {"sha256": "c", "compliant": False}
+        with self.assertRaisesRegex(ValueError, "did not match its experiment checklist"):
+            gate.module.compare(old, new)
+
+    def test_different_checklists_cannot_be_paired(self):
+        old, new = native_report(), reference_report()
+        old["checklist"] = {"sha256": "c1", "compliant": True}
+        new["checklist"] = {"sha256": "c2", "compliant": True}
+        with self.assertRaisesRegex(ValueError, "different checklists"):
+            gate.module.compare(old, new)
+
+    def test_a_shared_checklist_passes(self):
+        old, new = native_report(), reference_report()
+        old["checklist"] = {"sha256": "c1", "compliant": True}
+        new["checklist"] = {"sha256": "c1", "compliant": True}
+        self.assertTrue(gate.module.compare(old, new)["passed"])
+
+
+if __name__ == "__main__":
+    unittest.main()

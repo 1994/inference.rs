@@ -55,6 +55,17 @@ def align(baseline, candidate):
         raise ValueError("unaligned prefix cache state")
     if baseline.get("gpu_memory_utilization") != candidate.get("gpu_memory_utilization"):
         raise ValueError("unaligned resource constraint: gpu_memory_utilization")
+    # Both sides must have matched the same declared profile, or the comparison is between two
+    # different experiments that happen to share a workload file.
+    left_checklist = baseline.get("checklist")
+    right_checklist = candidate.get("checklist")
+    if not isinstance(left_checklist, dict) or not isinstance(right_checklist, dict):
+        raise ValueError("both reports must be checked against an experiment checklist")
+    for side, block in (("baseline", left_checklist), ("candidate", right_checklist)):
+        if block.get("compliant") is not True:
+            raise ValueError(f"{side} run did not match its experiment checklist")
+    if left_checklist.get("sha256") != right_checklist.get("sha256"):
+        raise ValueError("the two reports were measured against different checklists")
     left_engine = baseline["identity"].get("engine")
     right_engine = candidate["identity"].get("engine")
     if left_engine == right_engine:

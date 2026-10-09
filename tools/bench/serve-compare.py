@@ -56,8 +56,10 @@ MODEL_ARTIFACTS = (
     "model.safetensors.index.json",
     "chat_template.jinja",
 )
-# Debug sections are only emitted for a debug or explicitly unstripped build.
-DEBUG_SECTIONS = (b".debug_info", b".debug_str", b".debug_line")
+# Section-name prefixes that only exist in a debug or explicitly unstripped image. Scanning the
+# bytes for these names is not enough: std's backtrace symbolizer mentions them in read-only data
+# even when the section table has none, so the section table itself is read.
+DEBUG_PREFIXES = ("__debug_", ".debug_")
 
 
 def http(url, payload=None, timeout=600):
@@ -73,6 +75,18 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def load_checklist_module():
+    """Load the checklist helper, which is a hyphenated script and not importable by name."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "experiment_checklist", Path(__file__).with_name("experiment-checklist.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def sha256_bytes(data):
@@ -118,18 +132,112 @@ def release_profile():
     return manifest.get("profile", {}).get("release", {})
 
 
+def elf_section_names(data):
+    """Section names of an ELF image, or None when the bytes are not ELF."""
+    if data[:4] != b"\x7fELF":
+        return None
+    is64, little = data[4] == 2, data[5] == 1
+    order = "little" if little else "big"
+
+    def read(offset, size):
+        return int.from_bytes(data[offset : offset + size], order)
+
+    if is64:
+        table_offset, entry_size, count, strings = (
+            read(0x28, 8),
+            read(0x3A, 2),
+            read(0x3C, 2),
+            read(0x3E, 2),
+        )
+        name_at, offset_at, size_at = 0, 0x18, 0x20
+        wide = 8
+    else:
+        table_offset, entry_size, count, strings = (
+            read(0x20, 4),
+            read(0x2E, 2),
+            read(0x30, 2),
+            read(0x32, 2),
+        )
+        name_at, offset_at, size_at = 0, 0x10, 0x14
+        wide = 4
+    if not count or strings >= count:
+        return []
+
+    def entry(index):
+        base = table_offset + index * entry_size
+        return read(base + name_at, 4), read(base + offset_at, wide), read(base + size_at, wide)
+
+    _, strings_offset, strings_size = entry(strings)
+    names = []
+    for index in range(count):
+        start, _, _ = entry(index)
+        section = data[strings_offset : strings_offset + strings_size]
+        end = section.find(b"\0", start)
+        names.append(section[start : end if end != -1 else len(section)].decode("ascii", "replace"))
+    return names
+
+
+def macho_section_names(data):
+    """Section names of a Mach-O image, or None when the bytes are not Mach-O."""
+    magic = int.from_bytes(data[:4], "little")
+    if magic not in (0xFEEDFACF, 0xFEEDFACE):
+        return None
+    is64 = magic == 0xFEEDFACF
+    commands = int.from_bytes(data[0x10:0x14], "little")
+    offset = 0x20 if is64 else 0x1C
+    names = []
+    for _ in range(commands):
+        command = int.from_bytes(data[offset : offset + 4], "little")
+        size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+        if command == 0x19 and is64:
+            count, section, stride = (
+                int.from_bytes(data[offset + 64 : offset + 68], "little"),
+                offset + 72,
+                80,
+            )
+        elif command == 0x1 and not is64:
+            count, section, stride = (
+                int.from_bytes(data[offset + 48 : offset + 52], "little"),
+                offset + 56,
+                68,
+            )
+        else:
+            count = 0
+        for _ in range(count):
+            names.append(data[section : section + 16].rstrip(b"\0").decode("ascii", "replace"))
+            section += stride
+        offset += size
+    return names
+
+
 def binary_identity(path):
     """Observable build facts for an engine executable.
 
-    A debug or explicitly unstripped build carries DWARF section names, so their presence is a
-    direct signal that the binary is not a release build. The path is not used as evidence.
+    A debug or explicitly unstripped build carries debug sections in its section table, so the
+    table is read rather than searched for names. An image whose format cannot be read is
+    reported as unverifiable, and the gate refuses to call that a release build.
     """
     data = Path(path).read_bytes()
-    debug_sections = [name.decode() for name in DEBUG_SECTIONS if name in data]
+    names = elf_section_names(data)
+    image = "elf"
+    if names is None:
+        names = macho_section_names(data)
+        image = "macho"
+    if names is None:
+        return {
+            "path": str(path),
+            "sha256": sha256_bytes(data),
+            "bytes": len(data),
+            "image": "unknown",
+            "debug_sections": [],
+            "release_like": None,
+        }
+    debug_sections = sorted(name for name in names if name.startswith(DEBUG_PREFIXES))
     return {
         "path": str(path),
         "sha256": sha256_bytes(data),
         "bytes": len(data),
+        "image": image,
         "debug_sections": debug_sections,
         "release_like": not debug_sections,
     }
@@ -669,6 +777,24 @@ def run(args):
                         "native effective context "
                         f"{lengths.get('total')} differs from the requested {args.max_model_len}"
                     )
+            if args.checklist is not None:
+                # Declared conditions are checked against what the run actually did, including
+                # the effective limits just read back, not against the command line.
+                module = load_checklist_module()
+                checklist = module.load(args.checklist)
+                mismatches = module.check_run(checklist, report)
+                report["checklist"] = {
+                    "path": str(args.checklist),
+                    "sha256": sha256_file(args.checklist),
+                    "profile_id": checklist["profile_id"],
+                    "compliant": not mismatches,
+                    "mismatches": mismatches,
+                }
+                save()
+                if mismatches:
+                    raise RuntimeError(
+                        "run does not match the experiment checklist: " + "; ".join(mismatches)
+                    )
             measure(args, report, base, rows, save)
             hot = [t for t in report["trials"] if t["case"] == "hot_long" and not t["warmup"]]
             reused = sum(t["prefix_tokens_reused"] for t in hot)
@@ -724,6 +850,12 @@ def main():
         "--run-id", default=None, help="unique evidence id; reports never overwrite"
     )
     parser.add_argument("--profile-id", default=None, help="experiment profile this run belongs to")
+    parser.add_argument(
+        "--checklist",
+        type=Path,
+        default=None,
+        help="experiment profile this run must match; a mismatch fails the run",
+    )
     parser.add_argument("--prefix-cache", action="store_true", default=True)
     parser.add_argument("--no-prefix-cache", dest="prefix_cache", action="store_false")
     parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="extra engine flags")

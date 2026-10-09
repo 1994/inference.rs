@@ -190,21 +190,70 @@ class CommandTest(unittest.TestCase):
         module.require_cache_switch(self.arguments(prefix_cache=True))
 
 
+def elf(section_names):
+    """A minimal ELF64 image whose section table lists exactly the given names."""
+    strings = b"\0"
+    offsets = {}
+    for name in section_names:
+        offsets[name] = len(strings)
+        strings += name.encode() + b"\0"
+    shstrtab = len(section_names) + 1
+    count = shstrtab + 1
+    header = bytearray(64)
+    header[0:4] = b"\x7fELF"
+    header[4] = 2  # 64-bit
+    header[5] = 1  # little endian
+    header[6] = 1  # version
+    strings_offset = 64 + count * 64
+    header[0x28:0x30] = (64).to_bytes(8, "little")
+    header[0x34:0x36] = (64).to_bytes(2, "little")
+    header[0x3A:0x3C] = (64).to_bytes(2, "little")
+    header[0x3C:0x3E] = count.to_bytes(2, "little")
+    header[0x3E:0x40] = shstrtab.to_bytes(2, "little")
+    sections = bytearray(count * 64)
+    for index, name in enumerate(section_names, start=1):
+        base = index * 64
+        sections[base : base + 4] = offsets[name].to_bytes(4, "little")
+    base = shstrtab * 64
+    sections[base + 0x18 : base + 0x20] = strings_offset.to_bytes(8, "little")
+    sections[base + 0x20 : base + 0x28] = len(strings).to_bytes(8, "little")
+    return bytes(header) + bytes(sections) + strings
+
+
 class IdentityTest(unittest.TestCase):
-    def test_debug_sections_mark_a_binary_as_not_release(self):
+    def test_the_section_table_decides_whether_a_build_is_release(self):
         with tempfile.TemporaryDirectory() as directory:
-            debug = Path(directory) / "debug"
-            debug.write_bytes(b"\x7fELF" + b".debug_info" + b"payload")
             release = Path(directory) / "release"
-            release.write_bytes(b"\x7fELF" + b"payload")
+            release.write_bytes(elf([".text", ".rodata"]))
+            debug = Path(directory) / "debug"
+            debug.write_bytes(elf([".text", ".debug_info", ".debug_str"]))
+            self.assertEqual(module.binary_identity(release)["image"], "elf")
+            self.assertTrue(module.binary_identity(release)["release_like"])
+            self.assertEqual(module.binary_identity(release)["debug_sections"], [])
             self.assertFalse(module.binary_identity(debug)["release_like"])
             self.assertIn(".debug_info", module.binary_identity(debug)["debug_sections"])
-            self.assertTrue(module.binary_identity(release)["release_like"])
-            # The identity is a fingerprint, so identical bytes share one.
             self.assertEqual(
                 module.binary_identity(release)["sha256"],
                 module.sha256_bytes(release.read_bytes()),
             )
+
+    def test_the_section_names_are_read_rather_than_searched_for(self):
+        # A release image whose read-only data merely mentions the names must still be release:
+        # std's backtrace symbolizer embeds them, and a byte scan would misread that.
+        payload = elf([".text"]) + b".debug_info in a string table"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release"
+            path.write_bytes(payload)
+            self.assertTrue(module.binary_identity(path)["release_like"])
+            self.assertEqual(module.binary_identity(path)["debug_sections"], [])
+
+    def test_an_image_whose_format_is_unknown_is_unverifiable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "opaque"
+            path.write_bytes(b"not an executable image")
+            identity = module.binary_identity(path)
+            self.assertEqual(identity["image"], "unknown")
+            self.assertIsNone(identity["release_like"])
 
     def test_model_identity_fingerprints_the_artifacts_that_matter(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -50,6 +50,8 @@ def report(case="hot_long", concurrency=1, tokens=2, repeats=3, engine="native")
         "gpu_memory_utilization": 0.88,
         "matrix": {case: {"concurrency": concurrency, "repeats": repeats}},
         "identity": identity(engine),
+        # Both sides of a pair must have matched the same declared profile.
+        "checklist": {"path": "profile.json", "sha256": "checklist-1", "compliant": True},
         "trials": [
             {
                 "case": case,
