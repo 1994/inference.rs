@@ -33,16 +33,27 @@
 `src` 合计 **36** 个（inline 13 + 就近测试文件 23），
 `tests/` **391** 个。起始为 288 个正文在 `src`，现已完成 252 个。
 
-### 仍留在 `src` 的 crate
+### 仍留在 `src` 的 crate 与文件
 
-| crate | inline | 就近测试文件 |
-|---|---:|---:|
-| `cuda` | 10 | 1 |
-| `observe` | 0 | 8 |
-| `api` | 0 | 6 |
-| `state` | 1 | 5 |
-| `quality` | 0 | 3 |
-| `cli` | 2 | 0 |
+| crate | inline | 就近测试文件 | 剩余文件 |
+|---|---:|---:|---|
+| `cuda` | 10 | 1 | `attention/gate_check.rs`、`device/readback_check.rs`、`resident/metadata_check.rs`、`resident/prefill_gemm/bench_check.rs`、`resident/recurrent_prefill/model_check.rs`、`vision/attention_bench_check.rs`、`vision/attention_check.rs` |
+| `observe` | 0 | 8 | `src/tests.rs` |
+| `api` | 0 | 6 | `src/tests.rs`、`src/batches/tests.rs` |
+| `state` | 1 | 5 | `src/logical/tests.rs`、`src/physical.rs` |
+| `quality` | 0 | 3 | `src/tests.rs` |
+| `cli` | 2 | 0 | `src/backend/selected.rs`、`src/support/logging.rs` |
+
+两类要单独处理：
+
+- **`*_check.rs` 整体搬迁**：它们本来就是用 `#[path]` 挂载的独立测试模块，迁移规则应把
+  `tests.rs`、`*_tests.rs` 与 `*_check.rs` 一视同仁（本轮只覆盖了前两种，所以 CUDA 还剩 6 个
+  文件、10 个正文）。
+- **属性形态不同的内联块**：`state/src/physical.rs` 与 `cli` 的两个文件里，`#[cfg(test)]` 与
+  `mod X {` 之间还有别的属性，抽取正则只认紧邻的形式。
+
+上一批的提交信息写成"所有 backend 正文都已离开 `src`"，实际不是：以上 36 个正文是本项剩余的
+全部工作量，逐文件列在这里以便对账。
 
 ## 门控与 ignore
 
