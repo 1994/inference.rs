@@ -26,6 +26,31 @@ python3 tools/bench/freeze-baseline.py --verify benchmarks/baselines/serving/<id
 
 manifest 最后写入：缺少它的目录是未完成的冻结。`--verify` 会重算所有哈希，任一文件缺失或被改动都会失败。
 
+## 统计基础
+
+方案要求正式测量至少五个独立配对单位。`manifest.json` 的 `statistical_basis` 如实记录本次冻结**实际**包含几个配对单位、声明的漂移容差，以及每个复测单元相对主配对的逐指标漂移：
+
+```sh
+python3 tools/bench/freeze-baseline.py --baseline-id <id> --profile <profile>     --baseline A B --reproduction A2 B2 [--reproduction A3 B3 ...] --max-drift 0.2
+```
+
+- 主配对与每个复测单元都必须各自通过有效性门禁；
+- 漂移是「复测单元的配对比值」相对「主配对比值」的变化，逐指标记录，`worst_drift` 为最大值；
+- 超出声明容差不会被拒绝，而是记 `within_declared_tolerance: false` 并保留测量——测得波动也是结果；
+- 容差必须在测量前声明。若某次冻结的容差是事后选定的，必须在结论里说明，不能反过来当作已满足的统计要求。
+
+### 源码必须是干净的
+
+冻结要求两份报告的 `identity.source.dirty` 为 `false`。脏工作区意味着记录下来的 revision 不能唯一确定被测二进制，基线无法从它记录的版本重建。二进制哈希仍标识那次测量，但不足以签发基线。
+
+## 已签发的服务基线
+
+| baseline ID | profile | 模型 | MTP | 配对单位 |
+|---|---|---|---|---|
+| `2b-mtp0-serving-v1` | 2b-mtp0 | qwen3vl-2b | 0 | 待重建 |
+| `27b-mtp0-serving-v1` | 27b-mtp0 | Qwen3.8-27B-NVFP4 | 0 | 待重建 |
+| `27b-mtp2-serving-v1` | 27b-mtp2 | Qwen3.8-27B-NVFP4 | 2 | 待重建 |
+
 ## 与投影基线的区别
 
 [上一层目录](../README.md) 的 cuTile 投影记录保持自己的测量层级，不用来补齐服务矩阵。服务对比的 release、配置对齐、计时统计与证据规则统一见[性能基线方案](../../../docs/plans/performance/baseline.md)。

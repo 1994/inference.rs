@@ -23,8 +23,9 @@
   },
   "resources": {
     "gpu_memory_utilization": 0.88,
-    "max_model_len": 262144,
-    "max_num_seqs": 16
+    "max_model_len": 65536,
+    "max_num_seqs": 16,
+    "note": "Both engines must be able to serve the window. At 0.88 GPU memory utilization vLLM needs 4.31 GiB of KV cache for 131072 and has 3.77 GiB, and it estimates 112896 as the device maximum for this model; the profile pins 65536 to leave the batch4 slots KV headroom instead of sitting on the estimate."
   },
   "cache": {
     "prefix_cache": true
@@ -62,7 +63,7 @@
       "version": null
     },
     "vllm": {
-      "version": null
+      "version": "0.31.0"
     },
     "sglang": {
       "version": null

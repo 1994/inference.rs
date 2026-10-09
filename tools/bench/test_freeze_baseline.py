@@ -51,6 +51,8 @@ class FreezeTest(unittest.TestCase):
             "evidence": [self.evidence],
             "max_ratio": 1.1,
             "require_identical_tokens": False,
+            "reproduction": [],
+            "max_drift": 0.2,
         }
         arguments.update(overrides)
         return module.freeze(type("Args", (), arguments)())
@@ -90,6 +92,67 @@ class FreezeTest(unittest.TestCase):
         # The result is recorded honestly rather than being rejected as invalid.
         self.assertFalse(manifest["gate"]["passed"])
         self.assertTrue(manifest["validity"]["identity_verified"])
+
+    def test_an_independent_unit_is_recorded_with_its_drift(self):
+        # A second fresh-process pair for the same profile must be gated and its movement from
+        # the primary ratios recorded, so a reader can see the statistical basis.
+        second_native = self.directory / "native-b.json"
+        second_reference = self.directory / "vllm-b.json"
+        shifted = gate.report()
+        for trial in shifted["trials"]:
+            trial["wall_seconds"] = 1.05
+        second_native.write_text(json.dumps(shifted))
+        second_reference.write_text(json.dumps(gate.report()))
+        self.assertEqual(self.freeze(reproduction=[(second_native, second_reference)]), 0)
+        root = self.directory / "baselines" / "profile-v1"
+        manifest = json.loads((root / "manifest.json").read_text())
+        basis = manifest["statistical_basis"]
+        self.assertEqual(basis["paired_units"], 2)
+        self.assertEqual(len(basis["reproductions"]), 1)
+        unit = basis["reproductions"][0]
+        self.assertTrue(unit["passed"])
+        self.assertTrue(unit["within_declared_tolerance"])
+        self.assertGreater(unit["worst_drift"], 0.0)
+        # The reproduction's own reports are frozen alongside the primary evidence.
+        self.assertIn("native-b.json", [entry["file"] for entry in manifest["evidence"]])
+        self.assertEqual(module.verify(root), 0)
+
+    def test_a_reproduction_beyond_the_declared_tolerance_is_flagged(self):
+        second_native = self.directory / "native-b.json"
+        second_reference = self.directory / "vllm-b.json"
+        shifted = gate.report()
+        for trial in shifted["trials"]:
+            trial["wall_seconds"] = 2.0
+        second_native.write_text(json.dumps(shifted))
+        second_reference.write_text(json.dumps(gate.report()))
+        self.freeze(reproduction=[(second_native, second_reference)], max_drift=0.01)
+        root = self.directory / "baselines" / "profile-v1"
+        manifest = json.loads((root / "manifest.json").read_text())
+        unit = manifest["statistical_basis"]["reproductions"][0]
+        # The measurement is kept and flagged rather than rejected: it is a result.
+        self.assertFalse(unit["within_declared_tolerance"])
+        self.assertGreater(unit["worst_drift"], 0.01)
+
+    def test_a_dirty_source_tree_cannot_be_frozen(self):
+        # The revision would not determine the measured binary, so the baseline could not be
+        # rebuilt from what it records.
+        for role, mutate in (
+            ("baseline", lambda r: r["identity"]["source"].update(dirty=True)),
+            ("candidate", lambda r: r["identity"]["source"].update(dirty=True)),
+        ):
+            with self.subTest(role=role):
+                self.write_reports()
+                report = (
+                    json.loads(self.baseline_path.read_text())
+                    if role == "baseline"
+                    else json.loads(self.candidate_path.read_text())
+                )
+                mutate(report)
+                path = self.baseline_path if role == "baseline" else self.candidate_path
+                path.write_text(json.dumps(report))
+                with self.assertRaisesRegex(ValueError, "uncommitted tree"):
+                    self.freeze()
+                self.assertFalse((self.directory / "baselines").exists())
 
     def test_an_existing_baseline_id_is_never_overwritten(self):
         self.freeze()

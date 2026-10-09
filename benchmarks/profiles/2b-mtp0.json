@@ -21,8 +21,9 @@
   },
   "resources": {
     "gpu_memory_utilization": 0.88,
-    "max_model_len": 262144,
-    "max_num_seqs": 16
+    "max_model_len": 131072,
+    "max_num_seqs": 16,
+    "note": "131072 is the largest context both engines serve on this device: at 0.88 GPU memory utilization vLLM needs 28.0 GiB of KV cache for the model's 262144 ceiling but has 23.17 GiB available, so the profile pins the attainable window instead of a declared one."
   },
   "cache": {
     "prefix_cache": true
@@ -60,7 +61,7 @@
       "version": null
     },
     "vllm": {
-      "version": null
+      "version": "0.31.0"
     },
     "sglang": {
       "version": null

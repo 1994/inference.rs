@@ -66,20 +66,85 @@ def copy_evidence(paths, destination):
     return recorded
 
 
+def require_clean_source(report, role):
+    """A frozen baseline must be rebuildable from the revision it names.
+
+    A dirty tree means the recorded revision does not determine the measured binary; the binary
+    hash still identifies it, but the baseline could not be reconstructed from the revision.
+    """
+    source = (report.get("identity") or {}).get("source") or {}
+    if source.get("dirty") is not False:
+        raise ValueError(
+            f"{role} report was measured from an uncommitted tree; commit and re-measure before "
+            "freezing a baseline"
+        )
+
+
+def ratios(result):
+    """Paired ratios keyed by case and metric, for comparing two measurement units."""
+    return {
+        (entry["case"], entry["metric"]): entry["ratio"]
+        for entry in result["metrics"]
+        if entry.get("available")
+    }
+
+
+def reproductions(gate, args, baseline):
+    """Gate each independent re-measurement and record how far it moved the ratios.
+
+    The plan requires a fresh-process unit and a declared tolerance; the tolerance is recorded
+    next to the observed drift so a reader can see whether it was declared or chosen after the
+    fact.
+    """
+    recorded = []
+    primary = ratios(gate.compare(baseline, json.loads(args.candidate.read_text()), args.max_ratio))
+    for index, (left, right) in enumerate(args.reproduction, start=1):
+        first = json.loads(left.read_text())
+        second = json.loads(right.read_text())
+        unit = gate.compare(first, second, args.max_ratio, args.require_identical_tokens)
+        observed = ratios(unit)
+        shared = sorted(set(primary) & set(observed))
+        drift = {
+            f"{case}:{metric}": abs(observed[(case, metric)] - primary[(case, metric)])
+            / primary[(case, metric)]
+            for case, metric in shared
+        }
+        recorded.append(
+            {
+                "unit": index,
+                "reports": [left.name, right.name],
+                "passed": unit["passed"],
+                "drift": drift,
+                "worst_drift": max(drift.values(), default=0.0),
+                "within_declared_tolerance": all(
+                    value <= args.max_drift for value in drift.values()
+                ),
+            }
+        )
+    return recorded
+
+
 def freeze(args):
     validate_id(args.baseline_id)
     gate = load_gate()
     baseline = json.loads(args.baseline.read_text())
     candidate = json.loads(args.candidate.read_text())
+    require_clean_source(baseline, "baseline")
+    require_clean_source(candidate, "candidate")
     # Validity failures raise; a failed performance verdict is a result, not an error.
     result = gate.compare(baseline, candidate, args.max_ratio, args.require_identical_tokens)
+    units = reproductions(gate, args, baseline)
+    for index, (left, right) in enumerate(args.reproduction, start=1):
+        require_clean_source(json.loads(left.read_text()), f"reproduction {index} baseline")
+        require_clean_source(json.loads(right.read_text()), f"reproduction {index} candidate")
     destination = args.out / args.baseline_id
     if destination.exists():
         raise SystemExit(f"baseline already exists and is never overwritten: {destination}")
     destination.mkdir(parents=True)
 
     reports = copy_evidence([args.baseline, args.candidate], destination)
-    evidence = copy_evidence(args.evidence, destination)
+    reproduction_files = [path for pair in args.reproduction for path in pair]
+    evidence = copy_evidence([*args.evidence, *reproduction_files], destination)
     manifest = {
         "schema": 1,
         "baseline_id": args.baseline_id,
@@ -107,6 +172,15 @@ def freeze(args):
             "performance": result["performance"],
             "numeric": result["numeric"],
             "quality": result["quality"],
+        },
+        "statistical_basis": {
+            "paired_units": 1 + len(units),
+            "declared_max_drift": args.max_drift,
+            "note": (
+                "The baseline plan asks for at least five independent paired units; this record "
+                "states how many it actually holds so a consumer can weigh the interval."
+            ),
+            "reproductions": units,
         },
     }
     # The manifest is written last, so a directory without one is an incomplete freeze.
@@ -165,6 +239,21 @@ def main():
     )
     parser.add_argument("--max-ratio", type=float, default=1.1)
     parser.add_argument("--require-identical-tokens", action="store_true")
+    parser.add_argument(
+        "--reproduction",
+        type=Path,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("BASELINE", "CANDIDATE"),
+        help="an independent re-measurement of the same profile; repeatable",
+    )
+    parser.add_argument(
+        "--max-drift",
+        type=float,
+        default=0.2,
+        help="declared tolerance for how far a reproduction may move a paired ratio",
+    )
     parser.add_argument("--verify", type=Path, help="recheck an existing baseline's hashes")
     args = parser.parse_args()
     if args.verify is not None:
