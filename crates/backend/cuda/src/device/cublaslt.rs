@@ -8,6 +8,9 @@
 //! Layouts follow the row-major to column-major mapping a projection needs:
 //! `out[m, n] = activations[m, k] * weights[n, k]^T`, so `A` is the activation with `OP_T`
 //! (`lda = k`), `B` is the weight with `OP_N` (`ldb = k`), and `C` is the output with `ldc = m`.
+use cutile::cuda_async::device_future::DeviceFuture;
+use cutile::cuda_async::device_operation::{DeviceOp, ExecutionContext, GraphNode};
+use cutile::cuda_async::error::DeviceError;
 use cutile::{half::bf16, prelude::*};
 use std::ffi::c_void;
 use std::sync::OnceLock;
@@ -137,7 +140,7 @@ unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 /// Borrow the process-wide context, creating the handle on first use.
-fn context(device: &crate::device::CudaDevice) -> Option<&'static Context> {
+pub fn context_for(device: &crate::device::CudaDevice) -> Option<&'static Context> {
     static CONTEXT: OnceLock<Option<Context>> = OnceLock::new();
     CONTEXT.get_or_init(|| build(device)).as_ref()
 }
@@ -259,7 +262,7 @@ pub fn gemm_bf16(
     weights: &Tensor<bf16>,
     out: &Tensor<f32>,
 ) -> infer_core::Result<()> {
-    let context = context(device)
+    let context = context_for(device)
         .ok_or_else(|| infer_core::Error::invalid("cuBLAS handle unavailable for this device"))?;
     let [m, k] = activations.shape()[..] else {
         return Err(infer_core::Error::invalid("cuBLAS activation rank"));
@@ -293,10 +296,101 @@ pub fn gemm_bf16(
     })
 }
 
+/// A bf16 projection that can be recorded into a captured graph.
+///
+/// `DeviceOp::execute` runs during capture, which is why the launch takes `alpha` and `beta` from
+/// device memory: anything read from the host at that point would be frozen into the graph.
+pub struct GemmBf16<'a> {
+    context: &'a Context,
+    m: i32,
+    n: i32,
+    k: i32,
+    activations: &'a Tensor<bf16>,
+    weights: &'a Tensor<bf16>,
+    out: &'a Tensor<f32>,
+}
+
+impl<'a> GemmBf16<'a> {
+    /// Describe `out[m, n] = activations[m, k] * weights[n, k]^T`.
+    ///
+    /// # Errors
+    /// Rejects operands whose extents disagree.
+    pub fn new(
+        context: &'a Context,
+        activations: &'a Tensor<bf16>,
+        weights: &'a Tensor<bf16>,
+        out: &'a Tensor<f32>,
+    ) -> infer_core::Result<Self> {
+        let [m, k] = activations.shape()[..] else {
+            return Err(infer_core::Error::invalid("cuBLAS activation rank"));
+        };
+        let [n, weight_k] = weights.shape()[..] else {
+            return Err(infer_core::Error::invalid("cuBLAS weight rank"));
+        };
+        let [out_m, out_n] = out.shape()[..] else {
+            return Err(infer_core::Error::invalid("cuBLAS output rank"));
+        };
+        if k != weight_k || m != out_m || n != out_n {
+            return Err(infer_core::Error::invalid("cuBLAS operand shape"));
+        }
+        Ok(Self {
+            context,
+            m,
+            n,
+            k,
+            activations,
+            weights,
+            out,
+        })
+    }
+}
+
+impl GraphNode for GemmBf16<'_> {}
+
+#[expect(
+    unsafe_code,
+    reason = "Audited in-graph launch: the operands are borrowed for the whole capture and the stream comes from the context"
+)]
+impl DeviceOp for GemmBf16<'_> {
+    type Output = ();
+
+    unsafe fn execute(self, _context: &ExecutionContext) -> Result<(), DeviceError> {
+        // SAFETY: the operands are live device tensors whose extents were checked in `new`;
+        // the handle already targets the stream this capture records onto.
+        let status = unsafe {
+            launch(
+                self.context,
+                self.m,
+                self.n,
+                self.k,
+                self.activations.device_pointer().cu_deviceptr() as *const c_void,
+                self.weights.device_pointer().cu_deviceptr() as *const c_void,
+                self.out.device_pointer().cu_deviceptr() as *mut c_void,
+            )
+        };
+        status.map_err(|code| DeviceError::Internal(format!("cublasGemmEx status {code}")))?;
+        Ok(())
+    }
+}
+
+impl IntoFuture for GemmBf16<'_> {
+    type Output = Result<(), DeviceError>;
+    type IntoFuture = DeviceFuture<(), Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
+            policy.next_stream()
+        }) {
+            Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
+            Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::CudaDevice;
+    use crate::device::{CudaDevice, device_error};
 
     fn sample(seed: u64, index: usize) -> f32 {
         let mut state = seed
@@ -365,6 +459,55 @@ mod tests {
                 "cuBLAS disagrees with the reference at m={m} n={n} k={k}"
             );
         }
+        Ok(())
+    }
+
+    /// The engine runs captured graphs, so the launch has to be recordable and replayable, with
+    /// its scalars living on the device rather than frozen into the graph.
+    #[test]
+    #[ignore = "requires CUDA hardware; run inside safe-run"]
+    fn gemm_bf16_replays_inside_a_captured_graph() -> Result<(), Box<dyn std::error::Error>> {
+        CudaDevice::enable_kernel_cache()?;
+        let device = CudaDevice::new(0)?;
+        if !available() {
+            eprintln!("cuBLAS unavailable; skipping");
+            return Ok(());
+        }
+        let (m, n, k) = (12_usize, 2048_usize, 2048_usize);
+        let activations: Vec<bf16> = (0..m * k).map(|i| bf16::from_f32(sample(3, i))).collect();
+        let weights: Vec<bf16> = (0..n * k).map(|i| bf16::from_f32(sample(4, i))).collect();
+        let a = device.upload(activations, &[m, k])?;
+        let b = device.upload(weights, &[n, k])?;
+        let out = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+        let context = context_for(&device).ok_or("no cuBLAS context")?;
+        // cuBLAS does host-side work on the first use of a configuration (workspace and algorithm
+        // selection), which a capturing stream rejects; run the shape once before recording it.
+        gemm_bf16(&device, &a, &b, &out)?;
+        device.reclaim_barrier()?;
+        let graph = CudaGraph::scope(&device.stream, |scope| {
+            let op = GemmBf16::new(context, &a, &b, &out)
+                .map_err(|error| DeviceError::Internal(error.to_string()))?;
+            scope.record(op)?;
+            Ok(())
+        })
+        .map_err(device_error)?;
+        graph
+            .launch()
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        device.reclaim_barrier()?;
+        let captured = out.to_host_vec().sync_on(&device.stream)?;
+        let direct = api::zeros::<f32>(&[m, n]).sync_on(&device.stream)?;
+        gemm_bf16(&device, &a, &b, &direct)?;
+        device.reclaim_barrier()?;
+        let reference = direct.to_host_vec().sync_on(&device.stream)?;
+        let gap = captured
+            .iter()
+            .zip(&reference)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0_f32, f32::max);
+        eprintln!("captured versus direct launch: max_abs={gap:e}");
+        assert_eq!(gap, 0.0, "the captured launch differs from the direct one");
         Ok(())
     }
 }
