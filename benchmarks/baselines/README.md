@@ -4,6 +4,8 @@
 
 新的正式测试、服务基线与 vLLM 对齐统一按 [性能基线方案](../../docs/plans/performance/baseline.md) 执行。本目录的投影记录保持自己的历史条件，不能补齐缺失的服务矩阵；更早的 debug 样本仅保留为历史证据，不参与正式 release 对比。
 
+已验收的服务基线保存在 [serving/](serving/README.md)，由 [freeze-baseline.py](../../tools/bench/freeze-baseline.py) 写出，并可用 `--verify` 复核哈希。
+
 ## 文件
 
 | 文件 | 内容 |
