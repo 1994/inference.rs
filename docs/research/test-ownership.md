@@ -100,3 +100,24 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 `resident/recurrent_prefill` 的测试正文里：5 条 `too_many_lines`、2 条 `float_cmp`、
 2 条 `redundant_clone`、2 条 `cast_precision_loss`。`policy.py` 禁止豁免 `too_many_lines`，那 5 条
 只能拆函数；其余按其建议改。独立一批，不改断言。
+
+## 替换第一批的实测阻塞：CPU benchmark 需要两份声明
+
+按方案从 `benchmark` 与 `protocol` 入手尝试替换时，在最小的消费者（CPU benchmark，2 个文件）
+上就撞到两个必须先解决的契约问题。尝试的改动已完整回滚，工作区保持绿色。
+
+1. **`DeviceBackend` 没有非设备变体。** 删掉 `TestCpu`（feature-gated）之后，枚举只剩
+   `Cuda(NvidiaCapabilities)` 与 `Metal(MetalCapabilities)`。CPU benchmark 的后端是一个不执行
+   模型的"设备契约替身"，原来靠 `infer_ir::testing::reference_capabilities()` 报告
+   `TestCpu`。方案里写的替代是"CUD/Metal 描述样例，只验证元数据与选择规则，不宣称设备存在"，
+   仓库已有先例（`crates/backend/kernel-api/tests/unit/registry.rs` 手写 `NvidiaCapabilities`）。
+   本轮验证过：把 `DeviceCapabilities` 逐字段写成 CUDA 样例可以编译，同时保留原来的
+   `compute_dtypes`/`memory_bytes`/`unified_memory` 值，测量口径不变。
+2. **还需要一份声明的 kernel 集合。** 用显式 `ModelIr` 描述符替换 `ReferenceModel::fixture` 后，
+   bench 在运行时报 `no compatible kernel for TokenEmbedding with F32`——引擎会按注册表校验
+   模型的算子。`ReferenceKernels` 之前同时提供了"模型"和"kernel"，所以这个消费者的替代要做两件事：
+   显式模型描述符 + 一个只声明所需算子（不含执行逻辑）的 kernel provider 桩。
+
+结论：`benchmark`/`protocol` 的替换不是逐文件改写，而是先落一个**声明式协议桩**（capability
+样例 + kernel 声明 + 脚本化完成结果），再让这些消费者改用它。这也说明"先清点、再替换"的顺序是
+对的：这两点在删除 `TestCpu` 与 `testing` 模块之前必须先定，否则消费者没有可声明的后端身份。
