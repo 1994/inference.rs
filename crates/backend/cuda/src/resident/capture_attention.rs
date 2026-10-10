@@ -150,8 +150,8 @@ impl Capture<'_> {
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
                 self.capacity.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
                 i32::from(E::DTYPE != f32::DTYPE).to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         let mut output = output.reshape(&[lanes * query_heads, head_dim])?;
