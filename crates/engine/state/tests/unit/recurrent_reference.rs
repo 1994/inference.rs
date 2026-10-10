@@ -68,3 +68,65 @@ fn replaying_the_recorded_inputs_reproduces_the_last_state() {
     let rows = golden["declared_inputs"]["rows"].as_array().unwrap();
     assert_eq!(rows.len(), golden["states"].as_array().unwrap().len());
 }
+
+fn conv_golden() -> Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/recurrent-conv/golden.json");
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn the_recorded_convolution_window_describes_its_steps() {
+    let golden = conv_golden();
+    let channels = count(&golden["geometry"]["channels"]);
+    let kernel = count(&golden["geometry"]["kernel"]);
+    assert_eq!(
+        count(&golden["geometry"]["history"]),
+        channels * (kernel - 1)
+    );
+
+    let base = numbers(&golden["base_history"]);
+    assert_eq!(base.len(), channels * (kernel - 1));
+    assert!(
+        base.iter().all(|value| *value == 0.0),
+        "the reference starts empty"
+    );
+
+    let histories = golden["histories"].as_array().unwrap();
+    let outputs = golden["outputs"].as_array().unwrap();
+    let rows = golden["declared_inputs"]["rows"].as_array().unwrap();
+    assert_eq!(histories.len(), rows.len());
+    assert_eq!(outputs.len(), rows.len());
+    for (history, output) in histories.iter().zip(outputs) {
+        assert_eq!(numbers(history).len(), base.len());
+        assert_eq!(numbers(output).len(), channels);
+        assert!(
+            numbers(history)
+                .iter()
+                .chain(&numbers(output))
+                .all(|value| value.is_finite())
+        );
+    }
+    // The steps moved the window away from the base.
+    assert_ne!(numbers(&histories[histories.len() - 1]), base);
+}
+
+#[test]
+fn the_recorded_window_is_the_gather_r1_commits_with() {
+    let golden = conv_golden();
+    assert_eq!(
+        golden["replay_property"]["holds"], true,
+        "the recorded step has to satisfy the gather R1 commits on"
+    );
+    // The claim is about these steps: one recorded input per step, and the weights the step read.
+    for row in golden["declared_inputs"]["rows"].as_array().unwrap() {
+        assert_eq!(
+            row["activation"].as_array().unwrap().len(),
+            count(&golden["geometry"]["channels"])
+        );
+        assert_eq!(
+            row["weights"].as_array().unwrap().len(),
+            count(&golden["geometry"]["channels"]) * count(&golden["geometry"]["kernel"])
+        );
+    }
+}

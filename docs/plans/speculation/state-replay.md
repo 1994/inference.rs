@@ -27,6 +27,13 @@ ReplaySSM 的输入记录思想可以用于多种 recurrent 模型；具体记�
 
 CUDA 的 delta 算子接进来后直接对照这份 golden 即可，不必再依赖已删除的执行器。
 
+**Causal conv 的窗口同样已固化**（方案表格里"记录输入，提交时从基点历史与接受输入选取末尾
+history"那一行）：导出器 `tools/fixtures/export-conv-history-golden.py` 按参考实现的顺序重放
+（每通道一行 kernel 权重、f64 累加、SiLU 后回落 f32、窗口左移并追加本次输入），制品
+`examples/recurrent-conv/golden.json` 记录几何、公式、确定性输入、基点窗口、每步窗口与输出、容差，
+并**验证**了 R1 的提交方式：从基点窗口与已接受输入中 gather 末尾窗口，与逐步重放得到的窗口一致
+（`replay_property.holds = true`）。`recurrent_reference.rs` 里另有两条用例把它绑回代码。
+
 ## 通用的是思想，适配单位是状态算子
 
 对于 `S_t = F(S_{t-1}, u_t)`，可以保留基点 `S_0` 和短窗口输入记录 `u_1…u_T`，接受长度确定后只重放有效前缀，避免为每个候选保留完整状态。记录的是驱动状态更新的实际中间输入，不是原始 token；重放不应重新运行整套模型投影与 attention。
