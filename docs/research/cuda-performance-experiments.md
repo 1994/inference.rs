@@ -2397,3 +2397,28 @@ crates/backend/cuda/src/resident/attention.rs:113: tile block: [0, 0, 0], positi
 所以**还有第三处**"表与其 arena 不同源"的地方（draft 路径专属），下一轮先用最便宜的检查钉死它：
 在**每次捕获**时打印 `(figure 的 arena 块数, 该表的 shape 与最大条目)`——这两数一比就知道是谁错配，
 不用再推理。（当前已回退；回退后 clippy ✅、27 单测 ✅、4 GPU 硬件测试 ✅。）
+
+### 13.24 三轮失败的共同根因：`capacity` 同时承担了**两个角色**
+
+回头看 §13.22/§13.23 的失败，并对照代码里 `self.capacity` 的每一处用法，根因其实一句话：
+
+> **共享 arena 之后，"每槽的寻址窗口"和"arena 的行数"不再是同一个数，但代码里它们共用一个
+> `capacity`。**
+
+具体地，`Capture::capacity`（来自 `BatchBuilder.capacity`）被同时用于：
+
+1. **KV 张量的形状/分区**：`keys.reshape(&[kv_heads, self.capacity, head_dim])`、
+   `(&mut keys).partition([1, self.capacity, head_dim])`、以及 append 核的 `CAP` 泛型
+   —— 这些要的是 **arena 的行数**（共享后 = `capacity × width`）；
+2. **每槽的语义窗口**：槽的游标、逻辑块数、`SlotCopy` 的判据 —— 这些要的是**每槽**的 capacity。
+
+共享 arena 后我把表和 arena 都换成了"共享空间"，却让 (1) 仍拿每槽 capacity ⇒
+**内核看到的分区范围比表给出的物理块号小** ⇒ `attention.rs:113` 那个
+"dim 1, block index >= ceil(?/32)" 正是这么来的（而 reshapes 在部分路径上也因此不自洽）。
+
+**结论：第②步的正确前置是先把这两个角色拆开**（例如 `Capture` 增加 `arena_capacity`，
+只用于 (1)；`capacity` 保留 (2) 的语义），而不是先动 arena。这也解释了为什么三轮都是
+"编译通过、验证挂"——我一直在改数据的**归属**，却没改**范围**。
+
+**已落地的、不受此影响的东西保持不变**：第①步块表（恒等映射、行为逐位一致）、
+`CB_SLOT_TOKENS = 8192`（−13% wall / −22% 中位 TTFT）、`--chunked-recurrent`、张量核 attention。
