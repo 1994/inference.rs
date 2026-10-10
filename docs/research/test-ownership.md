@@ -42,11 +42,11 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（57 个文件）
+## 执行器消费者与删除归属（54 个文件）
 
-| `protocol` | 7 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
+| `protocol` | 5 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
-| `numeric` | 6 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
+| `numeric` | 5 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
 | `plumbing` | 12 | 构建与 feature 接线：manifest、IR feature、门禁与打包脚本 |
 
@@ -204,6 +204,21 @@ crate）。kernel 声明里的来源信息用 `env!("CARGO_PKG_NAME")` 与 `file
 
 **装饰器必须转发 `reserve_state_for`**：引擎通过它创建序列，只转发 `reserve_state` 会让替身的
 state 表为空，几轮下来这是最常踩的坑（`capacity`、`scheduling`、`isolation`、`http` 都遇到）。
+
+### 已替换：runtime 的两个大文件，`infer-runtime` 已零消费者
+
+| 文件 | 用例 | 关键点 |
+|---|---:|---|
+| `runtime/tests/control_path.rs` | 16 | `FaultyBackend`/`DelayedBackend` 两个装饰器 |
+| `runtime/tests/runner.rs` | 10 | `ReserveGate`（走 `into_threaded`，状态经资源命令到达）、`InlineReservationIntent` |
+
+两个文件都**只用补一处**就全过：装饰器必须把 `reserve_state_for`（以及 `reset_state`/
+`release_state`/`recycle_output`/`recycle_batch`）转发给替身，并把闸门/计数逻辑挂在
+`reserve_state_for` 上而不是 `reserve_state`。之前失败时表现为"tick 返回 `Ok([])`、请求静默不完成"，
+根因是替身的 state 表为空、`submit` 直接失败。这也是**第五次**踩同一个坑。
+
+`runner.rs` 原分类为 `numeric`，实际验的是保留预算、取消与资源命令语义，因此按实情改回 `protocol`。
+至此 `infer-runtime` 的消费者清零，manifest 里的 `infer-backend-reference` dev-dependency 已删除。
 
 ### 仍未替换：需要真实 token 内容的场景
 

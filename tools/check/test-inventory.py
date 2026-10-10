@@ -69,7 +69,6 @@ ROLE_RULES = (
     (r"^Cargo\.toml$", "plumbing"),
     (r"^tools/bench/cpu/", "benchmark"),
     (r"^crates/backend/cuda/examples/", "numeric"),
-    (r"^crates/engine/runtime/tests/runner\.rs$", "numeric"),
     (r"^crates/engine/runtime/", "protocol"),
     (r"^crates/service/frontdoor/", "protocol"),
     (r"^crates/service/agent/", "protocol"),

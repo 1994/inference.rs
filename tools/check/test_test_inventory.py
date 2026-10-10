@@ -210,7 +210,7 @@ class RoleTest(unittest.TestCase):
             ("tools/check/gate.sh", "plumbing"),
             ("crates/engine/runtime/tests/control_path.rs", "protocol"),
             ("crates/engine/runtime/tests/checkpoint_owner.rs", "protocol"),
-            ("crates/engine/runtime/tests/runner.rs", "numeric"),
+            ("crates/engine/runtime/tests/runner.rs", "protocol"),
             ("crates/service/frontdoor/tests/isolation.rs", "protocol"),
             ("crates/service/cli/tests/smoke.rs", "service"),
             ("crates/backend/cuda/examples/model_smoke/mod.rs", "numeric"),

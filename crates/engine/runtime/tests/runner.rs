@@ -1,21 +1,21 @@
-use infer_backend_reference::{
-    ReferenceBackend, ReferenceKernels, ReferenceModel, ReferenceTicket,
-};
+mod support;
 use infer_core::{Error, FinishReason, ModelId, Result, StateId};
 use infer_ir::{
-    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, OutputReadout,
-    PrecisionPlan, StepPlan, TaskOutput,
+    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, ModelOutput,
+    OutputReadout, PrecisionPlan, StepPlan, TaskOutput,
 };
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig, runner::ThreadedBackend};
+
 use infer_spi::{BackendProvider, ResourceCommand, ResourceReply};
 use std::{
     sync::Arc, sync::atomic::AtomicBool, sync::atomic::AtomicUsize, sync::atomic::Ordering,
     sync::mpsc, time::Duration, time::Instant,
 };
+use support::ProtocolBackend;
 
 struct ReserveGate {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     draft_depth: usize,
     gate: Option<mpsc::Receiver<()>>,
     entered: mpsc::Sender<()>,
@@ -27,7 +27,7 @@ struct ReserveGate {
     poll_gate: Arc<AtomicBool>,
 }
 impl BackendProvider for ReserveGate {
-    type Ticket = ReferenceTicket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
@@ -46,7 +46,14 @@ impl BackendProvider for ReserveGate {
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
         self.inner.execution_graph(model)
     }
-    fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        // The threaded runner reserves through a resource command, which reaches this entry point;
+        // keeping the gate on `reserve_state` alone would bypass it.
         self.reservation_attempts.fetch_add(1, Ordering::AcqRel);
         if self.owned.load(Ordering::Acquire) >= self.reservation_limit.load(Ordering::Acquire) {
             return Err(Error::new(
@@ -54,7 +61,7 @@ impl BackendProvider for ReserveGate {
                 "resident budget busy",
             ));
         }
-        self.inner.reserve_state(state, capacity)?;
+        self.inner.reserve_state_for(state, capacity, readout)?;
         self.owned.fetch_add(1, Ordering::AcqRel);
         self.entered
             .send(())
@@ -64,17 +71,26 @@ impl BackendProvider for ReserveGate {
         }
         Ok(())
     }
+    fn reset_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.reset_state(state)
+    }
     fn release_state(&mut self, state: StateId) -> Result<()> {
         self.inner.release_state(state)?;
         self.owned.fetch_sub(1, Ordering::AcqRel);
         Ok(())
+    }
+    fn recycle_output(&mut self, state: StateId, output: ModelOutput) -> Result<()> {
+        self.inner.recycle_output(state, output)
+    }
+    fn recycle_batch(&mut self, outputs: Vec<TaskOutput>) -> Result<()> {
+        self.inner.recycle_batch(outputs)
     }
     fn submit(
         &mut self,
         program: &ExecutionProgram,
         step: &StepPlan,
         tasks: Vec<ExecutionTask>,
-    ) -> Result<ReferenceTicket> {
+    ) -> Result<Self::Ticket> {
         self.observed_work
             .store(step.work.as_ptr() as usize, Ordering::Release);
         self.observed_sampling.fetch_add(
@@ -83,7 +99,7 @@ impl BackendProvider for ReserveGate {
         );
         self.inner.submit(program, step, tasks)
     }
-    fn poll(&mut self, ticket: &mut ReferenceTicket) -> Result<Option<Vec<TaskOutput>>> {
+    fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
         if self.poll_gate.load(Ordering::Acquire) {
             self.inner.poll(ticket)
         } else {
@@ -108,8 +124,7 @@ impl Fixture {
         Self::with_draft(gated, 0)
     }
     fn with_draft(gated: bool, draft_depth: usize) -> Result<Self> {
-        let model = ReferenceModel::fixture(ModelId::ONE, 7);
-        let ir = model.ir.clone();
+        let ir = support::model(ModelId::ONE);
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
         let owned = Arc::new(AtomicUsize::new(0));
@@ -119,7 +134,7 @@ impl Fixture {
         let observed_sampling = Arc::new(AtomicUsize::new(0));
         let poll_gate = Arc::new(AtomicBool::new(true));
         let backend = ReserveGate {
-            inner: ReferenceBackend::new(model)?,
+            inner: ProtocolBackend::new(16, 8, &ir)?,
             draft_depth,
             gate: gated.then_some(gate),
             entered,
@@ -131,7 +146,7 @@ impl Fixture {
             poll_gate: poll_gate.clone(),
         };
         let mut registry = KernelRegistry::default();
-        registry.register(&ReferenceKernels)?;
+        registry.register(&support::DeclaredKernels)?;
         let engine = Engine::new(
             backend,
             ir,
@@ -585,11 +600,11 @@ fn deferred_reservation_can_time_out_or_cancel_without_a_backend_state() -> Resu
 /// A direct backend that settles resource commands inline but owns reservation intent, so a
 /// busy `Reserve` is always observed on the engine's very first poll instead of a later one.
 struct InlineReservationIntent {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     attempts: Arc<AtomicUsize>,
 }
 impl BackendProvider for InlineReservationIntent {
-    type Ticket = ReferenceTicket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
@@ -608,7 +623,12 @@ impl BackendProvider for InlineReservationIntent {
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
         self.inner.execution_graph(model)
     }
-    fn reserve_state(&mut self, _state: StateId, _capacity: usize) -> Result<()> {
+    fn reserve_state_for(
+        &mut self,
+        _state: StateId,
+        _capacity: usize,
+        _readout: OutputReadout,
+    ) -> Result<()> {
         self.attempts.fetch_add(1, Ordering::AcqRel);
         Err(Error::new(
             infer_core::ErrorCode::Capacity,
@@ -624,10 +644,10 @@ impl BackendProvider for InlineReservationIntent {
         program: &ExecutionProgram,
         step: &StepPlan,
         tasks: Vec<ExecutionTask>,
-    ) -> Result<ReferenceTicket> {
+    ) -> Result<Self::Ticket> {
         self.inner.submit(program, step, tasks)
     }
-    fn poll(&mut self, ticket: &mut ReferenceTicket) -> Result<Option<Vec<TaskOutput>>> {
+    fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
         self.inner.poll(ticket)
     }
 }
@@ -638,15 +658,14 @@ fn inline_busy_reservation_defers_instead_of_failing_admission() -> Result<()> {
     // observed on the engine's first poll. When the backend owns reservation intent the
     // rejection must be deferred exactly like a later acknowledgement: keep the request
     // and its host state, and publish no retry until resource ownership progresses.
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let attempts = Arc::new(AtomicUsize::new(0));
     let backend = InlineReservationIntent {
-        inner: ReferenceBackend::new(model)?,
+        inner: ProtocolBackend::new(16, 8, &ir)?,
         attempts: attempts.clone(),
     };
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     let mut engine = Engine::new(
         backend,
         ir,

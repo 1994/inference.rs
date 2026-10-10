@@ -1,6 +1,8 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+mod support;
+
 use infer_kernel_api::KernelRegistry;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use support::ProtocolBackend;
 
 use infer_core::*;
 use infer_ir::*;
@@ -12,23 +14,29 @@ use infer_runtime::*;
 )]
 fn registry() -> KernelRegistry {
     let mut r = KernelRegistry::default();
-    r.register(&ReferenceKernels).unwrap();
+    r.register(&support::DeclaredKernels).unwrap();
     r
 }
 #[expect(
     clippy::unwrap_used,
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
-fn backend() -> ReferenceBackend {
-    ReferenceBackend::new(ReferenceModel::fixture(ModelId::new(1).unwrap(), 7)).unwrap()
+fn backend() -> ProtocolBackend {
+    ProtocolBackend::tagged(
+        "control-path-weights",
+        16,
+        8,
+        &support::model(ModelId::new(1).unwrap()),
+    )
+    .unwrap()
 }
 #[expect(
     clippy::unwrap_used,
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
-fn engine(config: RuntimeConfig) -> Engine<ReferenceBackend> {
+fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
     let b = backend();
-    let m = b.model().ir.clone();
+    let m = support::model(ModelId::new(1).unwrap());
     Engine::new(b, m, PrecisionPlan::f32(), &registry(), config).unwrap()
 }
 #[expect(
@@ -207,8 +215,13 @@ fn checkpoint_roundtrip_and_weight_mismatch_rejection() {
             .unwrap()
             .completed
     );
-    let other =
-        ReferenceBackend::new(ReferenceModel::fixture(ModelId::new(1).unwrap(), 8)).unwrap();
+    let other = ProtocolBackend::tagged(
+        "control-path-other-weights",
+        16,
+        8,
+        &support::model(ModelId::new(1).unwrap()),
+    )
+    .unwrap();
     assert!(Engine::restore(other, &registry(), checkpoint).is_err());
 }
 #[test]
@@ -338,16 +351,37 @@ enum Fault {
     InvalidTiming,
 }
 struct FaultyBackend {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     fault: Fault,
 }
 impl BackendProvider for FaultyBackend {
-    type Ticket = <ReferenceBackend as BackendProvider>::Ticket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
     fn capabilities(&self) -> DeviceCapabilities {
         self.inner.capabilities()
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        // The engine creates sequences through this entry point.
+        self.inner.reserve_state_for(state, capacity, readout)
+    }
+    fn reset_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.reset_state(state)
+    }
+    fn release_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.release_state(state)
+    }
+    fn recycle_output(&mut self, state: StateId, output: ModelOutput) -> Result<()> {
+        self.inner.recycle_output(state, output)
+    }
+    fn recycle_batch(&mut self, outputs: Vec<TaskOutput>) -> Result<()> {
+        self.inner.recycle_batch(outputs)
     }
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
@@ -394,7 +428,7 @@ fn failure_after_device_completion_does_not_leave_requests_waiting_on_a_missing_
         inner: backend(),
         fault: Fault::InvalidTiming,
     };
-    let model = backend.inner.model().ir.clone();
+    let model = support::model(ModelId::new(1).unwrap());
     let mut e = Engine::new(
         backend,
         model,
@@ -427,7 +461,7 @@ fn unbounded_trace_configuration_is_rejected_before_ring_allocation() {
         },
     ] {
         let backend = backend();
-        let model = backend.model().ir.clone();
+        let model = support::model(ModelId::new(1).unwrap());
         let result = Engine::new(backend, model, PrecisionPlan::f32(), &registry(), config);
         assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
     }
@@ -439,7 +473,7 @@ fn backend_failures_and_invalid_completions_release_all_owned_state() {
             inner: backend(),
             fault,
         };
-        let model = b.inner.model().ir.clone();
+        let model = support::model(ModelId::new(1).unwrap());
         let mut e = Engine::new(
             b,
             model,
@@ -467,7 +501,7 @@ fn backend_timeout_is_diagnosed_without_recycling_inflight_state() {
         inner: backend(),
         fault: Fault::NeverComplete,
     };
-    let model = b.inner.model().ir.clone();
+    let model = support::model(ModelId::new(1).unwrap());
     let mut e = Engine::new(
         b,
         model,
@@ -545,10 +579,10 @@ fn admission_failure_and_queued_cancellation_leave_no_leaks() {
     );
 }
 struct DelayedBackend {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
 }
 struct DelayedTicket {
-    inner: <ReferenceBackend as BackendProvider>::Ticket,
+    inner: <ProtocolBackend as BackendProvider>::Ticket,
     wait: bool,
 }
 impl BackendProvider for DelayedBackend {
@@ -558,6 +592,27 @@ impl BackendProvider for DelayedBackend {
     }
     fn capabilities(&self) -> DeviceCapabilities {
         self.inner.capabilities()
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        // The engine creates sequences through this entry point.
+        self.inner.reserve_state_for(state, capacity, readout)
+    }
+    fn reset_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.reset_state(state)
+    }
+    fn release_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.release_state(state)
+    }
+    fn recycle_output(&mut self, state: StateId, output: ModelOutput) -> Result<()> {
+        self.inner.recycle_output(state, output)
+    }
+    fn recycle_batch(&mut self, outputs: Vec<TaskOutput>) -> Result<()> {
+        self.inner.recycle_batch(outputs)
     }
     fn validate_program(&self, m: &ModelIr, p: &ExecutionProgram) -> Result<()> {
         self.inner.validate_program(m, p)
@@ -588,7 +643,7 @@ impl BackendProvider for DelayedBackend {
 #[test]
 fn in_flight_cancel_retains_state_until_completion() {
     let b = DelayedBackend { inner: backend() };
-    let model = b.inner.model().ir.clone();
+    let model = support::model(ModelId::new(1).unwrap());
     let mut e = Engine::new(
         b,
         model,
@@ -647,7 +702,7 @@ impl SchedulingPolicy for EmptyPolicy {
 #[test]
 fn scheduler_livelock_captures_diagnostic_snapshot() {
     let b = backend();
-    let model = b.model().ir.clone();
+    let model = support::model(ModelId::new(1).unwrap());
     let mut e = Engine::with_policy(
         b,
         model,

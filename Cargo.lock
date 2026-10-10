@@ -1285,7 +1285,6 @@ dependencies = [
 name = "infer-runtime"
 version = "0.1.0"
 dependencies = [
- "infer-backend-reference",
  "infer-compiler",
  "infer-core",
  "infer-gpu-api",

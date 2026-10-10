@@ -170,30 +170,6 @@
       "role": "plumbing"
     },
     {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/Cargo.toml",
-      "patterns": [
-        "infer-backend-reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/tests/control_path.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/tests/runner.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "numeric"
-    },
-    {
       "crate": "ir",
       "path": "crates/foundation/ir/Cargo.toml",
       "patterns": [
