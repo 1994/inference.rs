@@ -1321,3 +1321,35 @@ sum_d (decay*old + k⊗diff)[d,s] * q[d]
 所以"chunked 核对逐 lane 核"的护栏一直没在跑。现在它能在 release 下直接量
 （`cargo test --release -p infer-backend-cuda --features cuda -- --ignored recurrent_chunk_performance_gate --nocapture`，
 约 2 秒），是后续改 delta 的快速 A/B 工具。
+
+### 12.7 未解释但最便宜的线索：delta 在图内比隔离慢 2.6×【待查】
+
+同一颗核、同一几何（KH=16、VH=48、D=128、SW=D），两个口径对不上：
+
+| 口径 | 每 token | 来源 |
+|---|---:|---|
+| 隔离配对基准（清 L2） | **2.0–2.25 µs** | `recurrent_chunk_performance_gate`，(16,48,128,32/128) |
+| 服务图内逐节点事件 | **5.2 µs** | prefill 每次 replay 333 µs / 64 token |
+
+差 2.6×。图内那 46 ms 的记账是自洽的（各节点之和 = 图总时间），仪器本身只解释约 7%
+（同一 slot_verify：GRAPH_ONLY 26.68 ms vs 逐节点 28.5 ms），所以这不是测量口径问题。
+
+如果这条差距能收掉，**不需要改算法**：replay 46 ms 里 delta 占 16 ms，压到隔离水平即
+~6.5 ms，prefill 直接少 ~10 ms/replay（22%），long TTFT 394 → ~310 ms。
+
+下一步的判别实验很便宜（改 `resident_recurrent_prefill_benchmark_tests.rs`，约 2 秒一轮）：
+在候选图里插一个与服务器同量级的大 GEMM（例如 [64, 17408, 5120] 的 FP4/FP8 投影），
+让 delta 在它之后跑。若 2.6× 复现，就是邻接 kernel 造成的 L2/带宽干扰或图内调度缺口，
+方向转成"保护 delta 的工作集"或"把 delta 与邻居合并"；若不复现，则差距来自服务侧的
+别的因素（例如同一 stream 上的依赖链、图节点间的发射间隙），要另找口径。
+
+### 12.8 结论
+
+- **prefill 的差距不在"GPU 没吃饱"**：利用率比 vLLM 高，每 token 设备时间却是 vLLM 的
+  5.6×（720 µs vs 128 µs），其中非 GEMM 占 51%。
+- **两个真靶子**：`delta`（34.7%，150× 于下界）与 `linear`（48.7%，138 TFLOP/s = FP8 峰值 16%）。
+  `attention` 7.1% 同类但量级小一半。
+- **已排除的低成本路线**（不要再试）：值维分块（§十.1）、tile 形状（§11.7、§12.7 相关）、
+  delta 代数重排（§12.6）。
+- **剩下的路只有三条**：① delta 的算法级改写（WY / chunked 矩阵乘）；② GEMM 委托
+  （FP8 那条不需要 scale swizzle，覆盖 15.79 GB 里的 7.22 GB）；③ 先查 §12.7 的 2.6× 缺口。
