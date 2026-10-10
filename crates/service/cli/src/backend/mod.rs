@@ -94,7 +94,10 @@ pub struct Selection {
     /// The CUDA backend reads this; the feature sets that compile without it - the isolated
     /// production check and the host-only targets - would otherwise report it as dead code under
     /// `-D warnings`.
-    #[allow(dead_code, reason = "read by the CUDA backend, which these feature sets do not build")]
+    #[allow(
+        dead_code,
+        reason = "read by the CUDA backend, which these feature sets do not build"
+    )]
     pub chunked_recurrent: bool,
 }
 #[cfg(any(
