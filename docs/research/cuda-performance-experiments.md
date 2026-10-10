@@ -1777,3 +1777,38 @@ q/out 以 `[lanes, HEADS, D]` 视图记录；验收顺序是 ① `make local-bui
 ③ 官方矩阵与默认路径比 token（`token_mismatches` 应回到同一量级）。
 
 预期：预填充 attention 3.19 ms → ~1.0 ms（replay −6.4%）；decode 形要另做单 query 变体（未量）。
+
+### 12.19 试写张量核 attention 的结果：卡在 grid 推导，需要 KV cache 改成 token-major【实测失败】
+
+按 §12.18 的方案真的写了一版 `decode_tiled`（87 行，含 `precise_mma`/`MASKED` 的拷贝）并挂在
+`INFER_CUDA_TILED_ATTENTION` 后面，**编译、clippy、单测、GPU 测试全过，服务也能跑起来**
+（不崩、输出有限），但和默认路径对不上：
+
+| case | rep | 默认 64 token vs tiled 的前缀一致率 |
+|---|---|---|
+| short | 0/1/2 | 0/64、1/64、0/64 |
+| long | 0/1/2 | 1/64、0/25（提前 EOS，只出 24 token）、0/64 |
+| batch4 | 0/1/2 | 1/64、0/64、0/64 |
+| hot_long | 0/1/2 | 1/64、1/64、1/64 |
+
+**0–2% 一致率意味着数值是错的，不是浮点重排**（重排只会偶发翻转，不会是 0%）。
+batch4 wall 也从 1.44 s 涨到 2.10–2.25 s。已**整段回滚**，工作区回到提交状态。
+
+**原因（由 shape 约定推出，未做编译器级验证）**：cuTile 的 grid 不是显式给的，而是从各参数的
+partition 形状推出来的；SDPA 之所以能用 `pid.1` 当 head 索引，是因为它**四个参数全是 2-D**：
+`query:[-1,-1]` 与 `key:[-1,-1]` 都按 `[Q,D]`/`[K,D]` 切，于是 `key` 的 axis-1 分块数正好是
+`kv_heads`（`kv_heads*D / D`），与 query 的 head 轴对齐。而我们的 KV cache 是 **head-major**
+`[kv_heads, capacity, D]`，只能按 `[1, KB, D]` 切 ⇒ 分块数是 `(kv_heads, capacity/KB, 1)`，
+axis-1 是 **capacity 方向**（32768/32 = 1024），与 query 的 24 个 head 根本对不上；
+无论编译器取逐轴 max 还是 min，`pid.1` 都不可能是 head 索引 ⇒ 每个 CTA 去读错误的 KV 区域。
+这正好解释"有限、不崩、但完全不对"。
+
+**下一步的正解是把 KV cache 改成 token-major `[capacity, kv_heads*D]`**（SDPA 的约定），
+这样 K 的 `[KB, D]` partition 就是 `(capacity/KB, kv_heads)`，`pid.1` 恢复成 kv head。
+代价是这条链上的写入/读取要一起改：`append` 的 store 索引、SIMT 的 `decode`（prefill+decode
+两处）、池化的 KV 分配/快照与 prefix cache。**这属于"为了换成张量核要先动 KV 布局"**，
+而不是换一个核 —— 这个判断是本次实测换来的，比 §12.18 的估计更硬。
+
+复现：把 12.18 的 `decode_tiled` 写回 `attention_prefill.rs`、在 `record_prefill_attention`
+里按 `INFER_CUDA_TILED_ATTENTION` 接线，然后跑官方矩阵比 token（本次 run-id
+`tiled-mtp2-native-g2`，报告在 artifacts 里，未入库）。
