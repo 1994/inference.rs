@@ -2454,3 +2454,26 @@ reshape/分区/append 的 `CAP` 泛型），`capacity` 保留每槽语义；池�
 ⇒ 说明"表与 arena 不同源"的第三处**不在 capacity 的角色上**。下一轮改用 §13.23 里定下的
 最便宜的检查：在**每次捕获**时打印该图的 `(arena 行数/块数, 表的 shape 与最大条目)`，
 两数一比即可定位（不再靠推理）。已回退：clippy ✅、27 单测 ✅。
+
+### 13.27 第一次**测量**（而不是推理）：表的**形状**是对的，问题在表的**取值**或归属
+
+按 §13.23 的办法，在共享 arena + `arena_capacity` 拆分的基础上，于**每次捕获**打印：
+
+```
+KV capture: arena_rows=128 table_len=2 table_reach_rows=64 per_slot=64
+KV capture: arena_rows=256 table_len=2 table_reach_rows=64 per_slot=64
+```
+
+读法：`per_slot=64`（每槽 2 个 32 行的块）、`arena_rows = capacity × width`（128 = 2×64、
+256 = 4×64）**都自洽**；`table_len=2` 是**每槽**的表长（也自洽）。
+
+**但这次打印量错了量**：我打的是表的**长度**，而越界报错说的是**表的取值**（物理块号）——
+`table_reach_rows` 用 `len × BT` 算是 64，其实表里的值才是关键（槽 1 的表是 `[2,3]`，
+而 arena 有 4 个块，也仍在范围内）。所以这次测量**排除了"表长度/arena 行数不匹配"**，
+把嫌疑收窄到**表的取值**或**某个图拿到了别人的表**。
+
+**下一轮的正确打印**（一行）：把表的**最大值**打出来——`table` 是设备张量，需要一次
+`to_host` 回读（诊断期可以接受），打印 `(arena_blocks, max(table), table_len, owner)`。
+`max(table) × BT + rows ≤ arena_rows` 一成立/不成立，就知道是谁错配。
+
+（本轮改动已回退：`--all-targets` 0 错误、clippy ✅、4 个 GPU 硬件测试 ✅。）
