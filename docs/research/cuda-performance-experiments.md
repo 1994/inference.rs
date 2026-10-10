@@ -2524,3 +2524,38 @@ capacity 再预留一遍状态——因为**池在构建时已经为 `width` 个
 计划/计价**（`plan.reserved_tokens = max_model_len`）。只要这点不变，任何能负担的池都无法覆盖它，
 减免也永远不会命中。⇒ 第④步的正确一刀是**让计划/预留反映请求实际需要的长度**（prompt +
 max_new_tokens），而不是模型上限；那时"按块计价"才真正把并发与上下文长度解耦。
+
+### 13.30 更正 §13.25 与 §13.29：16384 的失败是**准备超时**，不是准入；报价的大头是**激活 arena**，不是 KV
+
+拿日志把两件事对上了，两处旧结论都要改：
+
+**（1）`CB_SLOT_TOKENS = 16384` 的失败原因不是"准入拒绝"**（§13.25 写错了）。`pricing16k` 的日志里
+**没有任何** `admission ... StateBytes` 行，而是：
+
+```
+INFO  CUDA slot pool captured at load width=4 capacity=16384
+INFO  request accepted request=1 workload=Generate { max_new_tokens: 64 }
+WARN  request finished unsuccessfully request=1
+      reason=Failed("resource preparation acknowledgement timed out") e2e_us=30000101
+```
+
+即：池在加载时**构建成功**（16384 也建起来了）、请求**被接受**，然后在**准备阶段超过 30 s 超时** ✗。
+8192 的同位置日志显示一切在 **~0.3 s** 内完成（`pool captured 02.42 → listening 02.61 → accepted 02.70`）✓。
+
+⇒ 真正的墙是**准备（preparation）随容量增长**，而不是显存。这与我更早测到的
+`deferred_reasons[preparation]` 才是一致的（第 25/26 轮我就见过 preparation 递延，却把它归到槽位/显存上）。
+
+**（2）`state_reservation_bytes` 的大头不是 KV**（§13.29 的"1.07 GB = 32768 × 32 KB"是错的）。
+`budget.rs::program` 的项依次是：`attention_scratch` + **`ActivationArena::required_bytes(graph, lanes)`**
++ 递推状态（按 `prompt` 通道）+ ... + KV 页（`capacity × columns × 2`）。以交付配置算：
+`capacity=128` 时 KV 页只有 **~0.26 MB**，而**激活 arena（按 lanes 计的整图激活）才是 1.12 GB 量级的大头** ✓。
+所以那条 1.12 GB 的准入拒绝是**激活预算**造成的，与"每序列按最大长度预留 KV"无关。
+
+⇒ 这也解释了为什么 §13.29 那条"池内减免"对交付 profile **不生效**：它减的是 KV/状态那一份，
+而真正压垮准入的是**固定激活预算**——减免它需要的是"池已提供共享激活 arena"这个事实被计价承认，
+而不是把 KV 归零。
+
+**下一步的正确杠杆（都有了实测支撑）**：
+- 长上下文的墙是**准备开销随容量增长**（16384 就 >30 s）⇒ 要么让**池覆盖该容量**从而不走私有准备，
+  要么让准备/预填充按**实际 prompt 长度**而不是预留容量来做；
+- 准入的墙是**激活预算**（固定且大）⇒ 池内请求应当只被收取"池未覆盖的那部分"。
