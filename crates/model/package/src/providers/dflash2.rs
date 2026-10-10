@@ -6,7 +6,8 @@
 //! later, and the SPI that carries proposals belongs to I1.
 use infer_core::{Error, Result};
 use infer_ir::{BackboneKind, Mixer, ModelIr, Operation};
-use std::collections::BTreeSet;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The architecture string the official draft declares in its configuration.
 pub const ARCHITECTURE: &str = "DFlash2DraftModel";
@@ -41,11 +42,186 @@ pub fn check_declared_architecture(declared: &[String]) -> Result<()> {
     )))
 }
 
+/// The draft's own `dflash_config` block.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DFlash2DraftConfig {
+    pub block_size: usize,
+    pub conv_group_size: usize,
+    pub conv_kernel_size: usize,
+    pub selector_rank: usize,
+    pub selector_top_k: usize,
+    /// Target layers whose hidden states the draft consumes.
+    pub target_layer_ids: Vec<usize>,
+}
+
+/// `z-lab/Qwen3.8-27B-DFlash2`'s `config.json` as the model declares it.
+///
+/// Only the fields this contract reads are listed; the loader maps the rest.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DFlash2Config {
+    pub architectures: Vec<String>,
+    pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub vocab_size: usize,
+    pub num_hidden_layers: usize,
+    pub num_attention_heads: usize,
+    pub num_key_value_heads: usize,
+    pub head_dim: usize,
+    pub sliding_window: usize,
+    /// Target layers the checkpoint was trained against.
+    pub num_target_layers: usize,
+    /// Blocks attend inside themselves, so the draft graph is deliberately not causal.
+    pub is_causal: bool,
+    pub tie_word_embeddings: bool,
+    pub dflash_config: DFlash2DraftConfig,
+}
+
+impl DFlash2Config {
+    /// # Errors
+    /// Rejects bytes that are not this draft's configuration, or that declare another architecture.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let config: Self = serde_json::from_slice(bytes)
+            .map_err(|error| Error::invalid(format!("draft configuration is invalid: {error}")))?;
+        check_declared_architecture(&config.architectures)?;
+        Ok(config)
+    }
+
+    #[must_use]
+    pub fn geometry(&self) -> DraftGeometry {
+        DraftGeometry {
+            hidden_size: self.hidden_size,
+            intermediate_size: self.intermediate_size,
+            vocab_size: self.vocab_size,
+            layers: self.num_hidden_layers,
+            target_layers: self.num_target_layers,
+            attention_heads: self.num_attention_heads,
+            key_value_heads: self.num_key_value_heads,
+            head_dim: self.head_dim,
+            block_size: self.dflash_config.block_size,
+            target_taps: self.dflash_config.target_layer_ids.clone(),
+            sliding_window: self.sliding_window,
+            selector_rank: self.dflash_config.selector_rank,
+            selector_top_k: self.dflash_config.selector_top_k,
+        }
+    }
+
+    /// Checks the draft's own block semantics.
+    ///
+    /// # Errors
+    /// Rejects a configuration that declares a causal draft: the score block attends inside itself
+    /// and only the target verifies causally.
+    pub fn check_block_semantics(&self) -> Result<()> {
+        if self.is_causal {
+            return Err(Error::invalid(
+                "draft blocks attend inside themselves and cannot be causal",
+            ));
+        }
+        if self.tie_word_embeddings {
+            return Err(Error::invalid(
+                "draft embeddings are not tied to the target vocabulary",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The tensors the draft's package must provide; `None` where geometry does not fix the shape.
+    ///
+    /// The two dynamic-convolution tensors depend on how the loader groups the double-tap kernel, so
+    /// their shapes are the ones observed in the released checkpoint and are confirmed by the device
+    /// loader rather than derived here.
+    #[must_use]
+    pub fn expected_weight_shapes(&self) -> BTreeMap<String, Option<Vec<usize>>> {
+        let hidden = self.hidden_size;
+        let intermediate = self.intermediate_size;
+        let kv = self.num_key_value_heads * self.head_dim;
+        let q = self.num_attention_heads * self.head_dim;
+        let taps = self.dflash_config.target_layer_ids.len();
+        let rank = self.dflash_config.selector_rank;
+        let mut expected: BTreeMap<String, Option<Vec<usize>>> = BTreeMap::new();
+        for (name, shape) in [
+            (
+                "candidate_selector.hidden_projection.weight",
+                vec![rank, hidden],
+            ),
+            (
+                "candidate_selector.predecessor_codebook",
+                vec![self.vocab_size, rank],
+            ),
+            (
+                "candidate_selector.successor_codebook",
+                vec![self.vocab_size, rank],
+            ),
+            ("fc.weight", vec![hidden, taps * hidden]),
+            ("hidden_norm.weight", vec![hidden]),
+            ("norm.weight", vec![hidden]),
+        ] {
+            expected.insert(name.to_owned(), Some(shape));
+        }
+        for layer in 0..self.num_hidden_layers {
+            for (suffix, shape) in [
+                ("input_layernorm.weight", Some(vec![hidden])),
+                ("post_attention_layernorm.weight", Some(vec![hidden])),
+                ("self_attn.q_proj.weight", Some(vec![q, hidden])),
+                ("self_attn.k_proj.weight", Some(vec![kv, hidden])),
+                ("self_attn.v_proj.weight", Some(vec![kv, hidden])),
+                ("self_attn.o_proj.weight", Some(vec![hidden, q])),
+                ("self_attn.q_norm.weight", Some(vec![self.head_dim])),
+                ("self_attn.k_norm.weight", Some(vec![self.head_dim])),
+                ("mlp.gate_proj.weight", Some(vec![intermediate, hidden])),
+                ("mlp.up_proj.weight", Some(vec![intermediate, hidden])),
+                ("mlp.down_proj.weight", Some(vec![hidden, intermediate])),
+                ("attention_conv.kernel_projection.weight", None),
+                ("attention_conv.base_kernel", None),
+                ("mlp_conv.kernel_projection.weight", None),
+                ("mlp_conv.base_kernel", None),
+            ] {
+                expected.insert(format!("layers.{layer}.{suffix}"), shape);
+            }
+        }
+        expected
+    }
+
+    /// Checks a package's tensor inventory against [`Self::expected_weight_shapes`].
+    ///
+    /// # Errors
+    /// Reports a missing tensor, a tensor the draft does not define, or a shape that disagrees with
+    /// the geometry.
+    pub fn check_weight_inventory(&self, actual: &BTreeMap<String, Vec<usize>>) -> Result<()> {
+        let expected = self.expected_weight_shapes();
+        if let Some(missing) = expected.keys().find(|name| !actual.contains_key(*name)) {
+            return Err(Error::invalid(format!(
+                "draft package is missing {missing}"
+            )));
+        }
+        if let Some(stray) = actual.keys().find(|name| !expected.contains_key(*name)) {
+            return Err(Error::invalid(format!(
+                "draft package carries an unknown tensor: {stray}"
+            )));
+        }
+        for (name, shape) in expected {
+            let Some(shape) = shape else { continue };
+            let found = actual
+                .get(&name)
+                .ok_or_else(|| Error::invalid(format!("draft package is missing {name}")))?;
+            if *found != shape {
+                return Err(Error::invalid(format!(
+                    "draft tensor {name} has shape {found:?}, geometry requires {shape:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Geometry declared by the draft's `config.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DraftGeometry {
     pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub vocab_size: usize,
     pub layers: usize,
+    /// Target layers the draft was trained against.
+    pub target_layers: usize,
     pub attention_heads: usize,
     pub key_value_heads: usize,
     pub head_dim: usize,
@@ -68,23 +244,45 @@ pub struct DraftQuote {
     pub feature_bytes_per_token: usize,
 }
 
+/// The values `z-lab/Qwen3.8-27B-DFlash2` declares, named so the contract holds no bare numbers.
+mod released {
+    pub const HIDDEN_SIZE: usize = 5_120;
+    pub const INTERMEDIATE_SIZE: usize = 17_408;
+    pub const VOCAB_SIZE: usize = 248_320;
+    pub const LAYERS: usize = 5;
+    /// Layers of the target the checkpoint was trained against.
+    pub const TARGET_LAYERS: usize = 64;
+    pub const ATTENTION_HEADS: usize = 32;
+    pub const KEY_VALUE_HEADS: usize = 8;
+    pub const HEAD_DIM: usize = 128;
+    /// The score block the draft proposes in one step.
+    pub const BLOCK_SIZE: usize = 8;
+    /// Target layers whose hidden states the draft consumes.
+    pub const TARGET_TAPS: [usize; 5] = [5, 19, 33, 47, 61];
+    pub const SLIDING_WINDOW: usize = 2_048;
+    pub const SELECTOR_RANK: usize = 256;
+    pub const SELECTOR_TOP_K: usize = 16;
+}
+
 impl DraftGeometry {
-    /// `z-lab/Qwen3.8-27B-DFlash2` as the plan records its configuration: five draft layers, hidden
-    /// 5120, 32 attention heads, 8 KV heads, head dim 128, native block size 8, target taps
-    /// `[5, 19, 33, 47, 61]`, sliding window 2048, selector rank 256 and top-k 16.
+    /// The registered fixture in `examples/qwen3.8-27b-dflash2` is the same configuration, and a
+    /// test asserts this constructor and the parsed file agree.
     #[must_use]
     pub fn official() -> Self {
         Self {
-            hidden_size: 5120,
-            layers: 5,
-            attention_heads: 32,
-            key_value_heads: 8,
-            head_dim: 128,
-            block_size: 8,
-            target_taps: vec![5, 19, 33, 47, 61],
-            sliding_window: 2048,
-            selector_rank: 256,
-            selector_top_k: 16,
+            hidden_size: released::HIDDEN_SIZE,
+            intermediate_size: released::INTERMEDIATE_SIZE,
+            vocab_size: released::VOCAB_SIZE,
+            layers: released::LAYERS,
+            target_layers: released::TARGET_LAYERS,
+            attention_heads: released::ATTENTION_HEADS,
+            key_value_heads: released::KEY_VALUE_HEADS,
+            head_dim: released::HEAD_DIM,
+            block_size: released::BLOCK_SIZE,
+            target_taps: released::TARGET_TAPS.to_vec(),
+            sliding_window: released::SLIDING_WINDOW,
+            selector_rank: released::SELECTOR_RANK,
+            selector_top_k: released::SELECTOR_TOP_K,
         }
     }
 
@@ -94,7 +292,10 @@ impl DraftGeometry {
     /// candidates than it scores, or a block wider than the window it slides in.
     pub fn validate(&self) -> Result<()> {
         if self.hidden_size == 0
+            || self.intermediate_size == 0
+            || self.vocab_size == 0
             || self.layers == 0
+            || self.target_layers == 0
             || self.attention_heads == 0
             || self.key_value_heads == 0
             || self.head_dim == 0
@@ -147,6 +348,12 @@ impl DraftGeometry {
             )));
         }
         let layers = target.mixers.len();
+        if layers != self.target_layers {
+            return Err(Error::invalid(format!(
+                "draft was trained against {} target layers, target has {layers}",
+                self.target_layers
+            )));
+        }
         for tap in &self.target_taps {
             let Some(mixer) = target.mixers.get(*tap) else {
                 return Err(Error::invalid(format!(

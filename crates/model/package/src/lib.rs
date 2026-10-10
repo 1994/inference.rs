@@ -20,7 +20,8 @@ pub use input::tool::{
     parse as parse_model_output, parse_with as parse_model_output_with,
 };
 pub use providers::dflash2::{
-    ARCHITECTURE as DFLASH2_ARCHITECTURE, DraftGeometry, DraftQuote, check_declared_architecture,
+    ARCHITECTURE as DFLASH2_ARCHITECTURE, DFlash2Config, DFlash2DraftConfig, DraftGeometry,
+    DraftQuote, check_declared_architecture,
 };
 pub use providers::qwen::{QwenProvider, VisionConfig};
 pub use providers::registry::{ModelRegistry, default_registry};

@@ -43,9 +43,31 @@ DFlash2 作为独立草稿 provider 接入，共用 [推测解码 SPI 与状态�
 | 算子能力 | `check_operations()`：草稿声明需要的算子集合必须是 backend 上报集合的子集，报出第一个缺失项 | 算子 |
 | 资源（几何部分） | `quote(dtype_bytes)`：每 token KV、窗口 KV、每 tap 每 token 的特征字节 | 资源（部分） |
 
-**明确还没有做的**：`config.json` 到 `DraftGeometry` 的键名映射（等官方 config 作为 fixture 登记后再写，避免先猜键名）、tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与 token map，属于 loader 的职责）、权重/arena/graph/回滚的报价（需要张量形状与设备事实）。独立 BF16/完整 head 参考与 selector 对照仍是 D1 的主要剩余工作。
+**配置映射与权重清单（第二步，已完成）**
 
-单测 11 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件与对应反例。
+模型本机已有下载（`/home/r/models/Qwen3.8-27B-DFlash2`，apache-2.0），因此键名与张量名取自真实
+制品而不是猜测：
+
+- 官方 `config.json` 原样登记为 fixture：`examples/qwen3.8-27b-dflash2/config.json`，配套
+  `source.json` 记录 repository/URL，并把**文件 sha256** 当作身份（本地下载未保留上游 revision，
+  如实标注，不编造）。`DFlash2Config` 按真实键名反序列化（顶层 + 嵌套 `dflash_config`），
+  `geometry()` 映射到 `DraftGeometry`，并有测试断言它与 `official()` 完全一致。
+- 配置实测值补充进几何：`intermediate_size 17408`、`vocab_size 248320`、`num_target_layers 64`
+  （taps 来自 `dflash_config.target_layer_ids`）。`check_target()` 因此新增**目标层数必须等于
+  草稿训练时的层数**这一条（64 层，与 `examples/qwen3.8-27b` 的目标 fixture 一致）。
+- `check_block_semantics()`：`is_causal` 必须为 false（块内双向注意力），且不得与目标共享词嵌入。
+- `expected_weight_shapes()` / `check_weight_inventory()`：按真实 checkpoint 的结构生成 81 个张量
+  名单（6 个共享 + 每层 15 个），其中几何能决定的形状逐项核对（`fc.weight [5120, 25600]`、
+  `q_proj [4096, 5120]`、`k/v_proj [1024, 5120]`、`o_proj [5120, 4096]`、`gate/up [17408, 5120]`、
+  `down [5120, 17408]`、`q/k_norm [128]`、selector 与 codebook）；两个双抽头卷积张量的形状由
+  loader 依分组方式确认，清单里只查名字。缺少、多余、形状不符都会点名报出。
+
+**明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
+token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价（两个卷积张量的形状先要由 loader
+固定）；独立 BF16/完整 head 参考与 selector 对照仍是 D1 的主要剩余工作。
+
+单测 17 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件与对应反例，其中 5 个直接读登记
+的 fixture。
 
 ## Target 特征捕获
 

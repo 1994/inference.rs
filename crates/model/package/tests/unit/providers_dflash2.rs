@@ -95,10 +95,21 @@ fn the_target_hidden_size_must_match_the_draft() {
 }
 
 #[test]
+fn the_target_layer_count_must_match_the_draft() {
+    let draft = DraftGeometry::official();
+    // The largest official tap is 61, but the layer count is checked first: a 61-layer target is
+    // not the 64-layer target the draft was trained against.
+    let error = draft.check_target(&decoder(5120, 61)).unwrap_err();
+    assert!(error.to_string().contains("64 target layers"), "{error}");
+}
+
+#[test]
 fn every_tap_must_name_a_target_attention_layer() {
     let draft = DraftGeometry::official();
-    // The largest official tap is 61, so a 61-layer target has no layer for it.
-    let error = draft.check_target(&decoder(5120, 61)).unwrap_err();
+    let mut target = decoder(5120, 64);
+    // A recurrent layer at a tapped index feeds no attention hidden state.
+    target.mixers[61] = Mixer::Recurrent { state_width: 128 };
+    let error = draft.check_target(&target).unwrap_err();
     assert!(error.to_string().contains("tap 61"), "{error}");
 }
 
@@ -142,4 +153,91 @@ fn another_architecture_does_not_answer_an_explicit_dflash2_request() {
     check_declared_architecture(&[ARCHITECTURE.to_owned()]).unwrap();
     let error = check_declared_architecture(&["Qwen3ForCausalLM".to_owned()]).unwrap_err();
     assert!(error.to_string().contains(ARCHITECTURE), "{error}");
+}
+
+fn fixture() -> DFlash2Config {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen3.8-27b-dflash2/config.json");
+    DFlash2Config::parse(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn the_registered_fixture_parses_to_the_official_geometry() {
+    let config = fixture();
+    assert_eq!(config.geometry(), DraftGeometry::official());
+    config.geometry().validate().unwrap();
+    config.check_block_semantics().unwrap();
+}
+
+#[test]
+fn the_inventory_covers_the_released_draft() {
+    let config = fixture();
+    let expected = config.expected_weight_shapes();
+    // The released checkpoint has 81 tensors: six shared and fifteen per draft layer.
+    assert_eq!(expected.len(), 6 + 15 * config.num_hidden_layers);
+    assert_eq!(expected["fc.weight"], Some(vec![5120, 25600]));
+    assert_eq!(
+        expected["layers.0.self_attn.q_proj.weight"],
+        Some(vec![4096, 5120])
+    );
+    assert_eq!(
+        expected["layers.0.self_attn.k_proj.weight"],
+        Some(vec![1024, 5120])
+    );
+    assert_eq!(
+        expected["layers.4.mlp.down_proj.weight"],
+        Some(vec![5120, 17408])
+    );
+    // The convolution shapes come from the loader, not from geometry.
+    assert_eq!(expected["layers.0.attention_conv.base_kernel"], None);
+}
+
+#[test]
+fn a_complete_inventory_is_accepted_and_each_shortfall_is_named() {
+    let config = fixture();
+    let mut actual: BTreeMap<String, Vec<usize>> = config
+        .expected_weight_shapes()
+        .into_iter()
+        .map(|(name, shape)| (name, shape.unwrap_or_else(|| vec![1280, 5120])))
+        .collect();
+    config.check_weight_inventory(&actual).unwrap();
+
+    let complete = actual.clone();
+    let missing = actual.keys().next().unwrap().clone();
+    actual.remove(&missing);
+    let error = config.check_weight_inventory(&actual).unwrap_err();
+    assert!(error.to_string().contains(&missing), "{error}");
+
+    actual = complete;
+    actual.insert("layers.0.mystery.weight".to_owned(), vec![1]);
+    let error = config.check_weight_inventory(&actual).unwrap_err();
+    assert!(error.to_string().contains("unknown tensor"), "{error}");
+
+    actual.remove("layers.0.mystery.weight");
+    actual.insert(
+        "layers.0.self_attn.q_proj.weight".to_owned(),
+        vec![4096, 4096],
+    );
+    let error = config.check_weight_inventory(&actual).unwrap_err();
+    assert!(error.to_string().contains("q_proj"), "{error}");
+}
+
+#[test]
+fn a_causal_or_tied_draft_configuration_is_rejected() {
+    let mut causal = fixture();
+    causal.is_causal = true;
+    assert!(causal.check_block_semantics().is_err());
+    let mut tied = fixture();
+    tied.tie_word_embeddings = true;
+    assert!(tied.check_block_semantics().is_err());
+}
+
+#[test]
+fn a_configuration_for_another_architecture_does_not_parse() {
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../examples/qwen3.8-27b/config.json"),
+    )
+    .unwrap();
+    assert!(DFlash2Config::parse(&bytes).is_err());
 }

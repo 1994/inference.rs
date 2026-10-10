@@ -1,0 +1,9 @@
+{
+  "repository": "z-lab/Qwen3.8-27B-DFlash2",
+  "revision": null,
+  "source": "https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2/resolve/main/config.json",
+  "license": "apache-2.0",
+  "config_sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980",
+  "purpose": "configuration and compatibility tests only; no model weights",
+  "note": "Copied on 2026-10-10 from a local download; the upstream revision was not recorded there, so the file digest identifies the revision instead."
+}
