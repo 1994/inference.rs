@@ -94,7 +94,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 16
+      "tests": 18
     },
     "workloads": {
       "benches": 0,
@@ -827,6 +827,11 @@
       "mount": "../tests/unit/physical.rs"
     },
     {
+      "crate": "state",
+      "file": "src/physical.rs",
+      "mount": "../tests/unit/recurrent_reference.rs"
+    },
+    {
       "crate": "workloads",
       "file": "src/lib.rs",
       "mount": "../tests/unit/cases.rs"
@@ -1050,19 +1055,14 @@
       "crate": "frontdoor",
       "file": "tests/unit/http.rs",
       "mount": "../../../../engine/runtime/tests/support/mod.rs"
-    },
-    {
-      "crate": "frontdoor",
-      "file": "tests/unit/http_openai.rs",
-      "mount": "../../../../engine/runtime/tests/support/mod.rs"
     }
   ],
   "totals": {
-    "all": 456,
+    "all": 458,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 456
+    "tests": 458
   }
 }

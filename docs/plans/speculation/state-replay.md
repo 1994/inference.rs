@@ -8,6 +8,25 @@ ReplaySSM 的输入记录思想可以用于多种 recurrent 模型；具体记�
 
 接口全貌见 [推测解码 SPI 方案](spi.md)，容量、数值与参考性能见 [Infernix 调研](../../research/infernix-performance.md)，CUDA 执行机制见 [性能优化方案](../performance/cuda.md)。性能实验执行 [性能基线方案](../performance/baseline.md)。本文维护分层与通用性边界，不重复性能估算。
 
+## 已实施：gated-delta 接受前缀参考（E1 删除执行器前保住的数值对照）
+
+第一阶段的 Record/Fold 需要一份**不依赖被测实现**的数值参考。它原本只存在于 CPU host 执行器的
+`delta()` 里，而 E1 会删掉那个 crate，所以现在把公式与数值固化成登记制品：
+
+- 导出器 `tools/fixtures/export-delta-state-golden.py`（冷路径、纯标准库）重新实现该步：
+  q/k 归一化（`sqrt(sum(x²)+eps)`，q 另乘 `sqrt(key_dim)`）、`beta = sigmoid(row1)`、
+  `decay = exp(-exp(row3) * softplus(row2 + row4))`、`state *= decay`、
+  `delta = (v - k @ state) * beta`、`state += outer(k, delta)`、`out = q @ state`；
+  **f64 累加、状态每步回落到 f32**——与被删掉的参考实现一致（不一致就无法作为对照）。
+- 制品 `examples/recurrent-delta/golden.json`：2 个 key head / 4 个 value head / key_dim = value_dim = 4、
+  3 步，记录几何、公式、确定性输入、基点状态、每步状态与输出、容差与理由；重复运行逐字节一致。
+- 同时记录 R1 成立的前提：**从基点重放记录输入能复现最后状态**（`replay_property.holds = true`），
+  这正是"提交接受前缀时可以不物化每个候选快照"的依据。
+- `crates/engine/state/tests/unit/recurrent_reference.rs` 把制品绑回代码：几何必须与记录的状态长度
+  一致、基点必须为空、每步状态与输出必须有限、最后状态不得等于基点、重放性质必须为真。
+
+CUDA 的 delta 算子接进来后直接对照这份 golden 即可，不必再依赖已删除的执行器。
+
 ## 通用的是思想，适配单位是状态算子
 
 对于 `S_t = F(S_{t-1}, u_t)`，可以保留基点 `S_0` 和短窗口输入记录 `u_1…u_T`，接受长度确定后只重放有效前缀，避免为每个候选保留完整状态。记录的是驱动状态更新的实际中间输入，不是原始 token；重放不应重新运行整套模型投影与 attention。

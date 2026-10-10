@@ -8,6 +8,12 @@
 
 测试布局见 [测试组织方案](tests.md)，构建和依赖迁移见 [构建与依赖方案](build-and-dependencies.md)。
 
+## 已保住的数值对照
+
+删除执行器前，其中唯一的数值参考（gated-delta 状态步）已固化为
+`examples/recurrent-delta/golden.json`，导出器与几何、公式、容差、以及"重放接受前缀可复现状态"的
+性质一并记录，细节见 [状态重放方案](../speculation/state-replay.md)。因此删除执行器不会丢掉对照物。
+
 ## 当前问题
 
 `test-backends` 已经成为产品的编译配置：[CLI manifest](../../../crates/service/cli/Cargo.toml) 启用两个 CPU 执行器和 IR feature，[IR hardware](../../../crates/foundation/ir/src/hardware/mod.rs) 据此改变 backend 枚举、能力和序列化类型。CLI 分派、命令、默认值和诊断因此持续携带测试分支。
