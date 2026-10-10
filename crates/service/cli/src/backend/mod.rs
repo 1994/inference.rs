@@ -90,6 +90,11 @@ pub struct Selection {
     /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
     pub autotune: bool,
     /// Capture the chunked gated-delta prefill kernel instead of the exact per-token one.
+    ///
+    /// The CUDA backend reads this; the feature sets that compile without it - the isolated
+    /// production check and the host-only targets - would otherwise report it as dead code under
+    /// `-D warnings`.
+    #[allow(dead_code, reason = "read by the CUDA backend, which these feature sets do not build")]
     pub chunked_recurrent: bool,
 }
 #[cfg(any(
