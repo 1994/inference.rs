@@ -1842,3 +1842,31 @@ axis-1 是 **capacity 方向**（32768/32 = 1024），与 query 的 24 个 head 
 
 本轮这一窗口里 batch4 的 wall 绝对值偏高（2200 ms 级，平时 ~1500 ms），说明机器上还有别的负载；
 但配对内的 TTFT/TPOT 差值与早先窗口吻合，所以结论以配对比值为准（§12.13 的教训）。
+
+### 12.21 prompt GEMM tile 也扫过了：现默认 [64,64] 就是最优（§11.7 只覆盖了 decode 宽度）
+
+§11.7 的 tile 扫描是靠 `INFER_CUDA_QUANT_TILE` 覆盖器做的，而那个覆盖器只对 **decode 宽度**
+（`rows <= QUANT_GEMM_TILE[0]`）生效，**预填充用的 [PROMPT_GEMM_TILE_ROWS, 64] 从没在交付配置里
+扫过**（constants.rs 只记了"全局加宽到 [64,128] 端到端变差"，那是 Stage A 之前、非 chunked 的旧配置）。
+本轮把覆盖器改成对**所有宽度**生效，在**当前配置**（`--chunked-recurrent`）下重扫了一次。
+
+一次 run 一个 tile，读 profile 的各图总量（中位，ms）：
+
+| tile | prefill | prefill_last | slot_verify |
+|---|---:|---:|---:|
+| 64×32 | 9.66 | 31.74 | 42.48 |
+| **64×64（现默认）** | **8.63** | **31.26** | 30.52 |
+| 64×128 | 8.83 | 34.03 | 30.18 |
+| 64×256 | 10.15 | 46.76 | 42.32 |
+
+服务侧同向（long 三次重复的 wall 中位）：64×64 = 1.235 s、64×128 = 1.249 s、64×32 = 1.604 s、
+64×256 = 1.641 s。
+
+**结论：[64,64] 已经是最优，不改。** 32 和 256 差 20–35%，128 在 prefill_last 上反而差 9%
+（只在 slot_verify 上小胜 1%，属噪声）。所以**预填充 GEMM 只跑到 39–41% 带宽不是 tile 问题**，
+`constants.rs` 里"加宽 N 端到端变差"的旧记录在当前配置下依然成立——剩下唯一的路就是那条已经写在
+§二的 kernel 级改动（K 向 `cp.async.bulk`/TMA 双缓冲、把每 k 步的在飞字节从 4 KB 提上去），
+那是重写 kernel，不是调参。
+
+覆盖器保留在 `constants.rs`（`INFER_CUDA_QUANT_TILE=rows,cols`，进程内读一次，默认不生效），
+这样几何或 kernel 变了以后这条结论可以重测；复现见上表，脚本在 /tmp/tile-sweep.sh（未入库）。

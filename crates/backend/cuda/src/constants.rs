@@ -50,12 +50,27 @@ mod device {
     /// covers the whole width and reads each weight once. Selection is a pure function of the
     /// output row count, so one shared `Workspace` can serve prompt and decode graphs without any
     /// mutable per-graph state.
-    pub const fn quant_gemm_tile(rows: usize) -> [usize; 2] {
+    pub fn quant_gemm_tile(rows: usize) -> [usize; 2] {
+        if let Some(tile) = quant_gemm_tile_override() {
+            return tile;
+        }
         if rows > QUANT_GEMM_TILE[0] {
             [PROMPT_GEMM_TILE_ROWS, QUANT_GEMM_TILE[1]]
         } else {
             QUANT_GEMM_TILE
         }
+    }
+    /// `INFER_CUDA_QUANT_TILE=rows,cols` replaces both the decode and the prompt tile, so a sweep
+    /// can move the prompt tile the decode sweep in §11.7 never covered. Capture-time read, once
+    /// per process, exactly like the other experiment switches.
+    fn quant_gemm_tile_override() -> Option<[usize; 2]> {
+        static TILE: std::sync::OnceLock<Option<[usize; 2]>> = std::sync::OnceLock::new();
+        *TILE.get_or_init(|| {
+            let value = std::env::var("INFER_CUDA_QUANT_TILE").ok()?;
+            let (rows, columns) = value.split_once(',')?;
+            let tile = [rows.trim().parse().ok()?, columns.trim().parse().ok()?];
+            (tile[0] > 0 && tile[1] > 0).then_some(tile)
+        })
     }
     /// Column block of a block-scaled FP8 GEMM: one scale covers this many input columns.
     pub const FP8_BLOCK_COLUMNS: usize = 128;
