@@ -23,6 +23,46 @@ MTP 与 DFlash2 各自负责草稿生成，共用目标模型验证、状态提�
 | `infer-runtime`、`infer-state`、`infer-scheduler` | 请求所有权、逻辑提交、资源票据、预算和公平性 | 不直接依赖具体算法执行器 |
 | backend | 草稿与验证图、设备 buffer、KV、recurrent state、物理回滚和追赶 | 具体融合、录制和执行留在设备 owner |
 
+## 现状清点（I1 第一步，已完成）
+
+两个同名计划仍然并存，这正是方案要求区分"模型绑定"与"执行计划"的地方：
+
+| 类型 | 位置 | 字段 | 语义 |
+|---|---|---|---|
+| `infer_spi::SpeculationPlan` | `crates/foundation/spi/src/model.rs:81` | `prefix`、`layers`、`fusion` | 模型绑定：草稿 head 的权重前缀、层数与融合槽 |
+| `infer_ir::SpeculationPlan` | `crates/foundation/ir/src/workload.rs:158` | `proposal`、`verification`、`hidden_state_taps`、`max_candidates`、`acceptance_policy` | 执行计划：proposal/verify program、抽头与接受策略 |
+
+算法策略在 backend 的分布（按 `mtp*`/`draft*`/`speculat*` 标识符在代码中的出现次数统计，
+`crates/backend/cuda/src`，注释不计）：
+
+| 文件 | 次数 | 承担的职责 |
+|---|---:|---|
+| `executor/execution.rs` | 48 | 草稿图装载、slot pool、验证与状态结算 |
+| `loading/bindings.rs` | 46 | 张量绑定与槽位映射 |
+| `loading/mod.rs` | 39 | 加载参数与预算 |
+| `executor/drafting.rs` | 15 | 草稿步进、采样与位置映射 |
+| `executor/state.rs` | 14 | 草稿状态与预算记账 |
+| `executor/provider.rs` | 11 | capability 声明 |
+| `executor/mod.rs` | 11 | 执行器装配 |
+| 其余 11 个文件 | 17 | 前缀复用、池化、profiling、常量、resident 批/验证 |
+
+合计 **211 处、18 个文件**——这就是"接入第二种算法会继续扩大条件分支"的具体规模。
+其中 `resident/slot_verify.rs` 正是另一个 session 当前在改的文件，因此实际拆分要等那块安静下来。
+
+公共层目前只剩 4 处算法名，已作为 I1 的**移除清单**由门禁 ratchet 冻结：
+
+- `crates/foundation/ir/src/diagnostics.rs`：`mtp_depth`——公共诊断字段以单一算法命名；
+- `crates/foundation/spi/src/model.rs`：`mtp_layers`——字段与构造参数。
+
+`tools/check/policy.py` 新增 `check_algorithm_neutrality()`：任何**新增**的算法名都会让门禁失败
+（注释与 `#[cfg(test)]` 块除外，规则针对会分支的代码），清单条目一旦被移除而条目还在，也会失败，
+强制同步清理。当前 34 个 tools 单测通过，其中 5 个覆盖这条规则。
+
+**下一步（按风险从低到高）**：① 把 `mtp_depth`/`mtp_layers` 改成 draft 语义（公共 API 变更，需要
+后端同步改，故此步要与后端改动一起排）；② 把 `acceptance_policy: String` 换成结构化契约；
+③ 按上表把 drafting/pool/capabilities 的策略移入 `crates/engine/workloads` 的 provider，backend
+只留算子与设备执行。
+
 ## 算法语义与设备实现的分层
 
 MTP、DFlash2 和 ReplaySSM 都不在公共架构上绑定 CUDA。当前 MTP 热路径集中在 CUDA，是已有实现的位置；DFlash2 和 ReplaySSM 在本项目仍属于接入与优化方案。公共接口与设备实现需要分开设计，不能从 CUDA 先落地推断它们是 CUDA 专属功能，也不能据接口存在宣称 Metal 已支持。

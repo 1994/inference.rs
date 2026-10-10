@@ -287,6 +287,72 @@ def check_strategy_neutrality():
     print("Strategy: tile selection stays independent of device names and model shapes")
 
 
+ALGORITHM_NAMES = re.compile(r"\b(mtp|dflash2?|replayssm)[A-Za-z0-9_]*", re.IGNORECASE)
+COMMON_LAYERS = (
+    "crates/foundation/ir/src",
+    "crates/foundation/spi/src",
+    "crates/engine/workloads/src",
+)
+
+
+# I1's removal list: the common layers still name MTP in these symbols. The rule is a ratchet, so
+# the list may only shrink - the migration that removes a symbol also removes its entry, and a stale
+# entry fails rather than lingering.
+ALGORITHM_NAME_BASELINE = {
+    "crates/foundation/ir/src/diagnostics.rs": {"mtp_depth"},
+    "crates/foundation/spi/src/model.rs": {"mtp_layers"},
+}
+
+
+def check_algorithm_neutrality(root=ROOT, baseline=None):
+    """The common layers describe drafts in general, not one algorithm.
+
+    I1's split puts the algorithm in its provider; the reason to hold the line is that a name in a
+    common layer is how an executor grows a branch per algorithm. Comments and test modules may name
+    them - the rule is about code that branches - and the symbols I1 has not removed yet are listed
+    above so the coupling can only shrink.
+    """
+    baseline = dict(ALGORITHM_NAME_BASELINE if baseline is None else baseline)
+    for relative in COMMON_LAYERS:
+        for path in sorted((root / relative).rglob("*.rs")):
+            location = str(path.relative_to(root))
+            lines = magic_masked_lines(path.read_text().splitlines())
+            for lineno, line in enumerate(lines, 1):
+                code = line.split("//", 1)[0]
+                match = ALGORITHM_NAMES.search(code)
+                if match is None:
+                    continue
+                symbol = match.group(0)
+                if symbol in baseline.get(location, set()):
+                    continue
+                snippet = line.strip()[:80]
+                raise SystemExit(
+                    f"{location}:{lineno}: {relative} must not name a speculation algorithm "
+                    f"(`{symbol}`); keep it in the provider that implements it: `{snippet}`"
+                )
+    stale = {
+        location: symbols - _symbols_in(root / location, symbols)
+        for location, symbols in baseline.items()
+    }
+    stale = {location: symbols for location, symbols in stale.items() if symbols}
+    require(not stale, f"Drop the entries I1 has already removed: {stale}")
+    remaining = sum(len(symbols) for symbols in baseline.values())
+    print(f"Speculation: common layers name no new algorithm ({remaining} listed for I1 to remove)")
+
+
+def _symbols_in(path, symbols):
+    """Which of `symbols` still appear in code in `path`."""
+    found = set()
+    if not path.is_file():
+        return found
+    for line in magic_masked_lines(path.read_text().splitlines()):
+        code = line.split("//", 1)[0]
+        for symbol in symbols:
+            if ALGORITHM_NAMES.search(code) and symbol in code:
+                found.add(symbol)
+    return found
+
+
 def check_production_dependencies():
     tree = subprocess.run(
         [
@@ -317,6 +383,7 @@ if __name__ == "__main__":
     check_exceptions()
     check_magic_numbers()
     check_strategy_neutrality()
+    check_algorithm_neutrality()
     check_production_dependencies()
     print(
         "Lint inheritance, exception, magic number, strategy neutrality, and "
