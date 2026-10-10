@@ -415,31 +415,6 @@
       "role": "service"
     },
     {
-      "crate": "frontdoor",
-      "path": "crates/service/frontdoor/Cargo.toml",
-      "patterns": [
-        "infer-backend-host",
-        "infer-backend-reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "frontdoor",
-      "path": "crates/service/frontdoor/tests/unit/http.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "frontdoor",
-      "path": "crates/service/frontdoor/tests/unit/http_openai.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "protocol"
-    },
-    {
       "crate": "cpu",
       "path": "crates/testing/cpu/host/Cargo.toml",
       "patterns": [
@@ -521,6 +496,24 @@
         "infer-backend-host",
         "infer-backend-reference",
         "test-backends"
+      ],
+      "role": "plumbing"
+    },
+    {
+      "crate": "tools",
+      "path": "tools/check/release-dependencies.py",
+      "patterns": [
+        "infer-backend-host",
+        "infer-backend-reference"
+      ],
+      "role": "plumbing"
+    },
+    {
+      "crate": "tools",
+      "path": "tools/check/test_release_dependencies.py",
+      "patterns": [
+        "infer-backend-host",
+        "infer-backend-reference"
       ],
       "role": "plumbing"
     },
@@ -1056,6 +1049,11 @@
     {
       "crate": "frontdoor",
       "file": "tests/unit/http.rs",
+      "mount": "../../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/unit/http_openai.rs",
       "mount": "../../../../engine/runtime/tests/support/mod.rs"
     }
   ],

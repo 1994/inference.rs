@@ -18,7 +18,7 @@ use infer_ir::*;
     reason = "one shared test source, two unit-test modules"
 )]
 #[path = "../../../../engine/runtime/tests/support/mod.rs"]
-mod support;
+pub(super) mod support;
 
 use support::ProtocolBackend;
 
@@ -145,21 +145,21 @@ async fn schema_rejection_has_structured_error_and_does_not_enter_runtime() {
     handle.shutdown().await.unwrap();
 }
 
+/// The hybrid fixture's own weights are covered where the package is loaded
+/// (`crates/model/package/tests/{loader,package}.rs` and the provider's unit cases); this scene
+/// checks that the served text path uses the package's assets and reports its own work.
 #[tokio::test]
-async fn native_text_uses_package_assets_and_incremental_hybrid_weights() {
-    use infer_backend_host::{HostBackend, HostConfig, HostKernels};
+async fn native_text_uses_package_assets_and_reports_its_work() {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = infer_models::ModelPackage::open(&root, ModelId::ONE).unwrap();
-    let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
-    let model = backend.model().clone();
+    let model = support::model(ModelId::ONE);
     let assets =
         std::sync::Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());
     let mut kernels = KernelRegistry::default();
-    kernels.register(&HostKernels).unwrap();
+    kernels.register(&support::DeclaredKernels).unwrap();
     let handle = RuntimeHandle::start(
         Engine::new(
-            backend,
+            ProtocolBackend::peaking_at(3, 16, 8, &model).unwrap(),
             model,
             PrecisionPlan::f32(),
             &kernels,
@@ -186,11 +186,13 @@ async fn native_text_uses_package_assets_and_incremental_hybrid_weights() {
         .await
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // The declared peak is token 3 and the budget is five tokens, so the sequence continues with
+    // the fixture's own decoding of that token.
     assert_eq!(
         result["result"]["output"]["Tokens"],
-        serde_json::json!([25, 3, 3, 3, 3])
+        serde_json::json!([3, 3, 3, 3, 3])
     );
-    assert_eq!(result["text"], "token25 system system system system");
+    assert_eq!(result["text"], "system system system system system");
     assert!(result["tokenizer_fingerprint"].as_str().unwrap().len() > 16);
     let mut malformed = payload.clone();
     malformed["unknown"] = serde_json::json!(true);

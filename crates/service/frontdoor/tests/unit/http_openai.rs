@@ -1,5 +1,4 @@
 use axum::{Router, body::Body, http::Request, http::StatusCode};
-use infer_backend_host::{HostBackend, HostConfig, HostKernels};
 use infer_core::ModelId;
 use infer_ir::PrecisionPlan;
 use infer_kernel_api::KernelRegistry;
@@ -10,6 +9,11 @@ use tower::ServiceExt;
 
 use crate::{RuntimeHandle, router_with_text};
 
+// The native HTTP module already mounts the shared protocol double; this module is a sibling
+// test and reuses it rather than loading the same file into the crate a second time.
+use super::super::tests::support;
+use support::ProtocolBackend;
+
 fn fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
     fixture_with(RuntimeConfig::default())
 }
@@ -17,13 +21,18 @@ fn fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
 fn fixture_with(config: RuntimeConfig) -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = infer_models::ModelPackage::open(&root, ModelId::ONE).unwrap();
-    let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
-    let model = backend.model().clone();
+    let model = support::model(ModelId::ONE);
     let assets = Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());
     let mut kernels = KernelRegistry::default();
-    kernels.register(&HostKernels).unwrap();
-    let engine = Engine::new(backend, model, PrecisionPlan::f32(), &kernels, config).unwrap();
+    kernels.register(&support::DeclaredKernels).unwrap();
+    let engine = Engine::new(
+        ProtocolBackend::peaking_at(3, 16, 8, &model).unwrap(),
+        model,
+        PrecisionPlan::f32(),
+        &kernels,
+        config,
+    )
+    .unwrap();
     (RuntimeHandle::start(engine).unwrap(), assets)
 }
 
@@ -57,15 +66,13 @@ fn streaming_fixture() -> (RuntimeHandle, Arc<infer_models::TextAssets>) {
         serde_json::to_vec(&tokenizer).unwrap(),
     )
     .unwrap();
-    let mut model_package = infer_models::ModelPackage::open(&package, ModelId::ONE).unwrap();
-    let backend = HostBackend::from_package(&mut model_package, HostConfig::default()).unwrap();
-    let model = backend.model().clone();
+    let model = support::model(ModelId::ONE);
     let assets = Arc::new(infer_models::TextAssets::open(&package, model.max_sequence).unwrap());
     assert!(assets.supports_streaming_decode());
     let mut kernels = KernelRegistry::default();
-    kernels.register(&HostKernels).unwrap();
+    kernels.register(&support::DeclaredKernels).unwrap();
     let engine = Engine::new(
-        backend,
+        ProtocolBackend::peaking_at(3, 16, 8, &model).unwrap(),
         model,
         PrecisionPlan::f32(),
         &kernels,
@@ -131,7 +138,7 @@ async fn call(app: Router, path: &str, payload: Option<Value>) -> (StatusCode, V
 }
 
 #[tokio::test]
-async fn completions_match_native_golden_and_report_usage() {
+async fn completions_follow_the_served_model_and_report_usage() {
     let (handle, assets) = fixture();
     let app = router_with_text(handle.clone(), assets);
     let (status, models) = call(app.clone(), "/v1/models", None).await;
@@ -147,9 +154,12 @@ async fn completions_match_native_golden_and_report_usage() {
     .await;
     assert_eq!(status, StatusCode::OK, "{result}");
     assert_eq!(result["object"], "text_completion");
+    // The declared peak is token 3, which this fixture's tokenizer decodes as "system", and the
+    // budget is five tokens. The earlier "token25 ..." was the host executor's arithmetic; the
+    // model's own goldens are checked where the fixture's text is registered.
     assert_eq!(
         result["choices"][0]["text"],
-        "token25 system system system system"
+        "system system system system system"
     );
     assert_eq!(result["choices"][0]["finish_reason"], "length");
     assert_eq!(

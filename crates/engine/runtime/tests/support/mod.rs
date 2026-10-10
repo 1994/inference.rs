@@ -149,6 +149,32 @@ impl ProtocolBackend {
         Self::tagged("declared-protocol-double", requests, batch, ir)
     }
 
+    /// The same double with a declared ramp that peaks at `token`.
+    ///
+    /// The default ramp peaks at the last vocabulary entry, which is the end-of-sequence token of
+    /// some fixtures - a scene that counts generated tokens then stops after one. Declaring the peak
+    /// states which token the sequence should continue with, so a token budget can be exercised
+    /// without depending on a fixture's stop token.
+    ///
+    /// # Errors
+    /// Returns an invalid-input error when the token is outside the vocabulary or the request bound
+    /// cannot be reserved.
+    pub fn peaking_at(token: usize, requests: usize, batch: usize, ir: &ModelIr) -> Result<Self> {
+        if token >= ir.vocab_size {
+            return Err(Error::invalid(format!(
+                "declared peak token {token} is outside a vocabulary of {}",
+                ir.vocab_size
+            )));
+        }
+        let mut backend = Self::tagged("declared", requests, batch, ir)?;
+        // A declared peak rather than a ramp: every other token is lower, so sampling's argmax is
+        // the token the scene named no matter which index the sampler walks from.
+        backend.template.logits = (0..ir.vocab_size)
+            .map(|index| if index == token { 1.0 } else { 0.0 })
+            .collect();
+        Ok(backend)
+    }
+
     /// The same double with a declared weight tag.
     ///
     /// A snapshot records the backend's `identity` as its weights fingerprint, so a scene that

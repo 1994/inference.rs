@@ -1203,8 +1203,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
- "infer-backend-host",
- "infer-backend-reference",
  "infer-core",
  "infer-ir",
  "infer-kernel-api",
