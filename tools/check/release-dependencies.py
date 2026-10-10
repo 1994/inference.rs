@@ -39,21 +39,36 @@ def load_package_tools():
     return module
 
 
-def release_configurations():
-    """The production targets and the features `build.rs` resolves for each."""
+# The production graphs the plan names. Each runner checks the one it can resolve from a warm
+# cache; `--all` checks both, which is what a record refresh and a local run use.
+PRODUCTION_TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
+HOST_TARGET = {
+    "linux": "x86_64-unknown-linux-gnu",
+    "darwin": "aarch64-apple-darwin",
+}
+
+
+def configuration(target):
     tools = load_package_tools()
-    configurations = []
-    for target in ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin"):
-        plan = tools.resolve("auto", target)
-        configurations.append(
-            {
-                "name": plan["platform"],
-                "target": plan["target"],
-                "backend": plan["backend"],
-                "features": plan["features"],
-            }
-        )
-    return configurations
+    plan = tools.resolve("auto", target)
+    return {
+        "name": plan["platform"],
+        "target": plan["target"],
+        "backend": plan["backend"],
+        "features": plan["features"],
+    }
+
+
+def release_configurations(everything=False):
+    """The production configurations to check, defaulting to the one this host can resolve."""
+    if everything:
+        targets = PRODUCTION_TARGETS
+    else:
+        host = HOST_TARGET.get(sys.platform)
+        if host is None:
+            raise SystemExit(f"no production configuration is defined for {sys.platform}")
+        targets = (host,)
+    return [configuration(target) for target in targets]
 
 
 def parse_tree(text):
@@ -76,12 +91,16 @@ def parse_tree(text):
     }
 
 
-def cargo_tree(configuration):
+def tree_command(configuration, offline):
     command = [
         "cargo",
         "tree",
-        "--offline",
-        "--locked",
+    ]
+    if offline:
+        command.append("--offline")
+    else:
+        command.append("--locked")
+    command += [
         "-p",
         "infer-cli",
         "--target",
@@ -93,7 +112,38 @@ def cargo_tree(configuration):
     ]
     for feature in configuration["features"]:
         command += ["--features", feature]
-    completed = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True)
+    return command
+
+
+def fetch(configuration):
+    """Download the sources a cold environment needs for this target's graph."""
+    subprocess.run(
+        ["cargo", "fetch", "--locked", "--target", configuration["target"]],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def cargo_tree(configuration):
+    """The target's graph, fetching a cold environment rather than failing on it.
+
+    A clean checkout may have none of this target's sources - the Apple-only crates are not in the
+    Linux host graph - so an offline walk is attempted first and the environment is populated only
+    when that fails. Warm runs stay offline and instant.
+    """
+    completed = subprocess.run(
+        tree_command(configuration, offline=True), cwd=ROOT, capture_output=True, text=True
+    )
+    if completed.returncode != 0:
+        print(f"{configuration['name']}: fetching sources for a cold cache", file=sys.stderr)
+        fetch(configuration)
+        completed = subprocess.run(
+            tree_command(configuration, offline=True), cwd=ROOT, capture_output=True, text=True
+        )
+    if completed.returncode != 0:
+        raise SystemExit(f"{configuration['name']}: cargo tree failed\n{completed.stderr.strip()}")
     return parse_tree(completed.stdout)
 
 
@@ -101,13 +151,12 @@ def lockfile_sha256():
     return hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()
 
 
-def collect():
+def collect(everything=False):
     return {
         "schema": 1,
         "lockfile_sha256": lockfile_sha256(),
         "configurations": [
-            {**configuration, **cargo_tree(configuration)}
-            for configuration in release_configurations()
+            {**target, **cargo_tree(target)} for target in release_configurations(everything)
         ],
     }
 
@@ -142,8 +191,13 @@ def mismatches(record, current):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true", help="refresh the recorded graph")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="check every production target, not only the one this host resolves warm",
+    )
     arguments = parser.parse_args()
-    current = collect()
+    current = collect(everything=arguments.record or arguments.all)
     if arguments.record:
         RECORD.write_text(json.dumps(current, indent=1, sort_keys=True) + "\n")
         for entry in current["configurations"]:

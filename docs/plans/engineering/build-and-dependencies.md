@@ -146,8 +146,13 @@ edges，并记录重复依赖、解析 features、lockfile 与目标身份；此
 - 门禁在以下情况失败并给出可执行提示：出现新的重复、`Cargo.lock` 变化（要求显式 `--record` 并复核）、
   target/features 漂移、缺少配置记录，或生产图里出现 `infer-backend-host`/`infer-backend-reference`
   这两个 CPU 测试执行器；
-- 它已接入 `make check-tools`（CI 的 tools job），9 个单测覆盖解析与各条失配路径，其中包括"记录与当前
-  图一致"的回路测试。
+- 它接入 `make check-rust` 的第一个 clippy 之后（此时宿主源码已就位），**每个 runner 只核对自己宿主
+  对应的配置**（Linux 查 linux-cuda、macOS 查 macos-metal，合起来覆盖两个图），`--all` 供本地与刷新
+  记录时使用；冷环境会先 `cargo fetch --locked --target <triple>` 再离线取图——首次提交时忘了这一步，
+  CI 的 tools 与两个 Rust job 都在 `--offline` 上直接失败，这次一并修正。
+- 10 个单测覆盖解析、各条失配路径、宿主选择与"记录与当前图一致"的回路测试；用空 `CARGO_HOME` 实测冷
+  路径可跑通，且**冷环境解析出的数字与本地暖缓存完全一致**（212/704/9 与 174/437/2），说明记录不依赖
+  本地缓存。
 
 当前实测记录：**linux-cuda 212 crates / 704 edges / 9 个重复**（`hashbrown` 三个版本，`syn` 2 与 3，
 `thiserror` 1 与 2，`getrandom`、`itertools`、`object`、`rustc-hash`、`shlex` 各两个版本）；

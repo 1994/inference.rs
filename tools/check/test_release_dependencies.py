@@ -94,6 +94,16 @@ class MismatchTest(unittest.TestCase):
         problems = release_dependencies.mismatches(self.current, current)
         self.assertTrue(any("no record" in problem for problem in problems))
 
+    def test_the_host_checks_the_configuration_it_can_resolve_warm(self):
+        # Each runner checks the graph its own target matches, so CI covers both without fetching
+        # the other platform's crates on every run.
+        selected = release_dependencies.release_configurations()
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(
+            selected[0]["target"], release_dependencies.HOST_TARGET[__import__("sys").platform]
+        )
+        self.assertEqual(len(release_dependencies.release_configurations(everything=True)), 2)
+
     def test_the_tree_record_is_current(self):
         import json
 
