@@ -1640,3 +1640,47 @@ INFER_ATTENTION_GATE=/tmp/llm-attn/fixtures.safetensors \
   cargo test --release --locked -p infer-backend-cuda --features cuda --lib -- \
   --ignored attention_native_gate --nocapture
 ```
+
+### 12.17 B3（decode 逐 lane 录制）的机制与规模：Row 派发占 verify replay 的 21.7%【确证】
+
+§二 杠杆 B3 只写了一行"`slot_verify` 里 `Dispatch32::Row` 的逐 lane 录制改成跨 lane 批量
+kernel"。本轮把它变成有数字、有边界、有拦路石的任务。
+
+**机制（读码确证）**：`batch.rs:175-229` 捕获槽位图时按节点分派：
+
+- `TensorOp::Linear` → `batch_projection::record_slots`，**一条 batched kernel**；
+- 其余走 `dispatch32(node, weights)`（`batch.rs:655`）：
+  - **`Batched`**（一次 `record()`，一条 kernel）：`Silu`/`Sigmoid`/`Add`/`Multiply`（输入不是常量）、
+    `Norm`/`Split`（input0 不是常量）、`GatedNorm`；
+  - **`Row`**（`for lane in 0..width { record_row(node, lane) }`，**每个节点 `width` 条 kernel**）：
+    其余全部 —— 在本模型上就是 **`Conv`、`Delta`、`Attention`**。
+
+**规模**（同一次 profile，`slot_verify` 中位 26.25 ms，1155 节点）：
+
+| 算子 | ms | 节点 | µs/节点 | 派发 |
+|---|---:|---:|---:|---|
+| linear | 18.10 | 497 | 36.4 | batched |
+| **delta** | **2.32** | 48 | **48.4** | **Row ×4** |
+| **conv** | **2.26** | 48 | **47.0** | **Row ×4** |
+| **attention** | **1.11** | 16 | **69.7** | **Row ×4** |
+| norm | 0.85 | 161 | 5.3 | batched |
+| rope | 0.51 | 32 | 15.8 | batched |
+| add / multiply / silu / sigmoid / split / gated_norm | 1.52 | 352 | 3.9–6.2 | batched |
+
+**Row 三项合计 5.69 ms = verify replay 的 21.7%。**
+
+**对照说明固定开销有多大**：batched 的那些节点每次 3.9–6.2 µs；而 conv 每个节点 47 µs 是
+**4 条 kernel**（≈11.8 µs/条），delta 48.4 µs（≈12.1 µs/条）。conv4 一条的实际工作量只有
+80 个 CTA × 4-tap × 128 通道（微秒级），所以这 11 µs 里绝大部分是**逐条 launch 的固定开销**。
+预填充侧同样两个算子只有 13.5 µs/节点（conv 走 `conv_prefill` 的 2 条 kernel、delta 走
+chunked 核一条），正是"批起来"之后的成本。
+
+**拦路石（必须先解决，否则整条 B3 会做歪）**：预填充那两个 batched 核**不能直接搬到 decode**。
+它们扫的是**同一份状态**上的一段 *时间*（chunk 内 LANES 个 token 共享一组 h0/h1/h2 或一个
+D×D state）；而 decode 要批的是**4 个互不相干的槽位状态**（`lane_states[lane]` 各自一套）。
+所以 B3 需要的是**带 slot 维的新 kernel 变体 + 池化状态布局**（把每槽的 conv/delta 状态收进
+一个可索引张量），不是"调用另一个已有函数"。
+
+**预估收益**：若 conv/delta 各变成"每节点一条 kernel"（~10–15 µs），可省约 **3 ms ≈ decode
+tick 的 11%**（batch4 tpot 19.03 → ~16.9 ms，比值 2.02 → ~1.80）；attention 的 16 个节点另有
+空间（§12.16 已量到张量核 SDPA 更快，但那是预填充形；decode 形要用单 query 变体，未量）。
