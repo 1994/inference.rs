@@ -29,13 +29,12 @@ pub(crate) mod kernels {
     }
     /// Append all prompt rows before the causal query kernels read the shared cache.
     #[cutile::entry()]
-    fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32, const BT: i32>(
+    fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32>(
         keys: &mut Tensor<E, { [1, CAP, D] }>,
         values: &mut Tensor<E, { [1, CAP, D] }>,
         k: &Tensor<f32, { [-1, -1, D] }>,
         v: &Tensor<f32, { [-1, -1, D] }>,
         metadata: &Tensor<i32, { [-1] }>,
-        table: &Tensor<i32, { [-1] }>,
         k_scale: f32,
         v_scale: f32,
     ) {
@@ -46,15 +45,9 @@ pub(crate) mod kernels {
         let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
         let kp = k.partition(shape![1, 1, D]);
         let vp = v.partition(shape![1, 1, D]);
-        let blocks = table.partition(shape![1]);
         for lane in 0i32..count {
             let position = base + lane + offset;
             if position >= 0 {
-                // Logical block to physical block, then the row inside it. Step 1's table is the
-                // identity, so this resolves to `position`; step 2's allocator is what makes the
-                // physical placement differ from the logical one.
-                let physical: i32 = tile_to_scalar(blocks.load([position / BT]).reshape(shape![]));
-                let position = physical * BT + position % BT;
                 let mut key = kp.load([lane, pid.0, 0i32]);
                 let mut value = vp.load([lane, pid.0, 0i32]);
                 if QUANT == 1 {

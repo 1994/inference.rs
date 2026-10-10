@@ -2072,31 +2072,3 @@ QT=16 减半到 16 KB，同时 CTA 数从 48 涨到 96。两个因素叠起来�
 **结论**：长上下文那半边现在有 **6.2×**（attention 节点 1587 → 256 µs），短块也从"慢 12%"变成"快 1.39×"——
 即张量核 attention 在**全区间**都不输 SIMT。它仍是**默认关闭**的可选项（输出末位不同，口径同
 `--chunked-recurrent`），但现在已经没有"短块回退"这个理由挡着它了。
-
-### 13.10 第①步落地：块表间接寻址（恒等映射），并**证明内核确实在查表**
-
-按 §13.5 的顺序做了第一步：**每序列一张 i32 block table**，`append` 不再直接写 `position`，而是
-`physical = table[position / BT]`，落点 `physical * BT + position % BT`；`KV_BLOCK_TOKENS = 32`
-（与 attention 核现有的 32-token KV tile 对齐）。**恒等映射下每个字节都还在原处**，所以这一步是
-纯结构改动、数值不变。
-
-**落点（编译器把站点全列出来了，比我上轮估的多）**：
-- `capture::Capture` 新增 `table: &Tensor<i32>`，共 **9 个构造点**：`batch.rs` 5 处、`slot_verify.rs` 2 处、`program.rs` 1 处、`slot_batch.rs` 1 处（builder 字段 `BatchBuilder.tables: &[Tensor<i32>]`）；
-- **owner 两种**：池化是 `SlotPool.tables: Vec<Tensor<i32>>`（每槽一张，声明在 `states/fp8` 旁边——
-  注释里写明"graph bakes these pointers, declared last so the graph drops first"，**字段顺序是承重的**）；
-  私有 program 是 `DeviceProgram.table`（`constant_inputs` 一并返回）；
-- 表长 = `capacity.div_ceil(32)`，恒等内容由 `metadata::identity_table()` 生成；
-- **索引语义不是"每 lane 一张"**：池化 decode 按槽（`tables[lane]`），verify 的候选 lane 按**槽**
-  （`tables[lane / verify]`——这里我先写错成 `tables[lane]`，测试立刻以越界报出来），
-  而 prompt/prefill 与 Flat 这类**共享一份 cache 的路径必须用 `tables[0]`**（同一个 program 的所有
-  lane 往同一份 cache 里追加）。
-
-**证明它真的在查表**（否则"恒等"会让这一步看起来什么都没做）：在既有的 `check_case()` 里追加一段
-**打乱过的表** `table = [1,0,3,2]` 的写入，并按 `swapped[position/32]*32 + position%32` 算出主机侧
-期望——断言通过，说明落点确实跟着表走。同时 `chunk_attention_matches_reference_…`（含 QT 双宽）
-保持通过。
-
-验收：27 单测 ✅、4 个 GPU 硬件测试 ✅（其中 `pooled_verify_preserves_independent_prefixes_and_reuse`
-与 `wide_prefill_preserves_tail_and_scalar_continuation` 正是"共享 cache vs 每槽 cache"两条路径，
-是这个改动最容易出错的地方）、clippy `-D warnings` ✅、fmt ✅。**官方 matrix 的恒等对照还没跑**
-（上一次跑挂在上面那个索引 bug 上，修完后我先把测试跑绿，matrix 留到下一步前补）。

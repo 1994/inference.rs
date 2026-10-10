@@ -75,8 +75,6 @@ pub struct SlotPool {
     verify: Option<SlotVerifyGraph>,
     states: Vec<States>,
     fp8: Vec<Fp8Caches>,
-    /// Per-slot identity block tables; declared with the states so they outlive the captures.
-    tables: Vec<Tensor<i32>>,
     plan: Vec<(TensorId, SlotCopy)>,
     free: Vec<usize>,
     slots: usize,
@@ -135,7 +133,6 @@ impl SlotPool {
             .saturating_sub(device.profile()?.device_headroom_bytes());
         let mut states = Vec::with_capacity(width);
         let mut fp8 = Vec::with_capacity(width);
-        let mut tables = Vec::with_capacity(width);
         let mut bytes = 0_u64;
         for _ in 0..width {
             let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
@@ -151,8 +148,6 @@ impl SlotPool {
             }
             states.push(slot_states);
             fp8.push(slot_fp8);
-            // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
-            tables.push(super::metadata::identity_table(device, capacity)?);
         }
         let external = api::zeros::<f32>(&[hidden])
             .sync_on(&device.stream)
@@ -182,7 +177,6 @@ impl SlotPool {
                 external: &external,
                 lane_external: &mut lane_external,
                 lane_fusion: &mut lane_fusion,
-                tables: &tables,
                 capacity,
                 width,
             };
@@ -200,7 +194,6 @@ impl SlotPool {
             verify: verify_graph,
             states,
             fp8,
-            tables,
             plan,
             free: (0..width).rev().collect(),
             slots: width,
@@ -321,18 +314,6 @@ impl SlotPool {
     ) -> Result<()> {
         if slot >= self.width() || rows > self.capacity {
             return Err(Error::invalid("slot bind index or prefix length"));
-        }
-        // Step 1 of the KV refactor: the kernels resolve KV positions through this table, so it
-        // must cover the slot's whole capacity. Step 2 replaces the identity contents with the
-        // allocator's blocks and rewrites them here on every bind.
-        let blocks = i32::try_from(self.capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS))
-            .map_err(|_| Error::invalid("slot block count"))?;
-        if self
-            .tables
-            .get(slot)
-            .is_none_or(|table| table.shape() != [blocks])
-        {
-            return Err(Error::invariant("slot block table shape"));
         }
         for (id, copy) in &self.plan {
             match *copy {

@@ -29,11 +29,6 @@ pub(super) struct Capture<'a> {
     pub fp8_states: &'a mut super::fp8_cache::Fp8Caches,
     pub states: &'a mut BTreeMap<TensorId, Vec<Tensor<f32>>>,
     pub metadata: &'a Tensor<i32>,
-    /// Logical-to-physical KV block ids for the sequence this capture belongs to. Step 1 of the
-    /// KV refactor keeps it an identity mapping over the sequence's own cache, so kernels resolve
-    /// a position through it while every byte stays where it is today; the allocator of step 2
-    /// will hand these blocks out across sequences.
-    pub table: &'a Tensor<i32>,
     pub external: &'a Tensor<f32>,
     pub capacity: usize,
     pub fusion: &'a mut Option<super::program::FusionWorkspace>,

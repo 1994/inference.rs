@@ -60,9 +60,6 @@ pub(super) struct BatchBuilder<'a> {
     pub external: &'a Tensor<f32>,
     pub lane_external: &'a mut Vec<Tensor<f32>>,
     pub lane_fusion: &'a mut Vec<Option<super::program::FusionWorkspace>>,
-    /// One block table per lane, indexed exactly like `lane_external`; batched and prefill
-    /// captures use entry 0 because their operators do not resolve KV positions.
-    pub tables: &'a [Tensor<i32>],
     pub capacity: usize,
     pub width: usize,
 }
@@ -204,7 +201,6 @@ impl BatchBuilder<'_> {
                             states: self.states,
                             fp8_states: self.fp8_states,
                             metadata: &metadata[0],
-                            table: &self.tables[0],
                             external: self.external,
                             capacity: self.capacity,
                             fusion: &mut no_fusion,
@@ -222,7 +218,6 @@ impl BatchBuilder<'_> {
                                     states: &mut lane_states[lane],
                                     fp8_states: &mut lane_fp8[lane],
                                     metadata: &metadata[lane],
-                                    table: &self.tables[lane],
                                     external: &self.lane_external[lane],
                                     capacity: self.capacity,
                                     fusion: &mut self.lane_fusion[lane],
@@ -457,8 +452,6 @@ impl BatchBuilder<'_> {
                         states: self.states,
                         fp8_states: self.fp8_states,
                         metadata: &lane.metadata,
-                        // Flat lanes share the program's single cache, so they share its table.
-                        table: &self.tables[0],
                         external: &self.lane_external[index],
                         capacity: self.capacity,
                         fusion: &mut self.lane_fusion[index],
@@ -524,7 +517,6 @@ impl BatchBuilder<'_> {
                         states: self.states,
                         fp8_states: self.fp8_states,
                         metadata: prefill_info,
-                        table: &self.tables[0],
                         external: self.external,
                         capacity: self.capacity,
                         fusion: &mut no_fusion,
@@ -555,7 +547,6 @@ impl BatchBuilder<'_> {
                             states: self.states,
                             fp8_states: self.fp8_states,
                             metadata: &metadata[0],
-                            table: &self.tables[0],
                             external: self.external,
                             capacity: self.capacity,
                             fusion: &mut no_fusion,
@@ -576,9 +567,6 @@ impl BatchBuilder<'_> {
                                 states: self.states,
                                 fp8_states: self.fp8_states,
                                 metadata: meta,
-                                // Every lane of a prompt chunk appends into the one cache this
-                                // program owns, so they all resolve through one table.
-                                table: &self.tables[0],
                                 external: &self.lane_external[lane],
                                 capacity: self.capacity,
                                 fusion: &mut self.lane_fusion[lane],

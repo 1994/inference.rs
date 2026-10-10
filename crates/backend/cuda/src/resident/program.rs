@@ -144,8 +144,6 @@ pub struct DeviceProgram {
     readbacks: crate::device::Readbacks,
     prefill: CudaGraph<()>,
     metadata: Tensor<i32>,
-    /// Identity block table over this program's own KV cache; see `capture::Capture::table`.
-    table: Tensor<i32>,
     nvfp4: super::nvfp4_gemm::Workspace,
     delegated: crate::device::cublaslt::Support,
     attention: super::attention_decode::Workspace,
@@ -337,7 +335,6 @@ impl DeviceProgram {
             external: &self.external,
             lane_external: &mut self.lane_external,
             lane_fusion: &mut self.lane_fusion,
-            tables: std::slice::from_ref(&self.table),
             capacity: self.capacity,
             width: weights.batch_width,
         };
@@ -403,20 +400,14 @@ impl DeviceProgram {
     }
 
     /// Zeroed decode metadata tensor and external hidden row shared by every capture.
-    fn constant_inputs(
-        device: &CudaDevice,
-        hidden: usize,
-        capacity: usize,
-    ) -> Result<(Tensor<i32>, Tensor<f32>, Tensor<i32>)> {
+    fn constant_inputs(device: &CudaDevice, hidden: usize) -> Result<(Tensor<i32>, Tensor<f32>)> {
         let metadata = device.upload(vec![0_i32; METADATA_FIELDS * 2], &[METADATA_FIELDS * 2])?;
         let metadata =
             Arc::try_unwrap(metadata).map_err(|_| Error::invariant("unique metadata"))?;
         let external = api::zeros::<f32>(&[hidden])
             .sync_on(&device.stream)
             .map_err(device_error)?;
-        // Step 1 of the KV refactor: an identity mapping over this program's own cache.
-        let table = super::metadata::identity_table(device, capacity)?;
-        Ok((metadata, external, table))
+        Ok((metadata, external))
     }
 
     /// Retained bytes priced from the graphs this program actually captured.
@@ -460,7 +451,7 @@ impl DeviceProgram {
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
         let reset_graph = capture_reset(device, &mut states)?;
-        let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
+        let (metadata, external) = Self::constant_inputs(device, hidden)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
         let mut capture_graph = |skip_logits: bool| {
@@ -474,7 +465,6 @@ impl DeviceProgram {
                     states: &mut states,
                     fp8_states: &mut fp8_states,
                     metadata: &metadata,
-                    table: &table,
                     external: &external,
                     capacity,
                     fusion: &mut fusion,
@@ -498,7 +488,6 @@ impl DeviceProgram {
             external: &external,
             lane_external: &mut lane_external,
             lane_fusion: &mut lane_fusion,
-            tables: std::slice::from_ref(&table),
             capacity,
             width: weights.batch_width,
         };
@@ -515,7 +504,6 @@ impl DeviceProgram {
         let hidden = super::batch::take_result(&mut arena, graph.hidden)?;
         let logits = super::batch::take_result(&mut arena, graph.logits)?;
         Ok(Self {
-            table,
             nvfp4,
             delegated,
             attention,

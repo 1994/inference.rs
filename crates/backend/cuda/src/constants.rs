@@ -44,11 +44,6 @@ mod device {
     /// tensor-core work. Keep the row-dependent split and re-measure serving, not just the
     /// kernel, before changing either dimension.
     pub const PROMPT_GEMM_TILE_ROWS: usize = 64;
-
-    /// Tokens per KV block. Step 1 of the KV refactor uses it only to resolve a position through
-    /// the sequence's block table; a real allocator will later hand these blocks out across
-    /// sequences. It matches the attention kernels' 32-token KV tile, so a block is one tile.
-    pub const KV_BLOCK_TOKENS: usize = 32;
     /// Output tile of the activation-quantized GEMM for a graph with `rows` output rows.
     ///
     /// Decode-width graphs keep the 16-row tile; wider ones take the prompt tile so one CTA
