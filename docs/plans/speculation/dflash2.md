@@ -115,10 +115,24 @@ taps、公式、舍入与 torch 版本；重复运行一致。Rust 测试把它�
 两个张量名必须已在 weight inventory 中、`kernel_projection` 形状必须等于 `[2 × taps × groups, hidden]`、
 输出维度必须等于 block × hidden。
 
+**权重报价（第六步，已完成）**
+
+卷积张量的形状确定之后，清单里不再有任何"只查名字"的项，于是权重报价可以完整给出并**被真实制品验证**：
+
+- `expected_weight_shapes()` 现在是 `BTreeMap<String, Vec<usize>>`（去掉 Option）：`base_kernel` 为
+  `[side, tap, channel]`、`kernel_projection` 为 `[2 × taps × groups, hidden]`，`groups` 取自
+  `conv_group_size`；顺带把两个都叫 "taps" 的计数分开命名（`feature_taps` 是抽头数、`conv_taps` 是
+  卷积核 tap 数）——它们在方案行文里同名，但在实现里毫无关系。
+- 新增 `DFlash2Config::weights_bytes(dtype_bytes)`。
+- 验收：`weights_bytes(2)` == **3,848,808,960** 字节，即 `model.safetensors` 里 81 个 BF16 张量的实际
+  总和（同时得出 1,924,404,480 个参数，与研究记录里的 "1.924B" 吻合）。这一个数字同时校验了全部
+  形状公式——`groups`、`conv_taps`、head 几何或 vocab 任一处错了都会对不上。
+- 我另外用一份**独立的 Python 推导**（不共享 Rust 实现）逐张量对比了真实文件的 header：**81 个名字与
+  形状全部精确一致**，无缺失、无多余、无形状差异。
+
 **明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
-token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价（`conv_*` 张量现在有了形状，下一步
-可以把权重报价补全）；草稿 attention 的**非因果 mask 与滑动窗口**语义、以及 selector 的 top-k 与
-路径选择部分是 D1 的剩余工作。
+token map，属于 loader 的职责）；arena、graph 与回滚开销的报价（需要设备事实）；草稿 attention 的
+**非因果 mask 与滑动窗口**语义、以及 selector 的 top-k 与路径选择部分是 D1 的剩余工作。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。

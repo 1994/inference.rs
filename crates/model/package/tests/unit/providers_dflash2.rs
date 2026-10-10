@@ -175,31 +175,32 @@ fn the_inventory_covers_the_released_draft() {
     let expected = config.expected_weight_shapes();
     // The released checkpoint has 81 tensors: six shared and fifteen per draft layer.
     assert_eq!(expected.len(), 6 + 15 * config.num_hidden_layers);
-    assert_eq!(expected["fc.weight"], Some(vec![5120, 25600]));
+    assert_eq!(expected["fc.weight"], vec![5120, 25600]);
     assert_eq!(
         expected["layers.0.self_attn.q_proj.weight"],
-        Some(vec![4096, 5120])
+        vec![4096, 5120]
     );
     assert_eq!(
         expected["layers.0.self_attn.k_proj.weight"],
-        Some(vec![1024, 5120])
+        vec![1024, 5120]
+    );
+    assert_eq!(expected["layers.4.mlp.down_proj.weight"], vec![5120, 17408]);
+    // The convolution shapes come from the reference implementation's layout.
+    assert_eq!(
+        expected["layers.0.attention_conv.base_kernel"],
+        vec![2, 2, 5120]
     );
     assert_eq!(
-        expected["layers.4.mlp.down_proj.weight"],
-        Some(vec![5120, 17408])
+        expected["layers.0.mlp_conv.kernel_projection.weight"],
+        vec![1280, 5120]
     );
-    // The convolution shapes come from the loader, not from geometry.
-    assert_eq!(expected["layers.0.attention_conv.base_kernel"], None);
 }
 
 #[test]
 fn a_complete_inventory_is_accepted_and_each_shortfall_is_named() {
     let config = fixture();
-    let mut actual: BTreeMap<String, Vec<usize>> = config
-        .expected_weight_shapes()
-        .into_iter()
-        .map(|(name, shape)| (name, shape.unwrap_or_else(|| vec![1280, 5120])))
-        .collect();
+    let mut actual: BTreeMap<String, Vec<usize>> =
+        config.expected_weight_shapes().into_iter().collect();
     config.check_weight_inventory(&actual).unwrap();
 
     let complete = actual.clone();
@@ -283,7 +284,7 @@ fn the_fusion_golden_matches_the_registered_contract() {
         .iter()
         .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
         .collect();
-    assert_eq!(Some(shape), expected["fc.weight"].clone());
+    assert_eq!(shape, expected["fc.weight"]);
 }
 
 #[test]
@@ -336,7 +337,7 @@ fn the_selector_golden_matches_the_registered_contract() {
             .iter()
             .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
             .collect();
-        assert_eq!(Some(shape), expected[tensor].clone(), "{tensor}");
+        assert_eq!(shape, expected[tensor], "{tensor}");
     }
     let scores = golden["scores"].as_array().unwrap();
     assert_eq!(scores.len(), geometry.selector_top_k);
@@ -417,4 +418,17 @@ fn the_conv_golden_matches_the_registered_contract() {
                 .all(|value| value.as_f64().unwrap().is_finite())
         );
     }
+}
+
+#[test]
+fn the_weight_quote_reproduces_the_released_checkpoint_exactly() {
+    let config = fixture();
+    // The released `model.safetensors` holds 81 bfloat16 tensors totalling 3,848,808,960 bytes.
+    // Every shape in the inventory is derived, so this one number checks all of them at once: a
+    // wrong group count, tap count or head geometry would miss it.
+    assert_eq!(config.weights_bytes(2), 3_848_808_960);
+    // The quote has to follow the dtype it is asked for.
+    assert_eq!(config.weights_bytes(4), 2 * config.weights_bytes(2));
+    // The draft's own footprint, for the report: 1.92 B parameters.
+    assert_eq!(config.weights_bytes(2) / 2, 1_924_404_480);
 }

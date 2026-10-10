@@ -124,20 +124,26 @@ impl DFlash2Config {
         Ok(())
     }
 
-    /// The tensors the draft's package must provide; `None` where geometry does not fix the shape.
+    /// The tensors the draft's package must provide and the shape geometry fixes for each.
     ///
-    /// The two dynamic-convolution tensors depend on how the loader groups the double-tap kernel, so
-    /// their shapes are the ones observed in the released checkpoint and are confirmed by the device
-    /// loader rather than derived here.
+    /// The double-tap convolution's shapes come from the reference implementation the plan cites:
+    /// `base_kernel` is `[side, tap, channel]` and `kernel_projection` is
+    /// `[side * taps * groups, hidden]`, with the group count taken from `conv_group_size`.
     #[must_use]
-    pub fn expected_weight_shapes(&self) -> BTreeMap<String, Option<Vec<usize>>> {
+    pub fn expected_weight_shapes(&self) -> BTreeMap<String, Vec<usize>> {
         let hidden = self.hidden_size;
         let intermediate = self.intermediate_size;
         let kv = self.num_key_value_heads * self.head_dim;
         let q = self.num_attention_heads * self.head_dim;
-        let taps = self.dflash_config.target_layer_ids.len();
+        // The fusion concatenates one feature per target tap; the convolution slides its own
+        // kernel, and the two counts are unrelated even though both are "taps" in the plan's prose.
+        let feature_taps = self.dflash_config.target_layer_ids.len();
         let rank = self.dflash_config.selector_rank;
-        let mut expected: BTreeMap<String, Option<Vec<usize>>> = BTreeMap::new();
+        let groups = self.hidden_size / self.dflash_config.conv_group_size;
+        let conv_taps = self.dflash_config.conv_kernel_size;
+        let conv_projection = vec![2 * conv_taps * groups, hidden];
+        let base_kernel = vec![2, conv_taps, hidden];
+        let mut expected: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (name, shape) in [
             (
                 "candidate_selector.hidden_projection.weight",
@@ -151,34 +157,50 @@ impl DFlash2Config {
                 "candidate_selector.successor_codebook",
                 vec![self.vocab_size, rank],
             ),
-            ("fc.weight", vec![hidden, taps * hidden]),
+            ("fc.weight", vec![hidden, feature_taps * hidden]),
             ("hidden_norm.weight", vec![hidden]),
             ("norm.weight", vec![hidden]),
         ] {
-            expected.insert(name.to_owned(), Some(shape));
+            expected.insert(name.to_owned(), shape);
         }
         for layer in 0..self.num_hidden_layers {
             for (suffix, shape) in [
-                ("input_layernorm.weight", Some(vec![hidden])),
-                ("post_attention_layernorm.weight", Some(vec![hidden])),
-                ("self_attn.q_proj.weight", Some(vec![q, hidden])),
-                ("self_attn.k_proj.weight", Some(vec![kv, hidden])),
-                ("self_attn.v_proj.weight", Some(vec![kv, hidden])),
-                ("self_attn.o_proj.weight", Some(vec![hidden, q])),
-                ("self_attn.q_norm.weight", Some(vec![self.head_dim])),
-                ("self_attn.k_norm.weight", Some(vec![self.head_dim])),
-                ("mlp.gate_proj.weight", Some(vec![intermediate, hidden])),
-                ("mlp.up_proj.weight", Some(vec![intermediate, hidden])),
-                ("mlp.down_proj.weight", Some(vec![hidden, intermediate])),
-                ("attention_conv.kernel_projection.weight", None),
-                ("attention_conv.base_kernel", None),
-                ("mlp_conv.kernel_projection.weight", None),
-                ("mlp_conv.base_kernel", None),
+                ("input_layernorm.weight", vec![hidden]),
+                ("post_attention_layernorm.weight", vec![hidden]),
+                ("self_attn.q_proj.weight", vec![q, hidden]),
+                ("self_attn.k_proj.weight", vec![kv, hidden]),
+                ("self_attn.v_proj.weight", vec![kv, hidden]),
+                ("self_attn.o_proj.weight", vec![hidden, q]),
+                ("self_attn.q_norm.weight", vec![self.head_dim]),
+                ("self_attn.k_norm.weight", vec![self.head_dim]),
+                ("mlp.gate_proj.weight", vec![intermediate, hidden]),
+                ("mlp.up_proj.weight", vec![intermediate, hidden]),
+                ("mlp.down_proj.weight", vec![hidden, intermediate]),
+                (
+                    "attention_conv.kernel_projection.weight",
+                    conv_projection.clone(),
+                ),
+                ("attention_conv.base_kernel", base_kernel.clone()),
+                ("mlp_conv.kernel_projection.weight", conv_projection.clone()),
+                ("mlp_conv.base_kernel", base_kernel.clone()),
             ] {
                 expected.insert(format!("layers.{layer}.{suffix}"), shape);
             }
         }
         expected
+    }
+
+    /// Every weight the draft loads, in bytes at `dtype_bytes` each.
+    ///
+    /// This is the half of the resource quote that the checkpoint's shapes determine; the arena,
+    /// graph and rollback costs still need device facts, and the state and feature history are
+    /// quoted by [`Self::quote`].
+    #[must_use]
+    pub fn weights_bytes(&self, dtype_bytes: usize) -> usize {
+        self.expected_weight_shapes()
+            .values()
+            .map(|shape| shape.iter().product::<usize>() * dtype_bytes)
+            .sum()
     }
 
     /// Checks a package's tensor inventory against [`Self::expected_weight_shapes`].
@@ -199,7 +221,6 @@ impl DFlash2Config {
             )));
         }
         for (name, shape) in expected {
-            let Some(shape) = shape else { continue };
             let found = actual
                 .get(&name)
                 .ok_or_else(|| Error::invalid(format!("draft package is missing {name}")))?;
