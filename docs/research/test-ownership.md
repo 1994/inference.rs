@@ -170,6 +170,22 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 - **state 表容量要按场景给**。`cpu_storage` 的候选窗口场景提交的请求数远超 4，替身容量太小会
   以 `fixed map exhausted` 失败。
 
+### 下一步：`control_path` 需要替身支持在途票据语义
+
+`control_path.rs`（16 个用例）已试改：13 个可以直接跑通，3 个需要替身补在途票据的语义，本轮
+**已完整回滚该文件**，但过程中确认了两条对后续批次有用的事实，并已落到 support 模块里：
+
+- **快照必须带上每个 state 的 token 历史**（原先只存 state id）。引擎从提交过的游标继续，替身
+  恢复后历史为空时，下一次 decode 会被判成 stale cursor（`incremental token cursor mismatch`）。
+  现在 `capture_execution_state` 序列化 `(state, history)`。
+- **注入计时的 `source` 必须与声明的 backend 种类匹配**，否则引擎直接丢弃该样本。`FaultyBackend`
+  用 `CpuWall` 配 CUDA 声明就对不上，须改成 `CudaGpu`。
+- **替身需要一个可声明的权重身份**：快照按 `backend.identity()` 比对"权重指纹"，所以
+  `ProtocolBackend::tagged(tag, ..)` 让"不同权重"场景用不同 tag 表达，而不是真的加载权重。
+
+剩下 3 个用例（`NeverComplete` 超时诊断、零长度计时拒绝、取消后的在途状态保留）依赖引擎对
+在途票据的判定，需要在替身里显式建模"票据已提交但未完成"的状态之后才能迁移。
+
 ### 其余 `protocol` 消费者的要求
 
 同样三件事：显式模型描述符、声明的 kernel 集合、显式 capability 样例；需要成本反馈的场景让替身
@@ -275,3 +291,10 @@ match (backend, self.source) {
 feature 的非设备种类**（它不再是产品可选后端，只是协议/基准的身份），要么让 `CpuWall` 对某个
 声明的非设备种类合法。方案完成条件里的"实现和 manifest 不再包含 `TestCpu`"在这一条解决之前无法
 落地，因此 E1 的删除半段建议先补这个契约，再逐消费者替换。
+
+## CI 成本
+
+文档类改动不再触发整条矩阵：`.github/workflows/ci.yml` 对 `docs/**` 与 `**/*.md` 加了
+`paths-ignore`，这类改动走 `.github/workflows/docs.yml` 只跑 `make check-tools`（本地链接、布局、
+用例清单）。原因是整条矩阵包含 4 次打包与 2 个 macOS runner，改一行 markdown 也要付这份成本；
+文档校验本身很便宜。改动同时把 `actionlint` 纳入本地可跑（`check-tools` 已包含）。

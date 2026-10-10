@@ -1,3 +1,10 @@
+// Each integration test compiles its own copy of this module, so whatever a given scene does not
+// use is dead code in that target.
+#![allow(
+    dead_code,
+    reason = "shared test source, included once per test target"
+)]
+
 //! The declared protocol double for runtime scenes.
 //!
 //! Scenes that exercise admission, completion identity, checkpointing or resource ownership need
@@ -125,6 +132,7 @@ struct State {
 }
 
 pub struct ProtocolBackend {
+    identity: String,
     states: BoundedMap<StateId, State>,
     template: ModelOutput,
     resources: infer_spi::ResourcePool,
@@ -136,6 +144,18 @@ impl ProtocolBackend {
     /// # Errors
     /// Returns an invalid-input error when the configured request bound cannot be reserved.
     pub fn new(requests: usize, batch: usize, ir: &ModelIr) -> Result<Self> {
+        Self::tagged("declared-protocol-double", requests, batch, ir)
+    }
+
+    /// The same double with a declared weight tag.
+    ///
+    /// A snapshot records the backend's `identity` as its weights fingerprint, so a scene that
+    /// checks a restore rejects different weights gives each side a different tag. The double
+    /// declares that identity instead of hashing tensors it never loads.
+    ///
+    /// # Errors
+    /// Returns an invalid-input error when the configured request bound cannot be reserved.
+    pub fn tagged(tag: &str, requests: usize, batch: usize, ir: &ModelIr) -> Result<Self> {
         let _ = batch;
         // A declared ramp rather than a constant: sampling has to pick a token that is not the stop
         // token for scenes that count generated tokens, and the ramp makes that deterministic
@@ -147,6 +167,7 @@ impl ProtocolBackend {
             value += 1.0;
         }
         Ok(Self {
+            identity: tag.to_owned(),
             states: BoundedMap::new(requests)?,
             template: ModelOutput {
                 logits,
@@ -162,8 +183,8 @@ impl ProtocolBackend {
 
 impl BackendProvider for ProtocolBackend {
     type Ticket = Option<Vec<TaskOutput>>;
-    fn identity(&self) -> &'static str {
-        "declared-protocol-double"
+    fn identity(&self) -> &str {
+        &self.identity
     }
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities {
@@ -192,33 +213,33 @@ impl BackendProvider for ProtocolBackend {
         }
     }
     fn capture_execution_state(&self) -> Result<Option<Vec<u8>>> {
-        // The double's whole device state is which states it has granted; it holds nothing else,
-        // so a checkpoint is that list and no tensor data.
-        let states: Vec<StateId> = self.states.keys().copied().collect();
-        serde_json::to_vec(&states)
+        // The double's whole device state is the token history it has been given per state. That
+        // history has to survive a checkpoint: the engine resumes from the cursor it committed, and
+        // a restored double with an empty history rejects the next decode as a stale cursor.
+        let history: Vec<(&StateId, &Vec<u32>)> = self
+            .states
+            .iter()
+            .map(|(id, state)| (id, &state.history))
+            .collect();
+        serde_json::to_vec(&history)
             .map(Some)
             .map_err(|error| Error::invalid(error.to_string()))
     }
     fn restore_execution_state(&mut self, state: Option<&[u8]>) -> Result<()> {
-        let states: Vec<StateId> = state.map_or_else(
+        let history: Vec<(StateId, Vec<u32>)> = state.map_or_else(
             || Ok(Vec::new()),
             |bytes| {
                 serde_json::from_slice(bytes).map_err(|error| Error::invalid(error.to_string()))
             },
         )?;
-        if states.len() > self.capacity {
+        if history.len() > self.capacity {
             return Err(Error::invalid(
                 "checkpoint holds more states than the double granted",
             ));
         }
         self.states.clear();
-        for id in states {
-            self.states.insert(
-                id,
-                State {
-                    history: Vec::new(),
-                },
-            )?;
+        for (id, tokens) in history {
+            self.states.insert(id, State { history: tokens })?;
         }
         Ok(())
     }

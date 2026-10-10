@@ -1,7 +1,16 @@
 name: quality
+# Documentation-only changes run `.github/workflows/docs.yml` instead: the full matrix here
+# spends four package builds and two macOS runners on a markdown edit, and none of that can be
+# affected by prose. Anything touching code still runs every gate.
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   merge_group:
   workflow_dispatch:
 
