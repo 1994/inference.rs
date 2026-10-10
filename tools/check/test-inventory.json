@@ -418,14 +418,6 @@
     },
     {
       "crate": "tools",
-      "path": "tools/check/gate.sh",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "tools",
       "path": "tools/check/layout.py",
       "patterns": [
         "infer-backend-host",

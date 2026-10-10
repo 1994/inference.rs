@@ -30,6 +30,22 @@ CUDA 的 5 个 example 只用到宿主执行器里的**一个函数** `reference
 环境一致），设上以后 `cargo check -p infer-backend-cuda --features cuda --examples` 通过 ✓ —— 这把
 E1 剩余部分从"只能靠设备机验证"变成了**本机可验证** ✓。
 
+## 已实施：CLI 的测试后端分叉关闭
+
+产品 CLI 的 `test-backends` 现在**没有任何实现**：feature 名字保留（让 `cfg` 站点仍然合法、便于下一步
+整批删除），但不再拉入两个执行器，`infer-cli` 的依赖里也没有它们了。门禁里依赖它的步骤随之移除：
+第二个测试 CLI 的构建、`--backend test-cpu verify` 的 golden 块、以及各处
+`--features infer-cli/test-backends`。
+
+**被移除断言的目的地，写清楚而不是含糊过去**：这些 golden（`examples/{qwen-hybrid-tiny,
+qwen-hybrid-grouped}/golden.json`）是**模型级**数值对照，只有 CPU 执行器能跑 ✗；E1 之后它们由设备验收
+（`make test-cuda` / `make test-metal`）与 `tools/validation/smoke-paged-kv.py` 消费，而**CI 不再覆盖**
+这一项——这与"真实设备验收不在 CI 内"是同一条既有边界，已记在 E2 的场景表里。算子级对照不受影响：
+它们已经搬进 `infer-reference-ops`，并由 CUDA example 直接使用。
+
+仍需处理（下一步）：`tools/validation/smoke-paged-kv.py` 现在把 Metal 输出与 CPU oracle 对比，要改成
+与登记 golden 对比；CLI 里 23 个 `#[cfg(feature = "test-backends")]` 站点与执行器本体一并删除。
+
 ## 已保住的数值对照
 
 删除执行器前，其中唯一的数值参考（gated-delta 状态步）已固化为

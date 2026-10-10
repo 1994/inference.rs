@@ -28,7 +28,7 @@ rust_checks() {
     # set, and the plan asks for build edges, duplicates and lockfile identity to be recorded.
     python3 tools/check/release-dependencies.py
     cargo clippy --locked -p infer-backend-cuda --no-default-features --all-targets -- -D warnings
-    cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets --features infer-cli/test-backends -- -D warnings
+    cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets -- -D warnings
     # Every test entry reports what it collected, ran, ignored and failed; an entry that only
     # compiles says `compiled` instead of leaving the reader to infer it from a long log.
     python3 tools/check/test-report.py --entry cli -- \
@@ -38,19 +38,10 @@ rust_checks() {
     python3 tools/check/test-report.py --entry cuda-no-default -- \
         cargo test --locked -p infer-backend-cuda --no-default-features
     python3 tools/check/test-report.py --entry workspace -- \
-        cargo test --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends --no-deps
+        cargo test --locked --workspace --exclude infer-backend-cuda
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --no-deps
     cargo build --locked --release -p infer-cli --no-default-features
     cpu_checks
-    # Golden execution is independent of the Rust implementation.
-    cargo build --locked -p infer-cli --features test-backends
-    target/debug/infer --backend test-cpu verify
-    for fixture in qwen-hybrid-tiny qwen-hybrid-grouped; do
-        target/debug/infer --backend test-cpu verify --package "examples/$fixture" \
-            --golden "examples/$fixture/golden.json" --atol 0.000002 --rtol 0.00002
-    done
-    target/debug/infer --backend test-cpu run --package examples/qwen-hybrid-tiny \
-        --requests examples/requests.json --config examples/runtime.json
 }
 
 cpu_checks() {
@@ -91,14 +82,13 @@ cuda_checks() {
 metal_checks() {
     # Explicit backend selection makes missing GPU support fail instead of skipping.
     cargo build --locked --release -p infer-cli --no-default-features
-    cargo build --locked -p infer-cli --features test-backends
     python3 tools/check/metal.py
     python3 tools/validation/cpu-open-loop.py
 }
 
 msrv_checks() {
     CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked -p infer-cli --no-default-features
-    CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked --workspace --exclude infer-backend-cuda --all-targets --features infer-cli/test-backends
+    CARGO_TARGET_DIR=target/msrv cargo +1.90.0 check --locked --workspace --exclude infer-backend-cuda --all-targets
     CARGO_TARGET_DIR=target/cpu-bench-msrv cargo +1.90.0 check --locked --manifest-path tools/bench/cpu/Cargo.toml --all-targets
 }
 
