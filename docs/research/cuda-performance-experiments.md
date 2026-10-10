@@ -1624,8 +1624,12 @@ attention 几何**上跑了现成的 `DenseAttentionPlan`：在 /tmp 造了一�
 
 **结论**：attention 这条路的可行性已经用真实几何 + 数值闸门 + 计时确认，剩余工作是集成而非
 算法：① fp8 KV 输入（转换或 fp8 变体）；② `[kv_heads, capacity, head_dim]` 布局 + 每 chunk 的
-append；③ 每 lane 位置（metadata 的 base/count/offset）——注意闸门里用的是
-`query_start = kv_tokens - tokens` 的单调 causal，而 resident 的 lane 位置是逐 lane 的；
+append；③ 每 lane 位置：闸门与 `DenseAttentionPlan` 的 causal 掩码只接受**一个** `query_start`
+（`plan.rs:216 => [1, 1, offset(query_start), 0, 0]`），而 resident 的 SIMT 核是按 lane 算
+`position = base + lane + offset` 的（`attention_prefill.rs:82`）。**单序列 chunk 下两者等价**
+（把 `query_start` 取成 `base + offset`，lane 内单调），但**多序列打包到一个 chunk 时 lane 位置
+不是单调的，现有 SDPA 掩码表达不了**。所以第一步应限定"单序列 chunk"，多序列要么先按序列拆开，
+要么给 SDPA 加一个逐 lane 位置数组的掩码变体——这是一个需要先确认的集成边界，不是细节；
 ④ 滑动窗口/因果语义对齐；⑤ decode 侧改用单 query 变体并复量。
 
 复现（fixture 脚本在 /tmp，未入库；格式与仓库的 `tools/attention` 一致）：
