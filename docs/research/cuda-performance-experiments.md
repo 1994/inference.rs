@@ -1322,7 +1322,7 @@ sum_d (decay*old + k⊗diff)[d,s] * q[d]
 （`cargo test --release -p infer-backend-cuda --features cuda -- --ignored recurrent_chunk_performance_gate --nocapture`，
 约 2 秒），是后续改 delta 的快速 A/B 工具。
 
-### 12.7 未解释但最便宜的线索：delta 在图内比隔离慢 2.6×【待查】
+### 12.7 未解释但最便宜的线索：delta 在图内比隔离慢 2.6×【**已更正，见 12.9**：这不是缺口，是比错了核】
 
 同一颗核、同一几何（KH=16、VH=48、D=128、SW=D），两个口径对不上：
 
@@ -1357,3 +1357,89 @@ sum_d (decay*old + k⊗diff)[d,s] * q[d]
   delta 代数重排（§12.6）。
 - **剩下的路只有三条**：① delta 的算法级改写（WY / chunked 矩阵乘）；② GEMM 委托
   （FP8 那条不需要 scale swizzle，覆盖 15.79 GB 里的 7.22 GB）；③ 先查 §12.7 的 2.6× 缺口。
+
+### 12.9 更正 12.7：那 2.5× 不是缺口，是比错了核；真正的发现是快的那颗核默认关着
+
+§12.7 把"隔离 2.07 µs/token vs 图内 5.2 µs/token"当成未解释的服务侧开销。**这个结论是错的，
+原因是我拿 chunked 核的隔离时间去比服务里实际跑的核。** 量化检查：
+
+- 服务里跑的是**逐 lane** 核。`recurrent_prefill::Workspace::new`
+  （`crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs:41`）对量化 checkpoint
+  **默认返回空 workspace**，`record()` 随即返回 false，落到 `capture_state.rs` 的
+  `TensorOp::Delta` 分支 —— 那是 `recurrent::delta`（per-lane），**每个 token 一次 launch**，
+  64 个 token 的 launch 都记在同一个 graph node 下（profile 的边界是 node，不是 kernel）。
+- 同一个配对基准里，per-lane 那一侧的隔离成本是 (16,48,128,64) **0.334 ms / 64 次 launch
+  = 5.2 µs/token**，也就是 **333 µs / 64-token 节点 —— 与服务图内实测的 333 µs 完全一致**。
+
+所以没有缺口：5.2 µs/token 就是逐 lane 核的价格，chunked 核（0.132 ms / 64 token =
+2.07 µs/token）**比服务里实际跑的核快 2.5×**，只是它默认被关着。
+
+### 12.10 把 chunked 递推打开：官方矩阵实测（本轮新增数据）
+
+`INFER_CUDA_CHUNKED_RECURRENT=1` 下，同一个 `long`、同一 profile、逐节点画像：
+
+| 算子 | 逐 lane（默认） | chunked | 变化 |
+|---|---:|---:|---:|
+| **delta** | 16.00 ms（333 µs/节点） | **5.77 ms（120 µs/节点）** | **−64%** |
+| linear | 22.46 | 21.26 | −5% |
+| attention | 3.25 | 3.19 | −2% |
+| 其余（norm/conv/gated_norm/…） | 4.36 | 4.19 | −4% |
+| **每次 replay 合计** | **46.07 ms** | **34.41 ms** | **−25%** |
+| 每 token | 720 µs | 538 µs | −25% |
+
+即 chunked 核的隔离收益（120 µs vs 333 µs）**原样兑现到图内**，不需要额外的诊断。
+官方矩阵（`chunked-mtp2-native-g1` vs `final-mtp2-native-g1`，同一 vLLM 参照）：
+
+| case | 指标 | 逐 lane | chunked | Δ | vs vLLM（chunked） |
+|---|---|---:|---:|---:|---:|
+| short | TTFT | 55.9 ms | 45.3 ms | **−19.0%** | 1.469 |
+| short | wall | 898 ms | 922 ms | +2.6% | 1.614 |
+| short | TPOT | 13.36 ms | 13.92 ms | +4.1% | 1.620 |
+| long | TTFT | 394.0 ms | 314.4 ms | **−20.2%** | 4.822 |
+| long | wall | 1194 ms | 1118 ms | **−6.4%** | 1.747 |
+| long | TPOT | 12.78 ms | 12.74 ms | −0.3% | 1.401 |
+| batch4 | TTFT | 240.0 ms | 206.7 ms | **−13.9%** | 2.237 |
+| batch4 | wall | 1454 ms | 1412 ms | **−2.9%** | 1.996 |
+| batch4 | TPOT | 18.53 ms | 18.28 ms | −1.4% | 1.988 |
+| hot_long | TTFT | 81.7 ms | 72.9 ms | **−10.8%** | 0.337 |
+| hot_long | wall | 802 ms | 862 ms | +7.4% | 1.079 |
+| hot_long | TPOT | 11.39 ms | 12.54 ms | +10.2% | 1.354 |
+
+三个 TTFT 比值之和 1.81+6.04+2.60 = **10.45 → 8.53**（short/long/batch4），四个 wall 比值之和
+6.50 → 6.44（基本持平）。
+
+### 12.11 short/hot_long 的 TPOT 回退机制：是 MTP 接受率，不是核成本【确证】
+
+§（前面第 8 轮）把"short/hot_long 的 wall/TPOT 回退 8–10%"记为**待查**。本轮从
+`stream_events` 的 token 到达间隔反推每步产出（同一步内接受的 token 到达间隔 <2 ms），
+再算**每步解码成本**：
+
+| case | 每步解码 | 步数 | TPOT |
+|---|---:|---:|---:|
+| short 逐 lane → chunked | 30.15 → **29.43 ms** | 29 → **33** | 13.87 → 15.41 ms |
+| long 逐 lane → chunked | 30.00 → **30.32 ms** | 28 → **25** | 13.32 → 12.02 ms |
+| hot_long 逐 lane → chunked | 29.88 → **30.41 ms** | 24 → **26** | 11.37 → 12.54 ms |
+
+**单流三条用例的每步解码成本差 ≤2%（在噪声内），变的是步数。** 步数变化来自 token 变了：
+两条路的输出 token 只有 31/64（short）、38/64（long）、**1/64（hot_long）** 相同，
+内容不同 → 草稿/目标的吻合率不同 → 每个产出 token 需要的 verify replay 次数不同。
+`batch4` 因为 4 条 lane 的到达事件交织，间隔反推不可靠（10.09 → 11.50），但它的 TPOT 几乎没动。
+
+结论：chunked 预填充**对解码没有每步成本**（与"chunked 只作用于预填充图"的代码事实一致），
+short/hot_long 的回退是**内容相关的接受率二阶效应**，不是可以调掉的核开销。
+
+**因此默认开关的取舍应该重新陈述**：TTFT 收益（−11~−20%）是确定的；wall/TPOT 的 ±10% 是
+内容相关的、方向不可预测的（同一个模型上 long 的接受率反而升高、TPOT −10%）。
+也就是说，关掉它的代价是一个**数值口径选择**（输出差 1 ULP 起），而不是性能。
+
+### 12.12 结论（修订版）
+
+- 差距不在"GPU 没吃饱"：native 利用率更高，每 token 设备时间是 vLLM 的 5.6×，其中非 GEMM 过半。
+- **最大的单项已经写好并且在跑得通的形态下实测过：chunked 递推核**（delta −64%，
+  每次 replay 46.07 → 34.41 ms，TTFT 全面 −11~−20%）。它默认关闭是**数值口径**决定
+  （cuTile lowering 的 1 ULP 差 → 贪心续写不同），不是性能。
+- 打开之后剩下的靶子：`linear` 占 replay 的 **61.8%**（138 TFLOP/s = FP8 峰值 ~16%，
+  704 GB/s = 39% 带宽）→ GEMM 委托（FP8 那条不需要 scale swizzle）；`attention`
+  9.3%、200 µs/节点，与 delta 同类。
+- 已彻底关闭的低成本路线：值维分块（§十.1）、tile 形状（§11.7）、delta 代数重排（§12.6）、
+  以及"图内比隔离慢"这条伪线索（§12.9）。
