@@ -85,6 +85,9 @@ CPU protocol benchmark 移入主 workspace 的开发工具成员，设为 `publi
   `workspace.dependencies`，lint 改为 `[lints] workspace = true`；`[profile.release]` 也随之删除，
   因为根 profile 本来就是同一组值（`lto = "thin"`、`codegen-units = 1`），保留只会让 cargo 警告非根
   profile 被忽略。
+- 打包去重的实测：改动前最后一次绿色运行（`dc26a12`）整条矩阵 17m23s、macOS 宿主打包步骤 4m46s；
+  改动后（`c6d3c4c`）整条矩阵 14m50s、同一步骤 3m05s。省下的是宿主套件被重复执行的那部分，
+  最贵的 macOS runner 上单一 job 省 1m41s。
 - 门禁相应收敛：`cpu_checks` 改用 `-p infer-cpu-bench`，security 里针对第二份 lock 的 `cargo deny`
   与 `cargo audit` 两行删除——主 workspace 的检查已覆盖同一依赖图（该工具的依赖是主图的子集）。
 - `tools/check/layout.py` 新增 `TOOL_MEMBERS`，明确识别该开发工具成员，同时继续要求 `crates/**`
