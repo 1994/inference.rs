@@ -2099,3 +2099,30 @@ capacity（32768 → 1024 块）下必然触发，而单测/GPU 测试的夹具 
 第①步的正确做法（下一轮）：先把**表长与它服务的 KV 缓冲容量**在同一个地方派生（同一个 `capacity`
 来源），再让 append/attention 都用它；并且先在**私有程序路径**用交付 capacity 复现一次
 （`--max-model-len 32768` 的最小请求即可触发），确认步长一致后再接读路径。
+
+### 13.12 撤回的真正原因查到了：**那次调用的位置本来就超出了 arena**（疑似既有隐患）
+
+上一轮只写了"表长与内核寻址的 capacity 对不上"。本轮把表装回去、在 `record_attention` 两个入口
+打印 `(capacity, KV 张量形状, 表长)`，用真机 profile 复现，拿到失败现场前三行的数据：
+
+```
+KV_TABLE capacity=128 keys_shape=[131072]      values_shape=[131072]      table_shape=[4]
+KV_TABLE capacity=128 keys_shape=[4, 128, 256] values_shape=[4, 128, 256] table_shape=[4]
+attention_prefill.rs:56: partition access out of bounds: dim 0, block index >= ceil(?/1) or index < 0
+```
+
+**表长是自洽的**：capacity 128 → 4 块 ✓（池化那条是 capacity 2048 → 64 块 ✓）。真正越界的是
+**表的下标** `position / BT`——该调用寻址的位置 **≥ 128**，而它服务的 KV 缓冲只有 128 行。
+
+**这意味着什么**：改动前那个内核在同一调用里**直接**用同一个 `position` 写 KV（`[1, CAP, D]`
+分区的 `[0, position, 0]`）。也就是说，**这个位置在旧代码里同样越过了 arena**——只是
+`partition_mut(..).store(..)` 没有像 `load` 那样把越界报出来，于是**静默写到了缓冲之外**。
+换句话说：我加的这次 `load` 把一个**既有的、静默的越界**变成了显式报错。
+
+这解释了为什么单测/GPU 测试永远看不到它：它们的夹具里没有"喂给容量 128 的程序一个 ≥128 的位置"
+这种组合。
+
+**下一步（必须先做，否则第①步做不成）**：在**主机侧**把 `metadata::update` 写入的
+`(base, count, offset)` 与该 program 的 capacity 对一次账，凡是 `base + count + offset > capacity`
+就直接报错——这既是分页的前置（block table 绝不能越界索引），也能判定"这是既有 bug 还是我引入的"。
+在没有这个护栏之前，不再往核里加表。
