@@ -356,3 +356,65 @@ fn the_selector_golden_matches_the_registered_contract() {
             .all(|value| value.as_f64().unwrap().is_finite())
     }));
 }
+
+#[test]
+fn the_conv_golden_matches_the_registered_contract() {
+    let config = fixture();
+    let geometry = config.geometry();
+    let draft = &config.dflash_config;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen3.8-27b-dflash2/conv-golden.json");
+    let golden: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+
+    // The convolution's own parameters come from the configuration, not from the exporter.
+    assert_eq!(
+        golden["block_size"].as_u64().unwrap(),
+        geometry.block_size as u64
+    );
+    assert_eq!(
+        golden["group_size"].as_u64().unwrap(),
+        draft.conv_group_size as u64
+    );
+    assert_eq!(
+        golden["taps"].as_u64().unwrap(),
+        draft.conv_kernel_size as u64
+    );
+    assert_eq!(golden["rows"].as_u64().unwrap(), geometry.block_size as u64);
+
+    // Both tensors the convolution reads are names the inventory already requires.
+    let expected = config.expected_weight_shapes();
+    let tensors = golden["model"]["tensors"].as_object().unwrap();
+    for name in tensors.keys() {
+        assert!(expected.contains_key(name), "{name} is not a draft tensor");
+    }
+    let projection: Vec<usize> = tensors
+        .iter()
+        .find(|(name, _)| name.ends_with("kernel_projection.weight"))
+        .map(|(_, shape)| {
+            shape
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
+                .collect()
+        })
+        .unwrap();
+    // `[2 * taps * groups, hidden]`, which is where the released 1280 comes from.
+    let groups = geometry.hidden_size / draft.conv_group_size;
+    assert_eq!(
+        projection,
+        vec![2 * draft.conv_kernel_size * groups, geometry.hidden_size]
+    );
+
+    let output = golden["output"].as_array().unwrap();
+    assert_eq!(output.len(), geometry.block_size);
+    for row in output {
+        assert_eq!(row.as_array().unwrap().len(), geometry.hidden_size);
+        assert!(
+            row.as_array()
+                .unwrap()
+                .iter()
+                .all(|value| value.as_f64().unwrap().is_finite())
+        );
+    }
+}

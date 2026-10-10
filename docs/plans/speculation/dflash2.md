@@ -97,12 +97,28 @@ rank/top-k、三个张量的形状与 dtype、输入公式、**故意相等的�
 记录而不是脚注）、容差与理由、torch 版本；重复运行结果一致。Rust 侧一个测试把 rank/top-k、三个张量
 形状（对照 `expected_weight_shapes()`）与分数矩阵维度绑到契约上。
 
+**双抽头分组卷积参考（第五步，已完成）**
+
+上一轮留白的问题在同一个文件里就有答案：vLLM 除 triton kernel 之外还有**非融合参考路径**
+（`_grouped_conv` + `DFlashGroupedConv`），它把形状关系写全了，无需猜测：
+
+- `base_kernel` 是 `[side, tap, channel]`（side 0 用于 `prepare`、side 1 用于 `finish`）；
+- `kernel_projection` 输出 `[row, side, tap, group]`，`2 × taps × groups = 2×2×320 = 1280` ✓
+  正是实测的 1280，`groups = hidden / conv_group_size = 5120/16 = 320`；
+- 系数 = `base_kernel[side]`（按 channel）+ `coefficients[:, side]`（按 group）；输出 = 系数[0]×block，
+  其后每个 tap 加 `系数[tap] × block[row - tap] × (row % block_size >= tap)`，末尾把 group 维摊回 channel。
+
+于是用真实权重落了 `examples/qwen3.8-27b-dflash2/conv-golden.json`（导出器
+`tools/fixtures/export-dflash2-conv-golden.py`）：**8 行（一个完整 block）× 5120**，side 1（finish），
+确定性输入，值按 6 位有效数字记录（远小于 2e-2 容差），并记录 config 摘要、两个张量形状、block/group/
+taps、公式、舍入与 torch 版本；重复运行一致。Rust 测试把它绑到契约：block/group/taps 必须等于配置、
+两个张量名必须已在 weight inventory 中、`kernel_projection` 形状必须等于 `[2 × taps × groups, hidden]`、
+输出维度必须等于 block × hidden。
+
 **明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
-token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价；**草稿 attention 的双抽头分组卷积
-参考**——本机 vLLM 里确实有它的 triton kernel（`_dflash2_grouped_conv_kernel`），但 `base_kernel`
-的 `[2, 2, 5120]` 与 `kernel_projection` 的 `1280 = 2 × 640` 之间存在一处无法从 kernel 单独确定的
-分组对应（kernel 只用了每 tap 640 里的前 320），需要先看到官方 dflash 侧的非融合写法再落 golden，
-不能凭猜测写参考。
+token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价（`conv_*` 张量现在有了形状，下一步
+可以把权重报价补全）；草稿 attention 的**非因果 mask 与滑动窗口**语义、以及 selector 的 top-k 与
+路径选择部分是 D1 的剩余工作。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。
