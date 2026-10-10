@@ -22,13 +22,7 @@ fn registry() -> KernelRegistry {
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
 fn backend() -> ProtocolBackend {
-    ProtocolBackend::tagged(
-        "scheduling-weights",
-        16,
-        8,
-        &support::model(ModelId::new(1).unwrap()),
-    )
-    .unwrap()
+    ProtocolBackend::tagged("scheduling-weights", 16, 8, &support::model(ModelId::ONE)).unwrap()
 }
 #[expect(
     clippy::unwrap_used,
@@ -36,7 +30,7 @@ fn backend() -> ProtocolBackend {
 )]
 fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
     let b = backend();
-    let m = support::model(ModelId::new(1).unwrap());
+    let m = support::model(ModelId::ONE);
     Engine::new(b, m, PrecisionPlan::f32(), &registry(), config).unwrap()
 }
 #[expect(
@@ -46,7 +40,7 @@ fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
 fn request(id: u64, input: usize) -> CanonicalRequest {
     CanonicalRequest {
         id: RequestId::new(id).unwrap(),
-        model: ModelId::new(1).unwrap(),
+        model: ModelId::ONE,
         session: None,
         input: RequestInput::Sequence {
             tokens: vec![3; input].into(),
@@ -386,7 +380,7 @@ impl SchedulingPolicy for ForgedPolicy {
 fn provider_cannot_underreport_cost_or_forge_permanent_rejection() {
     for reject in [false, true] {
         let b = backend();
-        let m = support::model(ModelId::new(1).unwrap());
+        let m = support::model(ModelId::ONE);
         let mut e = Engine::with_policy(
             b,
             m,
@@ -496,7 +490,7 @@ impl BackendProvider for TimedBackend {
 )]
 fn timed_engine(config: RuntimeConfig, elapsed: u64) -> Engine<TimedBackend> {
     let b = backend();
-    let m = support::model(ModelId::new(1).unwrap());
+    let m = support::model(ModelId::ONE);
     Engine::new(
         TimedBackend { inner: b, elapsed },
         m,

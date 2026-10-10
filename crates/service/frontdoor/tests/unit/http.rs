@@ -23,7 +23,7 @@ mod support;
 use support::ProtocolBackend;
 
 fn handle() -> RuntimeHandle {
-    let ir = support::model(ModelId::new(1).unwrap());
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
     registry.register(&support::DeclaredKernels).unwrap();
     RuntimeHandle::start(
@@ -41,7 +41,7 @@ fn handle() -> RuntimeHandle {
 fn request(id: u64, max_new_tokens: usize) -> CanonicalRequest {
     CanonicalRequest {
         id: RequestId::new(id).unwrap(),
-        model: ModelId::new(1).unwrap(),
+        model: ModelId::ONE,
         session: None,
         input: RequestInput::Sequence {
             tokens: vec![1, 2, 3].into(),
@@ -150,7 +150,7 @@ async fn native_text_uses_package_assets_and_incremental_hybrid_weights() {
     use infer_backend_host::{HostBackend, HostConfig, HostKernels};
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    let mut package = infer_models::ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
+    let mut package = infer_models::ModelPackage::open(&root, ModelId::ONE).unwrap();
     let backend = HostBackend::from_package(&mut package, HostConfig::default()).unwrap();
     let model = backend.model().clone();
     let assets =
@@ -353,7 +353,7 @@ impl BackendProvider for HeldBackend {
 }
 #[tokio::test]
 async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_completion() {
-    let ir = support::model(ModelId::new(1).unwrap());
+    let ir = support::model(ModelId::ONE);
     let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let backend = HeldBackend {
         inner: ProtocolBackend::new(16, 8, &ir).unwrap(),

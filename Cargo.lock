@@ -1038,7 +1038,6 @@ dependencies = [
 name = "infer-agent"
 version = "0.1.0"
 dependencies = [
- "infer-backend-reference",
  "infer-core",
  "infer-ir",
  "infer-kernel-api",

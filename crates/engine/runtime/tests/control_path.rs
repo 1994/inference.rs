@@ -22,13 +22,7 @@ fn registry() -> KernelRegistry {
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
 fn backend() -> ProtocolBackend {
-    ProtocolBackend::tagged(
-        "control-path-weights",
-        16,
-        8,
-        &support::model(ModelId::new(1).unwrap()),
-    )
-    .unwrap()
+    ProtocolBackend::tagged("control-path-weights", 16, 8, &support::model(ModelId::ONE)).unwrap()
 }
 #[expect(
     clippy::unwrap_used,
@@ -36,7 +30,7 @@ fn backend() -> ProtocolBackend {
 )]
 fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
     let b = backend();
-    let m = support::model(ModelId::new(1).unwrap());
+    let m = support::model(ModelId::ONE);
     Engine::new(b, m, PrecisionPlan::f32(), &registry(), config).unwrap()
 }
 #[expect(
@@ -46,7 +40,7 @@ fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
 fn request(id: u64, workload: Workload) -> CanonicalRequest {
     CanonicalRequest {
         id: RequestId::new(id).unwrap(),
-        model: ModelId::new(1).unwrap(),
+        model: ModelId::ONE,
         session: None,
         input: RequestInput::Sequence {
             tokens: vec![1, 2, 3, 4, 5].into(),
@@ -219,7 +213,7 @@ fn checkpoint_roundtrip_and_weight_mismatch_rejection() {
         "control-path-other-weights",
         16,
         8,
-        &support::model(ModelId::new(1).unwrap()),
+        &support::model(ModelId::ONE),
     )
     .unwrap();
     assert!(Engine::restore(other, &registry(), checkpoint).is_err());
@@ -428,7 +422,7 @@ fn failure_after_device_completion_does_not_leave_requests_waiting_on_a_missing_
         inner: backend(),
         fault: Fault::InvalidTiming,
     };
-    let model = support::model(ModelId::new(1).unwrap());
+    let model = support::model(ModelId::ONE);
     let mut e = Engine::new(
         backend,
         model,
@@ -461,7 +455,7 @@ fn unbounded_trace_configuration_is_rejected_before_ring_allocation() {
         },
     ] {
         let backend = backend();
-        let model = support::model(ModelId::new(1).unwrap());
+        let model = support::model(ModelId::ONE);
         let result = Engine::new(backend, model, PrecisionPlan::f32(), &registry(), config);
         assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
     }
@@ -473,7 +467,7 @@ fn backend_failures_and_invalid_completions_release_all_owned_state() {
             inner: backend(),
             fault,
         };
-        let model = support::model(ModelId::new(1).unwrap());
+        let model = support::model(ModelId::ONE);
         let mut e = Engine::new(
             b,
             model,
@@ -501,7 +495,7 @@ fn backend_timeout_is_diagnosed_without_recycling_inflight_state() {
         inner: backend(),
         fault: Fault::NeverComplete,
     };
-    let model = support::model(ModelId::new(1).unwrap());
+    let model = support::model(ModelId::ONE);
     let mut e = Engine::new(
         b,
         model,
@@ -643,7 +637,7 @@ impl BackendProvider for DelayedBackend {
 #[test]
 fn in_flight_cancel_retains_state_until_completion() {
     let b = DelayedBackend { inner: backend() };
-    let model = support::model(ModelId::new(1).unwrap());
+    let model = support::model(ModelId::ONE);
     let mut e = Engine::new(
         b,
         model,
@@ -702,7 +696,7 @@ impl SchedulingPolicy for EmptyPolicy {
 #[test]
 fn scheduler_livelock_captures_diagnostic_snapshot() {
     let b = backend();
-    let model = support::model(ModelId::new(1).unwrap());
+    let model = support::model(ModelId::ONE);
     let mut e = Engine::with_policy(
         b,
         model,

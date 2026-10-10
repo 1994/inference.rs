@@ -42,7 +42,7 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（54 个文件）
+## 执行器消费者与删除归属（53 个文件）
 
 | `protocol` | 5 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
@@ -219,6 +219,16 @@ state 表为空，几轮下来这是最常踩的坑（`capacity`、`scheduling`�
 
 `runner.rs` 原分类为 `numeric`，实际验的是保留预算、取消与资源命令语义，因此按实情改回 `protocol`。
 至此 `infer-runtime` 的消费者清零，manifest 里的 `infer-backend-reference` dev-dependency 已删除。
+
+### 顺带收尾：`infer-agent` 的 dev-dependency 与 `.unwrap()` 清理
+
+agent 的场景全部迁走之后，`crates/service/agent/Cargo.toml` 里的
+`infer-backend-reference` 与 `infer-ir` 的 `test-backends` feature 都已无人使用，直接删除
+（manifest 自己也是一个消费者）。
+
+迁移过程中我写下的 `ModelId::new(1).unwrap()` 共 21 处，全部换成 `ModelId::ONE` 常量：
+`control_path.rs` 10 处、`scheduling.rs` 5 处、`providers.rs` 2 处、`frontdoor/tests/unit/http.rs`
+4 处。仓库里其余 17 处属于我没改过的既有文件（metal/package/执行器自身测试），不在本次改动范围。
 
 ### 仍未替换：需要真实 token 内容的场景
 

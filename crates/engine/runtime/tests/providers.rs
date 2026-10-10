@@ -55,7 +55,7 @@ fn providers() -> WorkloadRegistry {
 }
 #[test]
 fn registered_provider_runs_through_core_and_checkpoint_requires_same_registry() {
-    let ir = support::model(ModelId::new(1).unwrap());
+    let ir = support::model(ModelId::ONE);
     let mut kernels = KernelRegistry::default();
     kernels.register(&support::DeclaredKernels).unwrap();
     let mut engine = Engine::new(
@@ -70,7 +70,7 @@ fn registered_provider_runs_through_core_and_checkpoint_requires_same_registry()
     .unwrap();
     let request = CanonicalRequest {
         id: RequestId::new(1).unwrap(),
-        model: ModelId::new(1).unwrap(),
+        model: ModelId::ONE,
         session: None,
         input: RequestInput::Sequence {
             tokens: vec![1, 2].into(),

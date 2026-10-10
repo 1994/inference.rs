@@ -210,15 +210,6 @@
       "role": "plumbing"
     },
     {
-      "crate": "agent",
-      "path": "crates/service/agent/Cargo.toml",
-      "patterns": [
-        "infer-backend-reference",
-        "test-backends"
-      ],
-      "role": "protocol"
-    },
-    {
       "crate": "cli",
       "path": "crates/service/cli/Cargo.toml",
       "patterns": [

@@ -24,7 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
+# The agent's scenes run on the declared protocol double in the runtime's tests/support
+# source, so they need no CPU inference executor and no IR test feature.
 [dev-dependencies]
-infer-backend-reference.workspace = true
 infer-model-recipes.workspace = true
-infer-ir = { workspace = true, features = ["test-backends"] }
