@@ -27,6 +27,15 @@ ReplaySSM 的输入记录思想可以用于多种 recurrent 模型；具体记�
 
 CUDA 的 delta 算子接进来后直接对照这份 golden 即可，不必再依赖已删除的执行器。
 
+**参考实现现在也在代码里**（不只是 JSON）：`crates/engine/workloads/src/recurrent.rs` 提供
+`DeltaGeometry` / `ConvGeometry` 的 `step()` 与 **`fold()`**——后者就是本方案的提交语义
+（从基点只重放**已接受前缀**，卷积则从基点窗口与已接受输入中 gather 末尾窗口）。它落在
+`infer-workloads`，正是方案表格里"通用接受规则与**独立正确性参考**"所指的位置，也符合刚落地的分层
+门禁（该 crate 的生产依赖只有 core/ir/spi/models）。算术刻意保留原参考的舍入点：状态 f32、累加 f64，
+卷积用**分开的乘加**而非 FMA（否则数值会偏离已记录的 golden，因此带理由的 lint expectation 说明了
+这一点）。`tests/unit/recurrent_reference.rs` 的 6 条用例逐位对比两份 golden（1e-6 以内）并覆盖
+`fold` 的正例与"接受前缀超出记录窗口"的反例。
+
 **Causal conv 的窗口同样已固化**（方案表格里"记录输入，提交时从基点历史与接受输入选取末尾
 history"那一行）：导出器 `tools/fixtures/export-conv-history-golden.py` 按参考实现的顺序重放
 （每通道一行 kernel 权重、f64 累加、SiLU 后回落 f32、窗口左移并追加本次输入），制品

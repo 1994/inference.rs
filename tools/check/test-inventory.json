@@ -100,7 +100,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 7
+      "tests": 12
     }
   },
   "executor_consumers": [
@@ -834,6 +834,11 @@
     {
       "crate": "workloads",
       "file": "src/lib.rs",
+      "mount": "../tests/unit/recurrent_reference.rs"
+    },
+    {
+      "crate": "workloads",
+      "file": "src/lib.rs",
       "mount": "../tests/unit/cases.rs"
     },
     {
@@ -1058,11 +1063,11 @@
     }
   ],
   "totals": {
-    "all": 460,
+    "all": 465,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 460
+    "tests": 465
   }
 }

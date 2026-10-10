@@ -13,10 +13,15 @@ mod math;
 mod native;
 mod outputs;
 #[cfg(test)]
+#[path = "../tests/unit/recurrent_reference.rs"]
+mod recurrent_reference;
+#[cfg(test)]
 #[path = "../tests/unit/cases.rs"]
 mod tests;
 pub use math::{pool, softmax};
 pub use native::NativeWorkloads;
 use outputs::{decisions, embedding, ranking};
+mod recurrent;
+pub use recurrent::{ConvGeometry, DeltaGeometry};
 mod speculative;
 pub use speculative::{Verification, draw_distribution, verify_draft};
