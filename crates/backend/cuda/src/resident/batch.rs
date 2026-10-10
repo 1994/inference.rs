@@ -94,13 +94,20 @@ impl BatchBuilder<'_> {
     ///
     /// A prompt chunk costs one fixed-width replay whatever its token count, so a program may
     /// capture a second, narrower prompt graph and route short chunks to it.
+    /// Capture the verification graph (unless the sequence will speculate through the
+    /// shared slot pool) plus whichever prompt graphs the configured widths select.
+    /// `wide_prompt` skips the widest prompt graph: pool-bound sequences prefill short
+    /// prompts through the narrow graph, and a per-sequence wide prompt arena costs more
+    /// physical memory than four pooled residents have room for.
     pub fn build_pair(
         &mut self,
+        verification: bool,
+        wide_prompt: bool,
     ) -> Result<(Option<BatchGraph>, Option<BatchGraph>, Option<BatchGraph>)> {
         if self.weights.batch_width > crate::constants::MAX_VERIFICATION_WIDTH {
             return Err(Error::invalid("verification width exceeds 9"));
         }
-        let batch = if self.width > 1 {
+        let batch = if verification && self.width > 1 {
             Some(self.build()?)
         } else {
             None
@@ -112,13 +119,14 @@ impl BatchBuilder<'_> {
                 "prefill width must match verification width or be 32",
             ));
         }
-        let prompt_narrow = if narrow >= crate::constants::PREFILL_LANES && narrow < wide {
-            self.width = narrow;
-            Some(self.build()?)
-        } else {
-            None
-        };
-        let prompt = if wide >= crate::constants::PREFILL_LANES {
+        let prompt_narrow =
+            if narrow >= crate::constants::PREFILL_LANES && (narrow < wide || !wide_prompt) {
+                self.width = narrow;
+                Some(self.build()?)
+            } else {
+                None
+            };
+        let prompt = if wide_prompt && wide >= crate::constants::PREFILL_LANES {
             self.width = wide;
             Some(self.build()?)
         } else {
@@ -864,18 +872,50 @@ impl BatchGraph {
 pub(super) type SlotLane = (usize, u32, usize, usize);
 
 impl SlotDecodeGraph {
-    pub(super) fn bind_external(
-        &self,
-        slot: &mut Tensor<f32>,
-        uploaded: &Arc<Tensor<f32>>,
+    /// Validate the lane set against the cursors, then stage every slot's metadata for
+    /// the next replay. `graph` only retains the metadata writes until that replay.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "disjoint field borrows of the graph"
+    )]
+    fn stage_lanes(
+        metadata: &mut [Tensor<i32>],
+        cursors: &[usize],
+        width: usize,
+        external_hidden: bool,
+        graph: &CudaGraph<()>,
+        lanes: &[SlotLane],
+        capacity: usize,
+        vocabulary: usize,
     ) -> Result<()> {
-        self.graph
-            .update(api::memcpy(&mut *slot, uploaded))
-            .map_err(device_error)?;
-        if let Some(graph) = &self.state_only {
-            graph
-                .update(api::memcpy(slot, uploaded))
-                .map_err(device_error)?;
+        if lanes.is_empty() || lanes.len() > width {
+            return Err(Error::invalid("slot decode lane count"));
+        }
+        let mut per_slot = vec![None; width];
+        for &(slot, token, rope_pos, state_pos) in lanes {
+            if slot >= width
+                || per_slot[slot].is_some()
+                || usize::try_from(token).map_err(device_error)? >= vocabulary
+                || state_pos >= capacity
+            {
+                return Err(Error::invalid("slot decode slot, token or position"));
+            }
+            if state_pos != cursors[slot] {
+                return Err(Error::invalid("nonsequential slot state position"));
+            }
+            per_slot[slot] = Some((token, rope_pos, state_pos));
+        }
+        for (slot, metadata) in metadata.iter_mut().enumerate() {
+            let values = match per_slot[slot] {
+                Some((token, rope_pos, state_pos)) => [
+                    i32::try_from(rope_pos).map_err(device_error)?,
+                    i32::try_from(token).map_err(device_error)?,
+                    i32::try_from(state_pos).map_err(device_error)?,
+                    i32::from(external_hidden),
+                ],
+                None => [0, 0, crate::constants::INACTIVE_LANE_STATE_POSITION, 0],
+            };
+            super::metadata::update(graph, metadata, values)?;
         }
         Ok(())
     }
@@ -898,9 +938,6 @@ impl SlotDecodeGraph {
         vocabulary: usize,
         read_logits: bool,
     ) -> Result<BatchOutput> {
-        if lanes.is_empty() || lanes.len() > self.width {
-            return Err(Error::invalid("slot decode lane count"));
-        }
         let graph = if read_logits {
             &self.graph
         } else {
@@ -908,32 +945,16 @@ impl SlotDecodeGraph {
                 .as_ref()
                 .ok_or_else(|| Error::invalid("state-only draft graph"))?
         };
-        let mut per_slot = vec![None; self.width];
-        for &(slot, token, rope_pos, state_pos) in lanes {
-            if slot >= self.width
-                || per_slot[slot].is_some()
-                || usize::try_from(token).map_err(device_error)? >= vocabulary
-                || state_pos >= capacity
-            {
-                return Err(Error::invalid("slot decode slot, token or position"));
-            }
-            if state_pos != self.cursors[slot] {
-                return Err(Error::invalid("nonsequential slot state position"));
-            }
-            per_slot[slot] = Some((token, rope_pos, state_pos));
-        }
-        for (slot, metadata) in self.metadata.iter_mut().enumerate() {
-            let values = match per_slot[slot] {
-                Some((token, rope_pos, state_pos)) => [
-                    i32::try_from(rope_pos).map_err(device_error)?,
-                    i32::try_from(token).map_err(device_error)?,
-                    i32::try_from(state_pos).map_err(device_error)?,
-                    i32::from(self.external_hidden),
-                ],
-                None => [0, 0, crate::constants::INACTIVE_LANE_STATE_POSITION, 0],
-            };
-            super::metadata::update(graph, metadata, values)?;
-        }
+        Self::stage_lanes(
+            &mut self.metadata,
+            &self.cursors,
+            self.width,
+            self.external_hidden,
+            graph,
+            lanes,
+            capacity,
+            vocabulary,
+        )?;
         let vocabulary = self.logits.size() / self.width;
         let mut sources = Vec::with_capacity(2 * lanes.len());
         for &(slot, ..) in lanes {
@@ -972,6 +993,61 @@ impl SlotDecodeGraph {
                 ))
             })
             .collect()
+    }
+
+    /// Replay the state-only graph for `lanes` without a readback or a stream sync: a
+    /// draft catch-up needs the state writes, never the outputs. Completion is carried
+    /// by the next readback on this stream or the pool's drop barrier.
+    /// # Errors
+    /// Rejects the same lane/position errors as [`Self::run_lanes`], a missing state-only
+    /// graph, and CUDA launch failures detected at enqueue time.
+    #[expect(
+        unsafe_code,
+        reason = "Audited detached replay: single-stream ordering after staged metadata, \
+                  pool-owned buffers, drained by the owning pool's drop barrier"
+    )]
+    pub fn replay_detached(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        capacity: usize,
+        vocabulary: usize,
+    ) -> Result<()> {
+        let graph = self
+            .state_only
+            .as_ref()
+            .ok_or_else(|| Error::invalid("state-only draft graph"))?;
+        Self::stage_lanes(
+            &mut self.metadata,
+            &self.cursors,
+            self.width,
+            self.external_hidden,
+            graph,
+            lanes,
+            capacity,
+            vocabulary,
+        )?;
+        // SAFETY: the engine is single-stream, so this replay is ordered after the staged
+        // metadata and uploads and before any later replay; every buffer it touches is
+        // pool-owned, and the pool's drop barrier drains the stream before anything frees.
+        unsafe { graph.launch().async_on(&device.stream) }.map_err(device_error)?;
+        for &(slot, ..) in lanes {
+            self.cursors[slot] += 1;
+        }
+        Ok(())
+    }
+
+    /// Drain the capture stream: the pool's teardown barrier for detached replays.
+    /// # Errors
+    /// Returns the driver error when the stream cannot be synchronized.
+    #[expect(
+        unsafe_code,
+        reason = "Audited stream drain at teardown: no work is enqueued after the owning \
+                  pool starts dropping"
+    )]
+    pub(super) fn barrier(&self) -> Result<()> {
+        // SAFETY: teardown only; no work is enqueued after the owning pool starts dropping.
+        unsafe { self.graph.stream().synchronize() }.map_err(device_error)
     }
 
     /// Host-side state cursors of every slot.

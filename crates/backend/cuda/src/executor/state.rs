@@ -36,6 +36,34 @@ impl CudaBackend {
             .ok_or_else(|| Error::invalid("unknown CUDA state"))
     }
 
+    /// Whether a sequence must carry admission for its own verification graph. A sequence
+    /// that fits the slot pool verifies through the pool's shared graph instead — but only
+    /// up to the pool's width: past it, a resident sequence can lose the slot race and fall
+    /// back to serial execution, which lazily recaptures the private graph and must have
+    /// been charged for it.
+    pub(super) fn private_verification_for(&self, capacity: usize, readout: OutputReadout) -> bool {
+        let Some(pool) = &self.slots else {
+            return true;
+        };
+        if self.loaded.mtp_depth() == 0
+            || readout != OutputReadout::Logits
+            || capacity > pool.capacity()
+            || pool.verify().is_none()
+        {
+            return true;
+        }
+        let pooled = self
+            .states
+            .values()
+            .filter(|state| {
+                state.speculation.is_some()
+                    && state.readout == OutputReadout::Logits
+                    && state.capacity <= pool.capacity()
+            })
+            .count();
+        pooled >= pool.width()
+    }
+
     pub(super) fn reserve(
         &mut self,
         id: StateId,
@@ -49,7 +77,10 @@ impl CudaBackend {
                 "CUDA state already reserved",
             ));
         }
-        let budget = self.loaded.sequence_budget(capacity, readout)?;
+        let private_verification = self.private_verification_for(capacity, readout);
+        let budget = self
+            .loaded
+            .sequence_budget(capacity, readout, private_verification)?;
         if self.states.len() >= self.maximum_states
             || self
                 .active_budget()?
@@ -67,37 +98,15 @@ impl CudaBackend {
                 ),
             ));
         }
-        if let Some(mut state) = self.pool.take(capacity, readout) {
-            state.poisoned = true;
-            let reset = state.program.reset().and_then(|()| {
-                state
-                    .speculation
-                    .as_mut()
-                    .map_or(Ok(()), super::Speculation::reset)
-            });
-            if let Err(error) = reset {
-                self.pool.retain(state);
-                if let Err(drain_error) = self.loaded.device().drain() {
-                    self.fatal = Some(drain_error);
-                }
-                return Err(error);
-            }
-            if state.slot.is_some() {
-                return Err(Error::invariant("pooled CUDA state holds a slot lease"));
-            }
-            state.capacity = capacity;
-            // Reused programs may have released private verification storage.
-            // Reserve the full serial policy until a new slot lease credits it again.
-            state.budget = budget;
-            state.history.clear();
-            state.hidden.clear();
-            state.poisoned = false;
-            self.pool.reuses = self.pool.reuses.saturating_add(1);
-            self.states.insert(id, state);
-            return Ok(());
+        if let Some(state) = self.pool.take(capacity, readout) {
+            return self.reuse_pooled(id, state, capacity, budget, private_verification);
         }
         self.make_room(budget)?;
-        let program = match self.loaded.sequence(capacity) {
+        let program = match if private_verification {
+            self.loaded.sequence(capacity)
+        } else {
+            self.loaded.sequence_pooled(capacity)
+        } {
             Ok(program) => program,
             Err(error) => {
                 if let Err(drain_error) = self.loaded.device().reclaim_barrier() {
@@ -130,8 +139,55 @@ impl CudaBackend {
                 hidden: Vec::new(),
                 poisoned: false,
                 slot: None,
+                verification_priced: private_verification,
             },
         );
+        Ok(())
+    }
+
+    /// Re-admit a pooled sequence shell under a freshly charged budget: reset program and
+    /// speculation state, realign verification pricing with the new charge, and clear the
+    /// shell's poison flag. A reset failure poisons the shell back into the pool; when even
+    /// the drain after it fails, the backend records the drain as fatal.
+    fn reuse_pooled(
+        &mut self,
+        id: StateId,
+        mut state: Sequence,
+        capacity: usize,
+        budget: u64,
+        private_verification: bool,
+    ) -> Result<()> {
+        state.poisoned = true;
+        let reset = state.program.reset().and_then(|()| {
+            state
+                .speculation
+                .as_mut()
+                .map_or(Ok(()), super::Speculation::reset)
+        });
+        if let Err(error) = reset {
+            self.pool.retain(state);
+            if let Err(drain_error) = self.loaded.device().drain() {
+                self.fatal = Some(drain_error);
+            }
+            return Err(error);
+        }
+        if state.slot.is_some() {
+            return Err(Error::invariant("pooled CUDA state holds a slot lease"));
+        }
+        state.capacity = capacity;
+        // The reused program's verification storage must match the price just charged:
+        // a serial-priced program may still hold one (a later slot lease credits its
+        // release), while the pooled price never included one.
+        if !private_verification {
+            state.program.forfeit_verification();
+        }
+        state.verification_priced = private_verification;
+        state.budget = budget;
+        state.history.clear();
+        state.hidden.clear();
+        state.poisoned = false;
+        self.pool.reuses = self.pool.reuses.saturating_add(1);
+        self.states.insert(id, state);
         Ok(())
     }
     pub(super) fn reset(&mut self, id: StateId) -> Result<()> {
@@ -139,7 +195,7 @@ impl CudaBackend {
         let restore = self
             .states
             .get(&id)
-            .filter(|s| s.slot.is_some())
+            .filter(|s| s.slot.is_some() && s.verification_priced)
             .map_or(0, |s| s.program.released_verification_bytes());
         if restore > 0 {
             self.make_room(restore)?;

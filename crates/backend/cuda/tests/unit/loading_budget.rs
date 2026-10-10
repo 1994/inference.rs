@@ -41,20 +41,25 @@ fn admission_charges_shared_projection_geometry_once() -> Result<()> {
     }
     // Repeated layers share one [3, K] / [3, N] pair. Prefill has zero-copy views.
     assert_eq!(
-        projection_workspace(&graph, &weights)?,
+        projection_workspace(&graph, &weights, true)?,
         (128 + 256) * 3 * F32
     );
     weights.input_scales.insert(TensorId::new(10)?, 1.0);
     weights.input_scales.insert(TensorId::new(11)?, 1.0);
     assert_eq!(
-        projection_workspace(&graph, &weights)?,
+        projection_workspace(&graph, &weights, true)?,
         (128 + 256) * 3 * F32 + (128 / 2 + 128 / 16) * (1 + 3 + 32)
     );
     // Wider verification batches also share one pack/unpack pair per geometry.
     weights.batch_width = 5;
     assert_eq!(
-        projection_workspace(&graph, &weights)?,
+        projection_workspace(&graph, &weights, true)?,
         (128 + 256) * 5 * F32 + (128 / 2 + 128 / 16) * (1 + 5 + 32)
+    );
+    // Without a private verification graph its pack/unpack pairs and staging rows vanish.
+    assert_eq!(
+        projection_workspace(&graph, &weights, false)?,
+        (128 / 2 + 128 / 16) * (1 + 32)
     );
     Ok(())
 }

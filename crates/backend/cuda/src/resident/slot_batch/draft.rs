@@ -25,6 +25,58 @@ impl SlotPool {
         graph.set_cursor(slot, position)
     }
 
+    /// Stage one lane's external hidden row through its pinned ring and enqueue the H2D
+    /// copy; never syncs: ordering comes from the shared stream, completion from the
+    /// next readback or the pool drop barrier.
+    fn upload_external(&mut self, device: &CudaDevice, slot: usize, values: &[f32]) -> Result<()> {
+        let ring = self
+            .pinned_external
+            .get_mut(slot)
+            .filter(|ring| !ring.is_empty())
+            .ok_or_else(|| Error::invalid("external hidden staging"))?;
+        let cursor = self
+            .pinned_cursor
+            .get_mut(slot)
+            .ok_or_else(|| Error::invariant("external staging cursor"))?;
+        let index = *cursor % ring.len();
+        let pinned = ring
+            .get_mut(index)
+            .ok_or_else(|| Error::invariant("external staging ring"))?;
+        *cursor = cursor.wrapping_add(1);
+        if values.len() != pinned.len() {
+            return Err(Error::invalid("external hidden shape"));
+        }
+        pinned.as_mut_slice().copy_from_slice(values);
+        let buffer = self
+            .lane_external
+            .get_mut(slot)
+            .ok_or_else(|| Error::invalid("external hidden slot"))?;
+        device.copy_h2d_pinned(buffer, pinned, values.len())?;
+        self.external_uploaded[slot] = true;
+        Ok(())
+    }
+
+    /// Supply one external hidden row per active lane through the pinned rings.
+    fn upload_lanes(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        hidden: &[&[f32]],
+    ) -> Result<()> {
+        let external = self
+            .decode
+            .as_ref()
+            .ok_or_else(|| Error::invalid("external hidden requires a decode pool"))?
+            .external_hidden;
+        if !external || lanes.len() != hidden.len() {
+            return Err(Error::invalid("external hidden lane count or graph"));
+        }
+        for (&(slot, ..), values) in lanes.iter().zip(hidden) {
+            self.upload_external(device, slot, values)?;
+        }
+        Ok(())
+    }
+
     /// Supply one external hidden row per active lane, retaining upload owners for every
     /// graph update (including inactive slots on later replays).
     pub(crate) fn run_external(
@@ -43,29 +95,28 @@ impl SlotPool {
         hidden: &[&[f32]],
         read_logits: bool,
     ) -> Result<BatchOutput> {
-        let graph = self
-            .decode
-            .as_ref()
-            .ok_or_else(|| Error::invalid("external hidden requires a decode pool"))?;
-        if !graph.external_hidden || lanes.len() != hidden.len() {
-            return Err(Error::invalid("external hidden lane count or graph"));
-        }
-        for (&(slot, ..), values) in lanes.iter().zip(hidden) {
-            let buffer = self
-                .lane_external
-                .get_mut(slot)
-                .ok_or_else(|| Error::invalid("external hidden slot"))?;
-            if values.len() != buffer.size() {
-                return Err(Error::invalid("external hidden shape"));
-            }
-            let uploaded = device.upload(values.to_vec(), &[values.len()])?;
-            graph.bind_external(buffer, &uploaded)?;
-            self.external_uploads[slot] = Some(uploaded);
-        }
+        self.upload_lanes(device, lanes, hidden)?;
         self.decode
             .as_mut()
             .ok_or_else(|| Error::invariant("external decode graph"))?
             .run_lanes(device, lanes, self.capacity, self.vocabulary, read_logits)
+    }
+
+    /// Draft catch-up replay: the state-only graph's outputs are never read, so the
+    /// launch detaches — no readback, no sync. Completion rides the next pool readback
+    /// or the drop barrier; stream order keeps it ahead of any later replay.
+    pub(crate) fn run_external_detached(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        hidden: &[&[f32]],
+    ) -> Result<()> {
+        self.upload_lanes(device, lanes, hidden)?;
+        let (capacity, vocabulary) = (self.capacity, self.vocabulary);
+        self.decode
+            .as_mut()
+            .ok_or_else(|| Error::invariant("external decode graph"))?
+            .replay_detached(device, lanes, capacity, vocabulary)
     }
 
     /// Copy a draft slot back to its private program before acceptance/rejection replay.

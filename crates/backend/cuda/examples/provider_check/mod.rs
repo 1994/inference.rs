@@ -32,7 +32,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
     )?;
-    let estimate = loaded.sequence_budget(prompt.len() + 16, OutputReadout::Full)?;
+    let estimate = loaded.sequence_budget(prompt.len() + 16, OutputReadout::Full, true)?;
     // The MTP draft graph, fusion weights and shared tensors must capture on real hardware.
     let draft = loaded.draft(prompt.len() + 16)?;
     if draft.is_none() && mtp_depth() > 0 {

@@ -12,9 +12,18 @@ const READBACK_COPIES: u64 = 2;
 impl LoadedModel {
     /// Upper bound for known tensor storage plus 256 MiB of graph/allocator headroom.
     /// This is admission accounting, not a measurement of CUDA driver allocations.
+    ///
+    /// `private_verification` prices the rollback snapshots and batch workspaces of a
+    /// sequence-owned verification graph. A sequence that will speculate through the shared
+    /// slot pool never captures one, so charging it would price pool members out of admission.
     /// # Errors
     /// Rejects invalid capacity or arithmetic overflow before any device allocation.
-    pub fn sequence_budget(&self, capacity: usize, readout: OutputReadout) -> Result<u64> {
+    pub fn sequence_budget(
+        &self,
+        capacity: usize,
+        readout: OutputReadout,
+        private_verification: bool,
+    ) -> Result<u64> {
         if capacity == 0 || capacity > crate::constants::MAX_CAPACITY_TOKENS {
             return Err(Error::invalid(
                 "CUDA sequence capacity must be in 1..=32768",
@@ -33,6 +42,7 @@ impl LoadedModel {
                 hidden,
                 vocabulary,
                 readout,
+                private_verification,
             )?,
         )?;
         if let Some(draft) = &self.draft {
@@ -46,6 +56,7 @@ impl LoadedModel {
                     hidden,
                     vocabulary,
                     readout,
+                    private_verification,
                 )?,
             )?;
         }
@@ -61,34 +72,17 @@ fn program(
     hidden: usize,
     vocabulary: usize,
     readout: OutputReadout,
+    private_verification: bool,
 ) -> Result<u64> {
-    let verify = weights.batch_width as u64;
+    let verify = if private_verification {
+        weights.batch_width as u64
+    } else {
+        0
+    };
     let prompt = weights.prompt_lane_total() as u64;
     let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
     let mut bytes = 0;
-    // Split-KV scratch is shared by sequential attention nodes with the same geometry.
-    // Charge the supported upper bound (16 partitions), independent of device tuning.
-    let mut attention_shapes = std::collections::BTreeSet::new();
-    for node in &graph.nodes {
-        if let TensorOp::Attention {
-            query_heads,
-            head_dim,
-            ..
-        } = node.op
-            && attention_shapes.insert((query_heads, head_dim))
-        {
-            bytes = add(
-                bytes,
-                mul(
-                    mul(
-                        query_heads as u64,
-                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
-                    )?,
-                    mul(head_dim as u64 + 2, F32)?,
-                )?,
-            )?;
-        }
-    }
+    bytes = add(bytes, attention_scratch(graph)?)?;
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
     bytes = add(
@@ -143,7 +137,10 @@ fn program(
         };
         bytes = add(bytes, amount)?;
     }
-    bytes = add(bytes, projection_workspace(graph, weights)?)?;
+    bytes = add(
+        bytes,
+        projection_workspace(graph, weights, private_verification)?,
+    )?;
     // External hidden buffers exist for the scalar graph and every prompt lane.
     // Fused draft programs additionally retain embedding and two normalized rows per lane.
     let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
@@ -156,10 +153,12 @@ fn program(
         bytes,
         mul(mul(hidden as u64, external_lanes * fusion_rows)?, F32)?,
     )?;
-    // Pinned readback staging is retained with each graph/state. Count all
-    // lanes conservatively even though prompt mode reads only the last logits.
+    // Pinned readback is allocated on demand and capped per batch (device/readback.rs), so
+    // charge what a step actually stages: one decode lane, the verification batch when it is
+    // private, and the last prompt lane (prompt modes read only the last logits row).
     let readout_elements = add(hidden as u64, vocabulary as u64)?;
-    bytes = add(bytes, mul(mul(readout_elements, lanes)?, F32)?)?;
+    let readout_lanes = 1 + if verify > 1 { verify } else { 0 } + u64::from(prompt > 0);
+    bytes = add(bytes, mul(mul(readout_elements, readout_lanes)?, F32)?)?;
     if readout == OutputReadout::Full {
         // Full-history CPU readback and its returned copy are included in admission.
         bytes = add(
@@ -169,8 +168,39 @@ fn program(
     }
     Ok(bytes)
 }
+/// Split-KV scratch is shared by sequential attention nodes with the same geometry.
+/// Charge the supported upper bound (16 partitions), independent of device tuning.
+fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
+    let mut bytes = 0;
+    let mut shapes = std::collections::BTreeSet::new();
+    for node in &graph.nodes {
+        if let TensorOp::Attention {
+            query_heads,
+            head_dim,
+            ..
+        } = node.op
+            && shapes.insert((query_heads, head_dim))
+        {
+            bytes = add(
+                bytes,
+                mul(
+                    mul(
+                        query_heads as u64,
+                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
+                    )?,
+                    mul(head_dim as u64 + 2, F32)?,
+                )?,
+            )?;
+        }
+    }
+    Ok(bytes)
+}
 /// Projection buffers are shared by geometry; prefill views use the activation arena.
-fn projection_workspace(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64> {
+fn projection_workspace(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    private_verification: bool,
+) -> Result<u64> {
     let sizes = graph
         .tensors
         .iter()
@@ -180,7 +210,12 @@ fn projection_workspace(graph: &DataflowGraph, weights: &ProgramWeights) -> Resu
     let mut partials = std::collections::BTreeSet::new();
     let mut quantized = std::collections::BTreeSet::new();
     let mut fp8_quantized = std::collections::BTreeSet::new();
-    let quantized_rows = [1, weights.batch_width]
+    let verify_rows = if private_verification {
+        weights.batch_width
+    } else {
+        0
+    };
+    let quantized_rows = [1, verify_rows]
         .into_iter()
         .chain(weights.prompt_widths())
         .collect::<std::collections::BTreeSet<_>>()
@@ -210,7 +245,7 @@ fn projection_workspace(graph: &DataflowGraph, weights: &ProgramWeights) -> Resu
                 )?,
             )?;
         }
-        if weights.batch_width > 1 && verification.insert((rows, columns)) {
+        if private_verification && weights.batch_width > 1 && verification.insert((rows, columns)) {
             bytes = add(
                 bytes,
                 mul(add(rows, columns)?, weights.batch_width as u64 * F32)?,

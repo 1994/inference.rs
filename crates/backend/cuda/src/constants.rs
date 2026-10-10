@@ -136,9 +136,11 @@ mod device {
     /// raise this without an end-to-end measurement at the concurrency being targeted.
     pub const CB_DECODE_SLOTS: usize = 4;
     /// Token rows in each slot's KV cache. Sequences admitted above this stay on the
-    /// per-sequence serial path; 4096 keeps the pool's upfront allocation (one state set per
-    /// slot) inside the device budget next to resident sequences and the prefix cache.
-    pub const CB_SLOT_TOKENS: usize = 4096;
+    /// per-sequence serial path. The pool is captured at load time, so this allocation
+    /// (fp8 KV per slot per token) competes with the sequences it must coexist with:
+    /// at 4096 rows the pool plus four pooled sequences exceeded physical memory on the
+    /// 32 GB card and the fourth request starved behind completions; 2048 leaves room.
+    pub const CB_SLOT_TOKENS: usize = 2048;
     /// Metadata state-position sentinel masking one lane's state writes in a batched replay.
     pub const INACTIVE_LANE_STATE_POSITION: i32 = -1;
 }

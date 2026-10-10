@@ -9,9 +9,17 @@ use super::{
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
 use crate::device::{CudaDevice, device_error};
+use cuda_core::{CudaContext, PinnedHostBuffer};
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorStorage};
+
+/// Pinned ring depth per external-hidden lane: one upload per draft or catch-up step,
+/// and a lane's chain between stream barriers never exceeds the maximum verify width.
+const EXTERNAL_UPLOAD_RING: usize = crate::constants::MAX_VERIFICATION_WIDTH + 1;
+
+/// Per-lane external hidden rows and their pinned upload rings.
+type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
 
 /// How one state family moves into a slot at bind time: a token-row prefix of a
 /// capacity-sized KV cache (f32 or fp8), or the whole tensor (conv/delta state).
@@ -78,7 +86,13 @@ pub struct SlotPool {
     _nvfp4: super::nvfp4_gemm::Workspace,
     _attention: super::attention_decode::Workspace,
     lane_external: Vec<Tensor<f32>>,
-    external_uploads: Vec<Option<Arc<Tensor<f32>>>>,
+    /// Whether a lane's external hidden row was uploaded at least once.
+    external_uploaded: Vec<bool>,
+    /// Pinned staging rings feeding `lane_external`: uploads enqueue without a sync, so a
+    /// ring slot must not be rewritten while an earlier copy from it could still be in
+    /// flight. The ring outlasts the longest unsynced upload chain (a draft catch-up).
+    pinned_external: Vec<Vec<PinnedHostBuffer<f32>>>,
+    pinned_cursor: Vec<usize>,
     _lane_fusion: Vec<Option<super::program::FusionWorkspace>>,
 }
 
@@ -139,14 +153,8 @@ impl SlotPool {
             .sync_on(&device.stream)
             .map_err(device_error)?;
         let lanes = if verify >= 2 { width * verify } else { width };
-        let mut lane_external = Vec::with_capacity(lanes);
-        for _ in 0..lanes {
-            lane_external.push(
-                api::zeros::<f32>(&[hidden])
-                    .sync_on(&device.stream)
-                    .map_err(device_error)?,
-            );
-        }
+        let (mut lane_external, pinned_external) =
+            Self::external_lanes(device, weights.fusion.is_some(), lanes, hidden)?;
         let mut lane_fusion: Vec<Option<super::program::FusionWorkspace>> = (0..lanes)
             .map(|_| {
                 super::program::FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())
@@ -195,9 +203,55 @@ impl SlotPool {
             _nvfp4: nvfp4,
             _attention: attention,
             lane_external,
-            external_uploads: (0..lanes).map(|_| None).collect(),
+            external_uploaded: vec![false; lanes],
+            pinned_external,
+            pinned_cursor: vec![0; lanes],
             _lane_fusion: lane_fusion,
         })
+    }
+
+    /// Per-lane external hidden rows plus, for an external-hidden pool, their pinned
+    /// upload rings. Uploads enqueue without a sync, so a ring slot must not be rewritten
+    /// while an earlier copy from it could still be in flight; the ring depth outlasts
+    /// the longest unsynced upload chain (a draft catch-up).
+    fn external_lanes(
+        device: &CudaDevice,
+        external_hidden: bool,
+        lanes: usize,
+        hidden: usize,
+    ) -> Result<ExternalLanes> {
+        let mut lane_external = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            lane_external.push(
+                api::zeros::<f32>(&[hidden])
+                    .sync_on(&device.stream)
+                    .map_err(device_error)?,
+            );
+        }
+        let context = external_hidden
+            .then(|| CudaContext::new(device.stream.device().ordinal()))
+            .transpose()
+            .map_err(device_error)?;
+        let mut pinned_external = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            let ring = match &context {
+                Some(context) => (0..EXTERNAL_UPLOAD_RING)
+                    .map(|_| PinnedHostBuffer::zeroed(context, hidden).map_err(device_error))
+                    .collect::<Result<Vec<_>>>()?,
+                None => Vec::new(),
+            };
+            pinned_external.push(ring);
+        }
+        Ok((lane_external, pinned_external))
+    }
+
+    /// Drain in-flight detached work before the pool's buffers free.
+    fn barrier(&self) -> Result<()> {
+        match (&self.decode, &self.verify) {
+            (Some(graph), _) => graph.barrier(),
+            (None, Some(graph)) => graph.barrier(),
+            (None, None) => Ok(()),
+        }
     }
 
     /// Slots (state sets) in the pool.
@@ -311,7 +365,7 @@ impl SlotPool {
             .is_some_and(|graph| graph.external_hidden)
             && lanes
                 .iter()
-                .any(|&(slot, ..)| self.external_uploads.get(slot).is_none_or(Option::is_none))
+                .any(|&(slot, ..)| !self.external_uploaded.get(slot).copied().unwrap_or(false))
         {
             return Err(Error::invalid("draft lane has no external hidden input"));
         }
@@ -466,6 +520,16 @@ impl SlotPool {
             device.copy_d2d(dst, src, src.size())?;
         }
         Ok(())
+    }
+}
+
+impl Drop for SlotPool {
+    fn drop(&mut self) {
+        // Detached draft catch-up replays and verify restores may still be in flight on
+        // the graph stream; the pool's states and arenas must not free beneath them.
+        if let Err(error) = self.barrier() {
+            eprintln!("CUDA slot pool drop barrier failed: {error}");
+        }
     }
 }
 

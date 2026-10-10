@@ -166,7 +166,7 @@ pub(super) fn catch_up(
             ));
             hidden.push(rows[slot * width + offset].0.as_slice());
         }
-        pool.run_external_readout(device, &lanes, &hidden, false)?;
+        pool.run_external_detached(device, &lanes, &hidden)?;
     }
     for &(index, slot) in participants {
         let spec = states

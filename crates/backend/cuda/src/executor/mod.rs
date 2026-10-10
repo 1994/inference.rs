@@ -48,6 +48,9 @@ struct Sequence {
     budget: u64,
     poisoned: bool,
     slot: Option<SlotLease>,
+    /// Whether `budget` included private verification storage; a slot-lease credit and a
+    /// reset restore only apply to bytes admission actually charged.
+    verification_priced: bool,
 }
 /// A sequence's lease on one continuous-batching decode slot. `batched` is the sticky
 /// mode: a leased sequence always decodes through the shared slot graph and never
@@ -148,7 +151,7 @@ impl CudaBackend {
             state_budget,
         )?;
         let identity = format!("cuda-resident/{}", loaded.device().name()?);
-        Ok(Self {
+        let mut backend = Self {
             loaded,
             capabilities,
             operations: program.operations,
@@ -166,7 +169,9 @@ impl CudaBackend {
             pool_failure_reason: None,
             busy: false,
             fatal: None,
-        })
+        };
+        backend.warm_slot_pool();
+        Ok(backend)
     }
     #[must_use]
     pub const fn model(&self) -> &infer_ir::ModelIr {

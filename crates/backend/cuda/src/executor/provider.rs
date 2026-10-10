@@ -47,7 +47,12 @@ impl BackendProvider for CudaBackend {
         capacity: usize,
         readout: OutputReadout,
     ) -> Result<Option<u64>> {
-        self.loaded.sequence_budget(capacity, readout).map(Some)
+        // Quote the same price reserve() will charge, or engine admission and backend
+        // accounting disagree on how many sequences fit.
+        let private = self.private_verification_for(capacity, readout);
+        self.loaded
+            .sequence_budget(capacity, readout, private)
+            .map(Some)
     }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         self.available().map(Some)

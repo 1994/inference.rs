@@ -352,6 +352,20 @@ impl LoadedModel {
             self.model.vocab_size,
         )
     }
+    /// A sequence that will speculate through the shared slot pool skips its private
+    /// verification graph; the pool's captured graph replaces it.
+    /// # Errors
+    /// Rejects invalid capacity, exceeded state budgets or CUDA graph capture failures.
+    pub(crate) fn sequence_pooled(&self, capacity: usize) -> Result<DeviceProgram> {
+        DeviceProgram::new_pooled(
+            &self.device,
+            &self.graph,
+            &self.weights,
+            capacity,
+            self.model.hidden_size,
+            self.model.vocab_size,
+        )
+    }
     pub(crate) fn ensure_verification(&self, program: &mut DeviceProgram) -> Result<()> {
         program.ensure_verification(&self.graph, &self.weights)
     }

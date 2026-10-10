@@ -433,6 +433,38 @@ impl CudaDevice {
         driver_status(status)
     }
 
+    /// Async H2D copy out of a pinned staging buffer, enqueued on the device stream and
+    /// never synchronized here: the caller keeps the pinned bytes untouched until a later
+    /// stream barrier (a readback or the owning pool's drop barrier) establishes completion.
+    /// # Errors
+    /// Rejects copies outside either buffer or a driver failure when the copy cannot be enqueued.
+    pub(crate) fn copy_h2d_pinned(
+        &self,
+        dst: &mut Tensor<f32>,
+        src: &cuda_core::PinnedHostBuffer<f32>,
+        elements: usize,
+    ) -> Result<()> {
+        if elements > dst.size() || elements > src.len() {
+            return Err(InferError::invalid("pinned upload range outside buffer"));
+        }
+        let bytes = elements
+            .checked_mul(size_of::<f32>())
+            .ok_or_else(|| InferError::invalid("pinned upload size overflow"))?;
+        let stream = self.stream.cu_stream();
+        // SAFETY: the checked lengths keep both ends inside live allocations, the pinned
+        // source is not rewritten until the caller's next stream barrier, and the stream
+        // belongs to this device.
+        let status = unsafe {
+            cuda_core::sys::cuMemcpyHtoDAsync_v2(
+                dst.device_pointer().cu_deviceptr(),
+                src.as_ptr().cast(),
+                bytes,
+                stream,
+            )
+        };
+        driver_status(status)
+    }
+
     /// # Errors
     /// Returns a driver error if available device memory cannot be queried.
     pub fn memory_info(&self) -> Result<(u64, u64)> {

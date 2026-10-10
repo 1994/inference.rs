@@ -223,6 +223,33 @@ impl CudaBackend {
         self.slots = Some(pool);
     }
 
+    /// Capture the decode slot pool at load time so the first concurrent requests batch
+    /// immediately — and so admission can price pooled sequences against a pool that
+    /// actually exists, instead of charging every early request for a private
+    /// verification graph the pool would discard on its first step.
+    /// Failure leaves the lazy first-step path in charge.
+    pub(super) fn warm_slot_pool(&mut self) {
+        let capacity = crate::constants::CB_SLOT_TOKENS;
+        let Some(pool) = self.create_slot_pool(capacity) else {
+            tracing::warn!(
+                target: "infer::executor",
+                capacity,
+                last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
+                "CUDA slot pool prewarm failed; will retry on the first batchable step"
+            );
+            return;
+        };
+        let width = pool.width();
+        self.draft_slots = self.prepare_draft_pool(width, capacity);
+        self.slots = Some(pool);
+        tracing::info!(
+            target: "infer::executor",
+            width,
+            capacity,
+            "CUDA slot pool captured at load"
+        );
+    }
+
     /// Widest pool the device can fund, trying every width down to two.
     ///
     /// Each attempt that fails is followed by a reclaim so the next one is judged against
@@ -469,9 +496,16 @@ fn slot_replay(
             device,
         )?;
         state.program.discard_verification();
+        // Only a serial-priced admission charged for private verification storage; crediting
+        // a pooled price with released bytes it never included would underflow the account.
+        let credit = if state.verification_priced {
+            state.program.released_verification_bytes()
+        } else {
+            0
+        };
         state.budget = state
             .budget
-            .checked_sub(state.program.released_verification_bytes())
+            .checked_sub(credit)
             .ok_or_else(|| Error::invariant("private verification admission credit"))?;
         state.slot = Some(SlotLease {
             slot,

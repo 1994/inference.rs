@@ -2,7 +2,7 @@ use super::{ActivationArena, ProgramWeights, attention::attention, kernels::aux}
 use crate::strategy::LinearTiling;
 use cutile::prelude::*;
 use infer_core::TensorId;
-use infer_ir::{TensorNode, TensorOp};
+use infer_ir::{DataflowGraph, TensorNode, TensorOp};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -78,6 +78,21 @@ impl Capture<'_> {
             let size = output.size();
             let output = self.operation(node, output.reshape(&[size])?, part)?;
             self.arena.buffers[index] = Some(output.reshape(&restore)?);
+        }
+        Ok(())
+    }
+
+    /// Record every node of a program graph, optionally skipping the logits-producing
+    /// node (a prefill graph leaves the logits readout to its `_last` twin).
+    pub fn record_program(
+        &mut self,
+        graph: &DataflowGraph,
+        skip_logits: bool,
+    ) -> Result<(), DeviceError> {
+        for node in &graph.nodes {
+            if !skip_logits || !node.outputs.iter().any(|id| Some(*id) == graph.logits) {
+                self.record(node)?;
+            }
         }
         Ok(())
     }

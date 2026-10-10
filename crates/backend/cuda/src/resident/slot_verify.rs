@@ -371,6 +371,11 @@ impl SlotVerifyGraph {
     /// submitted token plus the accepted candidates.
     /// # Errors
     /// Rejects unknown slots, out-of-range counts and CUDA restore failures.
+    #[expect(
+        unsafe_code,
+        reason = "Audited detached restore: single-stream ordering before any later replay, \
+                  graph-owned tensors, drained by the owning pool's drop barrier"
+    )]
     pub fn commit(&mut self, device: &CudaDevice, slot: usize, accepted: usize) -> Result<()> {
         if slot >= self.slots || accepted >= self.pending[slot] {
             return Err(Error::invalid("slot verify commit"));
@@ -381,10 +386,11 @@ impl SlotVerifyGraph {
             .and_then(|per_slot| per_slot.get(accepted))
             .filter(|_| accepted + 1 < self.verify)
         {
-            restore
-                .launch()
-                .sync_on(&device.stream)
-                .map_err(device_error)?;
+            // SAFETY: single-stream execution orders the restore before any later replay
+            // of this slot; every tensor it touches is owned by this graph, and the pool's
+            // drop barrier drains the stream before anything frees. Completion itself is
+            // never observed on the host — the restore only rewrites device state.
+            unsafe { restore.launch().async_on(&device.stream) }.map_err(device_error)?;
         }
         self.cursors[slot] += 1 + accepted;
         self.pending[slot] = 0;
@@ -395,6 +401,19 @@ impl SlotVerifyGraph {
     #[must_use]
     pub fn cursors(&self) -> &[usize] {
         &self.cursors
+    }
+
+    /// Drain the capture stream: the pool's teardown barrier for detached restores.
+    /// # Errors
+    /// Returns the driver error when the stream cannot be synchronized.
+    #[expect(
+        unsafe_code,
+        reason = "Audited stream drain at teardown: no work is enqueued after the owning \
+                  pool starts dropping"
+    )]
+    pub(super) fn barrier(&self) -> Result<()> {
+        // SAFETY: teardown only; no work is enqueued after the owning pool starts dropping.
+        unsafe { self.graph.stream().synchronize() }.map_err(device_error)
     }
 
     /// Forget a failed replay when the owning sequence releases its lease.

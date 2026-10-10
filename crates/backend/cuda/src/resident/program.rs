@@ -170,19 +170,18 @@ pub struct DeviceProgram {
 
 /// Conservative lower bound on uniquely owned device storage; excludes graph metadata,
 /// readback buffers and auxiliary workspaces. Idle-state admission can reclaim this much.
+/// `verify`/`prompt` are the lane counts actually captured; a pool-bound program captured
+/// no verification graph (and possibly no wide prompt graph), so those snapshots and arena
+/// shares are not retained either.
 fn retained_tensor_bytes(
     graph: &DataflowGraph,
-    weights: &ProgramWeights,
     states: &super::batch::States,
     fp8: &super::fp8_cache::Fp8Caches,
     activation_bytes: usize,
+    verify: usize,
+    prompt: usize,
 ) -> u64 {
-    let verify = if weights.batch_width > 1 {
-        weights.batch_width
-    } else {
-        0
-    };
-    let prompt = weights.prompt_lane_total();
+    let verify = if verify > 1 { verify } else { 0 };
     let activations = activation_bytes as u64 * (1 + verify + prompt) as u64;
     let state_bytes = states
         .values()
@@ -303,6 +302,13 @@ impl DeviceProgram {
         true
     }
 
+    /// Rebase onto the pooled admission price: no private verification graph may be held,
+    /// and no release credit may survive — the pooled price never charged for one.
+    pub(crate) fn forfeit_verification(&mut self) {
+        self.discard_verification();
+        self.released_verification_bytes = 0;
+    }
+
     pub(crate) const fn released_verification_bytes(&self) -> u64 {
         self.released_verification_bytes
     }
@@ -331,12 +337,18 @@ impl DeviceProgram {
             width: weights.batch_width,
         };
         self.batch = Some(builder.build()?);
+        let prompt: usize = [self.prompt_batch.as_ref(), self.prompt_narrow.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|graph| graph.width)
+            .sum();
         self.reclaimable_bytes = retained_tensor_bytes(
             graph,
-            weights,
             &self.states,
             &self.fp8_states,
             self.activation_bytes,
+            weights.batch_width,
+            prompt,
         );
         self.released_verification_bytes = 0;
         Ok(())
@@ -352,6 +364,79 @@ impl DeviceProgram {
         hidden: usize,
         vocabulary: usize,
     ) -> Result<Self> {
+        Self::new_impl(device, graph, weights, capacity, hidden, vocabulary, true)
+    }
+
+    /// A sequence that will verify through the shared slot pool skips its private
+    /// verification graph: the pool's captured graph replaces it, so capturing one here
+    /// would cost memory, capture time and admission budget the pool makes useless.
+    /// # Errors
+    /// Rejects unsupported graph shapes, storage budgets or CUDA capture failures.
+    pub(crate) fn new_pooled(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        capacity: usize,
+        hidden: usize,
+        vocabulary: usize,
+    ) -> Result<Self> {
+        Self::new_impl(device, graph, weights, capacity, hidden, vocabulary, false)
+    }
+
+    /// Verification/prompt graph policy: whether the program keeps a private verification
+    /// graph and whether it captures the wide prompt graph.
+    const fn graph_policy(weights: &ProgramWeights, requested: bool) -> (bool, bool) {
+        // Prefill falls back to the verification graph when no prompt graph was captured
+        // (prefill_batch_readout), so a narrow-prefill program must keep its private batch.
+        let private_verification = requested || weights.prefill_width < PREFILL_LANES;
+        // A pool-bound sequence prefills through the narrow prompt graph only: the wide
+        // prompt arena is the largest per-sequence allocation, and four pooled residents
+        // must physically fit next to the pool. Without a narrow graph the wide one is
+        // the only prompt path, so it stays.
+        let wide_prompt = private_verification || weights.narrow_prefill_width < PREFILL_LANES;
+        (private_verification, wide_prompt)
+    }
+
+    /// Zeroed decode metadata tensor and external hidden row shared by every capture.
+    fn constant_inputs(device: &CudaDevice, hidden: usize) -> Result<(Tensor<i32>, Tensor<f32>)> {
+        let metadata = device.upload(vec![0_i32; METADATA_FIELDS * 2], &[METADATA_FIELDS * 2])?;
+        let metadata =
+            Arc::try_unwrap(metadata).map_err(|_| Error::invariant("unique metadata"))?;
+        let external = api::zeros::<f32>(&[hidden])
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        Ok((metadata, external))
+    }
+
+    /// Retained bytes priced from the graphs this program actually captured.
+    fn program_retained_bytes(
+        graph: &DataflowGraph,
+        states: &super::batch::States,
+        fp8: &super::fp8_cache::Fp8Caches,
+        activation_bytes: usize,
+        batch: Option<&super::batch::BatchGraph>,
+        prompts: [Option<&super::batch::BatchGraph>; 2],
+    ) -> u64 {
+        retained_tensor_bytes(
+            graph,
+            states,
+            fp8,
+            activation_bytes,
+            batch.map_or(0, |graph| graph.width),
+            prompts.into_iter().flatten().map(|graph| graph.width).sum(),
+        )
+    }
+
+    fn new_impl(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        capacity: usize,
+        hidden: usize,
+        vocabulary: usize,
+        private_verification: bool,
+    ) -> Result<Self> {
+        let (private_verification, wide_prompt) = Self::graph_policy(weights, private_verification);
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
@@ -363,20 +448,13 @@ impl DeviceProgram {
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
-        let reclaimable_bytes =
-            retained_tensor_bytes(graph, weights, &states, &fp8_states, activation_bytes);
         let reset_graph = capture_reset(device, &mut states)?;
-        let metadata = device.upload(vec![0_i32; METADATA_FIELDS * 2], &[METADATA_FIELDS * 2])?;
-        let metadata =
-            Arc::try_unwrap(metadata).map_err(|_| Error::invariant("unique metadata"))?;
-        let external = api::zeros::<f32>(&[hidden])
-            .sync_on(&device.stream)
-            .map_err(device_error)?;
+        let (metadata, external) = Self::constant_inputs(device, hidden)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
         let mut capture_graph = |skip_logits: bool| {
             CudaGraph::scope(&device.stream, |scope| {
-                let mut capture = capture::Capture {
+                capture::Capture {
                     scope,
                     arena: &mut arena,
                     weights,
@@ -389,13 +467,8 @@ impl DeviceProgram {
                     capacity,
                     fusion: &mut fusion,
                     mode: capture::CaptureMode::Flat,
-                };
-                for node in &graph.nodes {
-                    if !skip_logits || !node.outputs.iter().any(|id| Some(*id) == graph.logits) {
-                        capture.record(node)?;
-                    }
                 }
-                Ok(())
+                .record_program(graph, skip_logits)
             })
             .map_err(device_error)
         };
@@ -416,7 +489,16 @@ impl DeviceProgram {
             capacity,
             width: weights.batch_width,
         };
-        let (batch, prompt_batch, prompt_narrow) = builder.build_pair()?;
+        let (batch, prompt_batch, prompt_narrow) =
+            builder.build_pair(private_verification, wide_prompt)?;
+        let reclaimable_bytes = Self::program_retained_bytes(
+            graph,
+            &states,
+            &fp8_states,
+            activation_bytes,
+            batch.as_ref(),
+            [prompt_batch.as_ref(), prompt_narrow.as_ref()],
+        );
         let hidden = super::batch::take_result(&mut arena, graph.hidden)?;
         let logits = super::batch::take_result(&mut arena, graph.logits)?;
         Ok(Self {
