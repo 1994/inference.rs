@@ -1058,12 +1058,12 @@ dependencies = [
  "clap",
  "cuda-core",
  "cutile",
- "infer-backend-host",
  "infer-compiler",
  "infer-core",
  "infer-ir",
  "infer-kernel-api",
  "infer-models",
+ "infer-reference-ops",
  "infer-runtime",
  "infer-spi",
  "infer-state",
@@ -1085,6 +1085,7 @@ dependencies = [
  "infer-model-recipes",
  "infer-models",
  "infer-quality",
+ "infer-reference-ops",
  "infer-runtime",
  "infer-spi",
  "infer-state",
@@ -1294,6 +1295,15 @@ dependencies = [
  "infer-ir",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "infer-reference-ops"
+version = "0.1.0"
+dependencies = [
+ "infer-core",
+ "infer-ir",
+ "infer-state",
 ]
 
 [[package]]

@@ -1,7 +1,5 @@
 //! State responsibilities.
-use super::{
-    HostBackend, HostKernels, HostObservations, OpTrace, Sequence, kernels, publish_prefix,
-};
+use super::{HostBackend, HostKernels, HostObservations, OpTrace, Sequence, publish_prefix};
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::{
     BackendKind, ExecutionProgram, ExecutionTask, ModelIr, ModelOutput, PrecisionPlan, StateKind,
@@ -175,7 +173,9 @@ impl HostBackend {
                             .ok_or_else(|| Error::invariant("bound state"))
                     })
                     .transpose()?;
-                let outputs = kernels::execute(&node.op, &inputs, state, token, position)?;
+                let outputs = infer_reference_ops::reference_operation(
+                    &node.op, &inputs, state, token, position,
+                )?;
                 if outputs.len() != node.outputs.len() {
                     return Err(Error::invariant("kernel output binding count"));
                 }

@@ -7,6 +7,7 @@ const SOFTPLUS_LINEAR_THRESHOLD: f32 = 20.0;
 /// Floor added to the query/key sum of squares before the reciprocal square root.
 const DELTA_NORM_EPSILON: f64 = 1e-6;
 
+#[must_use]
 pub fn sigmoid(x: f32) -> f32 {
     if x >= 0.0 {
         1.0 / (1.0 + (-x).exp())

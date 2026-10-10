@@ -36,7 +36,7 @@ libloading.workspace = true
 [dev-dependencies]
 infer-runtime.workspace = true
 clap.workspace = true
-infer-backend-host.workspace = true
+infer-reference-ops.workspace = true
 infer-state.workspace = true
 
 [[example]]

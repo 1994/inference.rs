@@ -21,6 +21,7 @@ members = [
     "crates/service/agent",
     "crates/service/cli",
     "crates/testing/cpu/host",
+    "crates/testing/cpu/reference-ops",
     "crates/testing/cpu/reference",
     # Development tool: a member so it shares the lock, versions and lints, but not part of the
     # default product build set.
@@ -118,6 +119,7 @@ infer-agent = { version = "=0.1.0", path = "crates/service/agent" }
 
 # Opt-in CPU references
 infer-backend-host = { version = "=0.1.0", path = "crates/testing/cpu/host" }
+infer-reference-ops = { version = "=0.1.0", path = "crates/testing/cpu/reference-ops" }
 infer-backend-reference = { version = "=0.1.0", path = "crates/testing/cpu/reference" }
 
 [workspace.lints.rust]

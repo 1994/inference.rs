@@ -55,7 +55,7 @@ pub fn run(
         if nonlinear == rounded {
             return Err(Error::invariant("rounding fixture is degenerate"));
         }
-        let expected = infer_backend_host::reference_operation(
+        let expected = infer_reference_ops::reference_operation(
             &TensorOp::Linear,
             &[&rounded, &inputs[1]],
             None,

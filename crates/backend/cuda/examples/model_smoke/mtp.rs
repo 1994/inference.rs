@@ -131,7 +131,7 @@ impl Mtp {
             head_dim: config.hidden_size,
         };
         let norm = |input: &[f32], weight: &[f32]| -> Result<Vec<f32>> {
-            infer_backend_host::reference_operation(&op, &[input, weight], None, 0, 0)?
+            infer_reference_ops::reference_operation(&op, &[input, weight], None, 0, 0)?
                 .pop()
                 .ok_or_else(|| Error::invariant("MTP norm output"))
         };

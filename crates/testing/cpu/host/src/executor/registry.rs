@@ -43,8 +43,8 @@ impl KernelProvider for HostKernels {
             priority: 0,
             estimated_ns: 1,
             source: SourceLocation {
-                crate_name: "infer-backend-host".into(),
-                file: "crates/testing/cpu/host/src/executor/kernels.rs".into(),
+                crate_name: "infer-reference-ops".into(),
+                file: "crates/testing/cpu/reference-ops/src/kernels.rs".into(),
                 function: "execute".into(),
             },
         })

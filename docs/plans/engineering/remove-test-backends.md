@@ -8,6 +8,28 @@
 
 测试布局见 [测试组织方案](tests.md)，构建和依赖迁移见 [构建与依赖方案](build-and-dependencies.md)。
 
+## 已实施：标量参考搬出执行器（数值对照的第一步）
+
+E1 要删的是两个**完整执行器**，不是数值对照本身；方案要求"移动数值对照"、"关键断言有去向"。审查发现
+CUDA 的 5 个 example 只用到宿主执行器里的**一个函数** `reference_operation`（即 `kernels::execute`），
+却因此把整个执行器留在依赖图里 ✗。
+
+现在标量参考搬到独立 crate `infer-reference-ops`（`crates/testing/cpu/reference-ops`）：
+
+- 它是一个**参考**而不是执行器：依赖只有 `infer-core`、`infer-ir`、`infer-state`，没有 provider、
+  registry、CLI feature 或任何设备代码；
+- 宿主执行器改为**复用**它（`executor/mod.rs` 重导出、`state.rs` 调用它），因此两份实现不会漂移，
+  直到执行器被删除；
+- 5 个 CUDA example 改为直接对照它，`infer-backend-cuda` 的依赖从 `infer-backend-host` 换成
+  `infer-reference-ops`；
+- registry 的 source map 如实指向新位置（layout 门禁当场抓出了我漏改的这条 ✗）。
+
+**实测收益**：测试执行器的消费者从 **52 降到 45** ✓，且 CUDA 侧不再牵入执行器；`make check-rust`
+完整通过（workspace 72 个二进制、384 collected / 382 passed / 0 failed ✓）。本机可验证 CUDA example
+编译：需要 `BINDGEN_EXTRA_CLANG_ARGS=-I$(gcc -print-file-name=include)`（与 `package.py` 的 native
+环境一致），设上以后 `cargo check -p infer-backend-cuda --features cuda --examples` 通过 ✓ —— 这把
+E1 剩余部分从"只能靠设备机验证"变成了**本机可验证** ✓。
+
 ## 已保住的数值对照
 
 删除执行器前，其中唯一的数值参考（gated-delta 状态步）已固化为

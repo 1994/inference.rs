@@ -114,54 +114,6 @@
       "role": "plumbing"
     },
     {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/Cargo.toml",
-      "patterns": [
-        "infer-backend-host"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/examples/model_smoke/mod.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "numeric"
-    },
-    {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/examples/model_smoke/mtp.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "numeric"
-    },
-    {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/examples/resident_checks/batch.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "numeric"
-    },
-    {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/examples/resident_checks/mod.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "numeric"
-    },
-    {
-      "crate": "cuda",
-      "path": "crates/backend/cuda/examples/resident_checks/rounded_projection.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "numeric"
-    },
-    {
       "crate": "kernel-api",
       "path": "crates/backend/kernel-api/Cargo.toml",
       "patterns": [
@@ -420,14 +372,6 @@
       "patterns": [
         "infer-backend-host",
         "test-backends"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/host/src/executor/registry.rs",
-      "patterns": [
-        "infer-backend-host"
       ],
       "role": "fixture"
     },

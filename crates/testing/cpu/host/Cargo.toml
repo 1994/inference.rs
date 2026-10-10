@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 infer-core.workspace = true
+infer-reference-ops.workspace = true
 infer-ir = { workspace = true, features = ["test-backends"] }
 infer-spi.workspace = true
 infer-models.workspace = true

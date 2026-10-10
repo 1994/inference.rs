@@ -114,7 +114,7 @@ fn reference(
         refs[1] = &keys;
         refs[2] = &values;
     }
-    infer_backend_host::reference_operation(op, &refs, state.as_mut(), u32::from(token), position)?
+    infer_reference_ops::reference_operation(op, &refs, state.as_mut(), u32::from(token), position)?
         .pop()
         .ok_or_else(|| Error::invariant("reference output"))
 }

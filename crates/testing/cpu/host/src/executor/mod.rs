@@ -2,8 +2,7 @@
 mod checkpoint;
 mod execution;
 mod inspection;
-mod kernels;
-pub use kernels::execute as reference_operation;
+pub use infer_reference_ops::reference_operation;
 mod provider;
 mod setup;
 mod state;

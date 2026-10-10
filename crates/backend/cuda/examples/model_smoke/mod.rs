@@ -284,7 +284,7 @@ impl Model {
                     } else {
                         position
                     };
-                    infer_backend_host::reference_operation(
+                    infer_reference_ops::reference_operation(
                         &node.op,
                         &inputs,
                         state,

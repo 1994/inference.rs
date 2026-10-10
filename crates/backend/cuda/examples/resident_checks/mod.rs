@@ -261,7 +261,8 @@ fn replay_one(
         refs[1] = &quantized_keys;
         refs[2] = &quantized_values;
     }
-    let expected = infer_backend_host::reference_operation(op, &refs, state.as_mut(), 0, position)?;
+    let expected =
+        infer_reference_ops::reference_operation(op, &refs, state.as_mut(), 0, position)?;
     let (actual, logits) = program.step(
         0,
         position,
