@@ -1684,3 +1684,88 @@ D×D state）；而 decode 要批的是**4 个互不相干的槽位状态**（`l
 **预估收益**：若 conv/delta 各变成"每节点一条 kernel"（~10–15 µs），可省约 **3 ms ≈ decode
 tick 的 11%**（batch4 tpot 19.03 → ~16.9 ms，比值 2.02 → ~1.80）；attention 的 16 个节点另有
 空间（§12.16 已量到张量核 SDPA 更快，但那是预填充形；decode 形要用单 query 变体，未量）。
+
+### 12.18 attention 换张量核的落地方案（设计已定，代码下一轮写）
+
+§12.16 用仓库现成的 `DenseAttentionPlan` 量到 3.1–3.5×，但**不能直接接**：`plan.rs` 要求
+调用方提供 **f32** 的 K/V 缓冲，且 `plan.shapes()` 的尺寸在建 plan 时固定；我们的 KV 是
+**fp8 且按容量分配**（池 2048 槽、私有程序可到 32768），转成 f32 是 134 MB/层，不可行。
+所以正确形态不是"用 plan"，而是**把已验证的内层搬到 resident 核里**：保留 fp8 KV cache、
+保留运行时的 KV 上界，只把 QK^T / PV 换成张量核。下面是把 `attention/kernels.rs::sdpa::attention`
+改造成 resident 变体的完整映射（已逐项核对过现有核与 SDPA 的语义）。
+
+**操作数映射（全部可在不改布局的前提下表达）**
+
+| SDPA 角色 | resident 张量 | 布局 | 取法 |
+|---|---|---|---|
+| `query` | arena 里的 q | 现为 `[lanes*HEADS, D]`，可 view 成 `[lanes, HEADS, D]` | `q.partition([QT,1,D]).load([tile, head, 0])` → reshape `[QT,D]` |
+| `key` / `value` | fp8 KV cache | `[kv_heads, capacity, D]` | `keys.partition([1,KB,D]).load([kv_head, block, 0])` → reshape `[KB,D]`（**与现有 SIMT 核同一句**） |
+| `out` | arena 输出 | 现为 `[lanes*HEADS, D]`，view 成 `[lanes, HEADS, D]` | `out.partition([QT,1,D]).store(.., [tile, head, 0])` |
+| `scale` | `1/√D` | 现有核已算 | 沿用 |
+| `k_scale`/`v_scale` | 现有核已有 | — | `convert_tile` 之后再乘（与 SIMT 核一致） |
+
+**分块与网格**：`QT`（每个 tile 的 lane 数，建议 32 或 64）× `KB`（KV 块，32/64）；
+网格 = `(lanes/QT) × HEADS`。即"同一 head、连续 lane"为一组 —— 这正是 §12.16 里已经实测过的
+分块（闸门跑 `queries=64` 时 grid 就是 2×24，72 µs），**所以分块本身不需要再验证**。
+`QT` 越大越省 K/V 重复读（每个 KV head 被 GROUP=6 个 head 各读一遍，与 QT 无关）。
+
+**掩码**：tile 内第 i 行的位置是 `base + lane0 + i + offset`，同一 tile 内单调 ⇒ 可以套用
+SDPA 的 `visibility` 形状检查：`MASK=1`（causal）+ 运行时 `query_start = base + lane0 + offset`。
+§12.16 的 fixture 正是这个用法（`query_start=384`、`kv=448`、`tokens=64`、causal），已过闸门。
+滑动窗口用 `MASK=2` 同理。
+
+**唯一未决的语义**：`lane >= count` 的**非活跃行**。SIMT 核用 `if lane < count && position >= 0`
+整行跳过；tile 化的核没有 per-row 的 early-out，需要显式处理（把 q 行置零、或给 `visibility`
+再加一个逐行 `lane < count` 的合取项）。后者更干净：`valid &= (row < count)`，其中 row = 该 tile
+的 lane 序号 + lane0。**这一项必须在写核时一起做，否则非活跃行会写出垃圾（下游虽然按 metadata
+忽略，但显存里的值会被后续 kernel 读到）。**
+
+**代码骨架**（`attention_prefill.rs` 新增一个 `decode_tiled` entry，不动现有 `decode`）：
+
+```rust
+#[cutile::entry()]
+fn decode_tiled<E: ElementType, const D: i32, const DV: i32, const GROUP: i32,
+                const QT: i32, const KB: i32>(           // 网格 (lanes/QT) x HEADS
+    out: &mut Tensor<f32, { [-1, -1, DV] }>,             // [lanes, HEADS, DV]
+    q:   &Tensor<f32, { [-1, -1, D] }>,                  // [lanes, HEADS, D]
+    keys:   &Tensor<E, { [-1, -1, D] }>,                 // [kv_heads, capacity, D]
+    values: &Tensor<E, { [-1, -1, DV] }>,
+    metadata: &Tensor<i32, { [-1] }>,
+    window: i32, k_scale: f32, v_scale: f32,
+) {
+    let pid = get_tile_block_id();
+    let head = pid.1; let kv_head = head / GROUP;
+    // base/count/offset 从 metadata 读（与现有核逐字相同）
+    let qt: Tile<f32, {[QT, D]}> = q.partition(shape![QT,1,D]).load([pid.0, head, 0]).reshape(shape![QT,D]);
+    let mut acc: Tile<f32, {[QT, DV]}> = constant(0.0, shape![QT, DV]);
+    let mut row_max: Tile<f32, {[QT]}> = constant(MASKED, shape![QT]);
+    let mut row_sum: Tile<f32, {[QT]}> = constant(0.0, shape![QT]);
+    let kp = keys.partition(shape![1, KB, D]);
+    let vp = values.partition(shape![1, KB, DV]);
+    let last = (base + offset + pid.0*QT + QT - 1) / KB + 1;      // 运行时上界
+    for block in 0..last {
+        let k: Tile<f32,{[KB,D]}> = convert_tile(kp.load([kv_head, block, 0]).reshape(shape![KB,D])) * k_scale.broadcast(shape![KB,D]);
+        let v: Tile<f32,{[KB,DV]}> = convert_tile(vp.load([kv_head, block, 0]).reshape(shape![KB,DV])) * v_scale.broadcast(shape![KB,DV]);
+        let raw = precise_mma(qt, k.transpose()) * scale.broadcast(shape![QT,KB]);
+        let valid = /* causal + window + (row_lane < count) */;
+        let s = select(valid, raw, constant(MASKED, shape![QT,KB]));
+        let next = max_tile(row_max, reduce_max(s, 1i32));
+        let p = exp(s - next.reshape(shape![QT,1]).broadcast(shape![QT,KB]));
+        acc = acc * exp(row_max - next).reshape(shape![QT,1]).broadcast(shape![QT,DV])
+            + precise_mma(p, v);
+        row_sum = row_sum * exp(row_max - next) + reduce_sum(p, 1i32);
+        row_max = next;
+    }
+    out.partition(shape![QT,1,DV]).store((acc / row_sum.reshape(shape![QT,1]).broadcast(shape![QT,DV])).reshape(shape![QT,1,DV]), [pid.0, head, 0]);
+}
+```
+
+`precise_mma` / `MASKED` 从 `attention/kernels.rs` 抄一份即可（它是模块内的普通 `fn`，
+用 `mmaf` 做 bf16 补偿乘；`attention_prefill.rs` 里现在一次 `mmaf` 都没有）。
+
+**接线与验收**：`record_prefill_attention` 里按 `INFER_CUDA_TILED_ATTENTION` 选择新核（默认惰性）、
+q/out 以 `[lanes, HEADS, D]` 视图记录；验收顺序是 ① `make local-build` + 现有单测/GPU 测试，
+② `examples/provider_check`（它是**示例**不是测试，不需要动 test inventory，正好当数值校验器），
+③ 官方矩阵与默认路径比 token（`token_mismatches` 应回到同一量级）。
+
+预期：预填充 attention 3.19 ms → ~1.0 ms（replay −6.4%）；decode 形要另做单 query 变体（未量）。
