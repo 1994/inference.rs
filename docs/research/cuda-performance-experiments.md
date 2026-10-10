@@ -2168,3 +2168,27 @@ Row 走**每 lane 的 metadata**（`[rope_pos, token, state_pos, 0]`）——后
 metadata（`self.mode` + `self.metadata` 与 `prefill_info` 的指针/shape），并在 Row 绑定下把
 field[0..3] 的值 dump 出来。先确认"Row 预填充也会记录 append"这个假设——如果是，那 Row 绑定
 本身就带着一个既有的字段错位问题（与块表无关），也就不奇怪为什么只有加了表之后才炸。
+
+### 13.15 `BatchGraph::run` 少写了一个 sidecar：**真实的不对称，但在交付 workload 上行为中性**
+
+顺着 §13.14 的线索把"哪张 metadata"查清楚了，结果是一处**真实的代码不对称**：
+
+- prompt 图（`capture()` 里 `mode: CaptureMode::Prefill`）绑定的是 **`prefill_info`**，
+  而 append 与递推核都按 `[base, count, offset]` 读它；
+- **`run32`（宽 prompt，width ≥ PREFILL_LANES）会写它**（而且位置经过 §13.13 的护栏）；
+- **`run`（窄 prompt，width < PREFILL_LANES —— 正是池化 + `--chunked-recurrent` 走的那条）
+  只写每 lane 的 metadata，从不写 `prefill_info`** ⇒ 该图重放时读到的是**上一次写入的旧 base**。
+
+已修（`BatchGraph::run` 在 `prefill.is_some()` 时按 `run32` 的方式更新 `prefill_info`，并同样过护栏）。
+
+**但必须如实说**：修完之后，**官方 matrix 12 次 trial 的 token 与修之前逐位相同**（64/64），
+单测/GPU 测试也全绿。也就是说在交付 workload 上这处旧值**没有影响到输出**——所以它**不是**
+第 18 轮块表越界的原因。（很可能是窄 prompt 图最终走的是 Row 分支、绑每 lane metadata，
+`prefill_info` 对它并不生效；那也解释了为什么改了没有行为差异。）
+
+保留这个改动的理由只有一条，而且是诚实的：**"其中一个入口写、另一个入口不写"本身就是隐患**，
+下一次谁改动 prompt 图的绑定就会踩上它；而它已经验证过不改变任何输出。
+
+另外，本轮也**排除了一整类解释**：既然"KV 位置错"的那条路径改动前后输出逐位相同，
+说明这条链上的写位置差异**不会进入最终结果**——块表越界的原因还得在别处找（下次要在核里
+把 `BT`、表长、`position` 三个数**写进一个调试缓冲读回来**，不再靠推）。
