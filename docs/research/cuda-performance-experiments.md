@@ -2316,3 +2316,32 @@ admission StateBytes: required=1118322192, available=958402560  code=Capacity
 **但它是过渡手段**：真正的解法是**共享块池**——序列只持有它实际用到的块，`CB_SLOT_TOKENS`
 这种"每槽按容量预留"的门槛就该消失（第②步）。这条实测同时给出了第②步的验收方式：
 同样 4×2560 并发下 `gpu_budget` 递延应继续下降，且**不再需要靠调大常量**。
+
+### 13.21 第②步第一块（共享 arena）：设计定稿，写到最后两处未落地，已回退
+
+**设计**（行为等价，先把结构立起来）：池的每个 KV 状态从"每槽一份 arena"变成**一份共享 arena**
+`[kv_heads, width × capacity, head_dim]`，每槽的表从"恒等"改成**带块偏移**：
+槽 `i` 的逻辑块 `b` → arena 块 `i × blocks_per_slot + b`。因为偏移恰好等于原来每槽 arena 的起点，
+**寻址与今天逐字节相同**，所以这一步理应是"纯结构、token 不变"。
+
+**触点（这次全部枚举清了）**：
+1. `fp8_cache::allocate_shared(device, graph, capacity, slots, scales)`（arena 行数 = `capacity × slots`），
+   原 `allocate` 保留给私有 program；
+2. `SlotPool.fp8: Vec<Fp8Caches>` → **`Fp8Caches`（一份）**；
+3. 新增 `slot_tables(device, capacity, width)` 生成带偏移的表（把 `new` 里那段挪出来，顺带解决
+   clippy 的 122 行超限）；
+4. `build_slots` / `build_slot_verify` / `capture_slot_verify` 的 `lane_fp8: &mut [Fp8Caches]`
+   → 一份 `&mut Fp8Caches`（每个 lane 复用同一份）；
+5. `copy_kv_fp8` / `copy_kv_tensor` 需要 `KvSpan { capacity, offset, on_dst }`——**卡点就在这里**：
+   池化导入（bind）是"共享侧在**目的**"，而 **draft 导出（`slot_batch/draft.rs`）是"共享侧在源"**，
+   角色相反，所以不能只给"目的侧"加偏移；
+6. `state_bytes`：共享 arena 只计一次。
+
+**为什么回退**：我在两处调用点（bind、draft 导出）用锚点替换 `KvSpan` 时**没匹配上**（缩进不同），
+`make local-build` 报错，而我这一轮的预算已经用尽。按目标约束"不得让工作区处于编译不过的状态"，
+整块回退（`git checkout` 五个文件）。回退后复核：`cargo check --all-targets` **0 错误**、clippy
+`-D warnings` ✅、release 构建 ✅、27 单测 ✅、4 个 GPU 硬件测试 ✅。
+
+**下一轮直接落地**（顺序已定）：先把 `KvSpan` 的两处调用点改完再编译，然后再做**arena 尺寸由预算决定**
+（`total_blocks < width × capacity`）+ **分配不到块就递延**（复用 `DeferReason::StateCapacity` 既有机制）
+——那一步才是收益兑现点（§13.20 已给出验收：4×2560 并发的 `gpu_budget` 递延应继续下降）。
