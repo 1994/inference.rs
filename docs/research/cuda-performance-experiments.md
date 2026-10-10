@@ -1086,20 +1086,64 @@ vLLM 侧绝对数字不动支持这一点（它的 kernel 是预编译的，我�
   在 prefill 能与并发共享同一份 arena（或按批次大小惰性升级程序）之前，
   池化序列只能走 narrow 图；这条记为已知代价，不再尝试调 `graph_policy`。
 
-### 11.7 下一步（按证据排序）
+### 11.7 decode 侧的两条负结果：tile 已经是优解，逐节点画像不能再往下挖
 
-1. **B2b cuBLASLt NVFP4 委托**（§二 杠杆 A，规格已确证）：verify 的 `linear` 占
-   `slot_verify` 设备时间的 69%（18.9 / 27.4 ms），隔离测量窄行形状赢 1.6–1.7x。
-   注意 `constants.rs` 已有的教训：**隔离 kernel 结果在服务矩阵里会失真**
-   （`[64,128]` 隔离赢 1.47x，服务端 `slot_verify` 26.69 → 27.43 ms），
-   所以委托落地必须用服务矩阵验收，不能只看 kernel bench。
-   根因之一已写在 `PROMPT_GEMM_TILE_ROWS` 的注释里：decode 单个 GEMM 只有 ~40 个 CTA，
-   填不满 170 SM —— 任何加宽 tile/减少 CTA 的方向都会先输在这里。
-2. **B4 设备端 greedy argmax**：每步省 4 lane × 993 KB 的 logits D2H 与 host 串行
-   argmax（~3.3 ms/tick）。门控条件 `temperature == 0 && presence == 0 && repetition == 1.0`，
-   tie-break 必须与 host `greedy()` 逐位一致（首个最大值、total order、非有限值报错）。
-3. **B3 Row 派发跨 lane 批量化**：`delta` 3.7 + `conv` 2.4 + norm/rope/add ≈ 3 ms 的
+`slot_verify`（4 lane、MTP2、12 行）是 decode 的最大单项：图边界事件中位
+**26.68 ms**，逐节点一次 replay 的构成（node_count 1155，与 total 一致）：
+
+| 算子 | 每 replay | 节点数 | 每节点 |
+|---|---:|---:|---:|
+| **linear** | 19.76 ms | 497 | 36.8 µs（中位） |
+| delta | 3.89 ms | 48 | 81 µs |
+| conv | 2.34 ms | 48 | 49 µs |
+| attention | 1.38 ms | 16 | 86 µs |
+| norm+add+multiply+rope+silu+split+sigmoid+gated_norm | ~2.7 ms | 529 | ≤7 µs |
+| lm_head（组 64 的第 2 个 linear） | 0.78 ms | 1 | 783 µs |
+
+**tile 扫描【确证，已否】**：给 `quant_gemm_tile` 加了一个 capture 期的 env 覆盖
+（`INFER_CUDA_QUANT_TILE=rows,cols`，只覆盖 decode 宽度），用同一套 `slot_verify`
+图时间扫了列 tile：
+
+| 列 tile | slot_verify 中位 |
+|---|---:|
+| **64（现状）** | **24.74 ms** |
+| 32 | 25.05 ms |
+| 128 | 25.06 ms |
+| 256 | 26.68 ms |
+
+`[16,64]` 已经是优解；加宽（更少 CTA）和收窄（更多 CTA 但激活重读翻倍）都更差。
+覆盖代码已回滚——decode GEMM 的问题不在形状选择。
+
+**逐节点画像的 9 个离群点不是形状病理【确证】**：64 层里 9 层各有一个 linear 节点
+200–320 µs，而同样的形状在其它层只有 20–53 µs。但它们
+
+- 出现在**不同的投影位置**（组内下标 11 / 6 / 19 / 14 都有），
+- 间隔**非常规律**（约每 96 个节点一次，即每 5–6 层），
+- 且 `segments` 之和恰好等于 `total_ms`（没有未计入的间隙）。
+
+形状相同、位置随机、间隔规律 —— 这是**采集期的干扰被摊到某一节点**，不是可修的核。
+结论：per-node 画像的**总量**可信，**单个离群节点**不可信，不要照着它改 kernel；
+要判断某个形状慢不慢，用隔离 bench + 服务矩阵两把尺子。
+
+### 11.8 下一步（按证据排序）
+
+1. **B2b cuBLASLt NVFP4 委托**（§二 杠杆 A，规格已确证）：这是 decode 唯一还没试过的
+   大杠杆。11.7 已经把"换 tile/换形状"这条排除掉，剩下的就是**同一个形状换更好的核**：
+   隔离测量窄行形状 cuBLASLt 赢 1.6–1.7x，而我们的 GEMM 在服务里只有 ~50% 带宽。
+   两个必须带着的教训：① `[64,128]` 隔离赢 1.47x、服务端反而慢 1.7%
+   （`slot_verify` 26.69 → 27.43 ms），所以验收只认服务矩阵；② decode 单个 GEMM 只有
+   ~40 个 CTA，填不满 170 SM（`PROMPT_GEMM_TILE_ROWS` 注释），任何减少 CTA 的方向先输。
+2. **B4 设备端 greedy argmax**：draft 路径 host 侧 5.5 ms/tick 对设备 2.8 ms/tick，
+   差额主要是 8×993 KB 的 logits D2H 与 host 串行 argmax。门控条件
+   `temperature == 0 && presence == 0 && repetition == 1.0`，tie-break 必须与 host
+   `greedy()` 逐位一致（首个最大值、total order、非有限值报错）。
+3. **B3 Row 派发跨 lane 批量化**：`delta` 3.9 + `conv` 2.3 + norm/rope/add ≈ 2.7 ms 的
    12 路串行延迟链。
+
+**测量前先确认二进制**：同一 worktree 里有另一条工作线在构建，`make local-build` 的产物
+`target/release/infer` 被 CPU-only 构建覆盖过（24.8 MB → 8.3 MB，随后服务报
+`no supported GPU backend available`）。跑基准前 `stat -c%s target/release/infer`
+应 >20 MB，否则先重新 `make local-build`。
 
 复现命令（native 侧，vLLM 侧复用 `stage-b2-mtp2-vllm-g1`）：
 
