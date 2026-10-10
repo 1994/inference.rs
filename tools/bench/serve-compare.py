@@ -124,13 +124,40 @@ def git_identity():
         return {"revision": None, "dirty": None}
 
 
+# The knobs the baseline contract names, with cargo's release defaults. A report that records only
+# the keys someone happened to write in the manifest cannot show the effective optimization level or
+# whether debug assertions were on, which is exactly what the contract asks it to show.
+RELEASE_PROFILE_DEFAULTS = {
+    "opt-level": 3,
+    "lto": False,
+    "codegen-units": 16,
+    "debug": False,
+    "debug-assertions": False,
+    "overflow-checks": False,
+    "panic": "unwind",
+    "incremental": False,
+    "strip": "none",
+}
+# Flags that change what gets built without touching the manifest; recorded when set, because the
+# contract says any override has to be visible.
+PROFILE_ENVIRONMENT = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CUDAARCHS", "NVCC_CCBIN")
+
+
 def release_profile():
-    """The workspace release profile, so the recorded build facts are the real ones."""
+    """The effective release profile: the manifest's settings over cargo's defaults."""
     try:
         manifest = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text())
     except (OSError, tomllib.TOMLDecodeError):
-        return {}
-    return manifest.get("profile", {}).get("release", {})
+        return {"source": "unavailable", "effective": {}, "explicit": {}}
+    explicit = dict(manifest.get("profile", {}).get("release", {}))
+    return {
+        "source": "Cargo.toml [profile.release] over cargo's release defaults",
+        "effective": {**RELEASE_PROFILE_DEFAULTS, **explicit},
+        "explicit": explicit,
+        "environment": {
+            name: os.environ[name] for name in PROFILE_ENVIRONMENT if os.environ.get(name)
+        },
+    }
 
 
 def elf_section_names(data):

@@ -19,7 +19,18 @@ def identity(engine="native", **overrides):
         "engine": engine,
         "engine_version": "0.1.0",
         "source": {"revision": "deadbeef", "dirty": False},
-        "release_profile": {"lto": "thin", "codegen-units": 1},
+        "release_profile": {
+            "source": "fixture",
+            "effective": {
+                "opt-level": 3,
+                "lto": "thin",
+                "codegen-units": 1,
+                "debug": False,
+                "debug-assertions": False,
+                "overflow-checks": False,
+            },
+            "explicit": {"lto": "thin", "codegen-units": 1},
+        },
         "build": {"path": "/bin/infer", "sha256": "abc", "release_like": True},
         "model": {"path": "/models/x", "files": {"config.json": "aaa"}, "shards": {"a": 1}},
         "hardware": {"devices": [{"uuid": "GPU-1", "name": "RTX 5090", "driver_version": "1"}]},
@@ -131,6 +142,32 @@ class GateTests(unittest.TestCase):
                 new[field] = value
                 with self.assertRaises(ValueError):
                     module.compare(old, new)
+
+    def test_a_report_without_an_effective_profile_is_rejected(self):
+        with self.assertRaises(ValueError) as raised:
+            module.require_release_identity(
+                report()
+                | {"identity": identity(release_profile={"lto": "thin", "codegen-units": 1})}
+            )
+        self.assertIn("effective release profile", str(raised.exception))
+
+    def test_a_debug_assertion_build_is_rejected(self):
+        profile = identity()["release_profile"]
+        profile["effective"]["debug-assertions"] = True
+        with self.assertRaises(ValueError) as raised:
+            module.require_release_identity(
+                report() | {"identity": identity(release_profile=profile)}
+            )
+        self.assertIn("debug assertions", str(raised.exception))
+
+    def test_an_unoptimized_build_is_rejected(self):
+        profile = identity()["release_profile"]
+        profile["effective"]["opt-level"] = 0
+        with self.assertRaises(ValueError) as raised:
+            module.require_release_identity(
+                report() | {"identity": identity(release_profile=profile)}
+            )
+        self.assertIn("without optimization", str(raised.exception))
 
     def test_numerical_gate(self):
         old, new = report(), report()

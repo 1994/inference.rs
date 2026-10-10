@@ -71,6 +71,26 @@ ignored 和失败数量"。审查发现**设备验收入口是例外**：`make t
 顺带修掉包装器的一个真 bug：它原先删除**所有** `--`，会把 `cargo test … -- --ignored` 里的内层分隔符
 一起吃掉 ✗，使 `--ignored` 退化成测试名过滤 ✗。现在只删除紧跟选项的那一个 `--`，并补了一条专门的测试。
 
+**profile 身份从"记录了"变成"可证明"**
+
+方案要求"执行清单保存构建命令、完整源码版本、features、target、编译器、**实际 profile 设置**和二进制
+哈希；不能仅凭文件位于 `target/release/` 就认定构建正确"，并明确"任何优化级别、LTO、codegen units、
+debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
+
+审查发现报告只记录了 **manifest 里显式写出的键**（本仓库只有 `lto`、`codegen-units`）✗ —— 有效优化
+级别、是否带 debug assertions、是否 incremental 全都不在报告里 ✗，而门禁只检查 `release_like` 布尔
+✗，于是一份 profile 被改坏的报告也能通过 ✓→✗：
+
+- `release_profile()` 现在给出**有效**配置：cargo 的 release 默认值叠加 `[profile.release]`，
+  同时保留 `explicit`，并记录会改变构建的环境变量（`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、
+  `CUDAARCHS`、`NVCC_CCBIN`，仅在设置时记录）；
+- `compare-results.py` 新增 `require_release_profile()`：原生报告必须带有效 profile，且
+  `debug-assertions`、`overflow-checks` 必须为 false、`opt-level` 不能为 0、`incremental` 必须为
+  false、`debug` 不能为真——即"debug、混合 profile 或无法证明构建身份的结果不进入正式 baseline"
+  这条被真正执行；
+- 三条已签发基线仍逐条 `--verify` 通过（8 个文件哈希一致 ✓，`--verify` 只重算哈希、不重跑当时
+  的门禁 ✓），测试夹具同步更新并新增 3 个反例用例。
+
 **性能结论如实记录，不作签发条件**
 
 三条基线的 `gate.passed` 都是 `false`：native 目前慢于 vLLM（例如 2b 的 batch4 `wall_seconds`

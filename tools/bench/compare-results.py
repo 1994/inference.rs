@@ -26,6 +26,30 @@ REQUIRED_TELEMETRY = ("utilization_gpu_mean", "utilization_gpu_max", "sm_clock_m
 REQUIRED_REQUEST_LATENCY = ("ttft_seconds",)
 
 
+def require_release_profile(identity):
+    """Prove the profile a native report was built with, not merely that a path looked released.
+
+    The baseline contract says debug or mixed profiles do not enter a formal baseline and that the
+    effective optimization level and debug assertions have to be visible, so a report that records
+    only the manifest's explicit keys does not answer the question.
+    """
+    profile = identity.get("release_profile")
+    if not isinstance(profile, dict) or not profile.get("effective"):
+        raise ValueError("native report records no effective release profile")
+    effective = profile["effective"]
+    if effective.get("debug-assertions") is not False:
+        raise ValueError("native report was built with debug assertions")
+    if effective.get("overflow-checks") is not False:
+        raise ValueError("native report was built with overflow checks")
+    if effective.get("debug") not in (False, 0, "0", None):
+        raise ValueError("native report was built with debug information")
+    level = effective.get("opt-level")
+    if level in (0, "0"):
+        raise ValueError("native report was built without optimization")
+    if effective.get("incremental"):
+        raise ValueError("native report was built incrementally")
+
+
 def require_release_identity(report):
     """Reject a report whose build, model or hardware identity cannot be verified."""
     identity = report.get("identity")
@@ -40,6 +64,7 @@ def require_release_identity(report):
             raise ValueError("native report was not built as a release binary")
         if not (identity.get("source") or {}).get("revision"):
             raise ValueError("native report records no source revision")
+        require_release_profile(identity)
     elif not identity.get("engine_version"):
         raise ValueError("reference report records no engine version")
     if not (identity.get("hardware") or {}).get("devices"):
