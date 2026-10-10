@@ -26,20 +26,11 @@ help:
 build test package:
 	$(PYTHON) tools/package/package.py $@ --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
 
-# Cargo features are compile-time and cannot be selected by the CLI at runtime. Keep the
-# packaging pipeline above unchanged, but provide a native developer entry point that selects the
-# production backend from the host platform.
+# Cargo features are compile-time and cannot be selected by the CLI at runtime. The native entry
+# point resolves the same plan and preflight as packaging, so a native build and a package of the
+# same host cannot disagree about backend or features.
 local-build:
-	@case "$$(uname -s)" in \
-		Linux) \
-			gcc_include="$$(gcc -print-file-name=include 2>/dev/null)"; \
-			if test -f "$$gcc_include/stddef.h"; then \
-				export BINDGEN_EXTRA_CLANG_ARGS="$${BINDGEN_EXTRA_CLANG_ARGS:-} -isystem $$gcc_include"; \
-			fi; \
-			$(CARGO) build --locked --release -p infer-cli --features cuda ;; \
-		Darwin) $(CARGO) build --locked --release -p infer-cli ;; \
-		*) echo "unsupported host platform: $$(uname -s)" >&2; exit 2 ;; \
-	esac
+	$(PYTHON) tools/package/package.py native
 
 # Recursive Make expansion is deliberately avoided: each package action sequences
 # target checks -> Zig release -> archive -> integrity/native smoke -> publication.

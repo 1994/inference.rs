@@ -131,6 +131,17 @@ CI 分为 host check、MSRV/security、production target build/package 和真实
   宿主目标并重跑 Clippy + 全量测试，macOS aarch64 打包 job 同样重跑一遍——4 个打包目标里有两个在
   重复最贵的检查。`make test`/`package.py test` 保持为显式宿主套件入口。
 
+## 已实施：本机构建与打包共用计划与 preflight
+
+`make local-build` 不再按平台写死 `--features cuda` / 无 feature，也不再自己拼
+`BINDGEN_EXTRA_CLANG_ARGS`：它调用驱动的 `native` 入口，后者用同一个计划源解析宿主 target 的
+backend 与 features、跑同一个 preflight、用同一个 cargo 驱动构建 release CLI。`INFER_PACKAGE_BUILD`
+在两条路径上都设置，所以 `build.rs` 的生产 feature/backend 校验对本机构建同样生效——"native 与
+package 计划一致"从约定变成可执行检查。`local-build` 与 `package` 的差别只剩是否交叉。
+
+验证：`make local-build` 在本机跑通并产出 `target/release/infer`（计划解析为 cuda backend，包含
+`--features cuda`），`./target/release/infer --version` 正常；打包单测、`check-tools`、`ruff` 干净。
+
 ## 迁移顺序与验收
 
 首先清点现有 build/test/gate 调用、直接依赖和测试执行器消费者，建立场景映射。随后统一测试布局并替换协议消费者，移动数值对照，再删除两个 CPU backend、产品测试 feature 和 CLI 分支。

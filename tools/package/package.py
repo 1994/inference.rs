@@ -98,6 +98,39 @@ def target_validation(plan):
     return "cross-cli-tests-compiled-not-executed"
 
 
+def native_cargo(plan):
+    """Cargo for a native build: the plan's features and package, without a cross target."""
+    command = ["cargo", "build", "--locked", "-p", "infer-cli", "--no-default-features"]
+    if plan["features"]:
+        command.extend(["--features", ",".join(plan["features"])])
+    return command
+
+
+def native_env(plan):
+    """The environment a native build needs, discovered in the same place as the preflight.
+
+    `BINDGEN_EXTRA_CLANG_ARGS` is the discovery the Makefile used to hand-roll per platform:
+    bindgen cannot find the host C standard headers on its own, and the path must not be copied
+    from another machine. Reporting what was found keeps the failure legible when it is absent.
+    """
+    env = {**os.environ, "INFER_PACKAGE_BUILD": "1"}
+    if plan["backend"] != "cuda":
+        return env
+    include = output(["gcc", "-print-file-name=include"]).strip()
+    if include and (Path(include) / "stddef.h").is_file():
+        existing = env.get("BINDGEN_EXTRA_CLANG_ARGS", "")
+        if include not in existing:
+            env["BINDGEN_EXTRA_CLANG_ARGS"] = f"{existing} -isystem {include}".strip()
+    return env
+
+
+def native(plan):
+    """`make local-build`: the host release CLI, from the same plan and preflight as packaging."""
+    preflight(plan)
+    run([*native_cargo(plan), "--release"], env=native_env(plan))
+    return f"native-{plan['backend']}-release-cli"
+
+
 def test(plan):
     """`make test`: run the host checks and suites, plus a target test compile for cross targets."""
     run(["python3", "tools/check/layout.py"])
@@ -303,7 +336,9 @@ def package(plan, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "test", "package", "verify", "accept"])
+    parser.add_argument(
+        "action", choices=["build", "test", "package", "verify", "accept", "native"]
+    )
     parser.add_argument("--platform", default="auto")
     parser.add_argument("--target", default="")
     parser.add_argument("--out", type=Path, default=ROOT / "artifacts/packages")
@@ -322,6 +357,8 @@ def main():
             package(plan, args.out)
         elif args.action == "build":
             print(build(plan))
+        elif args.action == "native":
+            print(native(plan))
         else:
             test(plan)
 

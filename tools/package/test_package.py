@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import subprocess
 import tarfile
 import tempfile
@@ -37,6 +38,34 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(arm["zig_target"], "aarch64-unknown-linux-gnu.2.34")
         self.assertEqual(mac["backend"], "metal")
         self.assertEqual(mac["features"], [])
+
+    def test_native_entry_uses_the_plan_and_discovers_host_headers(self):
+        plan = package.resolve("auto", "x86_64-unknown-linux-gnu")
+        command = package.native_cargo(plan)
+        # The native build takes the plan's features but no cross target, so its artifact stays at
+        # the conventional path.
+        self.assertEqual(command[:3], ["cargo", "build", "--locked"])
+        self.assertNotIn("--target", command)
+        self.assertIn("cuda", command)
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / "stddef.h").write_text("")
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(package, "output", return_value=temporary),
+            ):
+                env = package.native_env(plan)
+        self.assertIn(f"-isystem {temporary}", env["BINDGEN_EXTRA_CLANG_ARGS"])
+        # The same production feature contract as packaging applies to a native build.
+        self.assertEqual(env["INFER_PACKAGE_BUILD"], "1")
+
+    def test_native_env_does_not_probe_gcc_for_metal(self):
+        plan = package.resolve("auto", "aarch64-apple-darwin")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(package, "output", side_effect=AssertionError("no gcc probe")),
+        ):
+            env = package.native_env(plan)
+        self.assertNotIn("BINDGEN_EXTRA_CLANG_ARGS", env)
 
     def test_production_features_and_zig_abi_are_explicit(self):
         plan = package.resolve("auto", "x86_64-unknown-linux-gnu")

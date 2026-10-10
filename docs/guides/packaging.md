@@ -51,6 +51,16 @@ make test TARGET=aarch64-unknown-linux-gnu
 
 `CARGO_TARGET_DIR`、`CARGO_BUILD_JOBS` 和 CUDA 工具链变量仍有效；工具从 Cargo JSON artifact 读取真实二进制路径，不猜测输出目录。使用 `--target` 确保 Zig 链接器实际生效，不注入 `target-cpu=native`。
 
+## 本机开发构建
+
+`make local-build` 走与打包同一条路径：用同一个计划源解析宿主 target 的 backend 与 features，
+跑同一个 preflight，再由同一个驱动按计划构建 release CLI。因此"本机构建"与"同一宿主 target 的包"
+不会在 backend/features 上产生分歧——这正是方案要求的 native/cross 共用一个计划来源。
+
+具体实现里只有一处环境发现：Linux + CUDA 时把 `gcc -print-file-name=include` 交给
+`BINDGEN_EXTRA_CLANG_ARGS`（bindgen 自己找不到主机 C 标准头）。它现在在驱动的 preflight 旁边，
+不再由 Makefile 按平台手写；找不到 `stddef.h` 时不注入，行为与之前一致。
+
 ## CUDA 与 Metal 的边界
 
 Zig 提供 C/C++ 交叉编译和链接，不提供 NVIDIA 或 Apple SDK。CUDA build 仍需可用的 CUDA headers/libclang；必要时以 `CUDA_TOOLKIT_TARGET_DIR` 选择目标 Toolkit 的 `targets/` 子树。运行设备需驱动与 cuTile JIT 工具链，具体设置见 [CUDA 后端说明](../../crates/backend/cuda/README.md)。不把构建机的 CUDA 动态库复制进包。
