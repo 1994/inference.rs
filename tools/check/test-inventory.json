@@ -16,7 +16,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 11
+      "tests": 17
     },
     "core": {
       "benches": 0,
@@ -106,9 +106,196 @@
   "executor_consumers": [
     {
       "crate": "cli",
+      "path": "crates/service/cli/Cargo.toml",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/arguments.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/backend/mod.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/backend/selected.rs",
+      "patterns": [
+        "infer_backend_host",
+        "infer_backend_reference",
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
       "path": "crates/service/cli/src/backend/testing.rs",
       "patterns": [
         "infer_backend_host"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/inference.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/measurement.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/mod.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/options.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/replay.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/server.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/commands/verification.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/constants.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/dispatch.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/main.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/agent.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/engine.rs",
+      "patterns": [
+        "infer_backend_reference",
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/execution.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/fixtures.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/json.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/mod.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/server.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/src/support/serving.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
+      "crate": "cli",
+      "path": "crates/service/cli/tests/smoke.rs",
+      "patterns": [
+        "test-backends"
       ],
       "role": "service"
     },
@@ -166,6 +353,8 @@
     }
   ],
   "gated": {
+    "feature = \"test-backends\"": 3,
+    "not(feature = \"test-backends\"": 1,
     "target_os = \"linux\"": 3,
     "target_os = \"macos\"": 1
   },
@@ -636,6 +825,11 @@
       "mount": "../../tests/unit/support_memory.rs"
     },
     {
+      "crate": "cli",
+      "file": "src/support/serving.rs",
+      "mount": "../../tests/unit/support_serving.rs"
+    },
+    {
       "crate": "frontdoor",
       "file": "src/actor/mod.rs",
       "mount": "../../tests/unit/actor.rs"
@@ -687,11 +881,11 @@
     }
   ],
   "totals": {
-    "all": 459,
+    "all": 465,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 459
+    "tests": 465
   }
 }

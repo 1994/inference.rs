@@ -65,20 +65,18 @@ qwen-hybrid-grouped}/golden.json`）是**模型级**数值对照，只有 CPU �
 2 ignored / 0 failed** ✓，即删掉执行器后少 7 个二进制、15 个用例 ✓）；`make check-tools` ✓；
 package 12 测试 ✓。
 
-**CLI 的死分支已清除（收尾）**
+**CLI 的死分支仍未清除（一次尝试被回退，据实记录）**
 
-- 约 180 处 `#[cfg(feature = "test-backends")]` 站点整批删除：`any(...)` 里的备选移除、独立属性连同
-  其守护项（`Demo` 命令、测试后端加载器、gated 测试等）一并删除；随后 CLI 的 `test-backends` feature
-  **声明本身也删掉** ✓ —— 于是它无法被重新启用，`unexpected_cfgs` 会挡住任何回退 ✓。
-- 删除过程中暴露两类残留并修正：① 被删项上方遗留的孤立文档注释（rustdoc 直接拒绝 ✗）—— 脚本扫描出
-  4 处并清除；② 错误文案里"CPU fixtures require a test-backends build"之类的过时指引 → 改为"设备后端
-  需要 `--package`" ✓。
-- 测试执行器消费者从 **30 再降到 6** ✓（只剩本仓门禁按规则点名这两个名字，以及一条历史注释）。
+两个执行器删除后，CLI 里约 180 处 `#[cfg(feature = "test-backends")]` 站点已**不可达**（feature 无实现），
+但仍是死代码 ✗。本轮尝试用脚本整批删除，结果**两次破坏了仅 macOS 生效的代码路径** ✗：混合条件
+`any(target_os = "macos", feature = "test-backends")` 被误判为"仅该 feature"而整项删除；宏参数里的
+`not(feature = ...)` 也被一并切掉。Linux 门禁**看不到**这些错误 ✗，而本机无法编译 Apple 目标
+（`libmimalloc-sys` 的 C 构建脚本需要 macOS 工具链 ✗），因此**回退了这次清理**，让 `main` 保持在已验证
+的绿色状态 ✓（回退提交 `14f942e` ✓）。
 
-**`tools/validation/smoke-paged-kv.py`**：它的 "Host output parity" 依赖已删除的 CPU oracle ✗。登记
-golden 记录的是 fixture 的**逐前缀 logits**（1–6 token 前缀 ✓），并不能为它请求的 5 token 生成提供参照
-✗ —— 因此这条断言**没有新家**，据实删除 ✓，工具保留它真正要验收的部分（页压力下的抢占、快照捕获与重放
-✓），文档字符串明确写出原因与取舍，不用含糊措辞掩盖。
+后续要求：这项清理必须**逐文件、以编译器为准**，或改在能编译 Apple 目标的环境（macOS CI）里做，不能再用
+全局正则。**未完成项照实登记**：CLI 死分支、以及 `tools/validation/smoke-paged-kv.py` 的 CPU oracle
+（其 parity 断言没有新家，需据实删除并在文档里说明）。
 
 ## 已保住的数值对照
 
