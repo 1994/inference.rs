@@ -42,9 +42,9 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（61 个文件）
+## 执行器消费者与删除归属（57 个文件）
 
-| `protocol` | 11 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
+| `protocol` | 7 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
 | `numeric` | 6 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
@@ -180,6 +180,37 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 替身还差一条能力声明才让页面压力场景不再卡死：**`supports_recompute_preemption() -> true`**。
 没有它，`logical_page_pressure_recomputes_and_replays_without_losing_generated_tokens` 会在
 "等调度器收敛"上超时。
+
+### 已替换：agent 与 frontdoor 的四个测试文件（本轮 5 个消费者）
+
+| 文件 | 用例 | 说明 |
+|---|---:|---|
+| `agent/tests/unit/cases.rs` | 12 | 为替身实现 `AgentBackend`（`fresh`/`registry`/`inspection`/`traces`/`probes`/`profile`/`execution_stats`），断言不变 |
+| `frontdoor/tests/output.rs` | 1 | 投影阻塞场景，直接构造 |
+| `frontdoor/tests/isolation.rs` | 3 | `Gated` 装饰器保留闸门语义 |
+| `frontdoor/tests/unit/actor.rs` | 4 | 直接构造 |
+| `frontdoor/tests/unit/http.rs` | 8 | `HeldBackend` 装饰器；指标断言里的 `backend="test_cpu"` 跟随声明改成 `backend="cuda"` |
+
+**跨 crate 复用同一份替身**：这几个 crate 用
+`#[path = "<相对路径>/engine/runtime/tests/support/mod.rs"] mod support;` 引用同一份源码，而不是
+各自复制一份（方案允许"多个 crate 复用的少量 fixture/脚本/断言共享测试源文件"，且不为 helper 新建
+crate）。kernel 声明里的来源信息用 `env!("CARGO_PKG_NAME")` 与 `file!()`，所以别的 crate 引用它时
+不会自称是 runtime。副作用有两条：
+
+- 前端 crate 的 manifest 需要 `infer-model-recipes` 作为 dev-dependency（替身用
+  `decoder::lower` 从描述符生成 dataflow）。
+- frontdoor 的 `actor.rs` 与 `http.rs` 同属一个测试二进制，同一份源码被引入两次，需要一处
+  `#[allow(clippy::duplicate_mod, reason = ...)]`。
+
+**装饰器必须转发 `reserve_state_for`**：引擎通过它创建序列，只转发 `reserve_state` 会让替身的
+state 表为空，几轮下来这是最常踩的坑（`capacity`、`scheduling`、`isolation`、`http` 都遇到）。
+
+### 仍未替换：需要真实 token 内容的场景
+
+`frontdoor/tests/unit/http_openai.rs`（15 个用例）与 `http.rs` 里那一处 host 用法需要**真实模型
+生成内容**：它们加载 `examples/qwen-hybrid-tiny` 包、跑实际推理并断言流式输出里的 token 文本。替身
+能提供"固定 token/logits 与可控完成时机"，但给不出与 tokenizer 一致的文本，因此这些用例要么按
+"参数映射/顺序/背压/中断"与"内容断言"拆开，要么整体归到真实设备 suite，不能靠替身糊过去。
 
 ### 下一步：`control_path` 需要替身支持在途票据语义
 

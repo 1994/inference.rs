@@ -117,9 +117,11 @@ impl KernelProvider for DeclaredKernels {
                 workspace_bytes: 0,
                 priority: 0,
                 estimated_ns: 1,
+                // Report the crate and file this module was compiled into, so a suite in another
+                // crate that includes it does not claim to be the runtime's.
                 source: SourceLocation {
-                    crate_name: "infer-runtime".into(),
-                    file: "crates/engine/runtime/tests/support/mod.rs".into(),
+                    crate_name: env!("CARGO_PKG_NAME").into(),
+                    file: file!().into(),
                     function: "DeclaredKernels::kernels".into(),
                 },
             })

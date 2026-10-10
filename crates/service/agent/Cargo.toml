@@ -26,4 +26,5 @@ sha2.workspace = true
 
 [dev-dependencies]
 infer-backend-reference.workspace = true
+infer-model-recipes.workspace = true
 infer-ir = { workspace = true, features = ["test-backends"] }

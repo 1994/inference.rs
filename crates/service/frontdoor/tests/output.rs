@@ -1,4 +1,5 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+#[path = "../../../engine/runtime/tests/support/mod.rs"]
+mod support;
 use infer_core::{Error, FinishReason, ModelId, ProgramId, RequestId, Result};
 use infer_frontdoor::RuntimeHandle;
 use infer_ir::{
@@ -76,10 +77,9 @@ async fn terminal(
 #[tokio::test]
 async fn stalled_projection_does_not_block_sampling_control_or_terminal_delivery() -> Result<()> {
     for cancel in [true, false] {
-        let model = ReferenceModel::fixture(ModelId::ONE, 7);
-        let ir = model.ir.clone();
+        let ir = support::model(ModelId::ONE);
         let mut registry = KernelRegistry::default();
-        registry.register(&ReferenceKernels)?;
+        registry.register(&support::DeclaredKernels)?;
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
         let provider = ProjectionGate {
@@ -88,7 +88,7 @@ async fn stalled_projection_does_not_block_sampling_control_or_terminal_delivery
         };
         let handle = RuntimeHandle::start(
             Engine::new(
-                ReferenceBackend::new(model)?,
+                support::ProtocolBackend::new(16, 8, &ir)?,
                 ir,
                 PrecisionPlan::f32(),
                 &registry,

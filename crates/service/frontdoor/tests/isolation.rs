@@ -1,11 +1,11 @@
-use infer_backend_reference::{
-    ReferenceBackend, ReferenceKernels, ReferenceModel, ReferenceTicket,
-};
+#[path = "../../../engine/runtime/tests/support/mod.rs"]
+mod support;
+
 use infer_core::{Error, FinishReason, ModelId, RequestId, Result, StateId};
 use infer_frontdoor::{RuntimeHandle, cpu::CpuConfig};
 use infer_ir::{
-    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, PrecisionPlan,
-    StepPlan, TaskOutput,
+    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, OutputReadout,
+    PrecisionPlan, StepPlan, TaskOutput,
 };
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, EngineOutput, RuntimeConfig};
@@ -13,6 +13,7 @@ use infer_spi::BackendProvider;
 use std::{
     sync::Arc, sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc, time::Duration,
 };
+use support::ProtocolBackend;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GateAt {
@@ -21,7 +22,7 @@ enum GateAt {
 }
 struct Gated {
     stage: GateAt,
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     gate: Option<mpsc::Receiver<()>>,
     entered: mpsc::Sender<()>,
     owned: Arc<AtomicUsize>,
@@ -40,7 +41,7 @@ impl Gated {
     }
 }
 impl BackendProvider for Gated {
-    type Ticket = ReferenceTicket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
@@ -63,16 +64,28 @@ impl BackendProvider for Gated {
         self.owned.fetch_sub(1, Ordering::AcqRel);
         Ok(())
     }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        // The engine creates sequences through this entry point, so the gate and the ownership
+        // count have to be here as well as on `reserve_state`.
+        self.inner.reserve_state_for(state, capacity, readout)?;
+        self.owned.fetch_add(1, Ordering::AcqRel);
+        self.wait(GateAt::Reserve)
+    }
     fn submit(
         &mut self,
         program: &ExecutionProgram,
         step: &StepPlan,
         tasks: Vec<ExecutionTask>,
-    ) -> Result<ReferenceTicket> {
+    ) -> Result<Self::Ticket> {
         self.wait(GateAt::Submit)?;
         self.inner.submit(program, step, tasks)
     }
-    fn poll(&mut self, ticket: &mut ReferenceTicket) -> Result<Option<Vec<TaskOutput>>> {
+    fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
         self.inner.poll(ticket)
     }
 }
@@ -94,20 +107,19 @@ async fn terminal(
 }
 #[tokio::test]
 async fn blocked_cpu_encoding_preserves_control_progress_and_fence_owned_state() -> Result<()> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let (release, gate) = mpsc::channel();
     let (entered, started) = mpsc::channel();
     let owned = Arc::new(AtomicUsize::new(0));
     let backend = Gated {
         stage: GateAt::Submit,
-        inner: ReferenceBackend::new(model)?,
+        inner: ProtocolBackend::new(16, 8, &ir)?,
         gate: Some(gate),
         entered,
         owned: owned.clone(),
     };
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     let handle = RuntimeHandle::start_with_config(
         Engine::new(
             backend,
@@ -149,12 +161,11 @@ async fn blocked_cpu_encoding_preserves_control_progress_and_fence_owned_state()
 }
 #[tokio::test]
 async fn cancellation_during_preparation_prevents_late_admission() -> Result<()> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     let handle = RuntimeHandle::start(Engine::new(
-        ReferenceBackend::new(model)?,
+        ProtocolBackend::new(16, 8, &ir)?,
         ir,
         PrecisionPlan::f32(),
         &registry,
@@ -199,20 +210,19 @@ async fn cancellation_during_preparation_prevents_late_admission() -> Result<()>
 #[tokio::test]
 async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeout() -> Result<()> {
     for cancel in [true, false] {
-        let model = ReferenceModel::fixture(ModelId::ONE, 7);
-        let ir = model.ir.clone();
+        let ir = support::model(ModelId::ONE);
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
         let owned = Arc::new(AtomicUsize::new(0));
         let backend = Gated {
             stage: GateAt::Reserve,
-            inner: ReferenceBackend::new(model)?,
+            inner: ProtocolBackend::new(16, 8, &ir)?,
             gate: Some(gate),
             entered,
             owned: owned.clone(),
         };
         let mut registry = KernelRegistry::default();
-        registry.register(&ReferenceKernels)?;
+        registry.register(&support::DeclaredKernels)?;
         let handle = RuntimeHandle::start_with_config(
             Engine::new(
                 backend,

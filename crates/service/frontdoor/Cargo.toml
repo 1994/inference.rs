@@ -42,5 +42,6 @@ futures-util.workspace = true
 infer-workloads.workspace = true
 tower.workspace = true
 infer-backend-reference.workspace = true
+infer-model-recipes.workspace = true
 infer-backend-host.workspace = true
 infer-kernel-api.workspace = true

@@ -1,4 +1,5 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+#[path = "../../../../engine/runtime/tests/support/mod.rs"]
+mod support;
 use infer_core::{ErrorCode, ModelId};
 use infer_ir::PrecisionPlan;
 use infer_kernel_api::KernelRegistry;
@@ -40,13 +41,12 @@ async fn automatic_request_ids_are_shared_concurrent_and_never_wrap() -> Result<
     handle.shutdown().await
 }
 fn handle() -> Result<RuntimeHandle> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     RuntimeHandle::start_with_config(
         Engine::new(
-            ReferenceBackend::new(model)?,
+            support::ProtocolBackend::new(16, 8, &ir)?,
             ir,
             PrecisionPlan::f32(),
             &registry,
@@ -153,12 +153,11 @@ async fn abandoned_query_releases_snapshot_credit_and_invalid_queries_do_not_lea
 
 #[tokio::test]
 async fn inspection_in_the_same_command_batch_observes_retired_cancellation() -> Result<()> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     let mut engine = Engine::new(
-        ReferenceBackend::new(model)?,
+        support::ProtocolBackend::new(16, 8, &ir)?,
         ir,
         PrecisionPlan::f32(),
         &registry,

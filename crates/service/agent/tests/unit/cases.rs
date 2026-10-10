@@ -3,7 +3,9 @@ use crate::{
     experiment::ExperimentConstraints, experiment::ExperimentPlan, registry::CommandDescriptor,
     registry::CommandEffect, registry::CommandRegistry, transport,
 };
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+#[path = "../../../../engine/runtime/tests/support/mod.rs"]
+mod support;
+
 use infer_core::{Error, ModelId, RequestId, Result};
 use infer_ir::{
     CanonicalRequest, ExecutionStats, LayerProbe, OpTrace, PrecisionPlan, Qos, RequestInput,
@@ -15,17 +17,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, collections::BTreeSet, io::Cursor};
 
-impl AgentBackend for ReferenceBackend {
+impl AgentBackend for support::ProtocolBackend {
     fn fresh(&self) -> Result<Self> {
-        Self::new(self.model().clone())
+        Self::new(16, 8, &support::model(ModelId::ONE))
     }
     fn registry(&self) -> Result<KernelRegistry> {
         let mut registry = KernelRegistry::default();
-        registry.register(&ReferenceKernels)?;
+        registry.register(&support::DeclaredKernels)?;
         Ok(registry)
     }
     fn inspection(&self) -> Value {
-        json!({"kind":"test-reference"})
+        json!({"kind":"declared-protocol-double"})
     }
     fn traces(&self) -> Vec<OpTrace> {
         Vec::new()
@@ -37,16 +39,16 @@ impl AgentBackend for ReferenceBackend {
         Vec::new()
     }
     fn profile(&self) -> Value {
-        json!({"scope":"test-reference","traceEvents":[]})
+        json!({"scope":"declared-protocol-double","traceEvents":[]})
     }
     fn execution_stats(&self) -> Option<ExecutionStats> {
         None
     }
 }
 
-fn service() -> Result<AgentService<ReferenceBackend>> {
-    let backend = ReferenceBackend::new(ReferenceModel::fixture(ModelId::ONE, 7))?;
-    let model = backend.model().ir.clone();
+fn service() -> Result<AgentService<support::ProtocolBackend>> {
+    let model = support::model(ModelId::ONE);
+    let backend = support::ProtocolBackend::new(16, 8, &model)?;
     let registry = AgentBackend::registry(&backend)?;
     AgentService::new(
         Engine::new(
@@ -79,7 +81,7 @@ fn request() -> CanonicalRequest {
     }
 }
 fn response(
-    service: &mut AgentService<ReferenceBackend>,
+    service: &mut AgentService<support::ProtocolBackend>,
     method: &str,
     params: Value,
 ) -> Result<Value> {

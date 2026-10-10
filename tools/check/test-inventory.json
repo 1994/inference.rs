@@ -243,14 +243,6 @@
       "role": "protocol"
     },
     {
-      "crate": "agent",
-      "path": "crates/service/agent/tests/unit/cases.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
       "crate": "cli",
       "path": "crates/service/cli/Cargo.toml",
       "patterns": [
@@ -466,34 +458,9 @@
     },
     {
       "crate": "frontdoor",
-      "path": "crates/service/frontdoor/tests/isolation.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "frontdoor",
-      "path": "crates/service/frontdoor/tests/output.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "frontdoor",
-      "path": "crates/service/frontdoor/tests/unit/actor.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "frontdoor",
       "path": "crates/service/frontdoor/tests/unit/http.rs",
       "patterns": [
-        "infer_backend_host",
-        "infer_backend_reference"
+        "infer_backend_host"
       ],
       "role": "protocol"
     },
@@ -1035,6 +1002,11 @@
       "mount": "../tests/unit/cases.rs"
     },
     {
+      "crate": "agent",
+      "file": "tests/unit/cases.rs",
+      "mount": "../../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
       "crate": "cli",
       "file": "src/arguments.rs",
       "mount": "../tests/unit/arguments.rs"
@@ -1093,6 +1065,26 @@
       "crate": "frontdoor",
       "file": "src/http/openai/stream.rs",
       "mount": "../../../tests/unit/http_openai_stream.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/isolation.rs",
+      "mount": "../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/output.rs",
+      "mount": "../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/unit/actor.rs",
+      "mount": "../../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/unit/http.rs",
+      "mount": "../../../../engine/runtime/tests/support/mod.rs"
     }
   ],
   "totals": {

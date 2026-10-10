@@ -1,5 +1,4 @@
 use axum::http::StatusCode;
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
 use infer_core::{Error, ErrorCode, ModelId, RequestId, Result};
 use infer_kernel_api::KernelRegistry;
 use infer_observe::ObservationQuery;
@@ -12,14 +11,21 @@ use tower::ServiceExt;
 use super::*;
 use infer_ir::*;
 
+// `actor.rs` includes the same source; both are modules of this crate's test binary, and the
+// shared file is written to be included once per target.
+#[allow(clippy::duplicate_mod, reason = "one shared test source, two unit-test modules")]
+#[path = "../../../../engine/runtime/tests/support/mod.rs"]
+mod support;
+
+use support::ProtocolBackend;
+
 fn handle() -> RuntimeHandle {
-    let model = ReferenceModel::fixture(ModelId::new(1).unwrap(), 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::new(1).unwrap());
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels).unwrap();
+    registry.register(&support::DeclaredKernels).unwrap();
     RuntimeHandle::start(
         Engine::new(
-            ReferenceBackend::new(model).unwrap(),
+            ProtocolBackend::new(16, 8, &ir).unwrap(),
             ir,
             PrecisionPlan::f32(),
             &registry,
@@ -294,16 +300,16 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
             .to_vec(),
     )
     .unwrap();
-    assert!(metrics.contains("infer_requests_successful_total{backend=\"test_cpu\"} 1\n"));
+    assert!(metrics.contains("infer_requests_successful_total{backend=\"cuda\"} 1\n"));
     handle.shutdown().await.unwrap();
 }
 
 struct HeldBackend {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl BackendProvider for HeldBackend {
-    type Ticket = <ReferenceBackend as BackendProvider>::Ticket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
@@ -315,6 +321,16 @@ impl BackendProvider for HeldBackend {
     }
     fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
         self.inner.execution_graph(model)
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: infer_core::StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        // The engine creates sequences through this entry point; forwarding only `reserve_state`
+        // leaves the double's state map empty.
+        self.inner.reserve_state_for(state, capacity, readout)
     }
     fn submit(
         &mut self,
@@ -334,15 +350,14 @@ impl BackendProvider for HeldBackend {
 }
 #[tokio::test]
 async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_completion() {
-    let model = ReferenceModel::fixture(ModelId::new(1).unwrap(), 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::new(1).unwrap());
     let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let backend = HeldBackend {
-        inner: ReferenceBackend::new(model).unwrap(),
+        inner: ProtocolBackend::new(16, 8, &ir).unwrap(),
         complete: complete.clone(),
     };
     let mut kernels = KernelRegistry::default();
-    kernels.register(&ReferenceKernels).unwrap();
+    kernels.register(&support::DeclaredKernels).unwrap();
     let handle = RuntimeHandle::start(
         Engine::new(
             backend,
