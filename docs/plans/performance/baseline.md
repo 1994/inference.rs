@@ -91,6 +91,24 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 - 三条已签发基线仍逐条 `--verify` 通过（8 个文件哈希一致 ✓，`--verify` 只重算哈希、不重跑当时
   的门禁 ✓），测试夹具同步更新并新增 3 个反例用例。
 
+**数值契约与采样种子的两条有效性规则**
+
+方案有两句话过去只写在文档里、没有任何检查 ✗：*"共同数值契约不能只写 BF16/FP8/NVFP4 名称，要记录
+执行中的权重处理、activation/accumulation、KV、recurrent state 与采样规则"*，以及请求对齐项里的
+*"同一 token 输入、输出策略、**采样参数、seed**、EOS/stop 条件"*。
+
+`experiment-checklist.py` 现在强制这两条：
+
+- `numeric` 的 `weights`/`activation`/`kv` 必须是描述规则的字符串，**纯 dtype 名一律拒绝**
+  （`bf16`/`fp16`/`fp32`/`f32`/`fp8`/`nvfp4`/`mxfp4`/`int8`/`w4a16`/`w8a8` 等，大小写不敏感），
+  空值同样拒绝；
+- `temperature > 0` 时必须声明 `seed` ✗→✓：没有固定种子的采样，两边哪怕温度相同也不是同一个实验。
+
+写规则时立刻得到了印证：**测试夹具自己就写着 `weights: "nvfp4"`、`activation: "fp8"`** ✗，
+正好是方案点名的那种写法 ✓，已改为描述性契约。三条已签入 profile 的温度都是 0 且数值字段本就是
+描述性文字，因此**无需改动、继续有效** ✓。新增 6 个用例（纯 dtype、带有大小写的变体、空值、
+需要种子、带种子、贪心无需种子），bench 单测 78 → **84 全过** ✓。
+
 **性能结论如实记录，不作签发条件**
 
 三条基线的 `gate.passed` 都是 `false`：native 目前慢于 vLLM（例如 2b 的 batch4 `wall_seconds`

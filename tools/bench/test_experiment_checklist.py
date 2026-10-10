@@ -25,7 +25,11 @@ def checklist():
         "schema": 1,
         "profile_id": "fixture-v1",
         "model": {"path": "fixture", "files": {"config.json": "aaa"}},
-        "numeric": {"weights": "nvfp4", "activation": "fp8", "kv": "model default"},
+        "numeric": {
+            "weights": "nvfp4 storage, re-quantization recorded per profile",
+            "activation": "fp8 with per-channel scales, fp32 accumulation",
+            "kv": "model default precision, recorded by the run",
+        },
         "quality": {"gate": "own gate", "required": False},
         "resources": {
             "gpu_memory_utilization": 0.88,
@@ -176,6 +180,52 @@ class GateChecklistTest(unittest.TestCase):
         old["checklist"] = {"sha256": "c1", "compliant": True}
         new["checklist"] = {"sha256": "c1", "compliant": True}
         self.assertTrue(gate.module.compare(old, new)["passed"])
+
+
+class NumericContractTest(unittest.TestCase):
+    """A numeric contract that is a dtype name answers nothing."""
+
+    def test_a_bare_dtype_name_is_rejected(self):
+        for field, value in (("weights", "nvfp4"), ("activation", "FP8"), ("kv", "bf16")):
+            profile = checklist()
+            profile["numeric"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError) as raised:
+                module.load_document(profile)
+            self.assertIn("only the dtype name", str(raised.exception))
+
+    def test_a_described_rule_is_accepted(self):
+        profile = checklist()
+        profile["numeric"]["activation"] = "fp8 with fp32 accumulation"
+        module.load_document(profile)
+
+    def test_an_empty_field_is_rejected(self):
+        profile = checklist()
+        profile["numeric"]["kv"] = "  "
+        with self.assertRaises(ValueError) as raised:
+            module.load_document(profile)
+        self.assertIn("missing kv", str(raised.exception))
+
+
+class SamplingSeedTest(unittest.TestCase):
+    """Sampling without a fixed seed cannot be aligned across engines."""
+
+    def test_sampling_needs_a_seed(self):
+        profile = checklist()
+        profile["workload"]["temperature"] = 0.7
+        with self.assertRaises(ValueError) as raised:
+            module.load_document(profile)
+        self.assertIn("without a seed", str(raised.exception))
+
+    def test_sampling_with_a_seed_is_accepted(self):
+        profile = checklist()
+        profile["workload"]["temperature"] = 0.7
+        profile["workload"]["seed"] = 20261010
+        module.load_document(profile)
+
+    def test_greedy_needs_no_seed(self):
+        profile = checklist()
+        profile["workload"]["temperature"] = 0
+        module.load_document(profile)
 
 
 class MtpCapabilityTest(unittest.TestCase):

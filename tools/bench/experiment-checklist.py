@@ -54,6 +54,42 @@ def load(path):
     return load_document(json.loads(Path(path).read_text()))
 
 
+# A numeric contract that is only a dtype name answers nothing: the plan requires the weight
+# handling, activation and accumulation rules, KV precision and sampling to be recorded, and names
+# these three labels as the examples of what is not enough.
+BARE_DTYPE_NAMES = {
+    "bf16",
+    "f16",
+    "fp16",
+    "fp32",
+    "fp8",
+    "f32",
+    "int4",
+    "int8",
+    "mxfp4",
+    "nvfp4",
+    "w4a16",
+    "w8a8",
+}
+NUMERIC_FIELDS = ("weights", "activation", "kv")
+
+
+def require_numeric_contract(checklist):
+    """Each numeric field has to describe a rule, not repeat a dtype name."""
+    numeric = checklist.get("numeric")
+    if not isinstance(numeric, dict):
+        raise ValueError("checklist numeric contract must be a mapping")
+    for field in NUMERIC_FIELDS:
+        value = numeric.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"checklist numeric contract is missing {field}")
+        if value.strip().lower() in BARE_DTYPE_NAMES:
+            raise ValueError(
+                f"checklist numeric {field} is only the dtype name {value.strip()!r}; record the "
+                "weight handling, accumulation or state rule it stands for"
+            )
+
+
 # Keys a checkpoint uses to declare an MTP head, at the top level or under `text_config`, which is
 # where the multimodal packages put the language tower's settings.
 MTP_LAYER_KEYS = ("mtp_num_hidden_layers",)
@@ -103,6 +139,14 @@ def load_document(checklist):
     ):
         if field not in checklist["workload"]:
             raise ValueError(f"checklist workload is missing {field}")
+    require_numeric_contract(checklist)
+    # Sampling that is not deterministic has to name the seed it drew from, or the two engines are
+    # not running the same experiment however equal the temperature looks.
+    if checklist["workload"]["temperature"] > 0 and not checklist["workload"].get("seed"):
+        raise ValueError(
+            "checklist samples at temperature > 0 without a seed, so the two engines cannot be "
+            "aligned on the same draws"
+        )
     # The baseline plan is explicit that a model without the algorithm must not be measured by
     # falling back to plain decode and calling the result that algorithm.
     depth = checklist["workload"]["mtp_depth"]
