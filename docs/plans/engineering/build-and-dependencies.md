@@ -131,6 +131,29 @@ CI 分为 host check、MSRV/security、production target build/package 和真实
   宿主目标并重跑 Clippy + 全量测试，macOS aarch64 打包 job 同样重跑一遍——4 个打包目标里有两个在
   重复最贵的检查。`make test`/`package.py test` 保持为显式宿主套件入口。
 
+## 已实施：生产依赖图（不只是宿主 CLI）
+
+方案要求发布依赖检查覆盖 Linux CUDA 与 macOS Metal 的**实际 feature 图**、包含 normal 与 build
+edges，并记录重复依赖、解析 features、lockfile 与目标身份；此前的 `policy.py` 只检查"当前宿主 +
+无 feature"的 CLI 依赖树，等于把 CUDA 图、按 target 生效的 Metal 依赖和全部构建脚本都排除在外。
+
+新增 `tools/check/release-dependencies.py`（记录在 `tools/check/release-dependencies.json`）：
+
+- **配置来自同一个计划源**：目标与 features 由 `build.rs` 的 `--plan` 解析（linux-cuda / macos-metal），
+  因此不会与 native/打包的计划漂移；
+- 每个配置跑 `cargo tree --offline --locked --target <triple> --edges normal,build`，解析成结构化结果：
+  crate 数、edge 数、**重复 crate 及各自版本**、目标身份与 `Cargo.lock` 摘要；
+- 门禁在以下情况失败并给出可执行提示：出现新的重复、`Cargo.lock` 变化（要求显式 `--record` 并复核）、
+  target/features 漂移、缺少配置记录，或生产图里出现 `infer-backend-host`/`infer-backend-reference`
+  这两个 CPU 测试执行器；
+- 它已接入 `make check-tools`（CI 的 tools job），9 个单测覆盖解析与各条失配路径，其中包括"记录与当前
+  图一致"的回路测试。
+
+当前实测记录：**linux-cuda 212 crates / 704 edges / 9 个重复**（`hashbrown` 三个版本，`syn` 2 与 3，
+`thiserror` 1 与 2，`getrandom`、`itertools`、`object`、`rustc-hash`、`shlex` 各两个版本）；
+**macos-metal 174 crates / 437 edges / 2 个重复**（`bitflags`、`syn`）。两个生产图都没有测试执行器。
+重复项是**记录**而非失败条件：方案要求记录重复依赖以便复核，是否需要合并由依赖更新时单独判断。
+
 ## 已实施：本机构建与打包共用计划与 preflight
 
 `make local-build` 不再按平台写死 `--features cuda` / 无 feature，也不再自己拼

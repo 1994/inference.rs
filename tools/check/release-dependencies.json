@@ -1,0 +1,73 @@
+{
+ "configurations": [
+  {
+   "backend": "cuda",
+   "crates": 212,
+   "duplicates": {
+    "getrandom": [
+     "0.3.4",
+     "0.4.3"
+    ],
+    "hashbrown": [
+     "0.14.5",
+     "0.15.5",
+     "0.17.1"
+    ],
+    "itertools": [
+     "0.12.1",
+     "0.14.0"
+    ],
+    "object": [
+     "0.36.7",
+     "0.39.1"
+    ],
+    "rustc-hash": [
+     "1.1.0",
+     "2.1.3"
+    ],
+    "shlex": [
+     "1.3.0",
+     "2.0.1"
+    ],
+    "syn": [
+     "2.0.119",
+     "3.0.6"
+    ],
+    "thiserror": [
+     "1.0.69",
+     "2.0.21"
+    ],
+    "thiserror-impl": [
+     "1.0.69",
+     "2.0.21"
+    ]
+   },
+   "edges": 704,
+   "features": [
+    "cuda"
+   ],
+   "name": "linux-cuda",
+   "target": "x86_64-unknown-linux-gnu"
+  },
+  {
+   "backend": "metal",
+   "crates": 174,
+   "duplicates": {
+    "bitflags": [
+     "1.3.2",
+     "2.13.2"
+    ],
+    "syn": [
+     "2.0.119",
+     "3.0.6"
+    ]
+   },
+   "edges": 437,
+   "features": [],
+   "name": "macos-metal",
+   "target": "aarch64-apple-darwin"
+  }
+ ],
+ "lockfile_sha256": "ba7d47b6ce8e77ccf56ea72660a7194623f0a4449bd48db6edb76fe2cc022b12",
+ "schema": 1
+}

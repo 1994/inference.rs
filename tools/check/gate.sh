@@ -52,6 +52,9 @@ cpu_checks() {
 }
 
 tool_checks() {
+    # Production dependency graphs, not just the host CLI's: each target resolves its own feature
+    # set, and the plan asks for build edges, duplicates and lockfile identity to be recorded.
+    python3 tools/check/release-dependencies.py
     uv tool run --from ruff==0.15.7 ruff check tools
     uv tool run --from ruff==0.15.7 ruff format --check tools
     go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= .github/workflows/*.yml
