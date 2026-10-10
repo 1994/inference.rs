@@ -62,12 +62,30 @@ DFlash2 作为独立草稿 provider 接入，共用 [推测解码 SPI 与状态�
   `down [5120, 17408]`、`q/k_norm [128]`、selector 与 codebook）；两个双抽头卷积张量的形状由
   loader 依分组方式确认，清单里只查名字。缺少、多余、形状不符都会点名报出。
 
+**特征融合参考（第三步，已完成）**
+
+本机 vLLM 环境里有官方模型的实现（`artifacts/vllm-compare/.../vllm/model_executor/models/qwen3_dflash.py`），
+因此融合语义是读出来的、不是猜的：`combine_hidden_states()` 对五个抽头 hidden 的**拼接**做一次
+`fc` 投影到草稿 hidden，`fc` **无 bias**，投影内**没有归一化**（`hidden_norm` 用在别处）。这也解释了
+实测的 `fc.weight [5120, 25600] = hidden × (taps × hidden)`。
+
+据此产出可对照的参考制品：
+
+- 导出器 `tools/fixtures/export-dflash2-fusion-golden.py`（冷路径，用 torch+safetensors，与既有
+  golden 导出同一约定），从真实权重里只读 `fc.weight`，对确定性公式构造的输入做 fp32 投影，写出
+  `examples/qwen3.8-27b-dflash2/fusion-golden.json`（5120 个值）。
+- golden 记录了它来自哪个模型：config 的 sha256、张量名与形状、dtype（BF16）、算术语义、torch
+  版本、容差与理由；重复运行结果完全一致（已验证）。
+- Rust 侧两个测试把 golden 与契约绑在一起：`config_sha256` 必须等于登记的 fixture、抽头必须等于
+  `geometry.target_taps`、`model.shape` 必须等于 `expected_weight_shapes()["fc.weight"]`、输出长度
+  必须等于 hidden——契约或 fixture 漂移时测试会失败。
+
 **明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
 token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价（两个卷积张量的形状先要由 loader
-固定）；独立 BF16/完整 head 参考与 selector 对照仍是 D1 的主要剩余工作。
+固定）；**草稿 attention（双抽头分组卷积）与 selector 的参考与对照**仍是 D1 的主要剩余工作。
 
-单测 17 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件与对应反例，其中 5 个直接读登记
-的 fixture。
+单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
+7 个直接读登记的 fixture 与 golden。
 
 ## Target 特征捕获
 

@@ -241,3 +241,65 @@ fn a_configuration_for_another_architecture_does_not_parse() {
     .unwrap();
     assert!(DFlash2Config::parse(&bytes).is_err());
 }
+
+fn golden() -> serde_json::Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen3.8-27b-dflash2/fusion-golden.json");
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn the_fusion_golden_matches_the_registered_contract() {
+    let config = fixture();
+    let geometry = config.geometry();
+    let golden = golden();
+
+    // The golden is only usable if it came from the same configuration the fixture registers.
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../examples/qwen3.8-27b-dflash2/config.json"),
+        )
+        .unwrap();
+        format!("{:x}", Sha256::digest(&bytes))
+    };
+    assert_eq!(golden["model"]["config_sha256"], digest);
+    let taps: Vec<usize> = golden["target_layer_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
+        .collect();
+    assert_eq!(taps, geometry.target_taps);
+    assert_eq!(
+        golden["fused"].as_array().unwrap().len(),
+        geometry.hidden_size
+    );
+    let expected = config.expected_weight_shapes();
+    let shape: Vec<usize> = golden["model"]["shape"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
+        .collect();
+    assert_eq!(Some(shape), expected["fc.weight"].clone());
+}
+
+#[test]
+fn the_fusion_projection_is_recorded_in_float32() {
+    let golden = golden();
+    assert_eq!(golden["model"]["tensor"], "fc.weight");
+    assert_eq!(golden["model"]["dtype"], "BF16");
+    assert!(
+        golden["formula"]["projection"]
+            .as_str()
+            .unwrap()
+            .contains("no bias"),
+        "the golden records the projection's semantics"
+    );
+    assert!(golden["fused"].as_array().unwrap().iter().all(|value| {
+        let value = value.as_f64().unwrap();
+        value.is_finite()
+    }));
+}
