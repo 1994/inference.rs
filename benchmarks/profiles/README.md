@@ -48,6 +48,21 @@ python3 tools/bench/experiment-checklist.py --compare <native.json> <vllm.json>
 | [27b-mtp2.json](27b-mtp2.json) | Qwen3.8-27B-NVFP4 | 2 |
 | [2b-mtp0.json](2b-mtp0.json) | qwen3vl-2b | 0 |
 
+## 能力限制（未签入清单的那些档位）
+
+方案要求"每个模型覆盖普通 decode 与当前已支持的 MTP 档位；**不支持的算法明确登记能力限制**，不能把
+回退成普通 decode 的结果当作该算法验收"。据此登记：
+
+| 模型 | 可测 MTP 档位 | 依据 |
+|---|---|---|
+| Qwen3.8-27B-NVFP4 | 0、2（`27b-mtp0`、`27b-mtp2`） | 配置声明 `text_config.mtp_num_hidden_layers = 1`，即带 MTP head；档位由提议深度给出 |
+| qwen3vl-2b | **仅 0**（`2b-mtp0`） | 该 checkpoint 的配置**没有任何 `mtp_*` 键**，即不附带 MTP head；任何正深度都只会落到普通 decode，因此不签发该档位 |
+
+这条限制现在**由工具强制**：`experiment-checklist.py` 在读取清单时，若 `workload.mtp_depth > 0`
+而模型配置未声明 MTP head，直接拒绝该清单（模型路径不可读时不作判断，因此离线环境仍可校验结构）。
+测试覆盖：声明了 head 的模型通过、没有 head 的正深度被拒、深度 0 无需 head、配置不可读时不判定，以及
+已签入的三份清单彼此一致。
+
 清单里的资源与 workload 条件对应 `artifacts/workloads/` 下同名输入；重新生成输入会改变
 `inputs_sha256`，必须重新签发清单，否则采集端会拒绝运行。
 

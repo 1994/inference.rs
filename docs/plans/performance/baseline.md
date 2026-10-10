@@ -64,6 +64,13 @@ cache、资源、矩阵与请求完整性任一不满足就不签发。
 （比较条件与证据）与"引擎是否够快"分开判定，`manifest.json` 如实写 `false`，不因为结果难看而拒绝签发，
 也不因为好看而放宽有效性。
 
+**能力限制不是缺口，而是登记项**
+
+方案要求未支持的算法档位"明确登记能力限制"，不允许用普通 decode 的回退结果充当该算法验收。
+`benchmarks/profiles/README.md` 因此登记了每个模型可测的档位与依据：Qwen3.8-27B-NVFP4 有 MTP head
+（`mtp_num_hidden_layers = 1`），可测 0 与 2；qwen3vl-2b 的配置**不含任何 `mtp_*` 键**，只可测 0。
+`experiment-checklist.py` 现在强制这条：清单声明正 MTP 深度而模型未声明 MTP head 时直接拒绝。
+
 **B3 的待补项（都需要设备窗口）**
 
 1. **独立复测样本数**：现值 `paired_units: 2`，方案要求至少 5。证据包自己在 `statistical_basis.note`

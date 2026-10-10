@@ -178,5 +178,43 @@ class GateChecklistTest(unittest.TestCase):
         self.assertTrue(gate.module.compare(old, new)["passed"])
 
 
+class MtpCapabilityTest(unittest.TestCase):
+    """A model without an MTP head must not be measured through a plain-decode fallback."""
+
+    def model_dir(self, config):
+        root = Path(tempfile.mkdtemp())
+        (root / "config.json").write_text(json.dumps(config))
+        return root
+
+    def test_a_declared_mtp_head_allows_a_depth(self):
+        profile = checklist()
+        profile["model"]["path"] = str(
+            self.model_dir({"text_config": {"mtp_num_hidden_layers": 1}})
+        )
+        module.load_document(profile)
+
+    def test_a_positive_depth_without_an_mtp_head_is_rejected(self):
+        profile = checklist()
+        profile["model"]["path"] = str(self.model_dir({"text_config": {"hidden_size": 8}}))
+        with self.assertRaises(ValueError) as raised:
+            module.load_document(profile)
+        self.assertIn("plain-decode fallback", str(raised.exception))
+
+    def test_a_plain_decode_profile_needs_no_mtp_head(self):
+        profile = checklist()
+        profile["workload"]["mtp_depth"] = 0
+        profile["model"]["path"] = str(self.model_dir({"text_config": {"hidden_size": 8}}))
+        module.load_document(profile)
+
+    def test_an_unreadable_configuration_is_not_judged(self):
+        profile = checklist()
+        profile["model"]["path"] = str(Path(tempfile.mkdtemp()) / "missing")
+        module.load_document(profile)
+
+    def test_the_checked_in_profiles_are_consistent(self):
+        for path in sorted(Path("benchmarks/profiles").glob("*.json")):
+            module.load_document(json.loads(path.read_text()))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,29 @@ def load(path):
     return load_document(json.loads(Path(path).read_text()))
 
 
+# Keys a checkpoint uses to declare an MTP head, at the top level or under `text_config`, which is
+# where the multimodal packages put the language tower's settings.
+MTP_LAYER_KEYS = ("mtp_num_hidden_layers",)
+
+
+def declared_mtp_layers(model_path):
+    """How many MTP layers a checkpoint declares, or None when its configuration is unreadable.
+
+    Zero is a real answer: it means the checkpoint ships no MTP head, so no speculative tier can be
+    measured on it.
+    """
+    config = Path(model_path) / "config.json"
+    if not config.is_file():
+        return None
+    document = json.loads(config.read_text())
+    scopes = [document, document.get("text_config", {})]
+    for scope in scopes:
+        for key in MTP_LAYER_KEYS:
+            if key in scope:
+                return int(scope[key])
+    return 0
+
+
 def load_document(checklist):
     """Structurally validate a checklist document."""
     if checklist.get("schema") != 1:
@@ -80,6 +103,16 @@ def load_document(checklist):
     ):
         if field not in checklist["workload"]:
             raise ValueError(f"checklist workload is missing {field}")
+    # The baseline plan is explicit that a model without the algorithm must not be measured by
+    # falling back to plain decode and calling the result that algorithm.
+    depth = checklist["workload"]["mtp_depth"]
+    if depth > 0:
+        layers = declared_mtp_layers(checklist["model"]["path"])
+        if layers == 0:
+            raise ValueError(
+                f"checklist asks for MTP depth {depth}, but {checklist['model']['path']} declares "
+                "no MTP head, so this would measure a plain-decode fallback"
+            )
     return checklist
 
 
