@@ -119,3 +119,20 @@ mod kernels {
         out.store(result);
     }
 }
+
+/// Identity block table for one sequence's own KV cache: logical block `b` is physical block `b`.
+/// Step 1 of the KV refactor keeps the arena untouched, so this is the mapping the kernels consult
+/// while every byte stays where it is today; step 2 replaces it with a real allocator's output.
+pub(super) fn identity_table(
+    device: &crate::device::CudaDevice,
+    capacity: usize,
+) -> Result<Tensor<i32>> {
+    let blocks = capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS);
+    let values: Vec<i32> = (0..blocks)
+        .map(|block| i32::try_from(block).unwrap_or(i32::MAX))
+        .collect();
+    let table = device
+        .upload(values, &[blocks.max(1)])
+        .map_err(device_error)?;
+    Arc::try_unwrap(table).map_err(|_| infer_core::Error::invariant("unique block table"))
+}
