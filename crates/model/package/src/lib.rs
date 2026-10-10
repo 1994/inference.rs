@@ -19,6 +19,9 @@ pub use input::tool::{
     OutputStreamParser, ParsedOutput, ParsedToolCall, StreamEvent, ToolCall, ToolDialect, assemble,
     parse as parse_model_output, parse_with as parse_model_output_with,
 };
+pub use providers::dflash2::{
+    ARCHITECTURE as DFLASH2_ARCHITECTURE, DraftGeometry, DraftQuote, check_declared_architecture,
+};
 pub use providers::qwen::{QwenProvider, VisionConfig};
 pub use providers::registry::{ModelRegistry, default_registry};
 pub use storage::index::SafetensorsIndex;

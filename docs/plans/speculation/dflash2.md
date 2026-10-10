@@ -30,6 +30,23 @@ DFlash2 作为独立草稿 provider 接入，共用 [推测解码 SPI 与状态�
 
 兼容性失败在加载或规划时报告具体原因。`auto` 可以依据明确策略回退 MTP 或普通 decode；显式要求 DFlash2 时，不能静默改用其他算法。草稿量化是单独的精度方案，需要记录格式和接受长度变化。
 
+## 已实施：D1 第一步的配置与兼容性契约
+
+`crates/model/package` 新增 `providers/dflash2.rs`（从 crate 根导出），只做与设备无关的部分：
+
+| 项 | 实现 | 验收对应 |
+|---|---|---|
+| 几何 | `DraftGeometry`，`official()` 记录方案里的官方值（5 层、hidden 5120、32 heads、8 KV heads、head dim 128、block 8、taps `[5,19,33,47,61]`、窗口 2048、selector rank 256 / top-k 16） | 配置检查 |
+| 内部一致性 | `validate()`：空维度、KV heads 必须整除 attention heads、taps 必须非空且严格递增、top-k 不得为 0 或超过 rank、block 不得宽于窗口 | 配置检查 |
+| 架构声明 | `check_declared_architecture()`：显式 DFlash2 请求不被别的算法静默接管 | "显式要求 DFlash2 时不能静默改用其他算法" |
+| target 兼容 | `check_target()`：target 必须是因果 decoder、hidden 必须与草稿一致、每个 tap 必须落在存在的 attention 层上，错误里带上 tap 编号 | target 身份 / target taps |
+| 算子能力 | `check_operations()`：草稿声明需要的算子集合必须是 backend 上报集合的子集，报出第一个缺失项 | 算子 |
+| 资源（几何部分） | `quote(dtype_bytes)`：每 token KV、窗口 KV、每 tap 每 token 的特征字节 | 资源（部分） |
+
+**明确还没有做的**：`config.json` 到 `DraftGeometry` 的键名映射（等官方 config 作为 fixture 登记后再写，避免先猜键名）、tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与 token map，属于 loader 的职责）、权重/arena/graph/回滚的报价（需要张量形状与设备事实）。独立 BF16/完整 head 参考与 selector 对照仍是 D1 的主要剩余工作。
+
+单测 11 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件与对应反例。
+
 ## Target 特征捕获
 
 模型 provider 声明抽头语义，backend 在 target 图中捕获指定位置。prefill 和 verification 必须使用同一特征定义。首先通过逐层独立参考确认 layer 编号、norm 前后位置、token 位置以及 fc 融合结果，再录制常驻图。

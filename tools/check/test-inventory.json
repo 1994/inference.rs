@@ -64,7 +64,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 80
+      "tests": 91
     },
     "quality": {
       "benches": 0,
@@ -940,6 +940,11 @@
     },
     {
       "crate": "package",
+      "file": "src/providers/dflash2.rs",
+      "mount": "../../tests/unit/providers_dflash2.rs"
+    },
+    {
+      "crate": "package",
       "file": "src/providers/qwen.rs",
       "mount": "../../tests/unit/providers_qwen.rs"
     },
@@ -1055,11 +1060,11 @@
     }
   ],
   "totals": {
-    "all": 427,
+    "all": 438,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 427
+    "tests": 438
   }
 }
