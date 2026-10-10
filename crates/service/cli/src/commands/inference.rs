@@ -1,25 +1,13 @@
 //! Inference commands.
-#[cfg(feature = "test-backends")]
-use super::{DemoOptions, examples};
 use super::{
     RunOptions, backend, config, print, read_json, results, run_requests, selected_engine,
     write_json,
 };
 use infer_core::Result;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_ir::CanonicalRequest;
-#[cfg(feature = "test-backends")]
-use infer_runtime::RuntimeConfig;
 
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn run(options: RunOptions, backend_choice: backend::Selection) -> Result<()> {
     let RunOptions {
         requests,
@@ -57,29 +45,6 @@ pub fn run(options: RunOptions, backend_choice: backend::Selection) -> Result<()
     print(
         &serde_json::json!({"runtime":engine.inspect(),"execution":engine.backend().inspection(),"results":results(&engine,&ids)?}),
     )?;
-
-    Ok(())
-}
-#[cfg(feature = "test-backends")]
-pub fn demo(options: DemoOptions, backend_choice: backend::Selection) -> Result<()> {
-    let DemoOptions { journal, snapshot } = options;
-    let mut engine = selected_engine(
-        RuntimeConfig::default(),
-        None,
-        None,
-        crate::constants::DEFAULT_HOST_MEMORY_MIB,
-        backend_choice,
-    )?;
-    let input = examples()?;
-    let ids = input.iter().map(|r| r.id).collect::<Vec<_>>();
-    run_requests(&mut engine, input)?;
-    if let Some(path) = journal {
-        write_json(&path, &engine.journal()?)?;
-    }
-    if let Some(path) = snapshot {
-        write_json(&path, &engine.snapshot()?)?;
-    }
-    print(&serde_json::json!({"runtime":engine.inspect(),"results":results(&engine,&ids)?}))?;
 
     Ok(())
 }

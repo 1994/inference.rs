@@ -65,18 +65,25 @@ qwen-hybrid-grouped}/golden.json`）是**模型级**数值对照，只有 CPU �
 2 ignored / 0 failed** ✓，即删掉执行器后少 7 个二进制、15 个用例 ✓）；`make check-tools` ✓；
 package 12 测试 ✓。
 
-**CLI 的死分支仍未清除（一次尝试被回退，据实记录）**
+**CLI 的死分支已清除（第二次尝试，全程双目标验证）**
 
-两个执行器删除后，CLI 里约 180 处 `#[cfg(feature = "test-backends")]` 站点已**不可达**（feature 无实现），
-但仍是死代码 ✗。本轮尝试用脚本整批删除，结果**两次破坏了仅 macOS 生效的代码路径** ✗：混合条件
-`any(target_os = "macos", feature = "test-backends")` 被误判为"仅该 feature"而整项删除；宏参数里的
-`not(feature = ...)` 也被一并切掉。Linux 门禁**看不到**这些错误 ✗，而本机无法编译 Apple 目标
-（`libmimalloc-sys` 的 C 构建脚本需要 macOS 工具链 ✗），因此**回退了这次清理**，让 `main` 保持在已验证
-的绿色状态 ✓（回退提交 `14f942e` ✓）。
+上一轮的脚本式清理被回退，原因是它破坏了只 macOS 编译的路径而本地无法验证。本轮解决了**验证手段**，
+清理才得以安全完成：
 
-后续要求：这项清理必须**逐文件、以编译器为准**，或改在能编译 Apple 目标的环境（macOS CI）里做，不能再用
-全局正则。**未完成项照实登记**：CLI 死分支、以及 `tools/validation/smoke-paged-kv.py` 的 CPU oracle
-（其 parity 断言没有新家，需据实删除并在文档里说明）。
+1. 临时把 `mimalloc` 依赖与 `#[global_allocator]` 停用（仅在本机验证期间，随后恢复 ✓），这样
+   `cargo check --offline --target aarch64-apple-darwin -p infer-cli --all-targets` 能在 Linux 上
+   真正编译 macOS 目标 ✓ —— 这把"只有 macOS CI 能发现"的错误变成**本地可发现** ✓；
+2. 清理器改为**按条目配平花括号/圆括号**判断边界（不再假设"ARM 只有一行"），并对 `cfg_attr`、
+   宏参数与 `not(feature = ...)` 逐一保守处理 ✓；
+3. 每个文件删完**立刻**跑两个目标（Linux 与 Apple）✓ —— 两道检查都通过才继续 ✓。
+
+结果：约 180 处站点清除 ✓，CLI 的 `test-backends` feature **声明本身也删除** ✓（任何回退都会触发
+`unexpected_cfgs` ✓）；顺带删除因 `mod` 声明消失而**孤立**的文件（`backend/testing.rs` ✓、
+`tests/unit/support_serving.rs` ✓），并清掉 4 处被删项遗留的孤立文档注释（rustdoc 直接拒绝 ✗）。
+测试执行器消费者降到 **5**（全是本仓门禁按规则点名 ✓）。
+
+**仍未做**：`tools/validation/smoke-paged-kv.py`（第 15 行的 `--test-binary` 帮助文本与 parity 逻辑
+仍指向已删除的 CPU oracle ✗；其 parity 断言无新家，需据实删除 ✓）。
 
 ## 已保住的数值对照
 

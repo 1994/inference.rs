@@ -1,40 +1,16 @@
 //! Agent CLI support.
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use super::selected_engine;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use crate::backend;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::{Error, Result};
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_runtime::RuntimeConfig;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use std::{io, path::Path};
 
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn agent(
     package: Option<&Path>,
     memory_mib: u64,
