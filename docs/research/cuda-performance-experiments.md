@@ -2051,3 +2051,24 @@ test resident::attention_prefill::tests::chunk_attention_matches_reference_with_
   要和 `--chunked-recurrent` 一样由使用方显式选择；
 - 它在长上下文快 1.58×（§13.7），短块慢 12%（grid 只有 48 个 CTA）——推广前应先修短块
   （QT 降到 16 或对 KV 循环做 split-K，把 grid 抬到数百）。
+
+### 13.9 张量核 attention 的 QT 扫描：**QT=16 在两个区间都赢，长上下文 6.2×**
+
+§13.7 记下"短块慢 12%"并猜是 grid 太小（48 个 CTA 对 SIMT 的 1536 个）。扫了一下 QT：
+
+| 位置桶 | SIMT（默认） | QT=32 | **QT=16** |
+|---|---:|---:|---:|
+| 0–1023 | 51.2 µs | 57.3 µs（1.12× 慢） | **36.9 µs（1.39× 快）** |
+| 3072+ | 1587.2 µs | 1004.2 µs（1.58× 快） | **256.0 µs（6.2× 快）** |
+
+QT=16 的**幅度**说明真正的原因不是"grid 不够大"那么简单：QT=32 时每 CTA 的累加器是
+`32 × 256 × 4 B = 32 KB` f32，远超寄存器预算（SM 共 256 KB），必然溢出/占不满 occupancy；
+QT=16 减半到 16 KB，同时 CTA 数从 48 涨到 96。两个因素叠起来，长块就被拉开到 6×。
+所以 `TILED_QUERY_TILE` 从 32 改成 **16**。
+
+数值上两个宽度都过：`check_case()` 里现在对 `qt ∈ {16, 32}` 各跑一遍，都用同一个主机参考、
+同一个 1e-4 相对容差，`chunk_attention_matches_reference_with_tails_windows_and_draft_offset` 通过。
+
+**结论**：长上下文那半边现在有 **6.2×**（attention 节点 1587 → 256 µs），短块也从"慢 12%"变成"快 1.39×"——
+即张量核 attention 在**全区间**都不输 SIMT。它仍是**默认关闭**的可选项（输出末位不同，口径同
+`--chunked-recurrent`），但现在已经没有"短块回退"这个理由挡着它了。

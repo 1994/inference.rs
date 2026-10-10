@@ -9,7 +9,7 @@ type AttentionResult<E> = Result<(Tensor<f32>, Tensor<E>, Tensor<E>), DeviceErro
 
 /// Lane rows per tile in the tensor-core attention twin; the graph's lane count must be a
 /// multiple of it so every tile is full.
-const TILED_QUERY_TILE: usize = 32;
+const TILED_QUERY_TILE: usize = 16;
 /// Key/value rows per tile in the tensor-core attention twin.
 const TILED_KEY_BLOCK: usize = 32;
 /// Head width the tensor-core twin has been measured at; other widths keep the SIMT kernel.
