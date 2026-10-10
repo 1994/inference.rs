@@ -286,6 +286,26 @@ mod released {
 }
 
 impl DraftGeometry {
+    /// Whether a `query` position may attend a `key` position in the draft's score block.
+    ///
+    /// The released configuration is non-causal and every layer is a sliding layer, and the plan's
+    /// contract is narrower than "not causal": a query sees its own block in both directions, sees
+    /// the blocks before it, and never reaches further back than the sliding window. The reference
+    /// resolves the same pair per layer - `causal = false`, window from the configuration - and
+    /// leaves the mask itself to the attention backend, so this is this project's statement of the
+    /// rule rather than a transcription.
+    #[must_use]
+    pub const fn attends(&self, query: usize, key: usize) -> bool {
+        let same_block = query / self.block_size == key / self.block_size;
+        same_block || (key <= query && query - key < self.sliding_window)
+    }
+
+    /// The block a position belongs to.
+    #[must_use]
+    pub const fn block_of(&self, position: usize) -> usize {
+        position / self.block_size
+    }
+
     /// The registered fixture in `examples/qwen3.8-27b-dflash2` is the same configuration, and a
     /// test asserts this constructor and the parsed file agree.
     #[must_use]

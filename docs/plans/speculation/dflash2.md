@@ -130,9 +130,25 @@ taps、公式、舍入与 torch 版本；重复运行一致。Rust 测试把它�
 - 我另外用一份**独立的 Python 推导**（不共享 Rust 实现）逐张量对比了真实文件的 header：**81 个名字与
   形状全部精确一致**，无缺失、无多余、无形状差异。
 
+**block mask 与滑动窗口（第七步，已完成）**
+
+参考实现把 mask 交给 attention 后端，自己只解析每层的 `(sliding_window, causal)`：本 checkpoint 的
+`layer_types` 全是 `sliding_attention`、`is_causal=false`，窗口取配置的 2048。方案对草稿 attention 的
+要求更具体——**块内双向可见、跨块只看历史、且不越过滑动窗口**。这两条合起来就是本项目的规则，已在
+`DraftGeometry` 上落地为 `attends(query, key)` 与 `block_of(position)`：
+
+```
+attends(q, k) = (q / block_size == k / block_size) || (k <= q && q - k < sliding_window)
+```
+
+这在文档里被标注为"本项目的规则陈述"而不是对参考实现的转写（参考只给了 `causal=false` 与窗口）。
+`validate()` 已经保证 `block_size <= sliding_window`，因此块内可见性永远不需要再查窗口。四个测试覆盖：
+块内双向、不看不见后续块、窗口边界（`window` 位置可见 `1` 而不可见 `0`；`window+1` 可见 `2`）、以及
+块宽不超过窗口这一前提。
+
 **明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
-token map，属于 loader 的职责）；arena、graph 与回滚开销的报价（需要设备事实）；草稿 attention 的
-**非因果 mask 与滑动窗口**语义、以及 selector 的 top-k 与路径选择部分是 D1 的剩余工作。
+token map，属于 loader 的职责）；arena、graph 与回滚开销的报价（需要设备事实）；selector 的 top-k
+与路径选择部分仍是 D1 的剩余工作。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。

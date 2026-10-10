@@ -432,3 +432,42 @@ fn the_weight_quote_reproduces_the_released_checkpoint_exactly() {
     // The draft's own footprint, for the report: 1.92 B parameters.
     assert_eq!(config.weights_bytes(2) / 2, 1_924_404_480);
 }
+
+#[test]
+fn a_query_sees_its_own_block_in_both_directions() {
+    let draft = DraftGeometry::official();
+    // Block 1 spans positions 8..16: its tokens see each other forwards and backwards.
+    assert!(draft.attends(8, 9));
+    assert!(draft.attends(15, 8));
+    assert_eq!(draft.block_of(8), 1);
+    assert_eq!(draft.block_of(15), 1);
+}
+
+#[test]
+fn a_query_does_not_see_later_blocks() {
+    let draft = DraftGeometry::official();
+    assert!(!draft.attends(7, 8));
+    assert!(!draft.attends(15, 16));
+    // ... but it does see the whole of an earlier block, up to the window.
+    assert!(draft.attends(16, 15));
+    assert!(draft.attends(16, 8));
+}
+
+#[test]
+fn the_sliding_window_bounds_how_far_back_a_query_reaches() {
+    let draft = DraftGeometry::official();
+    let window = DraftGeometry::official().sliding_window;
+    assert!(draft.attends(window, 1));
+    assert!(!draft.attends(window, 0));
+    assert!(!draft.attends(window + 1, 1));
+    // The furthest visible key is exactly window - 1 positions back.
+    assert!(draft.attends(window + 1, 2));
+}
+
+#[test]
+fn a_draft_block_never_exceeds_its_window() {
+    // `validate` keeps the block inside the window, so within-block visibility never has to consult
+    // the window at all.
+    let draft = DraftGeometry::official();
+    assert!(draft.block_size <= draft.sliding_window);
+}
