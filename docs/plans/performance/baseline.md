@@ -57,6 +57,20 @@ done
 无效对比不能误判通过这一点由 `compare-results.py` 的有效性门禁与它的单测保证：身份、模型/硬件、
 cache、资源、矩阵与请求完整性任一不满足就不签发。
 
+**验收入口按方案使用 release 并报告计数**
+
+方案要求"正式 Rust 测试、性能对比和设备/模型验收统一使用 release"，并"每个测试入口报告收集、执行、
+ignored 和失败数量"。审查发现**设备验收入口是例外**：`make test-cuda` 的测试步骤跑的是 debug，
+`make check-linux-numa` 同样是 debug ✗；而 `make test-metal` 早已通过 release 二进制验收 ✓、
+`make bench` 也走 release ✓。
+
+现在两个入口都改为 `cargo test --locked --release`，并接入上一条的计数包装器（`--entry cuda` /
+`--entry numa`）✓。CUDA 测试本身对两种 profile 都有准备——套件里有三处 `cfg!(debug_assertions)`
+分支、没有任何 `debug_assert!`，所以 release 是它们预期要支持的形状 ✓。
+
+顺带修掉包装器的一个真 bug：它原先删除**所有** `--`，会把 `cargo test … -- --ignored` 里的内层分隔符
+一起吃掉 ✗，使 `--ignored` 退化成测试名过滤 ✗。现在只删除紧跟选项的那一个 `--`，并补了一条专门的测试。
+
 **性能结论如实记录，不作签发条件**
 
 三条基线的 `gate.passed` 都是 `false`：native 目前慢于 vLLM（例如 2b 的 batch4 `wall_seconds`

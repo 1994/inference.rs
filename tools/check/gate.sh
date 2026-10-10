@@ -80,7 +80,10 @@ security_checks() {
 
 cuda_checks() {
     cargo clippy --locked -p infer-backend-cuda --features cuda --all-targets -- -D warnings
-    cargo test --locked -p infer-backend-cuda --features cuda
+    # Device acceptance, so it runs the release profile the baseline contract requires and reports
+    # what it collected. The suite branches on `cfg!(debug_assertions)` where the two differ.
+    python3 tools/check/test-report.py --entry cuda -- \
+        cargo test --locked --release -p infer-backend-cuda --features cuda
     RUSTDOCFLAGS="-D warnings" cargo doc --locked -p infer-backend-cuda --features cuda --no-deps
     cargo run --locked --release -p infer-backend-cuda --features cuda --example cuda-kernels
 }
@@ -114,7 +117,9 @@ linux_numa_checks() {
         echo 'NUMA acceptance requires a Linux host with memory-policy syscalls enabled' >&2
         exit 1
     fi
-    cargo test --locked -p infer-core placement::native::numa:: -- --ignored --test-threads=1
+    python3 tools/check/test-report.py --entry numa -- \
+        cargo test --locked --release -p infer-core placement::native::numa:: -- \
+        --ignored --test-threads=1
 }
 
 case "${1:-all}" in

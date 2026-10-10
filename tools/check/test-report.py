@@ -67,7 +67,11 @@ def main():
     parser.add_argument("--json", type=str, default=None)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     arguments = parser.parse_args()
-    command = [part for part in arguments.command if part != "--"]
+    # Only the separator this wrapper documents is removed; an inner one belongs to the command
+    # (`cargo test ... -- --ignored`, for instance) and has to reach it unchanged.
+    command = list(arguments.command)
+    if command[:1] == ["--"]:
+        command = command[1:]
     if not command:
         raise SystemExit("no command given")
 

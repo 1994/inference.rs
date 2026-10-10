@@ -25,6 +25,33 @@ COMPILED_ONLY = """   Compiling infer-ir v0.1.0
 """
 
 
+class CommandTest(unittest.TestCase):
+    def test_only_the_documented_separator_is_removed(self):
+        # `python3 test-report.py --entry x -- cargo test -- --ignored` must reach cargo with its
+        # own separator intact, or the flag becomes a test-name filter.
+        import subprocess
+        import sys
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("test-report.py")),
+                "--entry",
+                "inner",
+                "--",
+                sys.executable,
+                "-c",
+                "import sys; print('argv:', sys.argv[1:])",
+                "--",
+                "--ignored",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertIn("['--', '--ignored']", completed.stdout)
+
+
 class SummarizeTest(unittest.TestCase):
     def test_totals_every_binary(self):
         summary = test_report.summarize("workspace", TWO_BINARIES.splitlines())
