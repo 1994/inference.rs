@@ -16,7 +16,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 14
+      "tests": 11
     },
     "core": {
       "benches": 0,
@@ -113,6 +113,14 @@
       "role": "service"
     },
     {
+      "crate": "cli",
+      "path": "crates/service/cli/tests/unit/backend_selected.rs",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "service"
+    },
+    {
       "crate": "tools",
       "path": "tools/check/policy.py",
       "patterns": [
@@ -147,6 +155,14 @@
         "test-backends"
       ],
       "role": "plumbing"
+    },
+    {
+      "crate": "tools",
+      "path": "tools/validation/smoke-paged-kv.py",
+      "patterns": [
+        "test-backends"
+      ],
+      "role": "protocol"
     }
   ],
   "gated": {
@@ -671,11 +687,11 @@
     }
   ],
   "totals": {
-    "all": 462,
+    "all": 459,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 462
+    "tests": 459
   }
 }

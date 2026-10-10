@@ -1,5 +1,9 @@
 //! Dispatch executable responsibilities.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use crate::support::agent;
 use crate::{arguments::Cli, arguments::Command, backend, commands, support::print};
 use clap::Parser;
@@ -38,7 +42,11 @@ pub fn run() {
 // Host-only builds route the selection into subcommands that take it by value but never
 // consume it, which the ownership lint flags there and only there.
 #[cfg_attr(
-    not(any(target_os = "macos", all(target_os = "linux", feature = "cuda"))),
+    not(any(
+        target_os = "macos",
+        feature = "test-backends",
+        all(target_os = "linux", feature = "cuda")
+    )),
     expect(
         clippy::needless_pass_by_value,
         reason = "The dispatcher owns the single request-local selection in host-only builds"
@@ -46,20 +54,46 @@ pub fn run() {
 )]
 pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<()> {
     match command {
-        #[cfg(not(any(target_os = "macos", all(target_os = "linux", feature = "cuda"))))]
+        #[cfg(not(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        )))]
         Command::Run(options) if options.package.is_none() => Err(infer_core::Error::invalid(
-            "a device backend requires --package",
+            "device backend requires --package; CPU fixtures require a test-backends build",
         )),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Serve(options) => commands::serve(options, backend_choice),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Run(options) => commands::run(options, backend_choice),
+        #[cfg(feature = "test-backends")]
+        Command::Demo(options) => commands::demo(options, backend_choice),
         Command::Verify(options) => commands::verify(options, &backend_choice),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Replay(options) => commands::replay(options, backend_choice),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Profile(options) => commands::profile(options, backend_choice),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Benchmark(options) => commands::benchmark(options, backend_choice),
         Command::Compare(options) => commands::compare(options),
         Command::InspectModel(options) => commands::inspect_model(options),
@@ -68,14 +102,22 @@ pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<(
         Command::Doctor => print(
             &serde_json::json!({"host_arch":std::env::consts::ARCH,"host_os":std::env::consts::OS,"backends":backend::catalog(),"qwen38_config_import":true,"safetensors_weight_binding":true,"native_tokenizer":true,"incremental_hybrid_state":true,"cuda_execution":"resident CUDA BackendProvider; requires Linux --features cuda","qwen38_27b_execution_validated":false,"native_workloads":["generate","embed","rerank","decision"]}),
         ),
-        #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+        #[cfg(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        ))]
         Command::Agent(options) => agent(
             options.package.as_deref(),
             options.host_memory_mib,
             options.probe_memory_mib,
             backend_choice,
         ),
-        #[cfg(not(any(target_os = "macos", all(target_os = "linux", feature = "cuda"))))]
+        #[cfg(not(any(
+            target_os = "macos",
+            feature = "test-backends",
+            all(target_os = "linux", feature = "cuda")
+        )))]
         _ => Err(infer_core::Error::unsupported(match backend_choice.kind {
             backend::BackendChoice::Cuda => {
                 "CUDA execution requires Linux and a build with --features cuda"

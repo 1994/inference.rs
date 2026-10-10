@@ -1,21 +1,47 @@
 //! Execution CLI support.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use crate::backend::SelectedBackend;
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_core::{Error, RequestId, Result};
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_ir::CanonicalRequest;
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(feature = "test-backends")]
+use infer_ir::WorkloadOutput;
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 use infer_runtime::Engine;
 
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn run_to_idle(
     engine: &mut Engine<SelectedBackend>,
 ) -> Result<Vec<infer_core::event::SemanticEvent>> {
     run_to_idle_started(engine, engine.now_us(), std::time::Instant::now())
 }
 
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 fn run_to_idle_started(
     engine: &mut Engine<SelectedBackend>,
     clock: u64,
@@ -47,7 +73,11 @@ fn run_to_idle_started(
         "runtime exceeded tick limit; initial progress epoch {start}"
     )))
 }
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn results(
     engine: &Engine<SelectedBackend>,
     ids: &[RequestId],
@@ -62,7 +92,21 @@ pub fn results(
         })
         .collect()
 }
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+#[cfg(feature = "test-backends")]
+pub fn outputs(
+    engine: &Engine<SelectedBackend>,
+    ids: &[RequestId],
+) -> Result<Vec<Option<WorkloadOutput>>> {
+    Ok(results(engine, ids)?
+        .into_iter()
+        .map(|r| r.output)
+        .collect())
+}
+#[cfg(any(
+    target_os = "macos",
+    feature = "test-backends",
+    all(target_os = "linux", feature = "cuda")
+))]
 pub fn run_requests(
     engine: &mut Engine<SelectedBackend>,
     requests: Vec<CanonicalRequest>,

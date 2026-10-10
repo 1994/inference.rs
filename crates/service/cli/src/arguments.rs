@@ -72,6 +72,8 @@ pub enum Command {
     /// Run canonical requests with a Safetensors package or reference fixture.
     Run(commands::RunOptions),
     /// Exercise Generate, Embed, Rerank and Decision together.
+    #[cfg(feature = "test-backends")]
+    Demo(commands::DemoOptions),
     /// Compare numeric arrays, or verify batch/chunk invariance of the fixture.
     Verify(commands::VerifyOptions),
     /// Replay journal actions, or resume a quiescent execution checkpoint.

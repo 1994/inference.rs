@@ -49,3 +49,7 @@ pub fn derive_config(
     }
     config.validate()
 }
+
+#[cfg(all(test, feature = "test-backends"))]
+#[path = "../../tests/unit/support_serving.rs"]
+mod tests;

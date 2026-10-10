@@ -8,7 +8,8 @@ fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
     let mut backend = metal::load(
         &root,
-        // A zero budget derives the share from the Metal device.
+        // A zero budget derives the share from the Metal device; the CPU test-backend
+        // default is compiled out without `test-backends`.
         0,
         &Selection {
             kind: BackendChoice::Metal,

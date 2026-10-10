@@ -41,6 +41,14 @@ pub struct RunOptions {
     #[arg(long)]
     pub events: Option<PathBuf>,
 }
+#[cfg(feature = "test-backends")]
+#[derive(clap::Args)]
+pub struct DemoOptions {
+    #[arg(long)]
+    pub journal: Option<PathBuf>,
+    #[arg(long)]
+    pub snapshot: Option<PathBuf>,
+}
 #[derive(clap::Args)]
 pub struct VerifyOptions {
     #[arg(long, requires = "candidate")]
