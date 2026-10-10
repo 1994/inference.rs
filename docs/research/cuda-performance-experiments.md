@@ -2072,3 +2072,30 @@ QT=16 减半到 16 KB，同时 CTA 数从 48 涨到 96。两个因素叠起来�
 **结论**：长上下文那半边现在有 **6.2×**（attention 节点 1587 → 256 µs），短块也从"慢 12%"变成"快 1.39×"——
 即张量核 attention 在**全区间**都不输 SIMT。它仍是**默认关闭**的可选项（输出末位不同，口径同
 `--chunked-recurrent`），但现在已经没有"短块回退"这个理由挡着它了。
+
+### 13.11 第①步**已撤回**：官方 matrix 抓到了小夹具抓不到的 bug
+
+§13.10 记的块表改动（提交 `b3ddcd8`）在**单测/GPU 测试全绿**的情况下，被**欠着的那次官方 matrix 对照**
+当场打回：
+
+```
+crates/backend/cuda/src/resident/attention_prefill.rs:56: tile block: [0,0,0] …
+partition access out of bounds: dim 0, block index >= ceil(?/1) or index < 0
+```
+
+即 `append` 里 `table[position / BT]` 越界——**表长与内核实际用到的位置对不上**：真机 profile 的
+capacity（32768 → 1024 块）下必然触发，而单测/GPU 测试的夹具 capacity 只有 128 左右，位置永远落在
+少数几块里，**这个不一致在小夹具里根本不可能暴露**。表长是"由 capacity 派生"的结构，夹具的 capacity
+与交付配置差两个数量级，所以测试绿不等于这一步是对的。
+
+处置：`git revert b3ddcd8`（`b94bf1a`），回到未引入块表的状态；随后复验 fmt/clippy/27 单测/4 GPU 测试
+全绿，官方 matrix 重新正常出 4 个 case 的完整结果。
+
+**两条记录下来的教训**：
+1. **一切"按 capacity 派生"的结构（表长、块数、预算）必须用交付级 capacity 验证**，小夹具只能验证
+   语义不能验证尺寸。这类改动以后第一件事就是跑 matrix，再谈细节。
+2. 撤回本身说明"每步都跑官方 matrix"这条纪律是有效的——它挡下了一个测试全绿但真机会越界的改动。
+
+第①步的正确做法（下一轮）：先把**表长与它服务的 KV 缓冲容量**在同一个地方派生（同一个 `capacity`
+来源），再让 append/attention 都用它；并且先在**私有程序路径**用交付 capacity 复现一次
+（`--max-model-len 32768` 的最小请求即可触发），确认步长一致后再接读路径。
