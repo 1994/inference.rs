@@ -1286,3 +1286,38 @@ INFER_CUDA_PREFILL_PROFILE=/tmp/gp.jsonl target/release/infer /home/r/models/Qwe
   --max-model-len 32768 --max-num-seqs 16 &
 python3 /tmp/repro-case.py http://127.0.0.1:38091 long   # 先跑一遍预热，再删 profile 重跑
 ```
+
+### 12.6 已否掉的低成本尝试：delta 的代数重排【确证，已回滚】
+
+§12.3 的机制假设是"每 token 两次跨线程归约"。最便宜的验证是不动并行度、只重排代数：
+输出可以写成
+
+```
+sum_d (decay*old + k⊗diff)[d,s] * q[d]
+  = decay * sum_d old[d,s]*q[d] + diff[s] * (k·q)
+```
+
+这样两次大归约都只读 `old`，互相独立，链从"归约→更新→归约"变成"归约(并行)→更新"，
+并且不再需要为了求和而物化 `updated` 整块 tile。实现后跑现成的配对基准
+（`resident_recurrent_prefill_benchmark_tests::recurrent_chunk_performance_gate`，
+`do_bench_paired` + 清 L2，chunked 核 vs 逐 lane 核）：
+
+| 几何 | 原式 new_ms | 重排后 new_ms | 变化 |
+|---|---:|---:|---:|
+| (2, 4, 32, 32) | 0.0431 | 0.0451 | **+4.5%** |
+| (16, 48, 128, 32) | 0.0720 | 0.0789 | **+9.6%** |
+| (16, 48, 128, 128) | 0.2529 | 0.2766 | **+9.4%** |
+
+**慢了 4.5–9.6%**：cuTile 对原式的 elementwise+归约已经融得很好，重排反而多了一次
+`k·q` 归约和若干 broadcast。数值上重排是安全的（chunked-vs-per-lane 输出差
+7.45e-9 → 1.12e-8，仍比断言 1e-7 小一个量级），但**没有收益，已回滚**。
+
+结论：delta 的每 token 算术已经是最优写法，成本来自**结构**（逐 token 串行扫描 +
+每 token 归约 + 48 CTA 的网格），所以只有算法级改写（WY / chunked 矩阵乘）或换并行
+分解能救它；**不要再去调这个核的算式**。这也解释了为什么 §十.1 的值维分块同样无效。
+
+顺带修好了这个基准本身：它自 `0ba23c5` 加入 `SW` 泛型后就没再传第 5 个泛型，
+在 HEAD 上是**编译不过**的（`not enough generic arguments to instantiate const parameter SW`），
+所以"chunked 核对逐 lane 核"的护栏一直没在跑。现在它能在 release 下直接量
+（`cargo test --release -p infer-backend-cuda --features cuda -- --ignored recurrent_chunk_performance_gate --nocapture`，
+约 2 秒），是后续改 delta 的快速 A/B 工具。
