@@ -2477,3 +2477,29 @@ KV capture: arena_rows=256 table_len=2 table_reach_rows=64 per_slot=64
 `max(table) × BT + rows ≤ arena_rows` 一成立/不成立，就知道是谁错配。
 
 （本轮改动已回退：`--all-targets` 0 错误、clippy ✅、4 个 GPU 硬件测试 ✅。）
+
+### 13.28 把表的**取值**也量了：形状和取值**都自洽** ⇒ "表/arena 错配"这一族假设被排除
+
+这次把表的取值直接打出来（表是我们自己构造的，不需要设备回读）：
+
+```
+KV slot table: slot=0 len=2 base=0 max=1
+KV slot table: slot=1 len=2 base=2 max=3      <- 2 槽池：arena 128 行 = 4 块，max=3 在范围内
+KV slot table: slot=0..3 len=2 base=0/2/4/6 max=1/3/5/7   <- 4 槽池：arena 256 行 = 8 块，max=7 在范围内
+KV capture: arena_rows=128 table_len=2 per_slot=64
+KV capture: arena_rows=256 table_len=2 per_slot=64
+```
+
+对照关系全部成立：`max(table) × 32 + 32 ≤ arena_rows` ✓（3×32+32=128 ✓、7×32+32=256 ✓）。
+**所以故障不是"表的形状"也不是"表的取值"与 arena 不匹配**——这一族假设（我在 §13.23–13.27 反复推的）
+被实测排除。
+
+**还剩下的嫌疑**（下一轮直接量）：
+1. **`identity_table`**（私有/draft program 的表）——这次**没有**插桩，而它是 draft 路径独有的；
+2. **运行期**传进去的 `position`/窗口（`attention.rs:113` 的物理块号是由 `position/32` 索引表得到的）——
+   若某个 lane 拿到了**别的槽的位置**，`blocks.load([k])` 就会越过**表的长度**（dim 0），
+   而报错说的是 dim 1（arena），所以更可能是"表里的值被当成行号"以外的第三种情形；
+3. 因此下一步改为在**回放时**打印 `(lane, position, block 索引, 表项)`（host 侧，一次一行），
+   直接看**那一次**读取的输入。
+
+（改动已回退：`--all-targets` 0 错误、clippy ✅、4 个 GPU 硬件测试 ✅。补丁仍在 `/tmp/shared-arena.patch`。）
