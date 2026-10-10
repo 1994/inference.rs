@@ -1,12 +1,79 @@
 # 性能基线与 vLLM 对齐方案
 
-状态：设计方案，待实施。源码基点为 `7c79d99`，整理日期为 2026 年 10 月 9 日。现有服务脚本尚未通过本契约，没有可用于确认当前服务收益的已验收 baseline。
+状态：采集与门禁已实施，已签发三条有效基线（B2 达到验收；B3 的复测样本数与负载类型仍是待补项，见文末"已实施"）。源码基点为 `7c79d99`，整理日期为 2026 年 10 月 9 日。
 
 整体排期与完成状态由 [路线图](../README.md) 的 B2、B3 维护。本方案统一规定 release、当前 native/vLLM 配置对齐、比较身份、计时与统计、原始证据和基线更新。CUDA、MTP、DFlash2、ReplaySSM 的性能工作都引用本方案；模块各自维护数值、状态与资源验收，不另定采样规则或基线门槛。
 
 现有缺口见 [对比方法审查](../../reviews/vllm-benchmark-methodology-2026-10-09.md)，CUDA 正确性前置见 [提交审查](../../reviews/cuda-commits-2026-10-09.md)。旧 [Serving 矩阵](../../research/cuda-serving-baseline.md) 是历史记录，不自动获得有效基线身份。
 
 本方案定义待实施的硬门禁，现有脚本尚未完成该契约。基线是否准确与引擎是否足够快分别判定：即使 native 明显慢于 vLLM，只要比较条件与证据通过，仍可形成有效基线；无效对比即使显示加速，也不能形成基线或批准优化。
+
+## 已实施：采集、门禁与已签发基线
+
+本节记录**实测**状态，便于下一位维护者不必重新考古。核验命令写在条目里，全部可在本机无 GPU 执行，
+只有标注"设备窗口"的项需要真机。
+
+**工具与门禁**
+
+| 工具 | 职责 |
+|---|---|
+| `tools/bench/experiment-checklist.py` | 一个 profile 只声明一次；`--check` 用清单核验单次运行（缺任何条件即失败），`--compare` 打印**配置对照表**（native/reference 逐项实际生效值）与性能对比 |
+| `tools/bench/compare-results.py` | 有效性门禁：release 构建身份、同一模型制品与硬件、cache 状态与资源约束一致、矩阵完整、无失败或截断请求；通过后才做性能判定 |
+| `tools/bench/freeze-baseline.py` | 不可覆盖地冻结基线与证据，`--verify` 重算全部哈希 |
+| `tools/bench/hardware-monitor.py` | 随测量记录设备遥测（而非在间隙里采样） |
+
+这些模块的 `tools/bench/test_*.py` 由 `tools/check/gate.sh` 收集（gate.sh 里有一行注释说明这是审查发现
+"某个模块没有被任何地方收集"之后的修正），因此采集与门禁的实测行为在 CI 里跑。
+
+**已登记 profile 与已签发基线**
+
+`benchmarks/profiles/{2b-mtp0,27b-mtp0,27b-mtp2}.json` 三个 profile 对应方案要求的模型范围
+（qwen3vl-2b 与 Qwen3.8-27B-NVFP4）与 MTP 档位（0 与 2）。据此签发三条基线：
+
+| baseline ID | profile | 核验结果 | 性能判定 |
+|---|---|---|---|
+| `2b-mtp0-serving-v1` | 2b-mtp0 | 8 个文件哈希一致、`identity_verified`、`cache_effective`、四个基础场景矩阵完整 | `gate.passed: false` |
+| `27b-mtp0-serving-v1` | 27b-mtp0 | 同上 | `gate.passed: false` |
+| `27b-mtp2-serving-v1` | 27b-mtp2 | 同上 | `gate.passed: false` |
+
+核验命令（本机可复现，无需 GPU）：
+
+```sh
+for b in 2b-mtp0-serving-v1 27b-mtp0-serving-v1 27b-mtp2-serving-v1; do
+    python3 tools/bench/freeze-baseline.py --verify benchmarks/baselines/serving/$b
+done
+```
+
+**B2 的五项可核验条件分别落在哪里**
+
+| 条件 | 证据字段（`benchmarks/baselines/serving/*/…json`） |
+|---|---|
+| release 身份 | `identity.release_profile`（实测 `lto=thin`、`codegen-units=1`）、`identity.build`（`sha256`、`bytes`、`image`、`debug_sections: []`、`release_like: true`）、`identity.source`（revision + dirty） |
+| 配置回读 | `config_readback`（与 CLI 传入值分开记录的实际生效值） |
+| 工作量 | `inputs_sha256`、`max_new_tokens`、`matrix`、`hot_prefix_tokens_reused` |
+| 缓存 | `prefix_cache_enabled` 与清单核验出的 `validity.cache_effective` |
+| 计时与统计 | `trials`、`completed`、`statistical_basis`（`paired_units`、`declared_max_drift`、逐项 drift）、`telemetry` |
+
+无效对比不能误判通过这一点由 `compare-results.py` 的有效性门禁与它的单测保证：身份、模型/硬件、
+cache、资源、矩阵与请求完整性任一不满足就不签发。
+
+**性能结论如实记录，不作签发条件**
+
+三条基线的 `gate.passed` 都是 `false`：native 目前慢于 vLLM（例如 2b 的 batch4 `wall_seconds`
+1.58×、`ttft_seconds` 2.25×，上限为 1.10×）。按方案自身的规定，**测得退化仍是有效基线**——有效性
+（比较条件与证据）与"引擎是否够快"分开判定，`manifest.json` 如实写 `false`，不因为结果难看而拒绝签发，
+也不因为好看而放宽有效性。
+
+**B3 的待补项（都需要设备窗口）**
+
+1. **独立复测样本数**：现值 `paired_units: 2`，方案要求至少 5。证据包自己在 `statistical_basis.note`
+   里写明了这一点，消费方可以据此判断区间可信度。
+2. **负载类型**：四个基础场景（short/long/batch4/hot_long）已覆盖；方案的**服务产品验收**还要求
+   "持续与混合负载、代表性任务与长度分布"，目前尚未采集。
+3. 各引擎分别调优的产品实验需要另设 profile，不替代当前"当前配置对齐"基线。
+
+以上三项完成后，B3 才算按共同契约完成完整矩阵与固化；在那之前，本方案的有效性结论仅适用于已签发的
+三个 profile 与四个基础场景。
 
 ## Release 与当前配置是必检条件
 
