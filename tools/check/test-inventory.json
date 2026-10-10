@@ -40,7 +40,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 11
+      "tests": 14
     },
     "kernel-api": {
       "benches": 0,
@@ -139,14 +139,6 @@
         "test-backends"
       ],
       "role": "plumbing"
-    },
-    {
-      "crate": "tools",
-      "path": "tools/validation/smoke-paged-kv.py",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "protocol"
     }
   ],
   "gated": {
@@ -520,6 +512,11 @@
       "mount": "../../tests/unit/state_recipe.rs"
     },
     {
+      "crate": "ir",
+      "file": "src/workload.rs",
+      "mount": "../tests/unit/workload_speculation.rs"
+    },
+    {
       "crate": "spi",
       "file": "src/resource.rs",
       "mount": "../tests/unit/resource.rs"
@@ -671,11 +668,11 @@
     }
   ],
   "totals": {
-    "all": 459,
+    "all": 462,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 459
+    "tests": 462
   }
 }

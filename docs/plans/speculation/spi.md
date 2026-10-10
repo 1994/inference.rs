@@ -141,6 +141,20 @@ ReplaySSM 的具体分层、两阶段范围和持久状态边界由 [Recurrent �
 
 模型 package 解析、权重绑定、资源报价、规划与图录制发生在冷路径。热路径按逻辑执行 `propose → verify → decide → settle`，这些阶段可以在 backend 内融合，不要求阶段之间回到 CPU。提交与完成继续复用 `BackendProvider::submit/poll` 和现有 ticket 协议。
 
+## 已实施：执行计划的接受策略不再是字符串（I1 步骤②第一刀）
+
+执行 IR 的 `SpeculationPlan` 里，`acceptance_policy` 是一个 **`String`** ✗ —— 方案要求的正是"结构化契约" ✓
+（第 19 行：`infer-ir` 承载"算法标识、特征需求、候选布局、**采样契约**、提交结果与资源描述" ✓）。字符串既
+不能表达"验证器能接受哪种采样"，也**把拼写错误当成合法策略** ✗，而这份文件里其余字段都是类型的 ✓。
+
+现在它是 `AcceptancePolicy` 枚举 ✓：`Greedy`（只有与验证器 argmax 一致才接受 ✓）与 `Residual`（分歧从残差
+重采样 ✓ —— 正是 capability 里 `greedy_only` 那条注释所依赖的区分 ✓），serde 以 `snake_case` 记录 ✓，
+`Default = Greedy` ✓。三个用例（挂载在 `tests/unit/workload_speculation.rs` ✓，测试体仍在 `src/` 之外 ✓）
+覆盖：按名字往返 ✓、**未知策略被拒绝而不是被带下去** ✓、默认值 ✓。
+
+**这一步的边界要说清楚**：执行 IR 的 `SpeculationPlan` 目前**没有生产者** ✗（方案已把它列为步骤③"provider
+迁移"的内容 ✓），所以本次是**把既有契约收紧** ✓，而不是新增无人使用的脚手架 ✓；生产端接入时不必再改类型 ✓。
+
 ## 验证与提交的共同协议
 
 目标模型的验证结果定义权威接受前缀。backend 提交物理状态并返回 receipt；runtime 校验身份后，只提交一次逻辑结果，再交付输出。provider 不能自行把未验证的草稿写入公共前缀。

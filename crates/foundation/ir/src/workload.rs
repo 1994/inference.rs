@@ -154,13 +154,27 @@ pub struct FeaturePlan {
     pub adapter: Option<String>,
     pub prefix_reuse: bool,
 }
+/// How a verification graph accepts the proposals a draft produced.
+///
+/// The rule is part of the shared contract rather than a string each side interprets: a provider
+/// declares which sampling its verifier can accept, and the device implementation follows the
+/// declaration. An untyped field accepted a typo as readily as a policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcceptancePolicy {
+    /// A proposal is accepted only where it matches the verifier's argmax.
+    #[default]
+    Greedy,
+    /// A divergence is resampled from the residual, so acceptance needs the residual distribution.
+    Residual,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpeculationPlan {
     pub proposal: ProgramId,
     pub verification: ProgramId,
     pub hidden_state_taps: Vec<usize>,
     pub max_candidates: usize,
-    pub acceptance_policy: String,
+    pub acceptance_policy: AcceptancePolicy,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionAnswer {
@@ -191,3 +205,7 @@ impl WorkloadOutput {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/workload_speculation.rs"]
+mod tests;
