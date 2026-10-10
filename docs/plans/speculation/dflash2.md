@@ -80,9 +80,29 @@ DFlash2 作为独立草稿 provider 接入，共用 [推测解码 SPI 与状态�
   `geometry.target_taps`、`model.shape` 必须等于 `expected_weight_shapes()["fc.weight"]`、输出长度
   必须等于 hidden——契约或 fixture 漂移时测试会失败。
 
+**selector 参考（第四步，已完成）**
+
+`_score_edges()` 的语义同样从官方实现读出：`hidden_projection`（无 bias，5120→256）投影草稿 hidden，
+每个候选带上自己的 unary logit，低秩项是**前驱 codebook 行（按投影 hidden 缩放）与后继 codebook 行
+的双线性型**：
+
+```
+score[p, c] = unary_logits[c] + Σ_r predecessor_codebook[pred[p], r] * hidden[r] * successor_codebook[c, r]
+pred[0] = anchor, pred[p] = candidate[p-1]
+```
+
+对应产物 `examples/qwen3.8-27b-dflash2/selector-golden.json`（导出器
+`tools/fixtures/export-dflash2-selector-golden.py`，只按 id 行读 codebook）：记录 16×16 的分数矩阵、
+rank/top-k、三个张量的形状与 dtype、输入公式、**故意相等的两个 unary logit**（让 tie-break 成为可查的
+记录而不是脚注）、容差与理由、torch 版本；重复运行结果一致。Rust 侧一个测试把 rank/top-k、三个张量
+形状（对照 `expected_weight_shapes()`）与分数矩阵维度绑到契约上。
+
 **明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
-token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价（两个卷积张量的形状先要由 loader
-固定）；**草稿 attention（双抽头分组卷积）与 selector 的参考与对照**仍是 D1 的主要剩余工作。
+token map，属于 loader 的职责）；权重/arena/graph/回滚的字节报价；**草稿 attention 的双抽头分组卷积
+参考**——本机 vLLM 里确实有它的 triton kernel（`_dflash2_grouped_conv_kernel`），但 `base_kernel`
+的 `[2, 2, 5120]` 与 `kernel_projection` 的 `1280 = 2 × 640` 之间存在一处无法从 kernel 单独确定的
+分组对应（kernel 只用了每 tap 640 里的前 320），需要先看到官方 dflash 侧的非融合写法再落 golden，
+不能凭猜测写参考。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。

@@ -303,3 +303,56 @@ fn the_fusion_projection_is_recorded_in_float32() {
         value.is_finite()
     }));
 }
+
+fn selector_golden() -> serde_json::Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen3.8-27b-dflash2/selector-golden.json");
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn the_selector_golden_matches_the_registered_contract() {
+    let config = fixture();
+    let geometry = config.geometry();
+    let golden = selector_golden();
+    let expected = config.expected_weight_shapes();
+
+    assert_eq!(
+        golden["rank"].as_u64().unwrap(),
+        geometry.selector_rank as u64
+    );
+    assert_eq!(
+        golden["top_k"].as_u64().unwrap(),
+        geometry.selector_top_k as u64
+    );
+    for tensor in [
+        "candidate_selector.hidden_projection.weight",
+        "candidate_selector.predecessor_codebook",
+        "candidate_selector.successor_codebook",
+    ] {
+        let shape: Vec<usize> = golden["model"]["tensors"][tensor]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| usize::try_from(value.as_u64().unwrap()).unwrap())
+            .collect();
+        assert_eq!(Some(shape), expected[tensor].clone(), "{tensor}");
+    }
+    let scores = golden["scores"].as_array().unwrap();
+    assert_eq!(scores.len(), geometry.selector_top_k);
+    for row in scores {
+        assert_eq!(row.as_array().unwrap().len(), geometry.selector_top_k);
+    }
+    let logits = golden["inputs"]["unary_logits"].as_array().unwrap();
+    assert_eq!(logits[0], logits[1], "the recorded tie stays visible");
+    assert_eq!(
+        golden["inputs"]["candidate_ids"].as_array().unwrap().len(),
+        geometry.selector_top_k
+    );
+    assert!(golden["scores"].as_array().unwrap().iter().all(|row| {
+        row.as_array()
+            .unwrap()
+            .iter()
+            .all(|value| value.as_f64().unwrap().is_finite())
+    }));
+}
