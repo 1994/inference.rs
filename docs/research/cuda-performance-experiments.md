@@ -1439,8 +1439,8 @@ short/hot_long 的回退是**内容相关的接受率二阶效应**，不是可�
   每次 replay 46.07 → 34.41 ms，TTFT 全面 −11~−20%）。它默认关闭是**数值口径**决定
   （cuTile lowering 的 1 ULP 差 → 贪心续写不同），不是性能。
 - 打开之后剩下的靶子：`linear` 占 replay 的 **61.8%**（138 TFLOP/s = FP8 峰值 ~16%，
-  704 GB/s = 39% 带宽）→ GEMM 委托（FP8 那条不需要 scale swizzle）；`attention`
-  9.3%、200 µs/节点，与 delta 同类。
+  704 GB/s = 39% 带宽）；`attention` 9.3%、200 µs/节点，与 delta 同类。
+  **委托那条路见 §12.14：FP8 也不是"免 swizzle 的 drop-in"**，两条都要求重新量化。
 - 已彻底关闭的低成本路线：值维分块（§十.1）、tile 形状（§11.7）、delta 代数重排（§12.6）、
   以及"图内比隔离慢"这条伪线索（§12.9）。
 
@@ -1488,3 +1488,58 @@ chunked 在 mtp0 上 TPOT **不动**（−0.0 ~ −2.1%）。此后所有 A/B �
 - **TPOT/wall 只有在开了投机时才会出现 ±9% 的摆动**，方向由 token 内容（→ MTP 接受率）
   决定，不是核成本；mtp0 上它们是不动的。
 - 因此开关的取舍是一个**输出数值口径**决定，而不是性能决定；性能这一侧的代价基本不存在。
+
+### 12.14 委托路（B2b）的结论：FP8 也不是免 swizzle 的 drop-in【确证，已否】
+
+§二 杠杆 A 记着一条推断：FP4 需要 128×64 的 scale swizzle，但 **"FP8 那条更简单：
+`CUBLASLT_MATMUL_MATRIX_SCALE_OUTER_VEC_32F` 正好是每行 A 缩放 × 每行 B 缩放，与
+`record_fp8` 的 per-token × per-channel 一一对应，无需 swizzle"**。本轮把这条用真实
+API 打了一遍（CUDA 13.x 头文件 + `libcublasLt.so.13`，RTX 5090 / sm_120 / 驱动 615），
+**结论是这条推断不成立**。
+
+**先确认规格（来源：nv 的 `cublasLt.h`，不是转述）**：
+
+| 枚举 | 值 | 语义 |
+|---|---:|---|
+| `CUBLASLT_MATMUL_MATRIX_SCALE_OUTER_VEC_32F` | **3** | "vectors of CUDA_R_32F … expected to have **M and N elements** respectively；A 的第 i 个与 B 的第 j 个相乘" |
+| `CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0` | 2 | e4m3 数据 + UE8M0 每 32 元素块缩放（mxfp8） |
+| `CUBLASLT_MATMUL_MATRIX_SCALE_VEC128_32F` | 4 | f32 每 128 元素块缩放 |
+| `_DESC_A/B_SCALE_POINTER` / `_MODE` | 17 / 18 / 31 / 32 | |
+
+映射是**对得上**的：我们的 `out[m,n] = act[m,k]·w[n,k]^T`，cublas 侧 M_cb = 输出通道、
+N_cb = token，所以 A-slot（权重）的 scale 长 N_cb 个 = 每个输出通道一个
+（正是 checkpoint 里的 `weight_scale [n, 1]` BF16），B-slot（激活）长 M_cb 个 = 每个 token
+一个（正是 `quantize` 的 `qs`）。**即 27B 的 FP8 投影（in_proj_qkv/z、out_proj、q/k/v/o，
+共 7.22 GB）本来就是"每通道 × 每 token"的口径。**
+
+**但这条 mode 在本机拿不到算法**（`cublasLtMatmulAlgoGetHeuristic` 的返回）：
+
+| mode | FP8(e4m3) 数据 | BF16 数据 |
+|---|---|---|
+| **3 = OUTER_VEC_32F** | **status 15 = NOT_SUPPORTED**（256³、12×10240×5120、64×17408×5120 全一样） | status 7 = INVALID_VALUE |
+| 2 = VEC32_UE8M0 | status 0，**有算法**（上述所有形状） | — |
+| 4 = VEC128_32F | status 15 | status 7 |
+| 1 = VEC16_UE4M3 | status 7 | — |
+
+（TN 与 NN、带/不带 workspace 上限都试过；mode 3 从未返回过算法。）
+
+**所以：唯一能让"权重不重新量化就直接委托"的模式，在这块消费级 Blackwell 上不存在。**
+能用的 FP8 mode 是 2（mxfp8），代价是：
+
+1. 权重必须**重新量化**成 e4m3 + **UE8M0（2 的幂）每 32 元素 K 块**的 scale，而 checkpoint
+   存的是每通道 BF16 scale —— 这是换量化口径，不是换 GEMM；
+2. 激活侧也要新增一个产出同布局的 quantize kernel；
+3. mxfp8 的 A/B scale 按 nv 自己的参考实现（`quack/bench/cublaslt_quant_out.py`）是
+   `(rm, rk, 32, 4, 4)` **分块/重排**布局，不是扁平向量 —— "无需 swizzle" 在 mode 2 上
+   同样不成立（本轮的 heuristic 接受扁平张量，但没有验证核实际按哪种布局读，**未验证**）。
+
+**结论：B2b 作为"同形状换更快的核"的 drop-in 路线关闭** —— FP4 与 FP8 两条都要求改变
+checkpoint 的量化布局。要拿这部分收益，前提是先做一次**离线重新量化**（把权重存成
+mxfp8 或 NVFP4 的 cublasLt 布局），那是模型打包层的工程，不是推理核的调优。在这之前，
+decode 的 `linear` 只能靠自研核效率（138 TFLOP/s = FP8 峰值 ~16%）。
+
+复现（本机，venv 里有 torch；脚本在 /tmp，未入库）：
+
+```sh
+artifacts/vllm-compare/bin/python /tmp/lt_ws.py    # mode 3 vs mode 2 的算法可得性
+```
