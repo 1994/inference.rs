@@ -162,7 +162,7 @@ class PackageTests(unittest.TestCase):
             binary.chmod(0o755)
             out = root / "out"
             with (
-                patch.object(package, "test", return_value="test-checks"),
+                patch.object(package, "target_validation", return_value="target-checks"),
                 patch.object(package, "build", return_value=binary),
                 patch.object(package, "output", return_value="host: test-host"),
                 patch.object(package, "verify", side_effect=ValueError("smoke failed")),

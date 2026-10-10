@@ -84,7 +84,22 @@ def cargo(action, plan):
     return command
 
 
+def target_validation(plan):
+    """The validation a package run performs for its own target.
+
+    The host suites (layout, policy, formatting, clippy and the workspace tests) run in the Rust
+    and tools jobs of the same pipeline, so repeating them here would multiply the most expensive
+    job by the number of package targets. A cross target still compiles its tests, because that is
+    the only place it is checked; a host target is covered by the binary build and smoke below.
+    """
+    if plan["target"] == rust_host():
+        return "host-target-build-and-smoke"
+    run([*cargo("zigbuild", plan), "--tests", "--release"], env=build_env(plan))
+    return "cross-cli-tests-compiled-not-executed"
+
+
 def test(plan):
+    """`make test`: run the host checks and suites, plus a target test compile for cross targets."""
     run(["python3", "tools/check/layout.py"])
     run(["python3", "tools/check/policy.py"])
     run(["python3", "-m", "unittest", "discover", "-s", "tools/package", "-p", "test_*.py"])
@@ -224,7 +239,7 @@ def package(plan, out):
     final = out / label
     if final.exists():
         raise ValueError(f"refusing to overwrite existing release: {final}")
-    validation = test(plan)
+    validation = target_validation(plan)
     binary = build(plan)
     with tempfile.TemporaryDirectory(prefix=".package-", dir=out) as temporary:
         stage = Path(temporary) / label

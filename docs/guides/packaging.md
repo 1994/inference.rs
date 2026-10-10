@@ -38,9 +38,13 @@ make build TARGET=aarch64-unknown-linux-gnu
 make test TARGET=aarch64-unknown-linux-gnu
 ```
 
-流程：契约/SDK 预检 → 布局、打包测试与格式检查 → 目标检查 → Zig release 编译 → ELF/Mach-O 架构核对 → 归档 → 解压完整性校验 → 本地产物目录。
+流程：契约/SDK 预检 → 目标检查 → Zig release 编译 → ELF/Mach-O 架构核对 → 归档 → 解压完整性校验 → 本地产物目录。
 
-- target 等于 host 时：执行平台 CLI 的 Clippy 和测试，并启动解压后的 CLI `--version` / `--help`。
+宿主套件（布局、策略、格式、Clippy 与工作区测试）由同一条流水线的 Rust 与 tools job 负责，
+`make package` 不再重复执行：打包 job 有 4 个目标，重复一次就等于把最贵的检查乘以 4。
+`make test` 仍是显式的宿主套件入口（宿主目标执行套件；交叉目标编译其测试）。
+
+- target 等于 host 时：启动解压后的 CLI `--version` / `--help`。
 - 交叉 target：用 Zig **编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed` 和 `smoke_executed: false`。
 - 在目标机器上再运行 `verify-package` 即可执行启动检查。GPU 推理需要下面的独立 `accept`。
 

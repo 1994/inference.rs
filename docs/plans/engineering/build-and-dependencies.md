@@ -1,7 +1,8 @@
 # 构建入口与依赖管理统一方案
 
 状态：设计方案。基于 2026 年 10 月 9 日的 `7c79d99`。已实施：CPU protocol benchmark 并入主
-workspace（见"开发工具与独立参考环境"）。Makefile 的入口收敛、preflight 统一与 CI 去重尚未开始。
+workspace（见"开发工具与独立参考环境"）；成员依赖版本继承加上门禁；打包路径去掉重复的宿主套件。
+Makefile 的入口命名收敛与 preflight 统一尚未开始。
 
 整体排期与任务状态见 [路线图](../README.md) 的 E2；消费者与测试迁移由 E1 交接。本文维护本项设计与验收。
 
@@ -15,7 +16,8 @@ workspace（见"开发工具与独立参考环境"）。Makefile 的入口收敛
 
 [gate.sh](../../../tools/check/gate.sh) 的 rust gate 同时执行 Python、lint、unit/integration、文档、release build、CPU benchmark 和测试 CLI 的 golden 推理。CLI/IR 无 feature 检查与启用 `test-backends` 的工作区检查交错，构建配置和覆盖范围需要靠阅读脚本才能确认。
 
-根 manifest 已集中部分依赖，但 `tokenizers`、Minijinja、Metal、cuTile、tower 等版本仍在成员 manifest 声明。[CPU benchmark](../../../tools/bench/cpu/Cargo.toml) 与 [Attention 对照](../../../tools/bench/attention/Cargo.toml) 各有独立 workspace、lockfile 和完整 lint 副本。CPU benchmark 还通过 fixture 构造依赖 ReferenceModel/ReferenceKernels。
+根 manifest 已集中依赖版本：成员 manifest（含工具成员）不再自己声明版本，`tokenizers`、Minijinja、
+Metal、cuTile、tower 等都已是 `.workspace = true`。这条现在有门禁守着（见下），不再是"部分集中"。[CPU benchmark](../../../tools/bench/cpu/Cargo.toml) 与 [Attention 对照](../../../tools/bench/attention/Cargo.toml) 各有独立 workspace、lockfile 和完整 lint 副本。CPU benchmark 还通过 fixture 构造依赖 ReferenceModel/ReferenceKernels。
 
 当前正常 CLI 依赖树没有两个 CPU 测试执行器；工作区 feature tree 则由这两个执行器和 dev 依赖启用 IR 的 `test-backends`。整理需要同时保持生产隔离并删除测试配置分叉，不能把现有默认发布配置描述为已经包含 CPU 后端。
 
@@ -108,6 +110,17 @@ CI 分为 host check、MSRV/security、production target build/package 和真实
 依赖更新统一检查 normal/dev/build 及 target-specific 声明，防止可选依赖绕过层级约束。以 Cargo metadata/feature tree 的结构化结果为依据，不只搜索 crate 名字符串。现有模型、编译器、runtime 和 backend 的依赖方向继续执行。
 
 每个测试入口报告收集、执行、ignored 和失败数量。job 只完成 cross 编译时明确写 compiled；没有 GPU 的包保持未通过 GPU inference acceptance 的状态，不能由 host suite 代签。
+
+## 已实施：依赖继承门禁与打包去重
+
+- **成员依赖必须继承。** `tools/check/policy.py` 现在对每个成员（含工具成员）要求：每个直接依赖的
+  名字都在 `workspace.dependencies` 中，且成员 manifest 不得自带 `version`。此前只检查"根表里没有
+  没人用的条目"，方向是单向的；现在两个方向都守。核对结果：当前成员依赖全部已继承，门禁是防回归。
+- **打包不再重复宿主套件。** `package.py` 把"为该目标做的校验"拆成 `target_validation()`：宿主目标
+  只做构建与二进制 smoke（宿主套件由同流水线的 Rust/tools job 负责），交叉目标保留
+  `cargo zigbuild --tests --release` 的目标测试编译。此前 `x86_64-unknown-linux-gnu.2.28` 会解析为
+  宿主目标并重跑 Clippy + 全量测试，macOS aarch64 打包 job 同样重跑一遍——4 个打包目标里有两个在
+  重复最贵的检查。`make test`/`package.py test` 保持为显式宿主套件入口。
 
 ## 迁移顺序与验收
 

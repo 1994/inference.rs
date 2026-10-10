@@ -55,6 +55,21 @@ def check_manifests():
             )
     unused = set(WORKSPACE["dependencies"]) - inherited
     require(not unused, f"Unused workspace dependencies: {sorted(unused)}")
+    # The other direction: a member declares category, target, optional and features, and takes the
+    # version from the root table. Without this a member can quietly reintroduce a second version
+    # source that no check notices.
+    for member in WORKSPACE["members"]:
+        manifest = tomllib.loads((ROOT / member / "Cargo.toml").read_text())
+        for table in dependency_tables(manifest):
+            for name, value in table.items():
+                require(
+                    name in WORKSPACE["dependencies"],
+                    f"{member}: {name} is not declared in workspace.dependencies",
+                )
+                require(
+                    not (isinstance(value, dict) and "version" in value),
+                    f"{member}: {name} declares its own version; inherit the workspace entry",
+                )
     for group in ("all", "pedantic", "nursery"):
         require(WORKSPACE["lints"]["clippy"][group]["level"] == "deny", f"Keep {group} denied")
     for lint in (
