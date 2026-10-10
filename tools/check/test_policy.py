@@ -46,5 +46,35 @@ class AlgorithmNeutralityTest(unittest.TestCase):
         policy.check_algorithm_neutrality()
 
 
+class ProductionUnwrapTest(unittest.TestCase):
+    def test_a_production_unwrap_is_rejected(self):
+        root = Path(tempfile.mkdtemp())
+        source = root / "crates/example/src/lib.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("pub fn read() -> usize { value().unwrap() }\n")
+        with self.assertRaises(SystemExit) as raised:
+            policy.check_production_unwraps(root)
+        self.assertIn("must propagate this failure", str(raised.exception))
+
+    def test_a_test_source_may_unwrap(self):
+        root = Path(tempfile.mkdtemp())
+        source = root / "crates/example/tests/unit/case.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("fn case() { value().unwrap(); }\n")
+        policy.check_production_unwraps(root)
+
+    def test_a_cfg_test_block_in_a_production_file_may_unwrap(self):
+        root = Path(tempfile.mkdtemp())
+        source = root / "crates/example/src/lib.rs"
+        source.parent.mkdir(parents=True)
+        body = "pub fn read() -> usize { 1 }\n#[cfg(test)]\nmod tests {\n"
+        body += "    fn case() { value().unwrap(); }\n}\n"
+        source.write_text(body)
+        policy.check_production_unwraps(root)
+
+    def test_the_tree_has_no_production_unwrap(self):
+        policy.check_production_unwraps()
+
+
 if __name__ == "__main__":
     unittest.main()

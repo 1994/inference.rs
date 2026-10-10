@@ -355,6 +355,39 @@ def _symbols_in(path, symbols):
     return found
 
 
+PRODUCTION_ROOTS = ("crates", "tools")
+
+
+def is_test_source(path, root):
+    """Whether a file is test source, where unwrapping a failed expectation is the point."""
+    relative = path.relative_to(root)
+    return "tests" in relative.parts or path.name == "tests.rs" or path.name.startswith("test_")
+
+
+def check_production_unwraps(root=ROOT):
+    """Library and tool sources propagate failures; only test sources may unwrap.
+
+    An `unwrap` in production turns a recoverable condition into a panic that takes the process
+    with it. The workspace has none left in production code, so this keeps it that way: the scan
+    skips test sources and `#[cfg(test)]` blocks, and covers `build.rs` with the crates and tools.
+    """
+    paths = [path for name in PRODUCTION_ROOTS for path in (root / name).rglob("*.rs")]
+    paths.append(root / "build.rs")
+    for path in sorted(paths):
+        if not path.is_file() or is_test_source(path, root):
+            continue
+        lines = magic_masked_lines(path.read_text().splitlines())
+        for lineno, line in enumerate(lines, 1):
+            code = line.split("//", 1)[0]
+            if ".unwrap()" in code:
+                location = path.relative_to(root)
+                raise SystemExit(
+                    f"{location}:{lineno}: production code must propagate this failure instead of "
+                    f"unwrapping it: `{line.strip()[:80]}`"
+                )
+    print("Production: no unwrap outside test sources")
+
+
 def check_production_dependencies():
     tree = subprocess.run(
         [
@@ -386,6 +419,7 @@ if __name__ == "__main__":
     check_magic_numbers()
     check_strategy_neutrality()
     check_algorithm_neutrality()
+    check_production_unwraps()
     check_production_dependencies()
     print(
         "Lint inheritance, exception, magic number, strategy neutrality, and "
