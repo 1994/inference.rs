@@ -5,58 +5,18 @@ edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
 publish = false
-[workspace]
 [dependencies]
-infer-model-recipes = { path = "../../../crates/model/recipes" }
-infer-kernel-api = { version = "=0.1.0", path = "../../../crates/backend/kernel-api" }
-infer-state = { version = "=0.1.0", path = "../../../crates/engine/state" }
-infer-core = { version = "=0.1.0", path = "../../../crates/foundation/core" }
-infer-ir = { version = "=0.1.0", path = "../../../crates/foundation/ir" }
-infer-spi = { version = "=0.1.0", path = "../../../crates/foundation/spi" }
-infer-scheduler = { version = "=0.1.0", path = "../../../crates/engine/scheduler" }
-infer-runtime = { version = "=0.1.0", path = "../../../crates/engine/runtime" }
-infer-gpu-api = { version = "=0.1.0", path = "../../../crates/backend/api" }
-mimalloc = { version = "=0.1.52", default-features = false }
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-[lints.rust]
-warnings = "deny"
-rust_2018_idioms = { level = "deny", priority = -1 }
-future_incompatible = { level = "deny", priority = -1 }
-unsafe_code = "deny"
-unsafe_op_in_unsafe_fn = "deny"
-unused_must_use = "deny"
-unfulfilled_lint_expectations = "deny"
-unused_lifetimes = "deny"
-unused_qualifications = "deny"
-
-[lints.rustdoc]
-broken_intra_doc_links = "deny"
-private_intra_doc_links = "deny"
-invalid_html_tags = "deny"
-bare_urls = "deny"
-invalid_codeblock_attributes = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-nursery = { level = "deny", priority = -1 }
-undocumented_unsafe_blocks = "deny"
-allow_attributes_without_reason = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-todo = "deny"
-unimplemented = "deny"
-dbg_macro = "deny"
-mem_forget = "deny"
-multiple_unsafe_ops_per_block = "deny"
-unused_result_ok = "deny"
-get_unwrap = "deny"
-rc_mutex = "deny"
-too_many_lines = "deny"
-cognitive_complexity = "deny"
-
-[profile.release]
-lto = "thin"
-codegen-units = 1
+infer-model-recipes.workspace = true
+infer-kernel-api.workspace = true
+infer-state.workspace = true
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-spi.workspace = true
+infer-scheduler.workspace = true
+infer-runtime.workspace = true
+infer-gpu-api.workspace = true
+mimalloc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+[lints]
+workspace = true

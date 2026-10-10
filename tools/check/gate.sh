@@ -45,10 +45,10 @@ rust_checks() {
 }
 
 cpu_checks() {
-    cargo fmt --manifest-path tools/bench/cpu/Cargo.toml --check
-    CARGO_TARGET_DIR=target/cpu-bench cargo clippy --locked --manifest-path tools/bench/cpu/Cargo.toml --all-targets -- -D warnings
+    cargo fmt -p infer-cpu-bench --check
+    CARGO_TARGET_DIR=target/cpu-bench cargo clippy --locked -p infer-cpu-bench --all-targets -- -D warnings
     mkdir -p artifacts/cpu-completion
-    CARGO_TARGET_DIR=target/cpu-bench cargo run --locked --release --manifest-path tools/bench/cpu/Cargo.toml > artifacts/cpu-completion/allocation.json
+    CARGO_TARGET_DIR=target/cpu-bench cargo run --locked --release -p infer-cpu-bench > artifacts/cpu-completion/allocation.json
 }
 
 tool_checks() {
@@ -60,9 +60,7 @@ tool_checks() {
 security_checks() {
     # The only accepted advisory is documented with its removal condition in deny.toml.
     cargo deny --locked check --deny warnings
-    cargo deny --locked --manifest-path tools/bench/cpu/Cargo.toml --config tools/bench/cpu/deny.toml check --deny warnings
     cargo audit --deny warnings --ignore RUSTSEC-2024-0436
-    cargo audit --file tools/bench/cpu/Cargo.lock --deny warnings --ignore RUSTSEC-2024-0436
     go run github.com/zricethezav/gitleaks/v8@v8.24.3 dir . --no-banner --redact=100 \
         --ignore-gitleaks-allow --exit-code 1
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

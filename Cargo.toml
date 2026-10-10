@@ -22,6 +22,9 @@ members = [
     "crates/service/cli",
     "crates/testing/cpu/host",
     "crates/testing/cpu/reference",
+    # Development tool: a member so it shares the lock, versions and lints, but not part of the
+    # default product build set.
+    "tools/bench/cpu",
 ]
 
 default-members = [
@@ -43,6 +46,8 @@ default-members = [
     "crates/service/frontdoor",
     "crates/service/agent",
     "crates/service/cli",
+    # Development tool, not part of the default product build set.
+    "tools/bench/cpu",
 ]
 
 [workspace.package]

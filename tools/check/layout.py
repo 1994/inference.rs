@@ -7,6 +7,9 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
 GROUPS = {"foundation", "backend", "model", "engine", "diagnostics", "service", "testing"}
+# Development tools live outside the responsibility groups: they are members so they share the
+# workspace's lock, versions and lints, but they are not part of the product crate layout.
+TOOL_MEMBERS = {"tools/bench/cpu"}
 SERVICE = {"infer-frontdoor", "infer-agent", "infer-cli"}
 BACKENDS = {
     "infer-backend-metal",
@@ -73,9 +76,11 @@ def production_dependencies(manifest):
 def check_crates():
     workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]
     members = set(workspace["members"])
+    require(members >= TOOL_MEMBERS, f"Unregistered tool members: {sorted(TOOL_MEMBERS - members)}")
     found = {str(path.parent.relative_to(ROOT)) for path in (ROOT / "crates").rglob("Cargo.toml")}
-    require(found == members, f"Unregistered or missing crates: {sorted(found ^ members)}")
-    for member in sorted(members):
+    product = members - TOOL_MEMBERS
+    require(found == product, f"Unregistered or missing crates: {sorted(found ^ product)}")
+    for member in sorted(product):
         directory = ROOT / member
         parts = Path(member).parts
         require(len(parts) >= 3 and parts[1] in GROUPS, f"{member}: choose a responsibility group")

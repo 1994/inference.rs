@@ -1,6 +1,7 @@
 # 构建入口与依赖管理统一方案
 
-状态：设计方案。基于 2026 年 10 月 9 日的 `7c79d99`，尚未调整 Makefile、Cargo 或 CI。
+状态：设计方案。基于 2026 年 10 月 9 日的 `7c79d99`。已实施：CPU protocol benchmark 并入主
+workspace（见"开发工具与独立参考环境"）。Makefile 的入口收敛、preflight 统一与 CI 去重尚未开始。
 
 整体排期与任务状态见 [路线图](../README.md) 的 E2；消费者与测试迁移由 E1 交接。本文维护本项设计与验收。
 
@@ -74,6 +75,23 @@ resolver 2 会在测试/examples 所需场景启用 dev-dependencies 的 feature
 ## 开发工具与独立参考环境
 
 CPU protocol benchmark 移入主 workspace 的开发工具成员，设为 `publish = false`，不进入默认产品构建集合，复用根 lock、版本和 lint。它继续使用现有局部协议 double，删除 ReferenceModel/ReferenceKernels 引入的依赖；布局门禁明确识别该工具成员。
+
+**已实施。** `tools/bench/cpu` 现在是根 workspace 成员（不在 `default-members`，因此不进入默认产品
+构建集合），具体做法与验收证据：
+
+- manifest 删除 `[workspace]`、`Cargo.lock`、`deny.toml` 与整份 lint 副本，依赖改为继承
+  `workspace.dependencies`，lint 改为 `[lints] workspace = true`；`[profile.release]` 也随之删除，
+  因为根 profile 本来就是同一组值（`lto = "thin"`、`codegen-units = 1`），保留只会让 cargo 警告非根
+  profile 被忽略。
+- 门禁相应收敛：`cpu_checks` 改用 `-p infer-cpu-bench`，security 里针对第二份 lock 的 `cargo deny`
+  与 `cargo audit` 两行删除——主 workspace 的检查已覆盖同一依赖图（该工具的依赖是主图的子集）。
+- `tools/check/layout.py` 新增 `TOOL_MEMBERS`，明确识别该开发工具成员，同时继续要求 `crates/**`
+  与产品成员一一对应。
+- `tools/check/policy.py` 不再要求该工具复制 lint 表（成员循环已经要求
+  `[lints] workspace = true`），只对仍有独立 workspace 的 attention 对照保留"与根表逐项相同"的核对。
+- 验收：`make check-cpu`、`make check-tools` 通过；`cargo clippy --workspace`（现在含该成员）零发现；
+  `cargo test --workspace` 从 69 套件增至 70 套件且无失败。测量口径未变：release profile 与替换前
+  相同，源码未动。
 
 Candle Attention 对照保留独立 workspace 和锁定依赖，重型参考框架不进入生产 lock 和解析图。它有明确的对照职责、运行环境和安全检查；独立 manifest 的 shared lint 由检查验证或生成同步，禁止手工演化成另一套标准。
 

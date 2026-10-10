@@ -1180,6 +1180,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "infer-cpu-bench"
+version = "0.1.0"
+dependencies = [
+ "infer-core",
+ "infer-gpu-api",
+ "infer-ir",
+ "infer-kernel-api",
+ "infer-model-recipes",
+ "infer-runtime",
+ "infer-scheduler",
+ "infer-spi",
+ "infer-state",
+ "mimalloc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "infer-frontdoor"
 version = "0.1.0"
 dependencies = [
