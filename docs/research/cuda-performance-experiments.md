@@ -2147,3 +2147,24 @@ capacity 参数），让"表长与 arena 深度"只可能有一个来源。
 顺带记一个自己踩的坑：护栏第一版我把下界写成 `position < 1`，于是 **base=0 的正常请求**被拒
 （日志：`prompt state rows end at 50 (base 0, 51 tokens, offset 0), past the 128-token KV arena`）。
 **护栏自己的语义也要用正常路径验一遍**——又是 matrix 把它抓出来的。
+
+### 13.14 块表越界再收窄一步：**喂给那次 append 的 metadata 不是护栏校验的那张**
+
+把块表重新接上，并加了一道**捕获期一致性检查**（`Capture::check_table`：表宽必须等于
+`capacity / KV_BLOCK_TOKENS`，否则直接报错）。结果：
+
+- 一致性检查 **0 命中**（表宽与 arena 深度处处相符）；
+- 但 `attention_prefill.rs:56`（= 表加载 `blocks.load([position / BT])`）**仍然越界**，而且发生在
+  **request=1**（最短的 52-token 提示）；
+- 我的 prompt 护栏（校验 `prefill_info` 的 `base + count - 1 + offset < capacity`）**没有命中**。
+
+把这三条放在一起只能推出一个结论：**那次 append 绑定的 metadata 不是 `prefill_info`**。
+`record_prefill_attention` 有两类绑定：Batched 走 `prefill_info`（`[base, count, offset, 0]`），
+Row 走**每 lane 的 metadata**（`[rope_pos, token, state_pos, 0]`）——后者的字段语义完全不同
+（field[1] 是 token、field[2] 是 state 行号），而 append 核正是按 `[base, count, offset]` 去读的。
+我的护栏校验的是 `prefill_info`，所以对 Row 绑定这一路**恰好不生效**。
+
+**下一步（很具体）**：在 `Capture::record_prefill_attention` 里打印这次调用绑定的到底是哪张
+metadata（`self.mode` + `self.metadata` 与 `prefill_info` 的指针/shape），并在 Row 绑定下把
+field[0..3] 的值 dump 出来。先确认"Row 预填充也会记录 append"这个假设——如果是，那 Row 绑定
+本身就带着一个既有的字段错位问题（与块表无关），也就不奇怪为什么只有加了表之后才炸。
