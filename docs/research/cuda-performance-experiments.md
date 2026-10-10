@@ -1714,11 +1714,19 @@ SDPA 的 `visibility` 形状检查：`MASK=1`（causal）+ 运行时 `query_star
 §12.16 的 fixture 正是这个用法（`query_start=384`、`kv=448`、`tokens=64`、causal），已过闸门。
 滑动窗口用 `MASK=2` 同理。
 
-**唯一未决的语义**：`lane >= count` 的**非活跃行**。SIMT 核用 `if lane < count && position >= 0`
-整行跳过；tile 化的核没有 per-row 的 early-out，需要显式处理（把 q 行置零、或给 `visibility`
-再加一个逐行 `lane < count` 的合取项）。后者更干净：`valid &= (row < count)`，其中 row = 该 tile
-的 lane 序号 + lane0。**这一项必须在写核时一起做，否则非活跃行会写出垃圾（下游虽然按 metadata
-忽略，但显存里的值会被后续 kernel 读到）。**
+**唯一未决的语义：`lane >= count` 的非活跃行**（已核到具体后果，写核时必须一起做）：
+
+- SIMT 核是 `if lane < count && position >= 0 { 计算 } else { out.store(0.0f32) }`
+  （`attention_prefill.rs:83/145`）—— 非活跃行**显式写 0**；
+- `append` 只写 `for lane in 0..count`（`attention_prefill.rs:30`），所以非活跃行在 KV cache 里
+  是**陈值**；
+- tile 化的核没有 per-row early-out。若只加 `valid &= (row < count)`（row = tile 内 lane 序号 +
+  lane0），该行的分数会全被掩成 `MASKED`，于是 `next = MASKED`、`exp(MASKED - MASKED) = 1`，
+  得到 `acc = Σ v`、`row_sum = KB` —— **有限但错误的值**（不是 NaN）。要**和 SIMT 路逐位一致**
+  （下游按 metadata 忽略这些行，但显存里的值会被后续 kernel 读到），还需要在结尾对非活跃行
+  `select` 成 0。
+- 好消息：attention 的归约只发生在 **KV 维**，没有跨行归约，所以非活跃行的值不会污染活跃行；
+  必须处理只是为了避免写出"有限但无意义"或（若 row_sum 为 0）NaN 的值。
 
 **代码骨架**（`attention_prefill.rs` 新增一个 `decode_tiled` entry，不动现有 `decode`）：
 
