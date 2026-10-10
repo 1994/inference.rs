@@ -1870,3 +1870,33 @@ axis-1 是 **capacity 方向**（32768/32 = 1024），与 query 的 24 个 head 
 
 覆盖器保留在 `constants.rs`（`INFER_CUDA_QUANT_TILE=rows,cols`，进程内读一次，默认不生效），
 这样几何或 kernel 变了以后这条结论可以重测；复现见上表，脚本在 /tmp/tile-sweep.sh（未入库）。
+
+### 12.22 SDPA 的 TMA 流水线搬到 GEMM 上：无复现收益，已回滚【实测否证】
+
+§二 的杠杆 A 说预填充 GEMM 的瓶颈是"每 k 步在飞字节不足（weight tile [64,128] 仅 4 KB）"，
+方向是 K 向 `cp.async.bulk`/TMA 双缓冲。本轮去试了**现成的机制**：cuTile 的
+`load_pipelined::<LATENCY>`（`_core.rs:1205`）就是开 TMA 并带延迟提示，**全仓只有
+`attention/kernels.rs` 的 SDPA K 循环用了它（3 处），三个 GEMM 核一次都没用**。
+
+做法：给 `nvfp4_gemm::kernels::packed`（生产 W4A4 路）和 `fp8_gemm::kernels::matmul{,_block}`
+加一个 `PIPE` 泛型，`PIPE > 0` 时照抄 SDPA 的 `load_pipelined::<4>`，否则保持原 `.load()`；
+开关走 `INFER_CUDA_GEMM_PIPE`（默认 0）。**数值上完全中性**：同一 matrix 的 12 次 trial
+（short/long/batch4/hot_long 各 3 次）token **逐位相同**（TMA 只换搬运方式）。
+
+**结果：没有可复现收益。**
+
+| A/B | prefill（draft，23 节点） | prefill_last（target，1155 节点） | slot_decode | slot_verify |
+|---|---:|---:|---:|---:|
+| 第一次 FP4 only：0 → 1 | 9.81 → **8.66（−11.7%）** | 31.22 → 31.24 | 1.62 → 1.58 | 25.49 → 25.67 |
+| 第二次 FP4+FP8：0 → 1 | 10.38 → 10.33 | 31.15 → 31.32 | 1.62 → 1.60 | 25.57 → 25.83 |
+
+**第一次那个 −11.7% 没有复现**（第二次是 10.38 vs 10.33），是**同一配置的 run-to-run 波动**，
+不是开关效应——这正是 §12.13 记过的坑，只不过这次发生在"图总量"这个看起来更干净的指标上。
+第二次的差异是混合的（−1.2% ~ +1.0%），服务侧也混合（short TTFT −1.5%、long +2.4%、
+batch4 −0.8%，hot_long 那次 PIPE=0 的 run 被干扰到 TTFT 1.5 s，属异常样本）。
+
+**结论**：SDPA 的 TMA 配方**不能**照搬到这两个 GEMM 上——它们在 K 维的 tile（512/256/128）
+和在飞字节本来就比 attention 的 K 块大得多，再加 4 级 TMA 只增加共享内存/同步开销。
+已**整段回滚**（三个文件），工作区回到提交状态。杠杆 A 若还有收益，得从"重排 K 循环结构 /
+提高 tile 内 K 跨度"入手，而不是贴一个现成的 load 变体。**这个否证的价值在于：把"用现成的
+TMA load 就能提带宽"这条捷径关掉了。**
