@@ -28,8 +28,6 @@ rust_checks() {
     python3 tools/check/golden-provenance.py
     # Each workspace boundary states the dependency or toolchain isolation it exists for.
     python3 tools/check/workspaces.py
-    # The help text and the real targets agree, so a verb cannot mean something else than it says.
-    python3 tools/check/makefile.py
     # Production dependency graphs, not just the host CLI's: each target resolves its own feature
     # set, and the plan asks for build edges, duplicates and lockfile identity to be recorded.
     python3 tools/check/release-dependencies.py

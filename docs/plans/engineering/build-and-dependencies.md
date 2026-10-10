@@ -197,9 +197,11 @@ package 计划一致"从约定变成可执行检查。`local-build` 与 `package
 - 测试条目在 `gate.sh` 里**只有一处定义** ✓（`test_checks()` ✓），`rust_checks` 直接调用它 ✓ ——
   `make test` 跑的就是 `make check-rust` 末尾那一组 ✓，不存在两份会漂移的清单 ✓。
 
-新增 `tools/check/makefile.py` ✓：解析 `make help` 的两种写法（`make <name>` 与 "Quality gates:"
-列表 ✓），逐个用 `make -n` 验证目标**确实存在** ✓ —— 当前 **19 个**文档入口全部存在 ✓。这样"帮助文本
-承诺了一个不存在的入口"或"动词悄悄换了含义"都会在 `make check-tools` 阶段失败 ✓。
+**一致性的门禁尝试被回退，据实记录**：我写了 `tools/check/makefile.py` 校验"帮助文本里的入口都真实
+存在"✗，在本机与 macOS job 上都通过 ✓，但 **ubuntu job 5 秒内失败** ✗（同样的 `make check-rust`，macOS 跑
+满 9 分钟并通过 ✓），说明该检查对 CI 环境敏感 ✗ 而我无法在本地复现 ✗。按"不留下无法解释的检查"的原则，
+**回退了这门禁** ✓（`make test` 的职责分离保留 ✓，那部分在两条平台上都验证过 ✓）。要重做的话，正确做法是
+把判定改成**纯解析 Makefile**（不调用 `make`）或在两个 runner 上先验证，而不是继续猜环境差异 ✗。
 
 ## 已实施：workspace 边界必须说明理由（最后一条也进门禁）
 
