@@ -1594,3 +1594,45 @@ softmax 后再 `reduce_sum` 做 PV。**整个文件没有一处 `mmaf`**。也�
 fp8 变体）；② KV 布局是 `[kv_heads, capacity, head_dim]` + 每个 chunk 的 append；
 ③ 每 lane 位置不同（metadata 的 base/count/offset）；④ 滑动窗口与因果掩码语义要对齐。
 预计收益上限：attention 3.19 ms → 亚毫秒量级（预填充约 −8%），decode 同向。
+
+### 12.16 把现成的张量核 SDPA 拿到 LLM 几何上实跑：通过数值闸门，且快 3.1–3.5×【确证】
+
+§12.15 提出"resident 的 attention 换张量核"。本轮**没有改一行仓库代码**，直接用仓库已有的
+attention 闸门（`INFER_ATTENTION_GATE` + `tests/unit/attention_gate_check.rs`）在**27B 的
+attention 几何**上跑了现成的 `DenseAttentionPlan`：在 /tmp 造了一份同格式的 fixture
+（3 个 case，按 `tools/attention/attention_fixtures.py` 的 schema 与 `packed()` 布局），
+`cargo test --release ... -- --ignored attention_native_gate`。
+
+| case（q × KV × heads × kv_heads × D，causal） | 张量核 SDPA | resident SIMT 核 | 倍数 | F64 oracle 误差 |
+|---|---:|---:|---:|---:|
+| 64 × 448 × 24 × 4 × 256（最后一个 chunk） | **72.4 µs** | 225.3 µs | **3.11×** | 5.65e-7（参考幅值 0.085） |
+| 64 × 320 × 24 × 4 × 256 | **53.6 µs** | 190.5 µs | **3.55×** | 7.30e-7（参考幅值 0.144） |
+| 3 × 511 × 24 × 4 × 256（decode 形） | 88.3 µs | 80 µs / 12 lane | 0.9×（**不划算，见下**） | 4.68e-7 |
+
+三次都 `test result: ok`，即**数值闸门通过**：D=256、GQA 6:1、causal、448 KV 这些我们的真实
+几何，现成 SDPA 都支持（闸门的 tile 选择给的是 `[32,32,0]`）。
+
+**收益**：预填充 attention 3.19 ms/replay → 约 1.0 ms，**省 ~2.2 ms = chunked replay 的 6.4%**
+（per-lane replay 46.07 ms 上同样是这 2.2 ms）。注意这只算了 attention 本身：真接进 resident 路
+还要把 fp8 KV 转成 SDPA 入口要求的 f32（每层 918 KB fp8 → 3.7 MB f32，×16 层 ≈ 74 MB/replay
+≈ 41 µs），或者给 SDPA 加一个 fp8 变体；即使加上这笔，净收益仍在 3× 量级。
+
+**decode 形的注意点【未验证的边界】**：3 个 query 时 SDPA 反而慢（88 µs vs 80 µs），因为
+`DenseAttentionPlan` 的 tile 是 32——3 行只填 9%，其余 29 行是掩码。decode 要走的是
+`attention/decode.rs` 的单 query 变体（"Single-query SDPA avoids computing padded query rows"），
+本轮的 fixture 没有覆盖它，所以 **decode 侧能不能同样提速还没量**，别当成已知结论。
+
+**结论**：attention 这条路的可行性已经用真实几何 + 数值闸门 + 计时确认，剩余工作是集成而非
+算法：① fp8 KV 输入（转换或 fp8 变体）；② `[kv_heads, capacity, head_dim]` 布局 + 每 chunk 的
+append；③ 每 lane 位置（metadata 的 base/count/offset）——注意闸门里用的是
+`query_start = kv_tokens - tokens` 的单调 causal，而 resident 的 lane 位置是逐 lane 的；
+④ 滑动窗口/因果语义对齐；⑤ decode 侧改用单 query 变体并复量。
+
+复现（fixture 脚本在 /tmp，未入库；格式与仓库的 `tools/attention` 一致）：
+
+```sh
+artifacts/vllm-compare/bin/python /tmp/llm_attn_fixture.py --out /tmp/llm-attn/fixtures.safetensors
+INFER_ATTENTION_GATE=/tmp/llm-attn/fixtures.safetensors \
+  cargo test --release --locked -p infer-backend-cuda --features cuda --lib -- \
+  --ignored attention_native_gate --nocapture
+```
