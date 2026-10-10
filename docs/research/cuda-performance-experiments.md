@@ -2345,3 +2345,31 @@ admission StateBytes: required=1118322192, available=958402560  code=Capacity
 **下一轮直接落地**（顺序已定）：先把 `KvSpan` 的两处调用点改完再编译，然后再做**arena 尺寸由预算决定**
 （`total_blocks < width × capacity`）+ **分配不到块就递延**（复用 `DeferReason::StateCapacity` 既有机制）
 ——那一步才是收益兑现点（§13.20 已给出验收：4×2560 并发的 `gpu_budget` 递延应继续下降）。
+
+### 13.22 共享 arena 第二次尝试：编译通过、但 **draft 路径设备级出错**，已回退
+
+这次按 §13.21 的清单一次改完（`fp8_cache::allocate_shared`、`SlotPool.fp8` 变一份、`slot_tables`
+带偏移、三个 builder 共用一份、`KvSpan`、`state_bytes` 计一次），而且 **`cargo check` +
+`clippy -D warnings` 一次通过**（上一轮那两处失配这次用精确锚点 + "先断言再写入"解决了）。
+
+但验证不通过，失败点很集中：
+
+| 验证项 | 结果 |
+|---|---|
+| `cargo check --all-targets` / clippy | ✅ 0 错误 |
+| 27 单测 / `attention_decode` 数值测试 | ✅ |
+| `resident::slot_verify`（池化 verify） | ✅ 2/2 |
+| **`resident::slot_batch` 的两个 draft 测试** | ❌ 2/2：`DriverError(719, "unspecified launch failure")`（设备级越界） |
+| 官方 matrix token | ❌ short/batch4 分叉（1–36/64），long/hot_long 一致 |
+
+**根因（下次直接修）**：`draft.rs` 里那次 `copy_kv_fp8` 的**第一个参数是目的地**
+（`target.fp8_states_mut()`，目标序列的私有 arena），**第二个才是池的 arena**——所以原来的
+`slot_capacity` 描述的是「**目的地**的每头行数」，不是池 arena 的。我按"偏移侧=源"去改
+（`on_dst: false`），于是**源侧 stride 用了池 arena 的行数、目的侧用了自己的**，draft 导出越界。
+
+**正确的做法**：不要再编码"哪一侧是共享侧"这种隐式约定，让 `KvSpan` **显式描述两侧**
+（`dst: {capacity, offset}`、`src: {capacity, offset}`）——bind 时 `dst=pool, src=private`，
+draft 导出时 `dst=private, src=pool`，两侧都自带 (capacity, offset)，歧义就消失了。
+
+回退后复核：`--all-targets` **0 错误** ✅、clippy ✅、27 单测 ✅、4 个 GPU 硬件测试 ✅、fmt ✅、
+release 构建 ✅、工作区干净。
