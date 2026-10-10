@@ -1326,16 +1326,20 @@ sum_d (decay*old + k⊗diff)[d,s] * q[d]
 
 同一颗核、同一几何（KH=16、VH=48、D=128、SW=D），两个口径对不上：
 
-| 口径 | 每 token | 来源 |
-|---|---:|---|
-| 隔离配对基准（清 L2） | **2.0–2.25 µs** | `recurrent_chunk_performance_gate`，(16,48,128,32/128) |
-| 服务图内逐节点事件 | **5.2 µs** | prefill 每次 replay 333 µs / 64 token |
+| 口径 | LANES | 核时间 | 每 token | 来源 |
+|---|---:|---:|---:|---|
+| 隔离配对基准（清 L2） | 64 | 0.1322 ms | **2.07 µs** | `recurrent_chunk_performance_gate` (16,48,128,64) |
+| 隔离配对基准（清 L2） | 128 | 0.2527 ms | 1.97 µs | 同上 (16,48,128,128) |
+| 服务图内逐节点事件 | 64 | 333 µs | **5.2 µs** | prefill 每次 replay |
 
-差 2.6×。图内那 46 ms 的记账是自洽的（各节点之和 = 图总时间），仪器本身只解释约 7%
+同一宽度（64）下差 **2.5×**。图内那 46 ms 的记账是自洽的（各节点之和 = 图总时间），仪器本身只解释约 7%
 （同一 slot_verify：GRAPH_ONLY 26.68 ms vs 逐节点 28.5 ms），所以这不是测量口径问题。
 
 如果这条差距能收掉，**不需要改算法**：replay 46 ms 里 delta 占 16 ms，压到隔离水平即
 ~6.5 ms，prefill 直接少 ~10 ms/replay（22%），long TTFT 394 → ~310 ms。
+
+顺带：`recurrent_chunk_performance_gate` 现在也量 64 lane（模型 prompt 图实际捕的宽度），
+省得再插值；它在 (16,48,128,64) 上是 chunked 0.132 ms vs 逐 lane 0.334 ms。
 
 下一步的判别实验很便宜（改 `resident_recurrent_prefill_benchmark_tests.rs`，约 2 秒一轮）：
 在候选图里插一个与服务器同量级的大 GEMM（例如 [64, 17408, 5120] 的 FP4/FP8 投影），

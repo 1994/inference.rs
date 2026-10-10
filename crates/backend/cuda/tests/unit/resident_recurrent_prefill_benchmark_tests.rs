@@ -18,7 +18,14 @@ fn recurrent_chunk_performance_gate() -> Result<(), Box<dyn std::error::Error>> 
     }
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    for (kh, vh, dim, lanes) in [(2, 4, 32, 32), (16, 48, 128, 32), (16, 48, 128, 128)] {
+    // 64 lanes is the width the 27B prompt graph captures, so the serving number has a
+    // same-width isolated counterpart to compare against instead of an interpolation.
+    for (kh, vh, dim, lanes) in [
+        (2, 4, 32, 32),
+        (16, 48, 128, 32),
+        (16, 48, 128, 64),
+        (16, 48, 128, 128),
+    ] {
         bench_case(&device, (kh, vh, dim, lanes))?;
     }
     Ok(())
