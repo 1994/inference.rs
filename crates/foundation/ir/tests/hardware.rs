@@ -76,7 +76,8 @@ fn cuda_requirements_use_only_cuda_owned_attributes() {
     );
 }
 
-#[cfg(not(feature = "test-backends"))]
+/// E1 deleted the CPU test backends, so no production type may name one any more: this is the
+/// guard that they cannot come back through a deserializer.
 #[test]
 fn production_architectures_reject_cpu_and_test_targets() {
     for name in ["cpu", "host", "test_cpu"] {

@@ -19,4 +19,4 @@ infer-spi.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-infer-ir = { workspace = true, features = ["test-backends"] }
+infer-ir.workspace = true

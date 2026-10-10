@@ -29,8 +29,6 @@ infer-compiler.workspace = true
 infer-ir.workspace = true
 infer-spi.workspace = true
 infer-runtime.workspace = true
-infer-backend-reference = { workspace = true, optional = true }
-infer-backend-host = { workspace = true, optional = true }
 infer-backend-metal.workspace = true
 infer-quality.workspace = true
 clap.workspace = true

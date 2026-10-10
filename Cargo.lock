@@ -1075,27 +1075,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infer-backend-host"
-version = "0.1.0"
-dependencies = [
- "infer-compiler",
- "infer-core",
- "infer-ir",
- "infer-kernel-api",
- "infer-model-recipes",
- "infer-models",
- "infer-quality",
- "infer-reference-ops",
- "infer-runtime",
- "infer-spi",
- "infer-state",
- "infer-workloads",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "infer-backend-metal"
 version = "0.1.0"
 dependencies = [
@@ -1118,29 +1097,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "infer-backend-reference"
-version = "0.1.0"
-dependencies = [
- "infer-compiler",
- "infer-core",
- "infer-ir",
- "infer-model-recipes",
- "infer-spi",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "infer-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
  "infer-agent",
  "infer-backend-cuda",
- "infer-backend-host",
  "infer-backend-metal",
- "infer-backend-reference",
  "infer-compiler",
  "infer-core",
  "infer-frontdoor",

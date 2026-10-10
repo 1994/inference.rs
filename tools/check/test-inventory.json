@@ -46,7 +46,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 7
+      "tests": 6
     },
     "metal": {
       "benches": 0,
@@ -105,68 +105,9 @@
   },
   "executor_consumers": [
     {
-      "crate": "Cargo.toml",
-      "path": "Cargo.toml",
-      "patterns": [
-        "infer-backend-host",
-        "infer-backend-reference"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "kernel-api",
-      "path": "crates/backend/kernel-api/Cargo.toml",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "ir",
-      "path": "crates/foundation/ir/Cargo.toml",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "ir",
-      "path": "crates/foundation/ir/src/hardware/mod.rs",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "ir",
-      "path": "crates/foundation/ir/src/lib.rs",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "ir",
-      "path": "crates/foundation/ir/src/scheduling.rs",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
-      "crate": "ir",
-      "path": "crates/foundation/ir/tests/hardware.rs",
-      "patterns": [
-        "test-backends"
-      ],
-      "role": "plumbing"
-    },
-    {
       "crate": "cli",
       "path": "crates/service/cli/Cargo.toml",
       "patterns": [
-        "infer-backend-host",
-        "infer-backend-reference",
         "test-backends"
       ],
       "role": "service"
@@ -367,65 +308,6 @@
       "role": "service"
     },
     {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/host/Cargo.toml",
-      "patterns": [
-        "infer-backend-host",
-        "test-backends"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/host/tests/hybrid.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/host/tests/provider_graph.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/host/tests/readouts.rs",
-      "patterns": [
-        "infer_backend_host"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/reference/Cargo.toml",
-      "patterns": [
-        "infer-backend-reference",
-        "test-backends"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "cpu",
-      "path": "crates/testing/cpu/reference/src/model/registry.rs",
-      "patterns": [
-        "infer-backend-reference"
-      ],
-      "role": "fixture"
-    },
-    {
-      "crate": "tools",
-      "path": "tools/check/layout.py",
-      "patterns": [
-        "infer-backend-host",
-        "infer-backend-reference"
-      ],
-      "role": "plumbing"
-    },
-    {
       "crate": "tools",
       "path": "tools/check/policy.py",
       "patterns": [
@@ -472,7 +354,7 @@
   ],
   "gated": {
     "feature = \"test-backends\"": 3,
-    "not(feature = \"test-backends\"": 2,
+    "not(feature = \"test-backends\"": 1,
     "target_os = \"linux\"": 3,
     "target_os = \"macos\"": 1
   },
@@ -999,11 +881,11 @@
     }
   ],
   "totals": {
-    "all": 466,
+    "all": 465,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 466
+    "tests": 465
   }
 }

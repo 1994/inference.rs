@@ -45,9 +45,6 @@ pub use workload::{
     SpeculationPlan, Workload, WorkloadOutput, WorkloadPlan,
 };
 
-#[cfg(feature = "test-backends")]
-pub mod testing;
-
 mod buffer;
 pub use buffer::SharedOutput;
 

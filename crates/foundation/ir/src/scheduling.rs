@@ -137,13 +137,13 @@ pub struct ExecutionTiming {
 impl ExecutionTiming {
     #[must_use]
     pub const fn matches_backend(&self, backend: BackendKind) -> bool {
-        match (backend, self.source) {
+        // The CPU test backends E1 deleted had their own `CpuWall` source; the device backends are
+        // the only ones left to match.
+        matches!(
+            (backend, self.source),
             (BackendKind::Cuda, TimingSource::CudaGpu)
-            | (BackendKind::Metal, TimingSource::MetalGpu) => true,
-            #[cfg(feature = "test-backends")]
-            (BackendKind::TestCpu, TimingSource::CpuWall) => true,
-            _ => false,
-        }
+                | (BackendKind::Metal, TimingSource::MetalGpu)
+        )
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

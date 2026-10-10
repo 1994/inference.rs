@@ -24,7 +24,6 @@ workspace = true
 
 [features]
 default = []
-test-backends = []
 
 [dependencies]
 infer-core.workspace = true

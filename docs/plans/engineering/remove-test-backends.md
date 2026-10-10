@@ -46,6 +46,29 @@ qwen-hybrid-grouped}/golden.json`）是**模型级**数值对照，只有 CPU �
 仍需处理（下一步）：`tools/validation/smoke-paged-kv.py` 现在把 Metal 输出与 CPU oracle 对比，要改成
 与登记 golden 对比；CLI 里 23 个 `#[cfg(feature = "test-backends")]` 站点与执行器本体一并删除。
 
+## 已实施：两个 CPU 测试执行器与其 IR/kernel-api 分叉已删除
+
+- **`crates/testing/cpu/host` 与 `crates/testing/cpu/reference` 删除** ✓（连同 workspace 成员、根
+  path 依赖、CLI 的 optional 依赖）。测试执行器消费者从 **52 降到 30**（剩下的多是本仓门禁对这两个名字
+  的**规则性引用**，以及 CLI 内那些已不可达的 `cfg` 站点）。
+- **IR 分叉删除** ✓：`infer-ir` 的 `test-backends` feature、`testing` 模块与 `BackendKind::
+  DeviceBackend/BackendRequirements` 里的 `TestCpu` 变体全部移除；`scheduling.rs` 的
+  `matches_backend` 因此只剩设备分支，顺手改成 `matches!` ✓。
+- **kernel-api 分叉删除** ✓：不再请求 `infer-ir/test-backends`；其测试不再借 IR 的
+  `DeviceCapabilities::reference()`（那是**生产 API 只服务测试** ✗），改为测试内自建能力样本 ✓。
+- **一个断言变成了永久守卫** ✓：IR 的 `production_architectures_reject_cpu_and_test_targets` 原先
+  挂在 `#[cfg(not(feature = "test-backends"))]` 下 ✗，现在**无条件执行** ✓ —— 它正是"生产类型不得再
+  出现 CPU 测试后端"这条边界的守卫 ✓。另一个测试（"backend target prevents cpu kernels from binding"）
+  的前提随执行器一起消失，已删除并在方案里说明 ✓。
+
+**验证**：`make check-rust` 完整通过（workspace **65** 个二进制、**369 collected / 367 passed /
+2 ignored / 0 failed** ✓，即删掉执行器后少 7 个二进制、15 个用例 ✓）；`make check-tools` ✓；
+package 12 测试 ✓。
+
+**仍未做**：CLI 里约 180 处 `#[cfg(feature = "test-backends")]` 站点（现在**不可达**：feature 已无实现
+✓，但仍是死代码 ✗，需整批删除 ✓）；`tools/validation/smoke-paged-kv.py` 的 CPU oracle 需改为对照
+登记 golden ✓。
+
 ## 已保住的数值对照
 
 删除执行器前，其中唯一的数值参考（gated-delta 状态步）已固化为
