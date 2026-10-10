@@ -2219,3 +2219,26 @@ cuTile 的泛型是一串**位置参数**（这里是 5 个 `String`），编译
 2. 每次"缩小范围"都该问一句：**有没有一条最便宜的检查能直接证伪当前假设？** 这次只要在核里
    或调用点把 `BT` 打出来就够了，我却先做了四轮推理。
 3. 夹具与生产调用点**各写一份泛型/参数**时，夹具的正确不能代表生产正确。
+
+### 13.17 读路径也全部走表：整个 KV 访问链（写 + 四个读）现在都过 block table
+
+第①步的读半边补齐。现在**每一处 KV 访问都先用 `table[逻辑块]` 换成物理块**：
+
+| 访问点 | 文件 / 内核 | 说明 |
+|---|---|---|
+| 预填充写 | `attention_prefill::append` | §13.16 已通 |
+| 预填充读（SIMT） | `attention_prefill::decode` | `kp/vp.load([head, table[b], 0])` |
+| 预填充读（张量核，开关后） | `attention_prefill::decode_tiled` | 同上（表分区改名 `table_blocks`，避免与循环上界 `blocks` 撞名） |
+| decode 读（SIMT） | `resident/attention::decode` | `load([pid.0/GROUP, table[b], 0])` |
+| decode 读（split-KV） | `attention_decode::partial` | 表经 `attention_decode::Workspace::record` 透传 |
+
+**这次先做了泛型顺序审计**（§13.16 的教训）：六个内核的声明顺序与调用点逐一对齐后才构建——
+`append<E,D,CAP,QUANT,BT>`、`decode<E,D,GROUP,HEADS,BT>`、`decode_tiled<E,D,GROUP,QT,KB,BT>`、
+`attention::decode<E,D,GROUP,BT>`、`partial<E,D,GROUP,PARTS,BT>`，全部把 `BT` 放在**末位**，
+调用点也都在末位。
+
+**实测**：官方 matrix（`--chunked-recurrent`，4 case × 4 trial）**越界 0 次**，**12/12 trial token 逐位
+相同**（与加块表之前对比）。恒等映射下必须如此，所以这一步同样是**纯结构、零行为变化**。
+
+至此**间接层完整**：块池（现在还是"每序列一块恒等映射"）→ 每序列表 → 五处核 → 全部按物理块取数。
+下一步第②步就能把表的内容换成**真分配器的输出**，而核、绑定、预算都不用再动。

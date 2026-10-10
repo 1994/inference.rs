@@ -17,7 +17,7 @@ pub(crate) mod kernels {
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
     #[cutile::entry()]
-    fn partial<E: ElementType, const D: i32, const GROUP: i32, const PARTS: i32>(
+    fn partial<E: ElementType, const D: i32, const GROUP: i32, const PARTS: i32, const BT: i32>(
         out: &mut Tensor<f32, { [1, D] }>,
         maxima: &mut Tensor<f32, { [1, 1] }>,
         sums: &mut Tensor<f32, { [1, 1] }>,
@@ -25,6 +25,7 @@ pub(crate) mod kernels {
         keys: &Tensor<E, { [-1, -1, D] }>,
         values: &Tensor<E, { [-1, -1, D] }>,
         metadata: &Tensor<i32, { [-1] }>,
+        table: &Tensor<i32, { [-1] }>,
         window: i32,
         k_scale: f32,
         v_scale: f32,
@@ -48,6 +49,7 @@ pub(crate) mod kernels {
             let scale: Tile<f32, { [32] }> = rsqrt(d.broadcast(shape![32]), ftz::Disabled);
             let kp = keys.partition(shape![1, 32, D]);
             let vp = values.partition(shape![1, 32, D]);
+            let blocks = table.partition(shape![1]);
             let mut numerator: Tile<f32, { [D] }> = constant(0.0f32, shape![D]);
             let mut denominator: Tile<f32, { [1] }> = constant(0.0f32, shape![1]);
             let mut maximum: Tile<f32, { [1] }> = constant(-1.0e30f32, shape![1]);
@@ -60,10 +62,15 @@ pub(crate) mod kernels {
                 last = end;
             }
             for block in first..last {
-                let key: Tile<f32, { [32, D] }> =
-                    convert_tile(kp.load([head / GROUP, block, 0i32]).reshape(shape![32, D]));
-                let value: Tile<f32, { [32, D] }> =
-                    convert_tile(vp.load([head / GROUP, block, 0i32]).reshape(shape![32, D]));
+                let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
+                let key: Tile<f32, { [32, D] }> = convert_tile(
+                    kp.load([head / GROUP, physical, 0i32])
+                        .reshape(shape![32, D]),
+                );
+                let value: Tile<f32, { [32, D] }> = convert_tile(
+                    vp.load([head / GROUP, physical, 0i32])
+                        .reshape(shape![32, D]),
+                );
                 let key: Tile<f32, { [32, D] }> = key * k_scale.broadcast(shape![32, D]);
                 let value: Tile<f32, { [32, D] }> = value * v_scale.broadcast(shape![32, D]);
                 let score: Tile<f32, { [32] }> = reduce_sum(query * key, 1i32);

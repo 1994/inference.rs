@@ -83,6 +83,7 @@ impl Capture<'_> {
                 &keys,
                 &values,
                 self.metadata,
+                self.table,
                 query_heads,
                 kv_heads,
                 head_dim,
@@ -98,6 +99,7 @@ impl Capture<'_> {
                 &keys,
                 &values,
                 self.metadata,
+                self.table,
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 scales[0],
                 scales[1],
@@ -106,6 +108,7 @@ impl Capture<'_> {
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
                 (query_heads / kv_heads).to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         Ok((output, keys, values))
@@ -178,6 +181,7 @@ impl Capture<'_> {
                     &keys,
                     &values,
                     self.metadata,
+                    self.table,
                     i32::try_from(window.unwrap_or(0)).map_err(error)?,
                     scales[0],
                     scales[1],
@@ -189,6 +193,7 @@ impl Capture<'_> {
                     (query_heads / kv_heads).to_string(),
                     TILED_QUERY_TILE.to_string(),
                     TILED_KEY_BLOCK.to_string(),
+                    crate::constants::KV_BLOCK_TOKENS.to_string(),
                 ]),
             )?;
             return Ok((
@@ -206,6 +211,7 @@ impl Capture<'_> {
                 &keys,
                 &values,
                 self.metadata,
+                self.table,
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 scales[0],
                 scales[1],
@@ -215,6 +221,7 @@ impl Capture<'_> {
                 head_dim.to_string(),
                 (query_heads / kv_heads).to_string(),
                 query_heads.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         Ok((output, keys, values))

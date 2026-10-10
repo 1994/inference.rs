@@ -89,12 +89,13 @@ pub(crate) mod kernels {
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
     #[cutile::entry()]
-    fn decode<E: ElementType, const D: i32, const GROUP: i32, const HEADS: i32>(
+    fn decode<E: ElementType, const D: i32, const GROUP: i32, const HEADS: i32, const BT: i32>(
         out: &mut Tensor<f32, { [1, D] }>,
         q: &Tensor<f32, { [-1, D] }>,
         keys: &Tensor<E, { [-1, -1, D] }>,
         values: &Tensor<E, { [-1, -1, D] }>,
         metadata: &Tensor<i32, { [-1] }>,
+        table: &Tensor<i32, { [-1] }>,
         window: i32,
         k_scale: f32,
         v_scale: f32,
@@ -119,16 +120,19 @@ pub(crate) mod kernels {
             let scale: Tile<f32, { [32] }> = rsqrt(d.broadcast(shape![32]), ftz::Disabled);
             let kp = keys.partition(shape![1, 32, D]);
             let vp = values.partition(shape![1, 32, D]);
+            let blocks = table.partition(shape![1]);
             let mut numerator: Tile<f32, { [D] }> = constant(0.0f32, shape![D]);
             let mut denominator: Tile<f32, { [1] }> = constant(0.0f32, shape![1]);
             let mut maximum: Tile<f32, { [1] }> = constant(-1.0e30f32, shape![1]);
             for block in (start / 32i32)..(position / 32i32 + 1i32) {
+                // Logical block to physical block; an identity table keeps this the same row.
+                let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
                 let key: Tile<f32, { [32, D] }> = convert_tile(
-                    kp.load([(pid.0 % HEADS) / GROUP, block, 0i32])
+                    kp.load([(pid.0 % HEADS) / GROUP, physical, 0i32])
                         .reshape(shape![32, D]),
                 );
                 let value: Tile<f32, { [32, D] }> = convert_tile(
-                    vp.load([(pid.0 % HEADS) / GROUP, block, 0i32])
+                    vp.load([(pid.0 % HEADS) / GROUP, physical, 0i32])
                         .reshape(shape![32, D]),
                 );
                 let key: Tile<f32, { [32, D] }> = key * k_scale.broadcast(shape![32, D]);
@@ -187,12 +191,14 @@ pub(crate) mod kernels {
         const GROUP: i32,
         const QT: i32,
         const KB: i32,
+        const BT: i32,
     >(
         out: &mut Tensor<f32, { [QT, D] }>,
         query: &Tensor<f32, { [-1, -1] }>,
         keys: &Tensor<E, { [-1, -1, D] }>,
         values: &Tensor<E, { [-1, -1, D] }>,
         metadata: &Tensor<i32, { [-1] }>,
+        table: &Tensor<i32, { [-1] }>,
         window: i32,
         k_scale: f32,
         v_scale: f32,
@@ -206,6 +212,7 @@ pub(crate) mod kernels {
         let q: Tile<f32, { [QT, D] }> = query.partition(shape![QT, D]).load([pid.0, pid.1]);
         let kp = keys.partition(shape![1, KB, D]);
         let vp = values.partition(shape![1, KB, D]);
+        let table_blocks = table.partition(shape![1]);
         let rows: Tile<i32, { [QT] }> = iota(shape![QT]) + (pid.0 * QT).broadcast(shape![QT]);
         let positions: Tile<i32, { [QT] }> = rows + (base + offset).broadcast(shape![QT]);
         // Only the lanes this chunk appended bound the loop; later rows are inactive and masked.
@@ -214,6 +221,7 @@ pub(crate) mod kernels {
         let mut row_max: Tile<f32, { [QT] }> = constant(MASKED, shape![QT]);
         let mut row_sum: Tile<f32, { [QT] }> = constant(0.0f32, shape![QT]);
         for block in 0i32..blocks {
+            let physical: i32 = tile_to_scalar(table_blocks.load([block]).reshape(shape![]));
             let key: Tile<f32, { [KB, D] }> =
                 convert_tile(kp.load([pid.1 / GROUP, block, 0i32]).reshape(shape![KB, D]))
                     * k_scale.broadcast(shape![KB, D]);
@@ -247,9 +255,10 @@ pub(crate) mod kernels {
             );
             let sums: Tile<f32, { [QT] }> = reduce_sum(probabilities, 1i32);
             row_sum = row_sum * correction + sums.reshape(shape![QT]);
-            let value: Tile<f32, { [KB, D] }> =
-                convert_tile(vp.load([pid.1 / GROUP, block, 0i32]).reshape(shape![KB, D]))
-                    * v_scale.broadcast(shape![KB, D]);
+            let value: Tile<f32, { [KB, D] }> = convert_tile(
+                vp.load([pid.1 / GROUP, physical, 0i32])
+                    .reshape(shape![KB, D]),
+            ) * v_scale.broadcast(shape![KB, D]);
             let product: Tile<f32, { [QT, D] }> = precise_mma(probabilities, value);
             accumulator = accumulator * correction.reshape(shape![QT, 1]).broadcast(shape![QT, D])
                 + product.reshape(shape![QT, D]);

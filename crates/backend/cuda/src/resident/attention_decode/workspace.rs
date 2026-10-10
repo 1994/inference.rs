@@ -90,6 +90,7 @@ impl Workspace {
         keys: &Tensor<E>,
         values: &Tensor<E>,
         metadata: &Tensor<i32>,
+        table: &Tensor<i32>,
         heads: usize,
         kv_heads: usize,
         dim: usize,
@@ -110,6 +111,7 @@ impl Workspace {
                 keys,
                 values,
                 metadata,
+                table,
                 window,
                 scales[0],
                 scales[1],
@@ -119,6 +121,7 @@ impl Workspace {
                 dim.to_string(),
                 (heads / kv_heads).to_string(),
                 parts.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         scope.record(
