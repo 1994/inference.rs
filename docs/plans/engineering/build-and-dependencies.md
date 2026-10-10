@@ -154,6 +154,21 @@ edges，并记录重复依赖、解析 features、lockfile 与目标身份；此
 **macos-metal 174 crates / 437 edges / 2 个重复**（`bitflags`、`syn`）。两个生产图都没有测试执行器。
 重复项是**记录**而非失败条件：方案要求记录重复依赖以便复核，是否需要合并由依赖更新时单独判断。
 
+## 已实施：每个测试入口报告四个数字
+
+方案要求"每个测试入口报告收集、执行、ignored 和失败数量"，并明确"只完成 cross 编译时要写 compiled，
+不能由 host suite 代签"。`cargo test` 只为每个二进制单独打印这些数字，长日志里既难发现也难求和。
+
+新增 `tools/check/test-report.py`：原样透传命令输出（不改变失败语义），汇总后打印一行
+
+```
+ir: ran, 4 binaries, 11 collected, 11 passed, 0 failed, 0 ignored, ok
+```
+
+四个 `cargo test` 入口（cli / ir / cuda-no-default / workspace）在 `gate.sh` 里改用该包装器；没有出现
+任何 `running N tests` 的入口报告 `compiled` 而不是假装跑过，失败或 `result != ok` 时退出码非零，
+并可用 `--json` 落盘供 job 保存为证据。4 个单测覆盖多二进制求和、失败、只编译与输出格式。
+
 ## 已实施：本机构建与打包共用计划与 preflight
 
 `make local-build` 不再按平台写死 `--features cuda` / 无 feature，也不再自己拼

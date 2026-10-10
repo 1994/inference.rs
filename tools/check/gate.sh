@@ -26,10 +26,16 @@ rust_checks() {
     # CUDA builds belong to the package matrix; device checks to check-cuda.
     cargo clippy --locked -p infer-backend-cuda --no-default-features --all-targets -- -D warnings
     cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets --features infer-cli/test-backends -- -D warnings
-    cargo test --locked -p infer-cli --no-default-features
-    cargo test --locked -p infer-ir --no-default-features
-    cargo test --locked -p infer-backend-cuda --no-default-features
-    cargo test --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends
+    # Every test entry reports what it collected, ran, ignored and failed; an entry that only
+    # compiles says `compiled` instead of leaving the reader to infer it from a long log.
+    python3 tools/check/test-report.py --entry cli -- \
+        cargo test --locked -p infer-cli --no-default-features
+    python3 tools/check/test-report.py --entry ir -- \
+        cargo test --locked -p infer-ir --no-default-features
+    python3 tools/check/test-report.py --entry cuda-no-default -- \
+        cargo test --locked -p infer-backend-cuda --no-default-features
+    python3 tools/check/test-report.py --entry workspace -- \
+        cargo test --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --features infer-cli/test-backends --no-deps
     cargo build --locked --release -p infer-cli --no-default-features
     cpu_checks
