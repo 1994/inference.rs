@@ -179,14 +179,6 @@
     },
     {
       "crate": "runtime",
-      "path": "crates/engine/runtime/tests/capacity.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "runtime",
       "path": "crates/engine/runtime/tests/checkpoint_owner.rs",
       "patterns": [
         "infer_backend_reference"
@@ -220,14 +212,6 @@
     {
       "crate": "runtime",
       "path": "crates/engine/runtime/tests/scheduling.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/tests/unit/observation.rs",
       "patterns": [
         "infer_backend_reference"
       ],
@@ -913,6 +897,11 @@
       "crate": "runtime",
       "file": "src/stages/worker.rs",
       "mount": "../../tests/unit/stages_worker.rs"
+    },
+    {
+      "crate": "runtime",
+      "file": "tests/unit/observation.rs",
+      "mount": "../support/mod.rs"
     },
     {
       "crate": "scheduler",

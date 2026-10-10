@@ -1,22 +1,23 @@
-use infer_backend_reference::{
-    ReferenceBackend, ReferenceKernels, ReferenceModel, ReferenceTicket,
-};
+mod support;
+
 use infer_core::{Error, ErrorCode, FinishReason, ModelId, RequestId, Result, StateId};
 use infer_ir::{
-    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, PrecisionPlan,
-    StepPlan, TaskOutput,
+    CanonicalRequest, DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, OutputReadout,
+    PrecisionPlan, StepPlan, TaskOutput,
 };
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::{BackendProvider, ResourceCommand, ResourceTicket, execute_resource};
+use support::ProtocolBackend;
 
+/// Injects the two resource-lane rejections the scene needs on top of the declared double.
 struct Backpressure {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     submit_rejections: usize,
     reset_rejections: usize,
 }
 impl BackendProvider for Backpressure {
-    type Ticket = ReferenceTicket;
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
     fn identity(&self) -> &str {
         self.inner.identity()
     }
@@ -31,6 +32,20 @@ impl BackendProvider for Backpressure {
     }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        self.inner.reserve_state_for(state, capacity, readout)
+    }
+    fn capture_execution_state(&self) -> Result<Option<Vec<u8>>> {
+        self.inner.capture_execution_state()
+    }
+    fn restore_execution_state(&mut self, state: Option<&[u8]>) -> Result<()> {
+        self.inner.restore_execution_state(state)
     }
     fn release_state(&mut self, state: StateId) -> Result<()> {
         self.inner.release_state(state)
@@ -70,17 +85,22 @@ impl BackendProvider for Backpressure {
     fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
         self.inner.poll(ticket)
     }
+    fn recycle_output(&mut self, state: StateId, output: infer_ir::ModelOutput) -> Result<()> {
+        self.inner.recycle_output(state, output)
+    }
+    fn recycle_batch(&mut self, outputs: Vec<TaskOutput>) -> Result<()> {
+        self.inner.recycle_batch(outputs)
+    }
 }
 fn engine(submit_rejections: usize, reset_rejections: usize) -> Result<Engine<Backpressure>> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let backend = Backpressure {
-        inner: ReferenceBackend::new(model)?,
+        inner: ProtocolBackend::new(4, 4, &ir)?,
         submit_rejections,
         reset_rejections,
     };
     let mut kernels = KernelRegistry::default();
-    kernels.register(&ReferenceKernels)?;
+    kernels.register(&support::DeclaredKernels)?;
     Engine::new(
         backend,
         ir,
@@ -149,6 +169,7 @@ fn reset_backpressure_keeps_unit_transition_until_lane_recovers() -> Result<()> 
         }
     }
     assert!(observed_waiter && engine.is_idle());
+    eprintln!("DEBUG inspect={:?}", engine.inspect());
     assert!(
         engine
             .request(RequestId::ONE)?

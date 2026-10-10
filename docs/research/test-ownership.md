@@ -42,9 +42,9 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（66 个文件）
+## 执行器消费者与删除归属（64 个文件）
 
-| `protocol` | 14 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
+| `protocol` | 12 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
 | `numeric` | 8 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
@@ -136,6 +136,24 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
   行数。这一条是替换过程中最容易被忽略的：行数不对时请求会"完成"但没有输出，且不报错。
 
 `infer-runtime` 的 7 个集成 target 与单测全过，clippy 干净。
+
+### 已替换：`runtime/tests/capacity.rs` 与 `runtime/tests/unit/observation.rs`
+
+两个场景复用上一轮的 support 模块。`capacity.rs` 的 `Backpressure` 装饰器保留，只是内层从
+`ReferenceBackend` 换成 `ProtocolBackend`，并把 `reserve_state_for`、`capture/restore_execution_state`、
+`recycle_output/recycle_batch` 一并转发（引擎走的是 `reserve_state_for`，只转发 `reserve_state`
+会让替身的 state 表为空）。`unit/observation.rs` 用 `#[path = "../support/mod.rs"]` 从
+`tests/unit/` 指到同一份支撑模块。
+
+这一轮补上了替身缺的两条协议行为，都是"替身不执行模型"这个前提下的正确实现：
+
+- **`reset_state` 必须清空 token 游标**。参考实现会在 reset 时清空该 state 的 token 历史；替身
+  用默认空实现时，被注入拒绝后重试的同一次 prefill 会因为游标不匹配而失败
+  （`InvalidInput: incremental token cursor mismatch`），整个请求以 `Failed` 结束、`output` 为
+  `None`，而测试只表现为"没有输出"。
+- **不要租借输出缓冲**。替身改为每次 `submit` 复制一份声明输出：引擎可能在取回上一次输出之前就提交
+  下一个 unit，用缓冲池会把这种情况判成 `readback still leased`。真正需要按分配计数的那份替身在
+  `tools/bench/cpu`，它保留了自己的缓冲池实现。
 
 ### 其余 `protocol` 消费者的要求
 

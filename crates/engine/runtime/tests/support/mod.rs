@@ -121,16 +121,13 @@ impl KernelProvider for DeclaredKernels {
 }
 
 struct State {
-    output: Option<ModelOutput>,
     history: Vec<u32>,
 }
 
 pub struct ProtocolBackend {
     states: BoundedMap<StateId, State>,
-    outputs: Vec<ModelOutput>,
-    batches: Vec<Vec<TaskOutput>>,
+    template: ModelOutput,
     resources: infer_spi::ResourcePool,
-    vocabulary: usize,
     hidden: usize,
     capacity: usize,
 }
@@ -139,18 +136,15 @@ impl ProtocolBackend {
     /// # Errors
     /// Returns an invalid-input error when the configured request bound cannot be reserved.
     pub fn new(requests: usize, batch: usize, ir: &ModelIr) -> Result<Self> {
+        let _ = batch;
         Ok(Self {
             states: BoundedMap::new(requests)?,
-            outputs: (0..requests)
-                .map(|_| ModelOutput {
-                    logits: vec![1.0; ir.vocab_size],
-                    hidden: vec![vec![0.5; ir.hidden_size]],
-                    tokens: Vec::with_capacity(8),
-                })
-                .collect(),
-            batches: (0..4).map(|_| Vec::with_capacity(batch)).collect(),
+            template: ModelOutput {
+                logits: vec![1.0; ir.vocab_size],
+                hidden: vec![vec![0.5; ir.hidden_size]],
+                tokens: Vec::with_capacity(8),
+            },
             resources: infer_spi::ResourcePool::new(requests + 4)?,
-            vocabulary: ir.vocab_size,
             hidden: ir.hidden_size,
             capacity: requests,
         })
@@ -210,14 +204,9 @@ impl BackendProvider for ProtocolBackend {
         }
         self.states.clear();
         for id in states {
-            let output = self
-                .outputs
-                .pop()
-                .ok_or_else(|| Error::invariant("readback credit missing"))?;
             self.states.insert(
                 id,
                 State {
-                    output: Some(output),
                     history: Vec::new(),
                 },
             )?;
@@ -249,27 +238,28 @@ impl BackendProvider for ProtocolBackend {
         _tokens: usize,
         _readout: OutputReadout,
     ) -> Result<()> {
-        let output = self
-            .outputs
-            .pop()
-            .ok_or_else(|| Error::invariant("readback credit missing"))?;
         self.states.insert(
             state,
             State {
-                output: Some(output),
                 history: Vec::new(),
             },
         )?;
         Ok(())
     }
+    fn reset_state(&mut self, state: StateId) -> Result<()> {
+        // A reset starts the sequence over, so the token cursor the engine sends next must start
+        // from zero again; keeping the old history rejects the next prefill as a stale cursor.
+        self.states
+            .get_mut(&state)
+            .ok_or_else(|| Error::invalid("unknown state"))?
+            .history
+            .clear();
+        Ok(())
+    }
     fn release_state(&mut self, state: StateId) -> Result<()> {
-        let state = self
-            .states
+        self.states
             .remove(&state)
             .ok_or_else(|| Error::invariant("release state missing"))?;
-        if let Some(output) = state.output {
-            self.outputs.push(output);
-        }
         Ok(())
     }
     fn submit(
@@ -286,29 +276,26 @@ impl BackendProvider for ProtocolBackend {
         _: &StepPlan,
         tasks: &[ExecutionTask],
     ) -> Result<Self::Ticket> {
-        let mut batch = self
-            .batches
-            .pop()
-            .ok_or_else(|| Error::invariant("batch credit missing"))?;
+        // A declared output per task. The double does not lease buffers: the engine may submit the
+        // next unit before it returns the previous output, which a buffer pool would have to
+        // tolerate anyway.
+        let mut batch = Vec::with_capacity(tasks.len());
         for task in tasks {
             let state = self
                 .states
                 .get_mut(&task.state)
                 .ok_or_else(|| Error::invariant("submit state missing"))?;
-            let mut output = state
-                .output
-                .take()
-                .ok_or_else(|| Error::invariant("readback still leased"))?;
             // The output must carry one hidden row per token in the sequence, because the engine
             // projects a hidden output only when the rows match the context it planned for.
             task.tokens.commit(&mut state.history)?;
             let rows = state.history.len();
             let readout = task.tokens.readout();
+            let mut output = self.template.clone();
             output.logits.resize(
                 if readout == OutputReadout::None {
                     0
                 } else {
-                    self.vocabulary
+                    output.logits.len()
                 },
                 1.0,
             );
@@ -327,16 +314,11 @@ impl BackendProvider for ProtocolBackend {
         }
         Ok(Some(batch))
     }
-    fn recycle_output(&mut self, state: StateId, output: ModelOutput) -> Result<()> {
-        self.states
-            .get_mut(&state)
-            .ok_or_else(|| Error::invariant("recycle owner missing"))?
-            .output = Some(output);
+    fn recycle_output(&mut self, _state: StateId, _output: ModelOutput) -> Result<()> {
+        // The double allocates its declared outputs, so a returned buffer needs no bookkeeping.
         Ok(())
     }
-    fn recycle_batch(&mut self, mut outputs: Vec<TaskOutput>) -> Result<()> {
-        outputs.clear();
-        self.batches.push(outputs);
+    fn recycle_batch(&mut self, _outputs: Vec<TaskOutput>) -> Result<()> {
         Ok(())
     }
     fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {

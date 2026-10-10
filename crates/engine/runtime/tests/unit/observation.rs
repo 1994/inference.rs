@@ -1,18 +1,19 @@
 use super::*;
 use crate::RuntimeConfig;
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
 use infer_core::ModelId;
 use infer_ir::{CanonicalRequest, PrecisionPlan};
 use infer_kernel_api::KernelRegistry;
 
+#[path = "../support/mod.rs"]
+mod support;
+
 #[test]
 fn trace_parent_without_retained_events_is_pruned_when_request_is_consumed() -> Result<()> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     let mut engine = Engine::new(
-        ReferenceBackend::new(model)?,
+        support::ProtocolBackend::new(2, 2, &ir)?,
         ir,
         PrecisionPlan::f32(),
         &registry,
