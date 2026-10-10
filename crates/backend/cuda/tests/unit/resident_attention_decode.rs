@@ -3,6 +3,18 @@ use crate::device::CudaDevice;
 use cuda_core::f8e4m3fn;
 use cutile::prelude::*;
 
+/// Identity block table for a KV arena of `capacity` tokens.
+fn block_table(
+    device: &CudaDevice,
+    capacity: usize,
+) -> Result<Arc<Tensor<i32>>, Box<dyn std::error::Error>> {
+    let blocks = capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS);
+    let values: Vec<i32> = (0..blocks)
+        .map(|b| i32::try_from(b).unwrap_or(i32::MAX))
+        .collect();
+    Ok(device.upload(values, &[blocks])?)
+}
+
 fn decoded(code: u8) -> f32 {
     let magnitude = code & 127;
     let x = (1.0 + f32::from(magnitude & 7) / 8.0) * 2.0_f32.powi(i32::from(magnitude >> 3) - 7);
@@ -126,6 +138,8 @@ fn run<E: DType>(
     let mut numerator = api::zeros::<f32>(&[heads * parts, dim]).sync_on(&device.stream)?;
     let mut maxima = api::zeros::<f32>(&[heads * parts, 1]).sync_on(&device.stream)?;
     let mut sums = api::zeros::<f32>(&[heads * parts, 1]).sync_on(&device.stream)?;
+    // Step 1 of the KV refactor: every KV read resolves its block through this table.
+    let table = block_table(device, usize::try_from(k.shape()[1])?)?;
     kernels::partial(
         (&mut numerator).partition([1, dim]),
         (&mut maxima).partition([1, 1]),
@@ -134,6 +148,7 @@ fn run<E: DType>(
         k,
         v,
         &meta,
+        &table,
         window,
         0.5,
         2.0,
@@ -143,6 +158,7 @@ fn run<E: DType>(
         dim.to_string(),
         (heads / kv_heads).to_string(),
         parts.to_string(),
+        crate::constants::KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     let output = kernels::merge(
@@ -206,6 +222,7 @@ fn bench_case(
         let position = i32::try_from(capacity - 1)?;
         let meta = device.upload(vec![position, 0, position, 0], &[4])?;
         let mut output = api::zeros::<f32>(&[heads, dim]).sync_on(&device.stream)?;
+        let table = block_table(device, capacity)?;
         let baseline = CudaGraph::scope(&device.stream, |scope| {
             scope.record(
                 super::super::attention::attention::decode(
@@ -214,6 +231,7 @@ fn bench_case(
                     &k,
                     &v,
                     &meta,
+                    &table,
                     0,
                     1.0,
                     1.0,
@@ -222,6 +240,7 @@ fn bench_case(
                     f32::DTYPE.as_str().into(),
                     dim.to_string(),
                     (heads / kv_heads).to_string(),
+                    crate::constants::KV_BLOCK_TOKENS.to_string(),
                 ]),
             )?;
             Ok(())
@@ -240,6 +259,7 @@ fn bench_case(
                         &k,
                         &v,
                         &meta,
+                        &table,
                         0,
                         1.0,
                         1.0,
@@ -249,6 +269,7 @@ fn bench_case(
                         dim.to_string(),
                         (heads / kv_heads).to_string(),
                         parts.to_string(),
+                        crate::constants::KV_BLOCK_TOKENS.to_string(),
                     ]),
                 )?;
                 scope.record(

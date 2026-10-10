@@ -183,6 +183,7 @@ fn check_case(
         &keys,
         &values,
         &metadata,
+        &table,
         window,
         1.0,
         1.0,
@@ -192,6 +193,7 @@ fn check_case(
         DIM.to_string(),
         (HEADS / KV_HEADS).to_string(),
         HEADS.to_string(),
+        crate::constants::KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     for lane in 0..usize::try_from(count)? {
@@ -224,6 +226,7 @@ fn check_case(
             &keys,
             &values,
             &metadata,
+            &table,
             window,
             1.0,
             1.0,
@@ -235,6 +238,7 @@ fn check_case(
             (HEADS / KV_HEADS).to_string(),
             qt.to_string(),
             LANES.to_string(),
+            crate::constants::KV_BLOCK_TOKENS.to_string(),
         ])
         .sync_on(&device.stream)?;
         let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;

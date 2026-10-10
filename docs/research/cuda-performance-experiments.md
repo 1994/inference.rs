@@ -2272,3 +2272,19 @@ admission StateBytes: required=1118322192, available=958402560  code=Capacity
 **这条给重构提供了量化的靶子**：单靠"把池开宽"就能拿到 N=8 wall −21%；再往上就必须要
 **一个共享块池 + 按块计价**（第②、④步）——把"每槽预留 + 每序列全上下文预留"这份**双重预留**
 去掉，并发和上下文长度才能各自增长。换句话说：**当前设计里"并发"和"上下文长度"是在互相挤兑的**。
+
+### 13.19 补课：读路径改动漏掉了**直接调核的测试**
+
+第 24 轮把表接进 `attention_decode::partial` 与 `attention::decode` 之后，我跑了
+`cargo test`（当时显示了 "27 passed"），但那一次**没有真正重编测试目标**；等第 25 轮再跑时
+测试目标直接编译失败——`tests/unit/resident_attention_decode.rs` 与
+`tests/unit/resident_attention_prefill.rs` 里有**直接调用这些核**的地方（`partial`、`decode`、
+`decode_tiled`），所以核签名加参数后它们必须一起改。
+
+已修：三个测试调用点各补一张恒等块表与 `BT` 泛型；现在
+`cargo check --all-targets` ✅、27 单测 ✅、4 个 GPU 硬件测试 ✅、两个 `attention_decode` 测试
+（含 `split_kv_matches_independent_causal_window_reference` 这个数值参考测试）✅。
+
+**教训（与 §13.16 同源）**：改内核签名时，除了生产调用点，还要找**所有直接调核的测试与示例**；
+并且"测试通过"必须确认那次运行**真的重编了测试目标**（`cargo test` 如果被缓存/SKIP 过，
+输出的 `test result` 可能来自旧的二进制）。这次是靠 `--all-targets` 才发现的。
