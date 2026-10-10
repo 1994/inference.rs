@@ -185,6 +185,44 @@ package 计划一致"从约定变成可执行检查。`local-build` 与 `package
 验证：`make local-build` 在本机跑通并产出 `target/release/infer`（计划解析为 cuda backend，包含
 `--features cuda`），`./target/release/infer --version` 正常；打包单测、`check-tools`、`ruff` 干净。
 
+## 已实施：迁移前后的实测对照
+
+方案要求"对照迁移前的编译时间、链接目标数、测试收集和场景覆盖，分别报告变化，不能仅用目录和脚本数量
+减少证明完成"。以下是可复现的实测，命令与口径一并给出；**不可重建的项明确标注**，不用估计值代替。
+
+**编译时间（来自真实 CI 运行，不是本地推算）**：改动前最后一次绿色矩阵（`dc26a12`）整条 17m23s，
+改动后（`c6d3c4c`）14m50s；同一 macOS 宿主打包步骤 4m46s → 3m05s。省下的是宿主套件被重复执行的部分
+（两个打包目标里各重跑一次 Clippy + 全量测试）。本地计时只用于换算比例，不作为结论。
+
+**链接目标数**（两口径都记录，便于后续对比）：
+
+```sh
+cargo metadata --offline --locked --format-version 1 --no-deps   # 静态目标数
+CARGO_TARGET_DIR=/tmp/e2-target cargo test --offline --locked --no-run \
+    --workspace --exclude infer-backend-cuda --features infer-cli/test-backends
+find /tmp/e2-target/debug/deps -maxdepth 1 -type f -executable ! -name '*.d' ! -name '*.so' | wc -l
+```
+
+静态目标：`bin` 2、`lib` 20、`test` 30、`example` 16、`custom-build` 1（22 个包）。冷 target 目录下
+`--no-default-features` 的 release CLI 构建产出 1 个可执行文件（本机 26s），测试构建链接出 **52 个测试
+可执行文件**（本机 13s，含已编译依赖）。E1 删除第二个测试 CLI 与两个 CPU 执行器后，这个 52 应当下降——
+这正是把口径固定下来的原因。**迁移前的同一数字无法从当前树重建**（旧 revision 的依赖图已不在），
+因此只报告当前值，不编造差值。
+
+**测试收集**：登记的测试体 460 个、`src/` 内 0 个、按路径挂载的文件 100 个；门禁四个入口的实测计数为
+cli 8、ir 11、cuda（无默认 feature）6、workspace 376 collected / 374 passed / 2 ignored / 0 failed。
+这些数字由 `tools/check/test-report.py` 在每次门禁中打印，不再靠人工数日志。
+
+**场景覆盖**：CI 的 job 与场景对应关系如下（空白处即本仓库当前**不**在 CI 覆盖的场景，写出来而不是留白）：
+
+| 场景 | 覆盖它的 job |
+|---|---|
+| 宿主测试与静态检查 | `rust`（ubuntu + macOS）、`tools`、`msrv`、`security` |
+| Linux 放置验收（无 GPU） | `rust` 的 `Linux placement acceptance` 步骤 |
+| 交叉编译与打包合同（含 `--tests --release`） | `packages`（4 个 target） |
+| 真实设备推理验收 | **CI 不覆盖**，由 `make test-cuda` / `make test-metal` 在设备上执行 |
+| 服务性能与基线 | **CI 不覆盖**，由 `tools/bench/` 在设备窗口执行，见[基线方案](../performance/baseline.md) |
+
 ## 迁移顺序与验收
 
 首先清点现有 build/test/gate 调用、直接依赖和测试执行器消费者，建立场景映射。随后统一测试布局并替换协议消费者，移动数值对照，再删除两个 CPU backend、产品测试 feature 和 CLI 分支。

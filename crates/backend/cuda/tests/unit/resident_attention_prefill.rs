@@ -98,12 +98,18 @@ fn check_case(
     let key_device = device.upload(key.clone(), &[lanes, KV_HEADS, DIM])?;
     let value_device = device.upload(value.clone(), &[lanes, KV_HEADS, DIM])?;
     let metadata = device.upload(vec![start, count, offset, 0], &[4])?;
+    let blocks = CAPACITY / crate::constants::KV_BLOCK_TOKENS;
+    let identity: Vec<i32> = (0..blocks)
+        .map(|b| i32::try_from(b).expect("blocks fit"))
+        .collect();
+    let table = device.upload(identity.clone(), &[blocks])?;
     kernels::append(
         (&mut keys).partition([1, CAPACITY, DIM]),
         (&mut values).partition([1, CAPACITY, DIM]),
         &key_device,
         &value_device,
         &metadata,
+        &table,
         1.0,
         1.0,
     )
@@ -112,8 +118,64 @@ fn check_case(
         DIM.to_string(),
         CAPACITY.to_string(),
         "0".into(),
+        crate::constants::KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
+    // A permuted table must move the appended rows with it, which is what proves the kernel
+    // resolves positions through the table instead of assuming identity.
+    let swapped: Vec<i32> = (0..blocks)
+        .map(|b| i32::try_from(b ^ 1).expect("blocks fit"))
+        .collect();
+    let swapped_table = device.upload(swapped.clone(), &[blocks])?;
+    let mut moved_keys =
+        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 13)))
+            .sync_on(&device.stream)?
+            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
+    let mut moved_values =
+        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 17)))
+            .sync_on(&device.stream)?
+            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
+    kernels::append(
+        (&mut moved_keys).partition([1, CAPACITY, DIM]),
+        (&mut moved_values).partition([1, CAPACITY, DIM]),
+        &key_device,
+        &value_device,
+        &metadata,
+        &swapped_table,
+        1.0,
+        1.0,
+    )
+    .generics(vec![
+        "f32".into(),
+        DIM.to_string(),
+        CAPACITY.to_string(),
+        "0".into(),
+        crate::constants::KV_BLOCK_TOKENS.to_string(),
+    ])
+    .sync_on(&device.stream)?;
+    let mut expected_moved = data(KV_HEADS * CAPACITY * DIM, 13);
+    for lane in 0..usize::try_from(count)? {
+        let position = start + i32::try_from(lane)? + offset;
+        if position < 0 {
+            continue;
+        }
+        let position = usize::try_from(position)?;
+        let logical = position / crate::constants::KV_BLOCK_TOKENS;
+        let row = usize::try_from(swapped[logical]).expect("blocks fit")
+            * crate::constants::KV_BLOCK_TOKENS
+            + position % crate::constants::KV_BLOCK_TOKENS;
+        for head in 0..KV_HEADS {
+            let src = (lane * KV_HEADS + head) * DIM;
+            let dst = (head * CAPACITY + row) * DIM;
+            expected_moved[dst..dst + DIM].copy_from_slice(&key[src..src + DIM]);
+        }
+    }
+    assert_eq!(
+        moved_keys.to_host_vec().sync_on(&device.stream)?,
+        expected_moved,
+        "append ignored the block table"
+    );
+    let _ = moved_values;
     let mut output = api::zeros::<f32>(&[lanes * HEADS, DIM]).sync_on(&device.stream)?;
     kernels::decode(
         (&mut output).partition([1, DIM]),

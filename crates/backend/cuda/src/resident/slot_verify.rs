@@ -148,6 +148,7 @@ impl BatchBuilder<'_> {
                         states: self.states,
                         fp8_states: self.fp8_states,
                         metadata: &metadata[0],
+                        table: &self.tables[0],
                         external: self.external,
                         capacity: self.capacity,
                         fusion: &mut no_fusion,
@@ -167,6 +168,8 @@ impl BatchBuilder<'_> {
                                 states: &mut lane_states[slot],
                                 fp8_states: &mut lane_fp8[slot],
                                 metadata: lane_metadata,
+                                // The candidate lanes of one slot share that slot's cache.
+                                table: &self.tables[slot],
                                 external: &self.lane_external[lane],
                                 capacity: self.capacity,
                                 fusion: &mut self.lane_fusion[lane],
