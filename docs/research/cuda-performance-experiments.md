@@ -1543,3 +1543,48 @@ decode 的 `linear` 只能靠自研核效率（138 TFLOP/s = FP8 峰值 ~16%）�
 ```sh
 artifacts/vllm-compare/bin/python /tmp/lt_ws.py    # mode 3 vs mode 2 的算法可得性
 ```
+
+### 12.15 attention：resident 路是纯 SIMT，而仓库里已经有一颗张量核 SDPA【确证 + 可复用】
+
+§十.2 把 attention 记成"7.5%、556 µs/节点"，但没有说清它贵在哪。本轮把它量清楚了。
+
+**规模**（chunked 预填充，每次 replay 34.41 ms）：attention **3.19 ms / 16 节点 = 199 µs/节点**，
+占 9.3%；decode（`slot_verify` 28.5 ms）里是 1.29 ms / 16 节点 = 80 µs/节点，占 4.5%。
+
+**它随活跃 KV 长度线性增长**（同一次 profile，16 层的节点时间彼此几乎相同）：
+
+| position（KV 长度） | 256 | 320 | 384 | 448 |
+|---|---:|---:|---:|---:|
+| 每节点 | 164 µs | 190 µs | 217 µs | 225 µs |
+
+约 **0.32 µs / KV token / 层**，所以不是固定开销，是逐 KV 的成本。
+
+**贵在哪（读码确认）**：`resident/attention_prefill.rs::decode`
+（decode 侧的 `attention_decode.rs` 同构）是**纯 SIMT f32**——
+`convert_tile` 把 fp8 的 K/V 转成 f32，然后 `query * key` + `reduce_sum(…, 1i32)` 算分数、
+softmax 后再 `reduce_sum` 做 PV。**整个文件没有一处 `mmaf`**。也就是说：
+
+- 每个 32-token KV block 都要做**跨线程归约**（score 的 key 维归约、block max、PV 归约），
+  和 §12.3 的 delta 是同一种病；
+- 网格是**每个 (lane, query_head) 一个 CTA**（预填充 64×24 = 1536 个），GQA 的 6 个 query head
+  各自把同一个 KV head 再读一遍（组内不复用）；
+- 实测 ≈ **3 TFLOP/s**，而 fp32 SIMT 峰值约 122 TFLOP/s（170 SM × 128 lane × 2 × 2.8 GHz）
+  —— 核内还有 ~40× 的余量，且这部分算力本来可以用张量核（fp8 输入已在缓存里）。
+
+**可复用的现成资产【新信息】**：仓库里**已经有一颗张量核 SDPA**，只是没接给 LLM：
+
+- `crates/backend/cuda/src/attention/kernels.rs`（`sdpa::attention`，含 `mmaf`，模板参数带
+  `GROUP`（GQA）、`ONLINE`（online softmax）、`MASK`（含 `WINDOW_MASK = 2`）、Q/K/PIPE/DV 分块）、
+  `attention/decode.rs`（单 query 变体）、`attention/plan.rs`（`DenseAttentionPlan`，
+  "caller-owned buffers and stream"，用 `infer_kernel_api::attention::AttentionDescriptor` 描述）；
+- 它有自己的**数值闸门与基准**：`tests/unit/attention_gate_check.rs`（`INFER_ATTENTION_GATE`，
+  `make check-attention`）、`tools/attention/*`（fixture 生成 + Candle 对照 `infer-attention-candidate`）、
+  `tools/bench/attention.sh`、以及 `attention/benchmark_check.rs` 的计时输出；
+- **但它只被 vision 用**（`crates/backend/cuda/src/vision/program.rs:574/855`），
+  resident 的 LLM 路走的是上面那颗 SIMT 核。
+
+**所以 attention 这条不是"从零写 flash attention"**，而是"把已有的张量核 SDPA 接进 resident 路"。
+要处理的差异是明确的四条：① 输入是 **fp8 KV cache**（SDPA 入口是 `Tensor<f32>`，需要转换或加一个
+fp8 变体）；② KV 布局是 `[kv_heads, capacity, head_dim]` + 每个 chunk 的 append；
+③ 每 lane 位置不同（metadata 的 base/count/offset）；④ 滑动窗口与因果掩码语义要对齐。
+预计收益上限：attention 3.19 ms → 亚毫秒量级（预填充约 −8%），decode 同向。
