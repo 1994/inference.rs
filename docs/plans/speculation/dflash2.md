@@ -173,9 +173,27 @@ attends(q, k) = (q / block_size == k / block_size) || (k <= q && q - k < sliding
 4. 这套 walk 是**提议策略**，按 I1 的分层属于 `crates/engine/workloads` 的 provider，不属于模型
    package，因此本轮只把语义确认并记录，没有把采样器塞进 `infer-models`。
 
-**明确还没有做的**：arena、graph 与回滚开销的报价（需要设备事实）；上述 walk 的实现（归 I1 的
-provider 层，等 SPI 契约落地）；tokenizer 文件的逐 token 对照（需要 tokenizer 制品，目前 fixture
-只登记了配置）。
+**资源报价补齐到"草稿自身"能解释的部分（第九步）**
+
+方案要求报价包含"权重、target/draft 状态、feature 历史、arena、graph 和回滚开销"，且**完整报价可解释**。
+此前 `quote()` 只有每 token KV、窗口 KV 与每 tap 特征 ✗，权重与回滚都不在里面 ✗。现在报价移到
+`DFlash2Config`（几何与张量形状都在那里），字段与口径如下（BF16，`dtype_bytes = 2`）：
+
+| 字段 | 含义 | 值 |
+|---|---|---|
+| `weights_bytes` | 全部权重，与 weight inventory 同源 | 3,848,808,960 |
+| `kv_bytes_per_token` | 5 层 × 8 KV head × 128 维 × (K+V) × 2B | 20,480 |
+| `window_kv_bytes` | 每序列 2048 token 的窗口 | 41,943,040 |
+| `conv_history_bytes_per_sequence` | 每层两个动态卷积各 `kernel−1` 槽 × 5120 通道 × 2B | 102,400 |
+| `feature_bytes_per_token` | 每 tap 一条 hidden 特征（5 × 5120 × 2B） | 51,200 |
+| `rollback_bytes_per_round` | 只接受第一个候选时该轮丢弃的草稿 KV（`block−1`） | 143,360 |
+
+于是"一个序列的常驻草稿状态"= 窗口 + 卷积历史 = 42,045,440 字节（≈40 MB），而 feature 历史随已见 token
+线性增长——这正是它按 token 记账的原因。**仍未计入的是 arena 与捕获图**，它们需要设备事实；这一条继续
+写在方案里，不用估算糊过去。测试把每个字段与上述数字逐一钉住，含"权重报价与 inventory 同源"。
+
+**明确还没有做的**：arena 与捕获图的报价（需要设备事实）；上述 walk 的实现（归 I1 的 provider 层，
+等 SPI 契约落地）；tokenizer 文件的逐 token 对照（需要 tokenizer 制品，目前 fixture 只登记了配置）。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。

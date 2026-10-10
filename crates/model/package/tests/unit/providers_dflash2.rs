@@ -133,19 +133,41 @@ fn an_unsupported_operation_is_named() {
 
 #[test]
 fn the_quote_scales_with_geometry_and_precision() {
-    let draft = DraftGeometry::official();
-    let quote = draft.quote(2);
+    let config = fixture();
+    let quote = config.quote(2);
     // Five layers, eight KV heads of 128 values, K and V, two bytes each.
     assert_eq!(quote.kv_bytes_per_token, 5 * 8 * 128 * 2 * 2);
     assert_eq!(quote.window_kv_bytes, quote.kv_bytes_per_token * 2048);
     // Five taps of hidden 5120 at two bytes.
     assert_eq!(quote.feature_bytes_per_token, 5 * 5120 * 2);
-    let wide = draft.quote(4);
+    let wide = config.quote(4);
     assert_eq!(wide.kv_bytes_per_token, quote.kv_bytes_per_token * 2);
     assert_eq!(
         wide.feature_bytes_per_token,
         quote.feature_bytes_per_token * 2
     );
+}
+
+#[test]
+fn the_quote_covers_the_state_a_draft_sequence_carries() {
+    let config = fixture();
+    let quote = config.quote(2);
+    // Weights are the same number the inventory sums to, so the quote and the checks agree.
+    assert_eq!(quote.weights_bytes, config.weights_bytes(2));
+    assert_eq!(quote.weights_bytes, 3_848_808_960);
+    // Two dynamic convolutions per layer, each keeping `kernel - 1` slots over the hidden channels.
+    assert_eq!(quote.conv_history_bytes_per_sequence, 5 * 2 * 5120 * 2);
+    // A round that accepts only its first candidate discards the rest of the block.
+    assert_eq!(
+        quote.rollback_bytes_per_round,
+        quote.kv_bytes_per_token * (8 - 1)
+    );
+    // A sequence's resident state is its window plus the convolution histories; the features a
+    // sequence retains grow with the tokens it has seen, which is what the per-token figure is for.
+    let resident_without_features = quote.window_kv_bytes + quote.conv_history_bytes_per_sequence;
+    // K and V for the 2048-token window, plus both convolution histories.
+    assert_eq!(resident_without_features, 41_943_040 + 102_400);
+    assert!(quote.feature_bytes_per_token > quote.kv_bytes_per_token / 2);
 }
 
 #[test]

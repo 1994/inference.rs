@@ -258,11 +258,39 @@ impl DFlash2Config {
         expected
     }
 
+    /// The draft's own footprint, for the parts its geometry fixes.
+    ///
+    /// The plan's acceptance is that the complete quote is explainable; this covers the weights, the
+    /// draft's K/V and its window, the convolution history both dynamic convolutions keep, the
+    /// target features it retains, and what a rejected round leaves to discard. The arena, the
+    /// captured graph and the device's own accounting still need device facts and are not quoted
+    /// here.
+    #[must_use]
+    pub fn quote(&self, dtype_bytes: usize) -> DraftQuote {
+        let attention = self.num_hidden_layers * self.num_key_value_heads * self.head_dim;
+        let kv_bytes_per_token = attention * dtype_bytes * 2;
+        // One window per convolution per layer: it is `kernel - 1` wide over the hidden channels,
+        // and the configuration's group size is a grouping rather than a width.
+        let conv_history = self.num_hidden_layers
+            * 2
+            * self.hidden_size
+            * (self.dflash_config.conv_kernel_size - 1);
+        DraftQuote {
+            weights_bytes: self.weights_bytes(dtype_bytes),
+            kv_bytes_per_token,
+            window_kv_bytes: kv_bytes_per_token * self.sliding_window,
+            conv_history_bytes_per_sequence: conv_history * dtype_bytes,
+            feature_bytes_per_token: self.dflash_config.target_layer_ids.len()
+                * self.hidden_size
+                * dtype_bytes,
+            rollback_bytes_per_round: kv_bytes_per_token * (self.dflash_config.block_size - 1),
+        }
+    }
     /// Every weight the draft loads, in bytes at `dtype_bytes` each.
     ///
-    /// This is the half of the resource quote that the checkpoint's shapes determine; the arena,
-    /// graph and rollback costs still need device facts, and the state and feature history are
-    /// quoted by [`DraftGeometry::quote`].
+    /// The resource quote and the inventory have to agree, so this is the same sum
+    /// [`Self::quote`] reports as `weights_bytes`; the arena and the captured graph still need
+    /// device facts and are not quoted here.
     #[must_use]
     pub fn weights_bytes(&self, dtype_bytes: usize) -> usize {
         self.expected_weight_shapes()
@@ -325,12 +353,19 @@ pub struct DraftGeometry {
 /// What the draft costs before weights, arena, graph and rollback are known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DraftQuote {
+    /// Every weight the draft loads.
+    pub weights_bytes: usize,
     /// K and V for one token across every draft layer.
     pub kv_bytes_per_token: usize,
     /// The window the draft attention keeps per sequence.
     pub window_kv_bytes: usize,
+    /// The history both dynamic convolutions keep per layer, per sequence.
+    pub conv_history_bytes_per_sequence: usize,
     /// One retained target feature vector per tap, per token.
     pub feature_bytes_per_token: usize,
+    /// Draft K/V a rejected round leaves to discard, in the round where only the first candidate is
+    /// accepted.
+    pub rollback_bytes_per_round: usize,
 }
 
 /// The values `z-lab/Qwen3.8-27B-DFlash2` declares, named so the contract holds no bare numbers.
@@ -489,22 +524,6 @@ impl DraftGeometry {
             }
         }
         Ok(())
-    }
-
-    /// The part of the draft's footprint that its geometry fixes.
-    ///
-    /// Weights, arena, graph and rollback cost need tensor shapes and device facts, so they are not
-    /// quoted here; the plan's acceptance is that the complete quote is explainable, and this is
-    /// the half that is explainable from the configuration alone.
-    #[must_use]
-    pub const fn quote(&self, dtype_bytes: usize) -> DraftQuote {
-        let kv_bytes_per_token =
-            self.layers * self.key_value_heads * self.head_dim * dtype_bytes * 2;
-        DraftQuote {
-            kv_bytes_per_token,
-            window_kv_bytes: kv_bytes_per_token * self.sliding_window,
-            feature_bytes_per_token: self.target_taps.len() * self.hidden_size * dtype_bytes,
-        }
     }
 }
 
