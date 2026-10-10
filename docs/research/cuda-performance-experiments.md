@@ -2559,3 +2559,40 @@ WARN  request finished unsuccessfully request=1
 - 长上下文的墙是**准备开销随容量增长**（16384 就 >30 s）⇒ 要么让**池覆盖该容量**从而不走私有准备，
   要么让准备/预填充按**实际 prompt 长度**而不是预留容量来做；
 - 准入的墙是**激活预算**（固定且大）⇒ 池内请求应当只被收取"池未覆盖的那部分"。
+
+### 13.31 把"准备"和"16 槽"都量到底：真正的双重预留在**激活/工作区 scratch**，不在 KV
+
+**（1）16384 的挂起是 MTP 特有的。** 同一台机器、同一常量：
+
+| 配置 | 结果 |
+|---|---|
+| `CB_SLOT_TOKENS=16384`，**不开 MTP** | ✅ 正常：wall 3.0 s、TTFT 1.93 s |
+| `CB_SLOT_TOKENS=16384`，**开 MTP**（`--num-speculative-tokens 2`） | ❌ **挂起**：30 s 后 `resource preparation acknowledgement timed out`，TTFT 0 |
+
+日志里池子在两种情况下都**构建成功**（`CUDA slot pool captured at load width=4 capacity=16384`），
+差别只在 MTP ⇒ 挂起出在 **draft/验证准备**这一段，与容量叠加时才触发（8192 时正常）。
+
+**（2）§13.29 的池内计价落地之后，16 槽配置**（`CB_DECODE_SLOTS=16`）**依然失败**，但这次日志给出了
+真正的原因，而不是"准入拒绝"：
+
+```
+WARN CUDA slot pool prewarm failed; will retry on the first batchable step capacity=8192
+     last_failure=width 2: Capacity: resident F32 state exceeds available device memory
+{"code":"Capacity","message":"dataflow scratch exceeds program workspace budget"}
+```
+
+第一条：**池的 prewarm 连 width=2 都建不起来**（`resident F32 state exceeds available device memory`）；
+第二条：某个请求的程序**编译**就失败——`compilation.rs:109` 把 dataflow 的 scratch 与
+`workspace_limit`（设备的 arena 预算）比，**scratch 超了**。
+
+**（3）结论：真正的"双重预留"是激活/工作区 scratch，不是 KV。**
+池在构建时为自己的激活 arena 预留一份 workspace，**每个私有请求再为自己的程序预留一份**；
+池一宽（16 槽）或容量一大（16384），两边的 scratch 抢同一份预算 ⇒ prewarm 失败 / 程序编译失败。
+这与 §13.30 量到的"1.12 GB 报价由激活 arena 主导"完全一致 ✓，也解释了为什么 §13.29 减免 KV
+那一份**减错了项**。
+
+**⇒ 第④步的正确切法**：池内请求的程序应当以**池已持有的共享 arena 预算**去编译
+（`crates/model/compiler` 的 `workspace_limit` 来源：`device.arena_budget_bytes()`），而不是各自新开一份。
+这条比"把 KV 计价改成块数"更贴近实测瓶颈。
+
+（`CB_DECODE_SLOTS` 已回退到 4、`CB_SLOT_TOKENS` 保持 8192；matrix 复验 16/16 通过。）
