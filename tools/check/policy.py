@@ -137,6 +137,8 @@ def check_exceptions():
                         ROOT / "crates/backend/cuda/src/mlp/pdl_consumers.rs",
                         ROOT / "crates/backend/cuda/src/resident/arena.rs",
                         ROOT / "crates/backend/cuda/src/resident/profile.rs",
+                        ROOT / "crates/backend/cuda/src/resident/batch.rs",
+                        ROOT / "crates/backend/cuda/src/resident/slot_verify.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",
                         ROOT / "tools/bench/cpu/src/main.rs",
                     ),
