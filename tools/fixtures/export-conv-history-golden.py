@@ -14,6 +14,7 @@ import argparse
 import json
 import math
 import struct
+import sys
 from pathlib import Path
 
 CHANNELS = 4
@@ -77,6 +78,9 @@ def gathered(base: list[float], accepted: list[list[float]]) -> list[float]:
     return per_channel
 
 
+SCRIPT = "tools/fixtures/export-conv-history-golden.py"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
@@ -133,7 +137,13 @@ def main() -> None:
             "relative": 1e-5,
             "reason": "the reference accumulates in f64 and rounds the output once",
         },
-        "generator": {"script": "tools/fixtures/export-conv-history-golden.py"},
+        "generator": {
+            "script": SCRIPT,
+            "python": sys.version.split()[0],
+            "command": (
+                f"python3 tools/fixtures/{SCRIPT} --output examples/recurrent-conv/golden.json"
+            ),
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(golden) + "\n")

@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import struct
+import sys
 from pathlib import Path
 
 # A small geometry with two key heads shared by four value heads, which is the grouping the step
@@ -97,6 +98,9 @@ def step(state: list[float], inputs: list[list[float]]) -> list[float]:
     return recurrent, out
 
 
+SCRIPT = "tools/fixtures/export-delta-state-golden.py"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
@@ -161,7 +165,13 @@ def main() -> None:
             "relative": 1e-4,
             "reason": "the reference accumulates in f64 and keeps the state in f32",
         },
-        "generator": {"script": "tools/fixtures/export-delta-state-golden.py"},
+        "generator": {
+            "script": SCRIPT,
+            "python": sys.version.split()[0],
+            "command": (
+                f"python3 tools/fixtures/{SCRIPT} --output examples/recurrent-delta/golden.json"
+            ),
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(golden) + "\n")

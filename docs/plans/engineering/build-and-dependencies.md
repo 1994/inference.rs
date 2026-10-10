@@ -185,6 +185,26 @@ package 计划一致"从约定变成可执行检查。`local-build` 与 `package
 验证：`make local-build` 在本机跑通并产出 `target/release/infer`（计划解析为 cuda backend，包含
 `--features cuda`），`./target/release/infer --version` 正常；打包单测、`check-tools`、`ruff` 干净。
 
+## 已实施：golden 必须记录参考环境（并因此发现一处真实缺口）
+
+方案要求"**参考环境的版本、输入和生成命令随 golden 记录**，便于重新生成"。审查发现只做到了**一半** ✗：
+模型级 golden 记了 `producer`/`torch`/`transformers`/`seed` ✓，我新增的 DFlash2 与 recurrent 系列记了
+`generator.script` ✓，但**两个 readout golden 完全没有任何来源信息** ✗，`text-golden.json` 只记了
+`revision` ✗，而 recurrent 系列**没有记录环境版本** ✗。
+
+新增门禁 `tools/check/golden-provenance.py`（接入 `make check-tools` ✓）：每个登记 golden 必须能回答
+**三件事** —— 谁生成的（`producer` 或 `generator.script` ✓）、**环境版本**（`torch`/`transformers`/`python`/
+`version` ✓）、**输入身份**（`seed`/`revision`/`formula`/`inputs_sha256`/`declared_inputs`/`cases` ✓）；
+三者缺一即失败并点名缺哪一项 ✓。历史 golden 用**只减不增**的清单登记（条目被补齐后仍在表里会失败 ✓），
+复用与依赖记录同一套棘轮思路 ✓。
+
+**规则一落地就抓到真问题** ✓：把两个 readout golden 用当前 `artifacts/vllm-compare` 环境（torch 2.13 /
+transformers 5.18 ✓）重跑一遍导出器，**逐字段数值都变了** ✗（`embedding`、`rank_scores`、
+`decision_logits`、`continuous_expected`，以及 grouped 的 `greedy_tokens` ✗）—— 说明这些登记值来自
+**另一套库版本** ✗，用今天的环境**无法复现** ✗✓。因此我没有覆盖它们（消费它们的 Rust 断言是按旧值标定的 ✓），
+而是把两条 readout 与 `text-golden.json` 登记为 legacy 并写明原因 ✓；导出器侧已改为**新生成的 golden 会记录
+版本与命令** ✓，未来的重新生成有据可依 ✓。
+
 ## 已实施：迁移前后的实测对照
 
 方案要求"对照迁移前的编译时间、链接目标数、测试收集和场景覆盖，分别报告变化，不能仅用目录和脚本数量

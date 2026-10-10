@@ -115,6 +115,11 @@ golden = {
     "prefixes": prefixes,
     "greedy_tokens": generated,
 }
+golden["generator"] = {
+    "script": "tools/fixtures/export-qwen-golden.py",
+    "command": f"python3 tools/fixtures/export-qwen-golden.py --output {args.output}"
+    + (" --grouped" if args.grouped else ""),
+}
 (args.output / "golden.json").write_text(json.dumps(golden, indent=2) + "\n")
 
 vocab = {f"token{i}": i for i in range(32)}
@@ -161,6 +166,15 @@ with torch.no_grad():
 (args.output / "readout-golden.json").write_text(
     json.dumps(
         {
+            "producer": "Hugging Face Transformers Qwen3_5ForCausalLM, eager F32 CPU",
+            "transformers": transformers.__version__,
+            "torch": torch.__version__,
+            "seed": 20261004,
+            "generator": {
+                "script": "tools/fixtures/export-qwen-golden.py",
+                "command": f"python3 tools/fixtures/export-qwen-golden.py --output {args.output}"
+                + (" --grouped" if args.grouped else ""),
+            },
             "embedding": embedding.tolist(),
             "rank_scores": rank_scores,
             "decision_logits": decisions.tolist(),
