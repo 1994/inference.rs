@@ -2373,3 +2373,27 @@ draft 导出时 `dst=private, src=pool`，两侧都自带 (capacity, offset)，�
 
 回退后复核：`--all-targets` **0 错误** ✅、clippy ✅、27 单测 ✅、4 个 GPU 硬件测试 ✅、fmt ✅、
 release 构建 ✅、工作区干净。
+
+### 13.23 共享 arena 第三次尝试：`KvSpan` 改成**双侧行偏移**后编译通过，但 draft 路径仍有设备越界
+
+按 §13.22 的结论改：`KvSpan { dst: usize, src: usize }` **只带两侧的行偏移**，容量由张量自身
+的 extent 决定（校验也据此），于是"哪一侧是共享侧"的歧义彻底消失。`cargo check` /
+`clippy -D warnings` / `--all-targets` 全部一次通过，非 draft 的测试与 `slot_verify` 也过。
+
+但 draft 仍然越界，而且这次**定位到了具体内核**（`CUDA_LAUNCH_BLOCKING=1`）：
+
+```
+crates/backend/cuda/src/resident/attention.rs:113: tile block: [0, 0, 0], position: []:
+  partition access out of bounds: dim 1, block index >= ceil(?/32) or index < 0
+```
+
+`attention.rs:113` 正是 **decode 注意力的 KV 读**（`kp.load([pid.0 / GROUP, physical, 0])`），
+"dim 1" 就是 arena 的块维：**表给出的物理块号超过了该图所用 arena 的块数**。
+
+检查过的、应该一致的地方：池的 arena 用 `allocate_shared(capacity, width)`（= `capacity*width` 行
+= `capacity*width/32` 块），表用 `slot_tables(capacity, width)`（条目最大 `width*blocks - 1`）——两者
+自洽；私有 program 的表是 `identity_table(capacity)`，其 arena 也是同一 capacity——也自洽。
+
+所以**还有第三处**"表与其 arena 不同源"的地方（draft 路径专属），下一轮先用最便宜的检查钉死它：
+在**每次捕获**时打印 `(figure 的 arena 块数, 该表的 shape 与最大条目)`——这两数一比就知道是谁错配，
+不用再推理。（当前已回退；回退后 clippy ✅、27 单测 ✅、4 GPU 硬件测试 ✅。）
