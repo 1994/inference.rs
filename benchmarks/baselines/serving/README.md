@@ -16,6 +16,20 @@ python3 tools/bench/freeze-baseline.py --verify benchmarks/baselines/serving/<id
 
 性能结论按实测记录：测得退化仍是有效基线，`manifest.json` 的 `gate.passed` 如实写 `false`。任务质量不在本目录判定。
 
+## 旧基线的复核
+
+`manifest.json` 的 `gate` 记的是签发当年的判定 ✓；要**用当前门禁重新复核**冻结报告 ✗（例如与一份新候选对比，
+或确认旧结论仍可读懂 ✓），加 `--allow-legacy-baseline` ✓：
+
+```sh
+python3 tools/bench/compare-results.py --allow-legacy-baseline \
+    <frozen-native-g1.json> <frozen-reference-g1.json>
+```
+
+该开关只放宽 **profile 身份**这一项（早期报告不带有效 profile 字段 ✓），其余对齐、统计与数值门禁一律照旧 ✓；
+**新测量自身**在默认路径下仍必须自证 release profile ✓。三条已签发基线均以此方式复核通过（各 12 个指标，
+verdict 与 manifest 一致 ✓）。
+
 ## 目录内容
 
 | 文件 | 内容 |

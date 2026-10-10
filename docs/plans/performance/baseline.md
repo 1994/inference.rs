@@ -109,6 +109,20 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 描述性文字，因此**无需改动、继续有效** ✓。新增 6 个用例（纯 dtype、带有大小写的变体、空值、
 需要种子、带种子、贪心无需种子），bench 单测 78 → **84 全过** ✓。
 
+**profile 规则有版本边界，旧基线仍可复核（实测）**
+
+上面那条规则加进来之后出现一个副作用 ✗：**已签发的三条基线无法被当前门禁复核** ✗ —— 它们的报告早于规则，
+只有 manifest 的显式键，于是 `compare-results.py` 直接报 "records no effective release profile" ✗。
+而方案明确要求"**保留旧 profile 的结果和交接对照**"✓，所以这不是"旧报告无效"的问题，而是**版本边界**问题 ✓：
+
+- `release_profile_state()` 现在给出三态：**`proven`**（带有效 profile ✓）、**`legacy`**（字段缺失，
+  规则之前写的 ✓）、以及**直接抛错**（profile 存在但被改坏：debug assertions / 未优化 / incremental ✓）；
+- `compare()` 默认要求**两侧都** `proven` ✓；新增 `--allow-legacy-baseline` ✓ 表示"这是一次**历史对照**"
+  （复核冻结对、或用新候选对照冻结参考 ✓），此时任一侧可以是 `legacy` ✓ —— 但**新测量**在默认路径下
+  仍必须自证 profile ✓，规则强度没有被稀释 ✓；
+- **实测复核**：三条已签发基线用该开关重新跑一遍有效性门禁 ✓ —— **各自 12 个指标全部复核通过** ✓，
+  且 verdict（`passed = false`）与其 manifest 记录**一致** ✓，说明冻结证据至今仍可被当前门禁读懂 ✓。
+
 **性能结论如实记录，不作签发条件**
 
 三条基线的 `gate.passed` 都是 `false`：native 目前慢于 vLLM（例如 2b 的 batch4 `wall_seconds`

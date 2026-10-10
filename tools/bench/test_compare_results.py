@@ -143,31 +143,44 @@ class GateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     module.compare(old, new)
 
-    def test_a_report_without_an_effective_profile_is_rejected(self):
-        with self.assertRaises(ValueError) as raised:
-            module.require_release_identity(
-                report()
-                | {"identity": identity(release_profile={"lto": "thin", "codegen-units": 1})}
-            )
-        self.assertIn("effective release profile", str(raised.exception))
+    def test_a_report_without_an_effective_profile_is_legacy_not_invalid(self):
+        # The plan keeps old profiles' results, so an absent profile classifies as legacy; a profile
+        # that is present but wrong stays invalid, which the next two cases check.
+        legacy = report() | {
+            "identity": identity(release_profile={"lto": "thin", "codegen-units": 1})
+        }
+        module.require_release_identity(legacy)
+        self.assertEqual(module.release_profile_state(legacy["identity"]), "legacy")
 
     def test_a_debug_assertion_build_is_rejected(self):
         profile = identity()["release_profile"]
         profile["effective"]["debug-assertions"] = True
         with self.assertRaises(ValueError) as raised:
-            module.require_release_identity(
-                report() | {"identity": identity(release_profile=profile)}
-            )
+            module.release_profile_state(identity(release_profile=profile))
         self.assertIn("debug assertions", str(raised.exception))
 
     def test_an_unoptimized_build_is_rejected(self):
         profile = identity()["release_profile"]
         profile["effective"]["opt-level"] = 0
         with self.assertRaises(ValueError) as raised:
-            module.require_release_identity(
-                report() | {"identity": identity(release_profile=profile)}
-            )
+            module.release_profile_state(identity(release_profile=profile))
         self.assertIn("without optimization", str(raised.exception))
+
+    def test_a_legacy_pair_needs_the_historical_flag(self):
+        legacy = report() | {"identity": identity(release_profile={"lto": "thin"})}
+        with self.assertRaises(ValueError) as raised:
+            module.compare(legacy, legacy)
+        self.assertIn("predates the effective-profile rule", str(raised.exception))
+        # With the flag the same frozen pair is a historical comparison, which the plan keeps.
+        result = module.compare(legacy, legacy, allow_legacy_baseline=True)
+        self.assertIn("metrics", result)
+
+    def test_a_legacy_candidate_is_refused_while_it_is_not_a_historical_comparison(self):
+        fresh = report()
+        legacy = report() | {"identity": identity(release_profile={"lto": "thin"})}
+        with self.assertRaises(ValueError) as raised:
+            module.compare(fresh, legacy)
+        self.assertIn("candidate report predates", str(raised.exception))
 
     def test_numerical_gate(self):
         old, new = report(), report()

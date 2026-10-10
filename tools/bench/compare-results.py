@@ -26,16 +26,17 @@ REQUIRED_TELEMETRY = ("utilization_gpu_mean", "utilization_gpu_max", "sm_clock_m
 REQUIRED_REQUEST_LATENCY = ("ttft_seconds",)
 
 
-def require_release_profile(identity):
-    """Prove the profile a native report was built with, not merely that a path looked released.
+def release_profile_state(identity):
+    """Whether a native report's release profile is proven, legacy, or outright wrong.
 
-    The baseline contract says debug or mixed profiles do not enter a formal baseline and that the
-    effective optimization level and debug assertions have to be visible, so a report that records
-    only the manifest's explicit keys does not answer the question.
+    Reports written before the effective-profile rule carry only the manifest's explicit keys, so
+    their profile cannot be proven - they are `legacy`, not invalid. The plan keeps old profiles'
+    results for handover, so a caller may still use one as the fixed side of a comparison; a new
+    measurement must never be legacy.
     """
     profile = identity.get("release_profile")
     if not isinstance(profile, dict) or not profile.get("effective"):
-        raise ValueError("native report records no effective release profile")
+        return "legacy"
     effective = profile["effective"]
     if effective.get("debug-assertions") is not False:
         raise ValueError("native report was built with debug assertions")
@@ -48,6 +49,7 @@ def require_release_profile(identity):
         raise ValueError("native report was built without optimization")
     if effective.get("incremental"):
         raise ValueError("native report was built incrementally")
+    return "proven"
 
 
 def require_release_identity(report):
@@ -64,7 +66,6 @@ def require_release_identity(report):
             raise ValueError("native report was not built as a release binary")
         if not (identity.get("source") or {}).get("revision"):
             raise ValueError("native report records no source revision")
-        require_release_profile(identity)
     elif not identity.get("engine_version"):
         raise ValueError("reference report records no engine version")
     if not (identity.get("hardware") or {}).get("devices"):
@@ -216,7 +217,14 @@ def availability(values):
     return usable
 
 
-def compare(baseline, candidate, max_ratio=1.1, identical=False, reference="vllm"):
+def compare(
+    baseline,
+    candidate,
+    max_ratio=1.1,
+    identical=False,
+    reference="vllm",
+    allow_legacy_baseline=False,
+):
     for field in ("max_new_tokens", "temperature", "mtp_depth", "eos_tokens"):
         if field not in baseline or baseline[field] != candidate.get(field):
             raise ValueError(f"unaligned or missing workload field: {field}")
@@ -225,6 +233,19 @@ def compare(baseline, candidate, max_ratio=1.1, identical=False, reference="vllm
             raise ValueError(f"unaligned or missing workload field: {field}")
     require_release_identity(baseline)
     require_release_identity(candidate)
+    # A new measurement has to prove its profile. The flag marks a historical comparison - a frozen
+    # pair re-checked, or a new candidate against a frozen reference - where either side may predate
+    # the rule, because the plan keeps old profiles' results rather than discarding them.
+    legacy = [
+        side
+        for side in ("baseline", "candidate")
+        if release_profile_state(locals()[side]["identity"]) != "proven"
+    ]
+    if legacy and not allow_legacy_baseline:
+        raise ValueError(
+            f"{' and '.join(legacy)} report predates the effective-profile rule; pass"
+            " --allow-legacy-baseline to treat this as a historical comparison"
+        )
     align(baseline, candidate)
     tested_report, fixed_report, label = orientation(baseline, candidate, reference)
     old, new = measured(fixed_report), measured(tested_report)
@@ -373,6 +394,11 @@ def main():
     parser.add_argument("--max-ratio", type=float, default=1.1)
     parser.add_argument("--require-identical-tokens", action="store_true")
     parser.add_argument(
+        "--allow-legacy-baseline",
+        action="store_true",
+        help="accept a frozen baseline whose release profile predates the effective-profile rule",
+    )
+    parser.add_argument(
         "--reference-engine",
         default="vllm",
         help="the side the target is measured against; the ratio is the other side over this one",
@@ -387,6 +413,7 @@ def main():
             args.max_ratio,
             args.require_identical_tokens,
             args.reference_engine,
+            args.allow_legacy_baseline,
         )
     except (ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
