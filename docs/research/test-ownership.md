@@ -42,9 +42,9 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（62 个文件）
+## 执行器消费者与删除归属（61 个文件）
 
-| `protocol` | 12 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
+| `protocol` | 11 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
 | `numeric` | 6 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
@@ -169,6 +169,17 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
   斜坡用累加构造，避免 `index as f32` 触发 `clippy::cast_precision_loss`。
 - **state 表容量要按场景给**。`cpu_storage` 的候选窗口场景提交的请求数远超 4，替身容量太小会
   以 `fixed map exhausted` 失败。
+
+### 已替换：`runtime/tests/scheduling.rs`（11 个用例）
+
+装饰器 `TimedBackend` 保留，内层换成声明式替身，并补两项：`reserve_state_for` 转发（引擎走的是
+它，只转发 `reserve_state` 会让替身 state 表为空），以及把注入计时的 `source` 从 `CpuWall` 改成
+`CudaGpu` 以匹配声明的 backend 种类；`measured_cost_feedback_is_replayed_and_checkpointed_deterministically`
+里那处断言也跟着改成 `CudaGpu`（该用例要验的是"测量成本被确定性重放"，不是来源名字）。
+
+替身还差一条能力声明才让页面压力场景不再卡死：**`supports_recompute_preemption() -> true`**。
+没有它，`logical_page_pressure_recomputes_and_replays_without_losing_generated_tokens` 会在
+"等调度器收敛"上超时。
 
 ### 下一步：`control_path` 需要替身支持在途票据语义
 

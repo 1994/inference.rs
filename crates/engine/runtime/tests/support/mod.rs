@@ -243,6 +243,11 @@ impl BackendProvider for ProtocolBackend {
         }
         Ok(())
     }
+    fn supports_recompute_preemption(&self) -> bool {
+        // A scene that reclaims pages by recomputing needs the backend to allow it; the double has
+        // no device state to lose, so it always can.
+        true
+    }
     fn supports_control_checkpoint(&self) -> bool {
         // The double holds fixed outputs and no device state, so a control checkpoint reconstructs
         // it exactly; scenes that checkpoint need this to be true.

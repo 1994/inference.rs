@@ -1,8 +1,8 @@
-use infer_backend_reference::{
-    ReferenceBackend, ReferenceKernels, ReferenceModel, ReferenceTicket,
-};
+mod support;
+
 use infer_kernel_api::KernelRegistry;
 use infer_spi::{AdmissionPolicy, BackendProvider, SchedulingPolicy};
+use support::ProtocolBackend;
 
 use infer_core::*;
 use infer_ir::*;
@@ -14,23 +14,29 @@ use infer_runtime::*;
 )]
 fn registry() -> KernelRegistry {
     let mut r = KernelRegistry::default();
-    r.register(&ReferenceKernels).unwrap();
+    r.register(&support::DeclaredKernels).unwrap();
     r
 }
 #[expect(
     clippy::unwrap_used,
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
-fn backend() -> ReferenceBackend {
-    ReferenceBackend::new(ReferenceModel::fixture(ModelId::new(1).unwrap(), 7)).unwrap()
+fn backend() -> ProtocolBackend {
+    ProtocolBackend::tagged(
+        "scheduling-weights",
+        16,
+        8,
+        &support::model(ModelId::new(1).unwrap()),
+    )
+    .unwrap()
 }
 #[expect(
     clippy::unwrap_used,
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
-fn engine(config: RuntimeConfig) -> Engine<ReferenceBackend> {
+fn engine(config: RuntimeConfig) -> Engine<ProtocolBackend> {
     let b = backend();
-    let m = b.model().ir.clone();
+    let m = support::model(ModelId::new(1).unwrap());
     Engine::new(b, m, PrecisionPlan::f32(), &registry(), config).unwrap()
 }
 #[expect(
@@ -380,7 +386,7 @@ impl SchedulingPolicy for ForgedPolicy {
 fn provider_cannot_underreport_cost_or_forge_permanent_rejection() {
     for reject in [false, true] {
         let b = backend();
-        let m = b.model().ir.clone();
+        let m = support::model(ModelId::new(1).unwrap());
         let mut e = Engine::with_policy(
             b,
             m,
@@ -404,11 +410,11 @@ fn provider_cannot_underreport_cost_or_forge_permanent_rejection() {
 // Controlled timing fixtures isolate replay from machine timing variability.
 // Real Host and Metal measurements are covered by their backend integration tests.
 struct TimedBackend {
-    inner: ReferenceBackend,
+    inner: ProtocolBackend,
     elapsed: u64,
 }
 struct TimedTicket {
-    inner: ReferenceTicket,
+    inner: <ProtocolBackend as BackendProvider>::Ticket,
     done: bool,
 }
 impl BackendProvider for TimedBackend {
@@ -424,6 +430,20 @@ impl BackendProvider for TimedBackend {
     }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        self.inner.reserve_state_for(state, capacity, readout)
+    }
+    fn recycle_output(&mut self, state: StateId, output: ModelOutput) -> Result<()> {
+        self.inner.recycle_output(state, output)
+    }
+    fn recycle_batch(&mut self, outputs: Vec<TaskOutput>) -> Result<()> {
+        self.inner.recycle_batch(outputs)
     }
     fn reset_state(&mut self, state: StateId) -> Result<()> {
         self.inner.reset_state(state)
@@ -465,7 +485,8 @@ impl BackendProvider for TimedBackend {
     fn completion_timing(&self, t: &Self::Ticket) -> Option<ExecutionTiming> {
         t.done.then_some(ExecutionTiming {
             elapsed_us: self.elapsed,
-            source: TimingSource::CpuWall,
+            // The source has to match the declared backend kind or the engine discards the sample.
+            source: TimingSource::CudaGpu,
         })
     }
 }
@@ -475,7 +496,7 @@ impl BackendProvider for TimedBackend {
 )]
 fn timed_engine(config: RuntimeConfig, elapsed: u64) -> Engine<TimedBackend> {
     let b = backend();
-    let m = b.model().ir.clone();
+    let m = support::model(ModelId::new(1).unwrap());
     Engine::new(
         TimedBackend { inner: b, elapsed },
         m,
@@ -514,7 +535,7 @@ fn measured_cost_feedback_is_replayed_and_checkpointed_deterministically() {
     assert_eq!(original.inspect().cost_model, restored.inspect().cost_model);
     assert_eq!(
         original.inspect().cost_model.last_source,
-        Some(TimingSource::CpuWall)
+        Some(TimingSource::CudaGpu)
     );
     assert!(original.inspect().cost_model.observations > 0);
     let journal = original.journal().unwrap();

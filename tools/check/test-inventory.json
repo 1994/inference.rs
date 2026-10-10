@@ -194,14 +194,6 @@
       "role": "numeric"
     },
     {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/tests/scheduling.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
       "crate": "ir",
       "path": "crates/foundation/ir/Cargo.toml",
       "patterns": [
