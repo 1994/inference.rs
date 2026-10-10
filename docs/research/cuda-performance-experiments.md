@@ -1900,3 +1900,70 @@ batch4 −0.8%，hot_long 那次 PIPE=0 的 run 被干扰到 TTFT 1.5 s，属异
 已**整段回滚**（三个文件），工作区回到提交状态。杠杆 A 若还有收益，得从"重排 K 循环结构 /
 提高 tile 内 K 跨度"入手，而不是贴一个现成的 load 变体。**这个否证的价值在于：把"用现成的
 TMA load 就能提带宽"这条捷径关掉了。**
+
+## 十三、KV cache 管理的重构（为什么、目标形态、落地顺序）
+
+### 13.1 现状：固定槽位 + 每序列按最大长度预留 + 前缀整状态拷贝
+
+- **分配**（`resident/fp8_cache.rs::allocate`、`program.rs::allocate_states`）：每个
+  `AttentionKv` 状态一次性分配 `capacity × columns × 2`（K/V 各一）的**扁平 fp8 缓冲**，
+  `capacity` 是**每序列最大 token 数**，与实际长度无关。
+- **布局**：head-major `[kv_heads, capacity, head_dim]`；核里是
+  `keys.partition([1,K,D]).load([kv_head, block, 0])`——**位置即下标，没有间接层**。
+- **管理**（`resident/slot_batch.rs::SlotPool`）：`slots = width` 个槽位、`free` 栈、
+  每槽一套 `States`+`Fp8Caches`、`copy_plan`（KV 搬 `rows` 行 / conv·delta 整块）。
+- **准入**（`executor/execution.rs:378-392`）：并发上限 = 槽位数；领不到槽的序列这一步不跑。
+- **前缀复用**（`executor/execution.rs:13-55`）：`history.len()` 是 `PREFIX_GRANULARITY = 256`
+  的整数倍时**快照整个 program 状态**，复用时 `bind` 把 `rows` 行 KV **逐 head 拷贝**进新槽。
+
+**为什么长上下文差——根因不是"没分页"，是"固定形状的 CUDA 图"**：图在捕获时把张量形状钉死，
+于是每序列的 KV 必须按**最大长度**预留才能进图。**block table 正是把"图形状"与"序列长度"
+解耦的那个机制**；这也解释了为什么 `max_model_len` 只能取"装得下"的值。
+
+### 13.2 数字（27B fp8，capacity 32768）
+
+| 项 | 值 | 出处 |
+|---|---:|---|
+| KV 每 token | **32 KB** | 16 个全注意力层 × 4 kv_heads × 256 head_dim × 2(K+V) × 1 B |
+| 每序列 KV 预留 | **≈1.07 GB** | 32768 × 32 KB，**与实际长度无关** |
+| 递推状态（delta，48 层） | **≈151 MB/序列** | 48 层 × 48 value_heads × 128 × 128 × 4 B（几何见 §十） |
+| 复用拷贝量（3584 前缀） | **≈114 MB/次** | 3584 × 32 KB，逐 head 设备内拷贝 |
+| 前缀快照粒度 | 256 token，**整状态** | `PREFIX_GRANULARITY`，KV+递推全量 |
+
+即：**KV 预留随 `max_model_len` 线性膨胀，而一个 8k 上下文的真实需求只有 262 MB** —— 32 倍
+浪费；这直接把 agentic 场景（长共享前缀 + 高并发）的并发数压在个位数。
+
+### 13.3 目标形态：PagedAttention + 块级前缀共享（vLLM 的两件套）
+
+agentic 负载的特征决定了选项：**长且高度重复的前缀**（system prompt、工具 schema、few-shot）、
+**多轮**（前缀只增长）、**高并发**。对应的最优管理是：
+
+1. **块池 + 每序列 block table**：KV 切成固定 token 数的块，全局按需分配；序列只持有自己块 id 的
+   表。图形状不再依赖序列长度 ⇒ 不再需要按最大长度预留。
+2. **块级内容哈希 + 引用计数 + COW**（Automatic Prefix Caching）：相同前缀的块直接共享，
+   **零拷贝**；写共享块时才复制。替代现在"256 token 整状态快照 + 全量拷贝"。
+3. **块级逐出/换出**（后面再谈）：长尾前缀分页到主机内存。
+
+### 13.4 本模型的硬约束：递推状态不可分页、不可共享（必须先说清楚）
+
+64 层里 **48 层是 gated-delta（+conv）递推**，它带一个**每序列**状态（≈151 MB），
+**不能像 KV 那样分块/共享**——vLLM 的 PagedAttention 假设纯注意力，直接照搬会漏掉这一半。
+因此正确形态是：
+
+- **16 个全注意力层的 KV 走块池 + 共享**（这一半能分页、能零拷贝共享）；
+- **48 层递推状态保持每序列**，但要在**与共享块相同的边界**上做检查点，这样"共享前缀"要同时恢复
+  KV 块和递推检查点；检查点应改成**按需生成 + 复用不拷贝**（现在是每次复用都全量拷 151 MB）。
+
+这个边界也决定了并发的上限：即便 KV 完全分页，≈6 GiB 可用状态内存 ÷ (151 MB + KV) 仍是硬顶。
+
+### 13.5 落地顺序（每步默认路径不变、新路径挂开关、测试全绿）
+
+1. **块池 + block table 间接寻址**：`append`、prefill attention、decode attention 三处核改成
+   `(arena, block_table)` 取数；`bind`/预算跟着改；先用**恒等映射**（序列 i 的块 j → 物理
+   `i*blocks_per_seq + j`）验证数值与 token 完全一致。这一步不改变内存占用，只是把间接层建起来。
+2. **真实块分配器**：空闲块链 + 按需分配 ⇒ **去掉每序列最大长度预留**（这一步才拿到内存/并发收益）。
+3. **块级前缀哈希共享 + COW** ⇒ 复用零拷贝。
+4. **准入/计价改成块数**：`state_reservation_bytes`、engine 的 `capacity` 语义。
+5. **块内布局改 token-major** ⇒ 接上 §12.16 已验证的张量核 SDPA（3.1–3.5×，decode 另做单 query 变体）。
+
+验收：每步都跑官方矩阵（token 必须与改动前一致，除第 5 步外），并把图总量/并发数/显存占用记进本文件。
