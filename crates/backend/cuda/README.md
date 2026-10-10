@@ -9,7 +9,7 @@
 ```sh
 export CUDA_TOOLKIT_PATH=/path/to/cuda
 cargo build --locked --release -p infer-cli --features cuda
-make check-cuda
+make test-cuda
 ```
 
 bindgen 找不到 C 标准头时，将实际主机 include 路径传给 `BINDGEN_EXTRA_CLANG_ARGS`，例如 `-isystem /path/to/gcc/include`；该路径不能照搬其他机器。默认 CLI 不启用 CUDA feature，普通 hosted Rust 门禁不需要 Toolkit。
@@ -46,7 +46,7 @@ tile 尺寸是运行设备的属性，所以加载时自动决定，不需要操
 
 | 入口 | 用途 |
 |---|---|
-| `make check-cuda` | 严格 Clippy、测试、Rustdoc 与 GPU kernel 检查 |
+| `make test-cuda` | 严格 Clippy、测试、Rustdoc 与 GPU kernel 检查 |
 | `make check-attention` | 独立 F64 oracle 与 Candle 数值/性能门禁 |
 | `cuda-resident-check` / `cuda-provider-check` | 驻留执行图、加载与 provider 回归 |
 | `cuda-model-smoke` | 完整模型诊断与 MTP 对照 |
