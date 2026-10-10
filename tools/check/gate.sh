@@ -26,6 +26,8 @@ rust_checks() {
     # CUDA builds belong to the package matrix; device checks to check-cuda.
     # Every registered golden records what produced it, so it can be regenerated rather than trusted.
     python3 tools/check/golden-provenance.py
+    # Each workspace boundary states the dependency or toolchain isolation it exists for.
+    python3 tools/check/workspaces.py
     # Production dependency graphs, not just the host CLI's: each target resolves its own feature
     # set, and the plan asks for build edges, duplicates and lockfile identity to be recorded.
     python3 tools/check/release-dependencies.py

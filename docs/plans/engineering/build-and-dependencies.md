@@ -185,6 +185,20 @@ package 计划一致"从约定变成可执行检查。`local-build` 与 `package
 验证：`make local-build` 在本机跑通并产出 `target/release/infer`（计划解析为 cuda backend，包含
 `--features cuda`），`./target/release/infer --version` 正常；打包单测、`check-tools`、`ruff` 干净。
 
+## 已实施：workspace 边界必须说明理由（最后一条也进门禁）
+
+方案最后一条要求"**后续新增独立 workspace 必须说明依赖或工具链隔离原因**，不能为了几行 helper、一个
+测试或复制 lint 而创建"✗ —— 这条此前只有文字 ✓，没有门禁 ✗。审查确认全仓**只有一个**独立 workspace
+（`tools/bench/attention` ✓，Candle 注意力对照 ✓），它的 lint 表**已经**被 `policy.py` 逐项对齐根表 ✓，
+但"新增一个就必须写理由"这件事没有任何强制 ✗。
+
+新增 `tools/check/workspaces.py`（接入 `make check-tools` ✓）：扫描所有带 `[workspace]` 表的清单 ✓，
+要求每个（根除外）都在 `REGISTERED` 里**登记理由**（≥20 字符 ✓，条目被移除/失效即失败 ✓，与依赖记录同一
+套棘轮 ✓），并且**确实独立** —— 有自己的 `Cargo.lock` ✓、`publish = false` ✓、且不是根 workspace 成员 ✓。
+当前登记一条：`tools/bench/attention/Cargo.toml` ✓（固定 CUDA 版 candle，必须留在生产 lock 与解析图之外 ✓）。
+测试覆盖：未登记即失败并点名"说明隔离原因或并入主 workspace" ✓、条目失效即失败 ✓、缺 lockfile ✓、
+可发布 ✓、理由过短 ✓、真实仓库通过 ✓。
+
 ## 已实施：golden 必须记录参考环境（并因此发现一处真实缺口）
 
 方案要求"**参考环境的版本、输入和生成命令随 golden 记录**，便于重新生成"。审查发现只做到了**一半** ✗：
