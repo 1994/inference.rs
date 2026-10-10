@@ -1,16 +1,18 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+mod support;
+
 use infer_core::{Error, ErrorCode, ModelId, RequestId, Result};
 use infer_ir::{CanonicalRequest, PrecisionPlan, WorkloadOutput};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, EngineOutput, RuntimeConfig};
 
-fn engine(config: RuntimeConfig) -> Result<Engine<ReferenceBackend>> {
-    let model = ReferenceModel::fixture(ModelId::ONE, 7);
-    let ir = model.ir.clone();
+fn engine(config: RuntimeConfig) -> Result<Engine<support::ProtocolBackend>> {
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
+    registry.register(&support::DeclaredKernels)?;
     Engine::new(
-        ReferenceBackend::new(model)?,
+        // These scenes submit more than a handful of requests, so the double's state map has to
+        // be sized for them.
+        support::ProtocolBackend::new(64, 16, &ir)?,
         ir,
         PrecisionPlan::f32(),
         &registry,
@@ -21,7 +23,10 @@ fn request(id: u64) -> Result<CanonicalRequest> {
     serde_json::from_value(serde_json::json!({"id":id,"model":1,"input":{"Sequence":{"tokens":[1,2,3,4,5]}},"workload":{"Generate":{"max_new_tokens":2}}}))
         .map_err(|error| Error::invalid(error.to_string()))
 }
-fn drain(engine: &mut Engine<ReferenceBackend>, output: &mut Vec<EngineOutput>) -> Result<()> {
+fn drain(
+    engine: &mut Engine<support::ProtocolBackend>,
+    output: &mut Vec<EngineOutput>,
+) -> Result<()> {
     for _ in 0..1000 {
         engine.tick_into(engine.now_us() + 1, output)?;
         if engine.is_idle() {

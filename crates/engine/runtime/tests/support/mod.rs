@@ -137,10 +137,19 @@ impl ProtocolBackend {
     /// Returns an invalid-input error when the configured request bound cannot be reserved.
     pub fn new(requests: usize, batch: usize, ir: &ModelIr) -> Result<Self> {
         let _ = batch;
+        // A declared ramp rather than a constant: sampling has to pick a token that is not the stop
+        // token for scenes that count generated tokens, and the ramp makes that deterministic
+        // instead of depending on which index sampling happens to choose.
+        let mut logits = Vec::with_capacity(ir.vocab_size);
+        let mut value = 0.0_f32;
+        for _ in 0..ir.vocab_size {
+            logits.push(value);
+            value += 1.0;
+        }
         Ok(Self {
             states: BoundedMap::new(requests)?,
             template: ModelOutput {
-                logits: vec![1.0; ir.vocab_size],
+                logits,
                 hidden: vec![vec![0.5; ir.hidden_size]],
                 tokens: Vec::with_capacity(8),
             },
@@ -291,14 +300,9 @@ impl BackendProvider for ProtocolBackend {
             let rows = state.history.len();
             let readout = task.tokens.readout();
             let mut output = self.template.clone();
-            output.logits.resize(
-                if readout == OutputReadout::None {
-                    0
-                } else {
-                    output.logits.len()
-                },
-                1.0,
-            );
+            if readout == OutputReadout::None {
+                output.logits.clear();
+            }
             output.hidden.resize(
                 if readout == OutputReadout::Full {
                     rows

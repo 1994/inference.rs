@@ -1,17 +1,16 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
+mod support;
+
 use infer_core::{Error, ModelId, RequestId, Result};
 use infer_ir::{CanonicalRequest, PrecisionPlan};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig, RuntimeSnapshot};
 use std::{time::Duration, time::Instant};
 
-fn fixture() -> Result<(ReferenceBackend, KernelRegistry)> {
+fn fixture() -> Result<(support::ProtocolBackend, KernelRegistry)> {
+    let ir = support::model(ModelId::ONE);
     let mut registry = KernelRegistry::default();
-    registry.register(&ReferenceKernels)?;
-    Ok((
-        ReferenceBackend::new(ReferenceModel::fixture(ModelId::ONE, 7))?,
-        registry,
-    ))
+    registry.register(&support::DeclaredKernels)?;
+    Ok((support::ProtocolBackend::new(4, 4, &ir)?, registry))
 }
 fn request() -> Result<CanonicalRequest> {
     serde_json::from_value(serde_json::json!({"id":1,"model":1,"input":{"Sequence":{"tokens":[1,2,3]}},"workload":{"Generate":{"max_new_tokens":3}}}))
@@ -27,7 +26,7 @@ fn wait(limit: Instant) -> Result<()> {
 #[test]
 fn checkpoint_is_acknowledged_by_owner_and_restored_states_rejoin_async_pipeline() -> Result<()> {
     let (backend, registry) = fixture()?;
-    let model = backend.model().ir.clone();
+    let model = support::model(ModelId::ONE);
     let engine = Engine::new(
         backend,
         model,

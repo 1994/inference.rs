@@ -179,27 +179,11 @@
     },
     {
       "crate": "runtime",
-      "path": "crates/engine/runtime/tests/checkpoint_owner.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "numeric"
-    },
-    {
-      "crate": "runtime",
       "path": "crates/engine/runtime/tests/control_path.rs",
       "patterns": [
         "infer_backend_reference"
       ],
       "role": "protocol"
-    },
-    {
-      "crate": "runtime",
-      "path": "crates/engine/runtime/tests/cpu_storage.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "numeric"
     },
     {
       "crate": "runtime",

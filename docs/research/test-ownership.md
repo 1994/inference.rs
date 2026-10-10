@@ -42,11 +42,11 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（64 个文件）
+## 执行器消费者与删除归属（62 个文件）
 
 | `protocol` | 12 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
-| `numeric` | 8 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
+| `numeric` | 6 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
 | `plumbing` | 12 | 构建与 feature 接线：manifest、IR feature、门禁与打包脚本 |
 
@@ -154,6 +154,21 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 - **不要租借输出缓冲**。替身改为每次 `submit` 复制一份声明输出：引擎可能在取回上一次输出之前就提交
   下一个 unit，用缓冲池会把这种情况判成 `readback still leased`。真正需要按分配计数的那份替身在
   `tools/bench/cpu`，它保留了自己的缓冲池实现。
+
+### 已替换：`runtime/tests/checkpoint_owner.rs` 与 `runtime/tests/cpu_storage.rs`
+
+两个场景的正文都不用改，只换引擎的 backend：`checkpoint_owner` 验的是异步 checkpoint owner 的
+确认与恢复后重新入队，`cpu_storage` 验的是主机侧保留量、指针身份与指标导出——都不是数值对照。
+因此**归属表的分类也据实修正**：`cpu_storage` 与 `checkpoint_owner` 归到 `protocol`，`runtime`
+里只有 `runner.rs` 仍是 `numeric`（它逐 token 对照参考数值）。
+
+两条替身细节：
+
+- **logits 用声明式斜坡而不是常数**。`checkpoint_owner` 断言生成 3 个 token；常数 logits 会让
+  采样一直选中同一个下标（可能正是 stop token），斜坡让"选到非 stop token"变成确定的。
+  斜坡用累加构造，避免 `index as f32` 触发 `clippy::cast_precision_loss`。
+- **state 表容量要按场景给**。`cpu_storage` 的候选窗口场景提交的请求数远超 4，替身容量太小会
+  以 `fixed map exhausted` 失败。
 
 ### 其余 `protocol` 消费者的要求
 
