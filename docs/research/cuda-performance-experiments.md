@@ -1086,6 +1086,35 @@ vLLM 侧绝对数字不动支持这一点（它的 kernel 是预编译的，我�
   在 prefill 能与并发共享同一份 arena（或按批次大小惰性升级程序）之前，
   池化序列只能走 narrow 图；这条记为已知代价，不再尝试调 `graph_policy`。
 
+**第三次变体：池化程序只捕一张 prompt 图，但捕 wide 那张**（`exp-wideonly-native-g1`）。
+前两次失败都是"一个程序捕两张图"，于是把约束改写成"一个程序一张图"再测：
+
+| case | 指标 | narrow（现状） | wide-only | 比值 narrow → wide-only |
+|---|---|---:|---:|---|
+| long | TTFT | 394 ms | **314 ms** | 6.04 → **4.82** |
+| short | TTFT | 56 ms | 99 ms | 1.81 → **3.22** |
+| batch4 | TTFT | 240 ms | 286 ms | 2.60 → **3.10** |
+| batch4 | wall | 1454 ms | 1439 ms | 2.06 → 2.03 |
+| hot_long | wall | 802 ms | 804 ms | 1.00 → 1.01 |
+
+**batch4 这次没崩**（1.44 s，与 narrow 相同），所以前两次的瓶颈确实是"每个池化程序捕几张图"
+而不是图有多宽 —— 4×1 张能同时驻留，4×2（或 1×2 + 3×1）不能。但 wide-only 把 `short`
+的 51-token prompt 也推上 256-lane 图：TTFT 56 → 99 ms（**+78%**）。三个 TTFT 格子的比值之和
+从 1.81+6.04+2.60=10.45 变成 3.22+4.82+3.10=11.14，**净亏**，因此回滚。
+
+**这次量出了 prompt 图的两个机制【确证】**（后面要动 prefill 的人必须知道）：
+
+1. **prompt 图单次 replay 的成本随 lane 数近似线性**：128 → 256 lane 让 51 token 的 prefill
+   从 56 ms 涨到 99 ms（≈1.8x）。所以"更宽的图"只在 prompt 长到值得用它换 replay 次数时才划算
+   —— 511 token 是 2×256 便宜于 4×128（394 → 314 ms），51 token 反过来。
+   这正是 `prefers_narrow_prompt` 按 chunk 长度选图的依据。
+2. **池化程序的显存瓶颈是"捕了几张 prompt 图"，不是"图有多宽"**：1 张（无论 128 还是 256）
+   都能让 4 条并发驻留，2 张就不行。
+
+因此"既要 short 快又要 long 快"的正路**不是加第二张图**，而是让**一张图同时服务两个区间**
+（例如让 256-lane 图对掩码行不再付满代价），或让 prefill 与并发共享同一份 arena。
+在那之前 `graph_policy` 维持 narrow-only。
+
 ### 11.7 decode 侧的两条负结果：tile 已经是优解，逐节点画像不能再往下挖
 
 `slot_verify`（4 lane、MTP2、12 行）是 decode 的最大单项：图边界事件中位
