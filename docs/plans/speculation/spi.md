@@ -58,6 +58,21 @@ MTP 与 DFlash2 各自负责草稿生成，共用目标模型验证、状态提�
 （注释与 `#[cfg(test)]` 块除外，规则针对会分支的代码），清单条目一旦被移除而条目还在，也会失败，
 强制同步清理。当前 34 个 tools 单测通过，其中 5 个覆盖这条规则。
 
+**两条边界现在由门禁强制，而不只是写在方案里**
+
+方案要求"公共算法实现仅依赖共有 IR/SPI 和模型描述，不反向依赖 `infer-backend-cuda`、
+`infer-backend-metal`、cuTile 或 Metal API"，并要求 runtime/state/scheduler"不直接依赖具体算法执行器"。
+`tools/check/layout.py` 过去只覆盖了 foundation 与少数几个 crate，**`infer-workloads`（未来 provider 所在
+层）与 `infer-runtime` 都没有这条约束** ✗。现在：
+
+- `crates/engine/workloads` 的生产依赖只允许 `{core, ir, spi}` 加模型描述（`infer-models`、
+  `infer-model-recipes`）——与它当前实际的四个依赖一致，因此是防回归；
+- `crates/engine/runtime` 除原有规则外，生产依赖不得出现任何 `infer-backend-*`（设备执行器）。
+  规则只看**生产依赖**（`production_dependencies`），测试执行器作为 dev-dependency 不受影响。
+
+layout 单测新增了对应案例（workloads 依赖 cuda/metal/kernel-api/runtime 均被拒，runtime 依赖
+cuda/metal 被拒）。
+
 **下一步（按风险从低到高）**：① 把 `mtp_depth`/`mtp_layers` 改成 draft 语义（公共 API 变更，需要
 后端同步改，故此步要与后端改动一起排）；② 把 `acceptance_policy: String` 换成结构化契约；
 ③ 按上表把 drafting/pool/capabilities 的策略移入 `crates/engine/workloads` 的 provider，backend

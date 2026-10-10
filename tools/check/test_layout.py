@@ -11,6 +11,10 @@ class OwnershipTests(unittest.TestCase):
             ("crates/model/package", {"infer-model-recipes", "infer-spi"}),
             ("crates/model/compiler", {"infer-ir", "infer-kernel-api"}),
             ("crates/engine/runtime", {"infer-compiler", "infer-state"}),
+            (
+                "crates/engine/workloads",
+                {"infer-core", "infer-ir", "infer-spi", "infer-models"},
+            ),
         ]:
             check_ownership(member, deps)
 
@@ -23,6 +27,13 @@ class OwnershipTests(unittest.TestCase):
             ("crates/engine/state", "infer-backend-cuda"),
             ("crates/foundation/spi", "infer-runtime"),
             ("crates/backend/kernel-api", "infer-backend-cuda"),
+            # I1: the common algorithm layer plans over the shared contracts only.
+            ("crates/engine/workloads", "infer-backend-cuda"),
+            ("crates/engine/workloads", "infer-backend-metal"),
+            ("crates/engine/workloads", "infer-kernel-api"),
+            ("crates/engine/workloads", "infer-runtime"),
+            ("crates/engine/runtime", "infer-backend-cuda"),
+            ("crates/engine/runtime", "infer-backend-metal"),
         ]:
             with self.subTest(member=member), self.assertRaises(SystemExit):
                 check_ownership(member, {dependency})

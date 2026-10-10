@@ -57,10 +57,26 @@ def check_ownership(member, dependencies):
             not internal - foundation - {"infer-model-recipes"},
             f"{member}: model providers must not depend on compilation or execution",
         )
+    if member == "crates/engine/workloads":
+        # I1's boundary: the algorithm providers describe plans, candidates, sampling and state
+        # needs over the shared IR/SPI and the model description. A device backend, its kernel API
+        # or the GPU API would make this layer the place per-algorithm branches accumulate, which is
+        # what moving the policies out of CUDA is meant to end.
+        require(
+            not internal - foundation - {"infer-models", "infer-model-recipes"},
+            f"{member}: algorithms plan over the shared contracts, not over a device backend",
+        )
     if member == "crates/engine/runtime":
         require(
             not internal & {"infer-models", "infer-model-recipes"},
             f"{member}: orchestrate the bound graph; do not import model recipes",
+        )
+        # I1: the runtime coordinates lifecycles, budgets and fairness over the contracts; a device
+        # executor in its production dependencies is what makes one algorithm's execution the
+        # runtime's concern. Test executors are dev-dependencies and are not considered here.
+        require(
+            not internal & BACKENDS,
+            f"{member}: orchestrate over the contracts; do not depend on a device executor",
         )
 
 
