@@ -93,7 +93,11 @@ async fn stalled_projection_does_not_block_sampling_control_or_terminal_delivery
                 PrecisionPlan::f32(),
                 &registry,
                 RuntimeConfig {
-                    output_timeout_us: 50_000,
+                    // The cancel branch has to win this deadline rather than race it: at 50 ms a
+                    // loaded runner reports the output-stage timeout as the finish reason instead
+                    // of the cancellation the scene is about. The other branch still needs the
+                    // timeout to fire well inside the 3 s the terminal wait allows.
+                    output_timeout_us: 500_000,
                     ..RuntimeConfig::default()
                 },
             )?
