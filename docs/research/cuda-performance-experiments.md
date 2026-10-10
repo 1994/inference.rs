@@ -1967,3 +1967,33 @@ agentic 负载的特征决定了选项：**长且高度重复的前缀**（syste
 5. **块内布局改 token-major** ⇒ 接上 §12.16 已验证的张量核 SDPA（3.1–3.5×，decode 另做单 query 变体）。
 
 验收：每步都跑官方矩阵（token 必须与改动前一致，除第 5 步外），并把图总量/并发数/显存占用记进本文件。
+
+### 13.6 更正 §12.19/§12.22 的前提：grid 来自**主机侧 partition**，KV 不需要改 token-major
+
+写重构第①步前先把 round-9 那次失败的真正原因查清楚了，结论**推翻我之前的判断**：
+
+**机制（读 cuTile 源码确证）**：
+- 每个 `Partition` 有自己的 `grid()`（`tensor.rs:457`，`partition_launch_grid(shape, partition_shape)`，
+  **partition 的轴 k → grid 轴 k**）。
+- 内核的 launch grid 由**主机侧传入的 partition 参数**决定；**整张传进去的张量（`&keys`）不贡献
+  流式轴**——它是 `MappedLaunchPartition` 里的 **OWNED** 轴：`validate()`（`tensor.rs:359-400`）
+  只把 `map_shape != OWNED` 的轴计入 `streamed_tiles`，OWNED 轴"不遍历、不贡献 tile 数"。
+- 所以内核里对整张张量的 `partition(...).load([运行时标量...])` 是**设备侧视图**，与 grid 无关。
+
+**round-9 失败的原因**：我把 `output` 看成 `[lanes*query_heads, head_dim]` 再按 `[QT, head_dim]` 切
+⇒ grid = `(lanes*heads/QT, 1, 1)`，**轴 1 恒为 1**，于是 `pid.1` 恒等于 0，
+`kp.load([pid.1 / GROUP, block, 0])` **所有 CTA 都去读 kv_head 0** ⇒ 有限、不崩、完全不对。
+（当时我误判成"head-major 布局表达不了"，见 §12.19/§12.22 的结论。）
+
+**正确写法**（`plan.rs` 里 SDPA 的绑法）：把 q/out 看成 **`[lanes, heads*D]`** 再按 `[QT, D]` 切
+⇒ grid = `(lanes/QT, heads, 1)`，`pid.1` 就是 head；KV 整张传入、设备侧按
+`[1, KB, D]` 切并用 `pid.1 / GROUP` 索引——**和现有 SIMT 核完全一样的索引方式**。
+
+**两个推论**（都改写计划）：
+1. **张量核 SDPA 不需要先改 KV 布局**：KV 是整张传入 + 设备侧索引，head-major 完全可用。
+   §13.5 的第 ⑤ 步（"块内改 token-major 才能接 SDPA"）**前提不成立**，SDPA 可以更早接进来。
+2. **分页第①步可行且无 grid 风险**：把块池整张传入，用 block table 里的**运行时标量**做
+   `partition([1, BT, D]).load([block_id, 0, 0])`——与 SIMT 核现在的 `load([head, block, 0])` 同构。
+   必要时还能用 cuTile 的显式 `.grid((x,y,z))`（`compile_api.rs:215`，全仓尚未使用）钉死 launch 形状。
+
+顺带更正 §12.22 的措辞：attention 那条路的拦路石从来不是布局，而是**主机侧绑定时 head 轴被压平**。
