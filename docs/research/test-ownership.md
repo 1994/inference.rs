@@ -92,7 +92,7 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 
 ## 待处理的既有 lint：`check-cuda` 的 clippy
 
-`make check-cuda` 跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`，
+`make test-cuda`（别名 `check-cuda`）跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`，
 迁移前后都报同样 11 条（用 `git worktree` 在迁移前 HEAD 实测 12 条错误），全部在
 `resident/recurrent_prefill` 的测试正文里：5 条 `too_many_lines`、2 条 `float_cmp`、
 2 条 `redundant_clone`、2 条 `cast_precision_loss`。`policy.py` 禁止豁免 `too_many_lines`，那 5 条
@@ -300,7 +300,7 @@ crate。
 
 ## 待处理的既有 lint：`check-cuda` 的 clippy
 
-`make check-cuda` 跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`，
+`make test-cuda`（别名 `check-cuda`）跑 `cargo clippy -p infer-backend-cuda --features cuda --all-targets -- -D warnings`，
 迁移前后都报同样 11 条（用 `git worktree` 在迁移前 HEAD 实测 12 条错误），全部在
 `resident/recurrent_prefill` 的测试正文里：5 条 `too_many_lines`、2 条 `float_cmp`、
 2 条 `redundant_clone`、2 条 `cast_precision_loss`。`policy.py` 禁止豁免 `too_many_lines`，那 5 条

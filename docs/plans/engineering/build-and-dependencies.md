@@ -116,6 +116,12 @@ CI 分为 host check、MSRV/security、production target build/package 和真实
 - **成员依赖必须继承。** `tools/check/policy.py` 现在对每个成员（含工具成员）要求：每个直接依赖的
   名字都在 `workspace.dependencies` 中，且成员 manifest 不得自带 `version`。此前只检查"根表里没有
   没人用的条目"，方向是单向的；现在两个方向都守。核对结果：当前成员依赖全部已继承，门禁是防回归。
+- **入口使用文档里的动词。** `make test-cuda`、`make test-metal`、`make bench` 成为设备与性能
+  入口的名字，`check-cuda`/`check-metal`/`check-cpu` 作为迁移期别名保留（同一 gate，旧名字），帮助
+  文本与相关指南同步；`local-build` 与其余 `check-*` 的收敛仍在待办内。
+- **打包记录它所依赖的源码检查。** manifest 本来就有 `commit`、`dirty`、`validation`、
+  `smoke_executed`、`gpu_inference_accepted`；现在再加 `source_checks`（本包依赖的源码门禁名），
+  这样"不重复跑宿主套件"是有据可查的：同一 `commit` 且 `dirty` 为假，才有这些检查的结果。
 - **打包不再重复宿主套件。** `package.py` 把"为该目标做的校验"拆成 `target_validation()`：宿主目标
   只做构建与二进制 smoke（宿主套件由同流水线的 Rust/tools job 负责），交叉目标保留
   `cargo zigbuild --tests --release` 的目标测试编译。此前 `x86_64-unknown-linux-gnu.2.28` 会解析为

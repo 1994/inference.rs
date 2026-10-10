@@ -275,6 +275,9 @@ def package(plan, out):
             "commit": output(["git", "rev-parse", "HEAD"]),
             "dirty": bool(output(["git", "status", "--porcelain"])),
             "validation": [validation, "binary-architecture", "archive-integrity"],
+            # The source checks this package relies on instead of repeating them per target: the
+            # `commit` and `dirty` above are what tie the archive to their results.
+            "source_checks": ["make check-rust", "make check-tools"],
             "smoke_executed": plan["target"] == rust_host(),
             "gpu_inference_accepted": False,
             "files": {

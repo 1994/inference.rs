@@ -20,8 +20,8 @@ help:
 	@echo '  make accept PACKAGE_FILE=... MODEL=... GOLDEN=...'
 	@echo '  DIST_DIR=artifacts/packages overrides the artifact directory.'
 	@echo 'Quality gates: check, check-rust, check-tools, check-security,'
-	@echo '  check-cuda, check-metal, check-attention, check-msrv, check-cpu,'
-	@echo '  check-linux, check-linux-numa, check-package'
+	@echo '  test-cuda, test-metal, bench (aliases: check-cuda, check-metal, check-cpu),'
+	@echo '  check-attention, check-msrv, check-linux, check-linux-numa, check-package'
 
 build test package:
 	$(PYTHON) tools/package/package.py $@ --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
@@ -57,11 +57,27 @@ verify-package:
 accept:
 	$(PYTHON) tools/package/package.py accept --archive "$(PACKAGE_FILE)" --model "$(MODEL)" --golden "$(GOLDEN)"
 
-.PHONY: check check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa check-package
+# Device and tool entries use the documented verbs; the check-* names remain as aliases while the
+# rest of the tree migrates.
+.PHONY: check test-cuda test-metal bench check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa check-package
 check:
 	./tools/check/gate.sh all
 
-check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa:
+test-cuda:
+	./tools/check/gate.sh cuda
+
+test-metal:
+	./tools/check/gate.sh metal
+
+bench:
+	./tools/check/gate.sh cpu
+
+# Aliases for the migration: same gates, older names.
+check-cuda: test-cuda
+check-metal: test-metal
+check-cpu: bench
+
+check-rust check-tools check-security check-attention check-msrv check-linux check-linux-numa:
 	./tools/check/gate.sh $(patsubst check-%,%,$@)
 
 check-package:

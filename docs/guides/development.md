@@ -129,7 +129,7 @@ target/release/infer --backend metal benchmark --package examples/qwen-hybrid-ti
 - checkpoint 要求 quiescent 状态；restore 会校验 schema、weights/program/provider 身份与物理数据，协议见[请求生命周期](../architecture/request-lifecycle.md)。
 - journal 截断不可视为完整记录，回放会报告 dropped。
 - `benchmark` 为 closed 测量；`compare` 用正确性、goodput 与 P99 约束评估候选。
-- 固定到达 HTTP 验证由 `make check-metal` 执行，测量范围见[质量门禁](quality-gates.md)。
+- 固定到达 HTTP 验证由 `make test-metal` 执行，测量范围见[质量门禁](quality-gates.md)。
 
 ## 仓库约定
 

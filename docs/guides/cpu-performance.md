@@ -1,7 +1,7 @@
 # CPU 分配与性能测量
 
 ```sh
-make check-cpu
+make bench
 ```
 
 门禁运行隔离的 release benchmark（`tools/bench/cpu`），结果写入

@@ -32,9 +32,9 @@ make check-rust       # 目录、lint、测试、文档、release、CPU 分配�
 make check-tools      # Ruff 与 actionlint
 make check-security   # cargo-deny、cargo-audit、Gitleaks
 make check-msrv       # Rust 1.90
-make check-cpu        # 隔离的 CPU 分配计数
-make check-metal      # Metal 实机验收（仅 macOS）
-make check-cuda       # CUDA 实机 kernel 验收（需 Toolkit 与 GPU）
+make bench            # 隔离的 CPU 分配计数（别名 check-cpu）
+make test-metal       # Metal 实机验收（仅 macOS，别名 check-metal）
+make test-cuda        # CUDA 实机 kernel 验收（需 Toolkit 与 GPU，别名 check-cuda）
 make check-attention  # 自研 Attention 对 Candle 基线：数值与性能不达标均非零退出
 make check-linux      # Linux 原生放置测试
 make check-linux-numa # Linux NUMA 硬件验收，见 Linux 指南

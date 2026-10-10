@@ -45,7 +45,8 @@ make test TARGET=aarch64-unknown-linux-gnu
 `make test` 仍是显式的宿主套件入口（宿主目标执行套件；交叉目标编译其测试）。
 
 - target 等于 host 时：启动解压后的 CLI `--version` / `--help`。
-- 交叉 target：用 Zig **编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed` 和 `smoke_executed: false`。
+- 交叉 target：用 Zig **编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed`、`smoke_executed: false`，以及这份包
+依赖的 `source_checks`（`make check-rust`/`make check-tools`）与 `commit`/`dirty`。
 - 在目标机器上再运行 `verify-package` 即可执行启动检查。GPU 推理需要下面的独立 `accept`。
 
 `CARGO_TARGET_DIR`、`CARGO_BUILD_JOBS` 和 CUDA 工具链变量仍有效；工具从 Cargo JSON artifact 读取真实二进制路径，不猜测输出目录。使用 `--target` 确保 Zig 链接器实际生效，不注入 `target-cpu=native`。
@@ -88,4 +89,4 @@ make accept PACKAGE_FILE=/path/to/infer-....tar.gz \
 
 `make package` 执行目标检查、release 构建和归档校验；与宿主同架构时执行 CLI 冒烟，交叉目标只做编译和静态检查。成功后上传归档、SHA256SUMS 和 manifest，保留 14 天，不自动创建 GitHub Release。
 
-最终 `quality-gate` 要求所有质量检查和打包项通过，可用作分支保护的必需检查。hosted CI 不证明真实 GPU 的正确性或性能，manifest 保留 `gpu_inference_accepted: false`。设备验收使用 `make accept`、`check-cuda` / `check-metal` 和独立的 Candle attention 门禁。
+最终 `quality-gate` 要求所有质量检查和打包项通过，可用作分支保护的必需检查。hosted CI 不证明真实 GPU 的正确性或性能，manifest 保留 `gpu_inference_accepted: false`。设备验收使用 `make accept`、`test-cuda` / `test-metal` 和独立的 Candle attention 门禁。
