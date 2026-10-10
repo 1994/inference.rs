@@ -12,12 +12,20 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-USAGE = re.compile(r"make ([a-z][a-z0-9-]*)")
+# An entry is a line that offers one - `make <name>` at the start of a help line - not the word
+# "make" inside prose, which is how the artifact-directory sentence once read as `make directory`.
+USAGE = re.compile(r"^make ([a-z][a-z0-9-]*)")
 
 
 def documented(output):
     """Every target the help offers, whether it is written as `make x` or in the gate list."""
-    names = set(USAGE.findall(output))
+    names = set()
+    for line in output.splitlines():
+        # A help line may head its entry with a label, as `Tests: make test` does.
+        stripped = re.sub(r"^[A-Za-z][A-Za-z ]*: ", "", line.strip())
+        match = USAGE.match(stripped)
+        if match:
+            names.add(match.group(1))
     listing = False
     for line in output.splitlines():
         cleaned = re.sub(r"\([^)]*\)", "", line)

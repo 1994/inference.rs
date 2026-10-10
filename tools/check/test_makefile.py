@@ -46,6 +46,14 @@ class DocumentationTest(unittest.TestCase):
         )
         self.assertEqual(names, ["bench", "check", "check-rust", "test", "test-cuda"])
 
+    def test_the_word_make_in_prose_is_not_an_entry(self):
+        names = makefile.documented(
+            "Tests: make test\n"
+            "  DIST_DIR=artifacts/packages overrides the artifact directory.\n"
+            "Quality gates: check\n"
+        )
+        self.assertEqual(names, ["check", "test"])
+
     def test_the_tree_agrees(self):
         makefile.check()
 
