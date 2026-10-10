@@ -47,6 +47,18 @@ impl BackendProvider for CudaBackend {
         capacity: usize,
         readout: OutputReadout,
     ) -> Result<Option<u64>> {
+        // A sequence that will occupy a slot of the shared pool finds its state already
+        // reserved: the pool paid for `width` slots when it was built. Charging it again is
+        // what made a wide pool and a long context compete for the same bytes (13.18, 13.25),
+        // so a pooled sequence is charged the fixed graph headroom instead of its own
+        // capacity-sized state. Sequences too long for a slot, or arriving when every slot is
+        // leased, still pay the same price reserve() will charge.
+        if let Some(pool) = &self.slots
+            && capacity <= pool.capacity()
+            && pool.has_free_slot()
+        {
+            return Ok(Some(self.loaded.device().profile()?.graph_headroom_bytes()));
+        }
         // Quote the same price reserve() will charge, or engine admission and backend
         // accounting disagree on how many sequences fit.
         let private = self.private_verification_for(capacity, readout);

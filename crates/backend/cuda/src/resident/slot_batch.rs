@@ -275,6 +275,11 @@ impl SlotPool {
 
     /// Token rows each slot's KV cache holds.
     #[must_use]
+    /// Whether a sequence can still be leased a slot, so that its state is already reserved.
+    pub(crate) fn has_free_slot(&self) -> bool {
+        !self.free.is_empty()
+    }
+
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
