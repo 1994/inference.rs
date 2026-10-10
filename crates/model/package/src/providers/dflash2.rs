@@ -262,7 +262,7 @@ impl DFlash2Config {
     ///
     /// This is the half of the resource quote that the checkpoint's shapes determine; the arena,
     /// graph and rollback costs still need device facts, and the state and feature history are
-    /// quoted by [`Self::quote`].
+    /// quoted by [`DraftGeometry::quote`].
     #[must_use]
     pub fn weights_bytes(&self, dtype_bytes: usize) -> usize {
         self.expected_weight_shapes()
