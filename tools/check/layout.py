@@ -14,8 +14,6 @@ SERVICE = {"infer-frontdoor", "infer-agent", "infer-cli"}
 BACKENDS = {
     "infer-backend-metal",
     "infer-backend-cuda",
-    "infer-backend-host",
-    "infer-backend-reference",
 }
 
 

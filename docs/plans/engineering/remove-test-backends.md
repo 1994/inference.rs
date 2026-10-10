@@ -82,8 +82,23 @@ package 12 测试 ✓。
 `tests/unit/support_serving.rs` ✓），并清掉 4 处被删项遗留的孤立文档注释（rustdoc 直接拒绝 ✗）。
 测试执行器消费者降到 **5**（全是本仓门禁按规则点名 ✓）。
 
-**仍未做**：`tools/validation/smoke-paged-kv.py`（第 15 行的 `--test-binary` 帮助文本与 parity 逻辑
-仍指向已删除的 CPU oracle ✗；其 parity 断言无新家，需据实删除 ✓）。
+**`tools/validation/smoke-paged-kv.py` 的 CPU oracle 已据实移除** ✓：`--test-binary`、test-cpu agent、
+`expected` 与 `assert actual == expected` 全部删除；工具保留它真正验收的部分（页压力下的抢占、快照捕获与
+重放 ✓），文档字符串写明"parity 断言没有替代物"及其原因（登记 golden 是**逐前缀 logits**，覆盖不了本工具
+请求的 5 token 生成 ✓），并在要求每个请求有输出之外不再假装做了对照 ✓。
+
+## 验收对照（E1 完成标准逐条核验）
+
+| 完成标准 | 证据 |
+|---|---|
+| 按 crate 迁移测试并替换消费者 | `tools/check/test-inventory.py` 记录 **459** 个测试体、**`src/` 内 0** 个；执行器消费者 **5**（全部是本仓门禁按规则点名，无生产或测试消费者）✓ |
+| 删除两个完整 CPU 测试执行器 | `crates/testing/cpu/{host,reference}` 已删除（workspace 成员、根 path 依赖、CLI 可选依赖一并移除）✓；测试二进制 72 → **65**、收集 384 → **369** ✓ |
+| 删除产品 feature 分叉 | CLI 的 `test-backends` feature 声明已删除 ✓（任何回退触发 `unexpected_cfgs` ✓） |
+| 删除 IR 分叉 | `infer-ir` 的 `test-backends` feature、`testing` 模块、`BackendKind`/`DeviceBackend`/`BackendRequirements` 的 `TestCpu` 变体全部移除 ✓ |
+| 删除 CLI 分叉 | 约 180 处 `cfg` 站点清除 ✓，且**每个文件都经 Linux + Apple 双目标编译验证** ✓ |
+| 关键断言有去向 | 算子级数值对照 → `infer-reference-ops`（CUDA example 直接使用）✓；协议/行为用例 → 共享的声明式替身（frontdoor/runtime 已迁移）✓；Delta/Conv 状态 → 登记 golden + `infer-workloads` 的 Rust 参考 ✓；"生产类型拒绝 CPU 名称" → IR 中**无条件**执行的用例 ✓；模型级 golden → 设备验收（**CI 不再覆盖**，如实登记 ✗）；paged-KV 的 Host parity → **无替代物**，据实删除并说明原因 ✓ |
+
+`make check-rust` 在删除后完整通过；`make check-tools`、打包测试与三条已签发基线核验同样通过 ✓。
 
 ## 已保住的数值对照
 
