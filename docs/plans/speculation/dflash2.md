@@ -146,9 +146,36 @@ attends(q, k) = (q / block_size == k / block_size) || (k <= q && q - k < sliding
 块内双向、不看不见后续块、窗口边界（`window` 位置可见 `1` 而不可见 `0`；`window+1` 可见 `2`）、以及
 块宽不超过窗口这一前提。
 
-**明确还没有做的**：tokenizer 对应、embedding/head 共享与特殊 token 检查（需要 package 元数据与
-token map，属于 loader 的职责）；arena、graph 与回滚开销的报价（需要设备事实）；selector 的 top-k
-与路径选择部分仍是 D1 的剩余工作。
+**特殊 token 与目标边界（第八步，已完成）**
+
+配置里有两处容易放错位置的字段，实测确认了它们的位置：**mask token 在 `dflash_config` 内**
+（`mask_token_id = 248070`），而 eos/pad 在顶层（都是 248044）。据此新增：
+
+- `check_special_tokens()`：mask token 必须存在且落在自己的词表内（草稿用它填充"待提出"的槽位），
+  eos/pad 也必须落在词表内，且不得与目标共享词嵌入。
+- `check_target_tokens(eos, pad: Option<usize>)`：草稿的 eos/pad 必须与目标一致。目标 fixture
+  （`examples/qwen3.8-27b`）的 `text_config.pad_token_id` 是 **null**，所以这一侧的比较是可选的、
+  由目标决定——这本身也是配对信息的一部分，不是我们放宽了检查。
+- 测试同时读两个登记 fixture：eos 一致（248044）、词表一致（248320），并验证 eos 不匹配时报错。
+
+**selector 的 top-k 与路径选择（已确认语义，实现归属别的层）**
+
+追到 `vllm/v1/worker/gpu/spec_decode/dflash2/speculator.py` 后语义完整了，记在这里以免以后重新追：
+
+1. **候选来自草稿自己的 LM head**：`compute_candidates()` 对草稿 hidden 取 top-k（k = `selector_top_k` = 16）
+   得到 `candidate_ids` 与 `unary_logits`——**不是 selector 产生的**，selector 只负责给这些候选打分。
+2. **路径依赖**：选择是一个自回归的 lattice walk——`previous` 初始为 0（anchor），每一步用
+   `scores[step, previous, :]` 这一行，选中后 `previous = index` 交给下一步；被真正用到的行会写回
+   `realized_scores`，于是"实际用了哪一行"是可复核的。
+3. **排序与 tie break**：每步的抽取是 `gumbel_noised_argmax(scores_row, candidates, seed, position-1,
+   temperature)`——噪声由 (seed, 位置) 决定，所以**同 seed 同位置可复现**；平局由该噪声决出，而不是
+   取最小下标。`temperature = 0`（非概率模式）退化为贪心 argmax。
+4. 这套 walk 是**提议策略**，按 I1 的分层属于 `crates/engine/workloads` 的 provider，不属于模型
+   package，因此本轮只把语义确认并记录，没有把采样器塞进 `infer-models`。
+
+**明确还没有做的**：arena、graph 与回滚开销的报价（需要设备事实）；上述 walk 的实现（归 I1 的
+provider 层，等 SPI 契约落地）；tokenizer 文件的逐 token 对照（需要 tokenizer 制品，目前 fixture
+只登记了配置）。
 
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。

@@ -50,6 +50,8 @@ pub struct DFlash2DraftConfig {
     pub conv_kernel_size: usize,
     pub selector_rank: usize,
     pub selector_top_k: usize,
+    /// Token the draft embeds in the slots it proposes into; absent disables the replacement.
+    pub mask_token_id: Option<usize>,
     /// Target layers whose hidden states the draft consumes.
     pub target_layer_ids: Vec<usize>,
 }
@@ -73,6 +75,9 @@ pub struct DFlash2Config {
     /// Blocks attend inside themselves, so the draft graph is deliberately not causal.
     pub is_causal: bool,
     pub tie_word_embeddings: bool,
+    /// Vocabulary boundaries the draft shares with its target.
+    pub eos_token_id: Option<usize>,
+    pub pad_token_id: Option<usize>,
     pub dflash_config: DFlash2DraftConfig,
 }
 
@@ -103,6 +108,69 @@ impl DFlash2Config {
             selector_rank: self.dflash_config.selector_rank,
             selector_top_k: self.dflash_config.selector_top_k,
         }
+    }
+
+    /// Checks the draft's special tokens against its own vocabulary.
+    ///
+    /// # Errors
+    /// Rejects a packed draft whose mask token is missing or outside the vocabulary, or whose
+    /// end-of-sequence and padding tokens disagree with themselves.
+    pub fn check_special_tokens(&self) -> Result<()> {
+        match self.dflash_config.mask_token_id {
+            None => {
+                return Err(Error::invalid(
+                    "draft must declare the token it embeds in proposed slots",
+                ));
+            }
+            Some(mask) if mask >= self.vocab_size => {
+                return Err(Error::invalid(format!(
+                    "draft mask token {mask} is outside its vocabulary of {}",
+                    self.vocab_size
+                )));
+            }
+            Some(_) => {}
+        }
+        for (name, token) in [
+            ("eos_token_id", self.eos_token_id),
+            ("pad_token_id", self.pad_token_id),
+        ] {
+            if let Some(token) = token
+                && token >= self.vocab_size
+            {
+                return Err(Error::invalid(format!(
+                    "draft {name} {token} is outside its vocabulary of {}",
+                    self.vocab_size
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks that a target's tokenizer boundaries are the ones this draft was packed against.
+    ///
+    /// # Errors
+    /// Rejects a pairing whose end-of-sequence or padding tokens differ, which would mean the draft
+    /// was packed against a different vocabulary than the target it is being attached to.
+    pub fn check_target_tokens(
+        &self,
+        eos_token_id: usize,
+        pad_token_id: Option<usize>,
+    ) -> Result<()> {
+        for (name, mine, theirs) in [
+            ("eos_token_id", self.eos_token_id, Some(eos_token_id)),
+            ("pad_token_id", self.pad_token_id, pad_token_id),
+        ] {
+            // A target that declares no padding token has nothing to compare against.
+            let Some(theirs) = theirs else { continue };
+            if let Some(mine) = mine
+                && mine != theirs
+            {
+                return Err(Error::invalid(format!(
+                    "draft {name} {mine} does not match the target's {theirs}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Checks the draft's own block semantics.

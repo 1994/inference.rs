@@ -471,3 +471,63 @@ fn a_draft_block_never_exceeds_its_window() {
     let draft = DraftGeometry::official();
     assert!(draft.block_size <= draft.sliding_window);
 }
+
+fn target_config() -> serde_json::Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/qwen3.8-27b/config.json");
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn the_registered_fixture_declares_its_special_tokens() {
+    let config = fixture();
+    config.check_special_tokens().unwrap();
+    assert_eq!(config.dflash_config.mask_token_id, Some(248_070));
+    assert_eq!(config.eos_token_id, Some(248_044));
+    assert_eq!(config.pad_token_id, Some(248_044));
+    assert!(config.dflash_config.mask_token_id.unwrap() < config.vocab_size);
+}
+
+#[test]
+fn a_draft_without_a_mask_token_or_outside_its_vocabulary_is_rejected() {
+    let mut absent = fixture();
+    absent.dflash_config.mask_token_id = None;
+    assert!(absent.check_special_tokens().is_err());
+
+    let mut outside = fixture();
+    outside.dflash_config.mask_token_id = Some(outside.vocab_size);
+    let error = outside.check_special_tokens().unwrap_err();
+    assert!(
+        error.to_string().contains("outside its vocabulary"),
+        "{error}"
+    );
+
+    let mut bad_eos = fixture();
+    bad_eos.eos_token_id = Some(bad_eos.vocab_size + 1);
+    assert!(bad_eos.check_special_tokens().is_err());
+}
+
+#[test]
+fn the_draft_shares_its_targets_token_boundaries() {
+    let config = fixture();
+    let target = target_config();
+    let text = &target["text_config"];
+    let eos = usize::try_from(text["eos_token_id"].as_u64().unwrap()).unwrap();
+    // The target declares no padding token, so only the end-of-sequence boundary is compared.
+    let pad = text["pad_token_id"]
+        .as_u64()
+        .map(|value| usize::try_from(value).unwrap());
+    config.check_target_tokens(eos, pad).unwrap();
+    assert_eq!(eos, 248_044);
+    // The vocabularies have to agree as well, since the draft's head scores the target's tokens.
+    assert_eq!(
+        text["vocab_size"].as_u64().unwrap(),
+        config.vocab_size as u64
+    );
+
+    let error = config.check_target_tokens(eos + 1, pad).unwrap_err();
+    assert!(
+        error.to_string().contains("does not match the target"),
+        "{error}"
+    );
+}
