@@ -50,6 +50,12 @@ pub struct Cli {
     /// Keep the conservative built-in tile instead of measuring the best one per projection.
     #[arg(long, global = true)]
     pub(super) no_autotune: bool,
+    /// Prefill a quantized checkpoint's gated-delta layers with one chunk kernel instead of one
+    /// launch per token. Measured 10-30% better prompt latency and unchanged decode cost without
+    /// speculation, but the two lowerings differ in the last bits, so greedy continuations can
+    /// change; the exact per-token path stays the default.
+    #[arg(long, global = true)]
+    pub(super) chunked_recurrent: bool,
     /// Draft tokens proposed per step by the MTP head; 0 disables speculation.
     #[arg(long, global = true, default_value_t = 0)]
     pub(super) num_speculative_tokens: usize,

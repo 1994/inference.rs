@@ -16,6 +16,7 @@ const fn selection() -> backend::Selection {
         num_speculative_tokens: 0,
         gpu_memory_utilization: 0.9,
         autotune: true,
+        chunked_recurrent: false,
     }
 }
 

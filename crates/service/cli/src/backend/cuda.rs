@@ -46,6 +46,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
                 prefill_width: selection.max_num_batched_tokens.unwrap_or(0),
                 mtp_depth: selection.num_speculative_tokens,
                 autotune: selection.autotune,
+                chunked_recurrent: selection.chunked_recurrent,
                 ..LoadOptions::default()
             },
         )

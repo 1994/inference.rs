@@ -92,6 +92,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         tiling: BTreeMap::new(),
         fusion: None,
         fp8_inputs: BTreeSet::new(),
+        chunked_recurrent: options.chunked_recurrent,
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),
@@ -256,6 +257,8 @@ fn draft_weights(
             report,
         )?),
         fp8_inputs: BTreeSet::new(),
+        // The draft proposes for the same sequence, so it follows the target's recurrence policy.
+        chunked_recurrent: target.chunked_recurrent,
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         constants: BTreeMap::new(),

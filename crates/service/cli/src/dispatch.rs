@@ -26,6 +26,7 @@ pub fn run() {
         num_speculative_tokens: cli.num_speculative_tokens,
         gpu_memory_utilization: cli.gpu_memory_utilization,
         autotune: !cli.no_autotune,
+        chunked_recurrent: cli.chunked_recurrent,
     };
     if let Err(error) = execute(
         cli.into_command().unwrap_or_else(|error| error.exit()),

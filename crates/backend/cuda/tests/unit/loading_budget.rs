@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 #[test]
 fn admission_charges_shared_projection_geometry_once() -> Result<()> {
     let mut weights = ProgramWeights {
+        chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 32,
         narrow_prefill_width: 0,

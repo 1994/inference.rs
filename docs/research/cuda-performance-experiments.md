@@ -1812,3 +1812,33 @@ axis-1 是 **capacity 方向**（32768/32 = 1024），与 query 的 24 个 head 
 复现：把 12.18 的 `decode_tiled` 写回 `attention_prefill.rs`、在 `record_prefill_attention`
 里按 `INFER_CUDA_TILED_ATTENTION` 接线，然后跑官方矩阵比 token（本次 run-id
 `tiled-mtp2-native-g2`，报告在 artifacts 里，未入库）。
+
+### 12.20 chunked 递推现在是正式开关：`--chunked-recurrent`（默认仍是逐位精确的逐 lane 路）
+
+§12.10–12.13 量到的收益此前只能靠环境变量 `INFER_CUDA_CHUNKED_RECURRENT` 打开，操作方既看不到
+也没法在部署描述里表达。本轮把它接成**正式的 CLI 选项**（`crates/service/cli/src/arguments.rs`），
+一路 `Selection` → `LoadOptions` → `ProgramWeights.chunked_recurrent` → `recurrent_prefill::Workspace`；
+环境变量仍然有效（两者取或），**默认不变**（量化 checkpoint 仍走逐位精确的逐 lane 路）。
+
+同刻基线对照（同一窗口、同一 vLLM 参照，server 用 `--extra --chunked-recurrent` 起）：
+
+| case | 指标 | flag off | `--chunked-recurrent` | Δ | 环境变量（早先一次） |
+|---|---|---:|---:|---:|---:|
+| short | TTFT | 53.0 ms | 44.7 ms | **−15.7%** | 46.9 ms |
+| short | TPOT | 13.11 | 14.16 | +8.0% | 14.45 |
+| short | wall | 880 | 936 | +6.4% | 957 |
+| long | TTFT | 399.6 | 319.5 | **−20.1%** | 317.0 |
+| long | TPOT | 13.07 | 12.60 | −3.6% | 12.57 |
+| long | wall | 1227 | 1114 | **−9.2%** | 1110 |
+| batch4 | TTFT | 190.0 | 162.2 | **−14.6%** | 204.1 |
+| batch4 | TPOT | 17.97 | 16.30 | −9.3% | 17.65 |
+| hot_long | TTFT | 85.7 | 72.0 | **−16.0%** | 75.7 |
+| hot_long | TPOT | 11.45 | 12.42 | +8.4% | 12.48 |
+
+**CLI 路与环境变量路逐格一致**（long TTFT −20.1% vs −20.2%、short −15.7% vs −13.2%、hot_long wall
+857 vs 863 ms、TPOT 14.16 vs 14.45），说明接线确实走到了 `Workspace::new`。TTFT 全用例下降
+14.6–20.1%，与 §12.13 的结论一致；short/hot_long 的 TPOT +8% 仍是 §12.11 的 MTP 接受率二阶效应
+（mtp0 上为零，已实测）。
+
+本轮这一窗口里 batch4 的 wall 绝对值偏高（2200 ms 级，平时 ~1500 ms），说明机器上还有别的负载；
+但配对内的 TTFT/TPOT 差值与早先窗口吻合，所以结论以配对比值为准（§12.13 的教训）。

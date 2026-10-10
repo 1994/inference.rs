@@ -111,6 +111,7 @@ fn fixture_at(
         &[16, out_columns],
     )?;
     let weights = ProgramWeights {
+        chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 1,
         narrow_prefill_width: 0,

@@ -23,6 +23,7 @@ pub fn prepare(
     fusion: Option<FusionWeights>,
 ) -> Result<()> {
     let mut weights = ProgramWeights {
+        chunked_recurrent: false,
         batch_width: model.verify_width,
         prefill_width: model.prefill_width,
         narrow_prefill_width: 0,

@@ -48,6 +48,7 @@ fn check_projection(
 ) -> Result<()> {
     let mut graph = DataflowGraph::default();
     let mut weights = ProgramWeights {
+        chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 3,
         narrow_prefill_width: 0,

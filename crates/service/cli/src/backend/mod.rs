@@ -89,6 +89,8 @@ pub struct Selection {
     pub gpu_memory_utilization: f64,
     /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
     pub autotune: bool,
+    /// Capture the chunked gated-delta prefill kernel instead of the exact per-token one.
+    pub chunked_recurrent: bool,
 }
 #[cfg(any(
     test,

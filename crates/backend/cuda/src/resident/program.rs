@@ -79,6 +79,8 @@ pub struct ProgramWeights {
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
     pub input_scales: BTreeMap<TensorId, f32>,
     pub fp8_inputs: std::collections::BTreeSet<TensorId>,
+    /// Capture the chunked gated-delta prompt kernel rather than the per-token one.
+    pub chunked_recurrent: bool,
     pub constants: BTreeMap<TensorId, Arc<Tensor<f32>>>,
     pub embeddings: BTreeMap<TensorId, Arc<Tensor<bf16>>>,
     pub rope_axes: BTreeMap<infer_core::OpId, Arc<Tensor<i32>>>,

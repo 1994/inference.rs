@@ -38,7 +38,8 @@ impl Workspace {
         // only drafts in chunks when a caller asks for it. On the 27B the opt-in measures long
         // TTFT -24%, long wall -10%, long TPOT -4%, and 10-24% better TTFT everywhere, while
         // short and hot_long give back 8-10% of wall and TPOT.
-        let opted_in = std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
+        let opted_in =
+            weights.chunked_recurrent || std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
         if !opted_in && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()) {
             return Ok(Self {
                 lanes,

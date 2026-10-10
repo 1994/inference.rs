@@ -28,6 +28,9 @@ pub struct LoadOptions {
     /// tile size is a property of the machine, so the first load measures and caches its winners
     /// instead of asking the operator to choose them.
     pub autotune: bool,
+    /// Capture the chunked gated-delta prompt kernel instead of the exact per-token kernel.
+    /// The two lowerings differ in the last bits, so this is an explicit numerical choice.
+    pub chunked_recurrent: bool,
 }
 impl Default for LoadOptions {
     fn default() -> Self {
@@ -37,6 +40,7 @@ impl Default for LoadOptions {
             fp8_kv: None,
             mtp_depth: 0,
             autotune: true,
+            chunked_recurrent: false,
         }
     }
 }

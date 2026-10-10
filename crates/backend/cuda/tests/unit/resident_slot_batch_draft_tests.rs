@@ -73,6 +73,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
             .collect()
     };
     let weights = ProgramWeights {
+        chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
