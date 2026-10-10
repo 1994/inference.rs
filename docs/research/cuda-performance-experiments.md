@@ -1059,14 +1059,47 @@ vLLM 侧绝对数字不动支持这一点（它的 kernel 是预编译的，我�
 在解释清楚之前，**跨驱动的绝对数字不可比**，只有同驱动的成对比率能用；签发新基线前必须
 先复现/推翻这条。
 
-### 11.6 未决项二：池化程序放弃 wide prompt 图，代价落在单请求 prefill 上【待 A/B】
+### 11.6 池化程序放弃 wide prompt 图的代价，以及为什么换不回来【确证，已否】
 
 `graph_policy` 为了 4 条池化序列能同时驻留，让池化程序只保留 narrow prompt 图
 （`wide_prompt = private_verification || narrow_prefill_width < PREFILL_LANES`）。
 单请求也走池化程序，于是 511-token 的 `long` 被切成更多次 replay：long TTFT
-317.6 → 396 ms（+25%），比值 4.2–4.5 → 6.10。`CB_SLOT_TOKENS` 已从 4096 收到 2048，
-腾出的显存是否够把 wide prompt 图还给池化程序，需要一次 A/B；若 4 条并发因此退化，
-则应改成"只有池已满的序列才降级"。
+317.6 → 396 ms（+25%），比值 4.2–4.5 → 6.10。
+
+**把 wide 图还给池化程序的两个变体都实测否掉了**（同 profile、同 vLLM 参照，
+`exp-wideprompt-native-g1`、`exp-firstwide-native-g1`）：
+
+| 变体 | long TTFT | batch4 TTFT | batch4 wall |
+|---|---:|---:|---:|
+| narrow only（现状） | 398 ms | 243 ms | 1.48 s |
+| 4 条池化都给 wide | **311 ms** | 671 ms | 2.32 s |
+| 只有第一条池化驻留给 wide | **311 ms** | 671 ms | 2.31 s |
+
+- 给全部池化程序 wide：long 快 22%，但 batch4 退回串行准入（TTFT 243 → 671 ms，
+  比值 2.64 → 7.27），因为 wide arena 是每序列最大的分配，4 份加池就超卡。
+- **只给第一条驻留：结果一样坏。** 冷启动 server 上只发 batch4（无历史 shell）测得
+  热态 group wall 1.52 → 2.15 s，第 4 条 lane 的 TTFT 1.26 s，defer `Preparation` 15 次：
+  一份 wide arena 已经足以让第 4 条排不进来。shell 复用池按 `(capacity, readout)` 取，
+  还会把前序用例留下的 wide shell 再发给并发请求，加重这一点。
+- 结论：**wide prompt 图与"该请求是否独自在跑"绑定，而这件事在准入时刻不可知**
+  （`reserve` 只拿到 capacity/readout，池是空的还是即将来 3 条看不出区别）。
+  在 prefill 能与并发共享同一份 arena（或按批次大小惰性升级程序）之前，
+  池化序列只能走 narrow 图；这条记为已知代价，不再尝试调 `graph_policy`。
+
+### 11.7 下一步（按证据排序）
+
+1. **B2b cuBLASLt NVFP4 委托**（§二 杠杆 A，规格已确证）：verify 的 `linear` 占
+   `slot_verify` 设备时间的 69%（18.9 / 27.4 ms），隔离测量窄行形状赢 1.6–1.7x。
+   注意 `constants.rs` 已有的教训：**隔离 kernel 结果在服务矩阵里会失真**
+   （`[64,128]` 隔离赢 1.47x，服务端 `slot_verify` 26.69 → 27.43 ms），
+   所以委托落地必须用服务矩阵验收，不能只看 kernel bench。
+   根因之一已写在 `PROMPT_GEMM_TILE_ROWS` 的注释里：decode 单个 GEMM 只有 ~40 个 CTA，
+   填不满 170 SM —— 任何加宽 tile/减少 CTA 的方向都会先输在这里。
+2. **B4 设备端 greedy argmax**：每步省 4 lane × 993 KB 的 logits D2H 与 host 串行
+   argmax（~3.3 ms/tick）。门控条件 `temperature == 0 && presence == 0 && repetition == 1.0`，
+   tie-break 必须与 host `greedy()` 逐位一致（首个最大值、total order、非有限值报错）。
+3. **B3 Row 派发跨 lane 批量化**：`delta` 3.7 + `conv` 2.4 + norm/rope/add ≈ 3 ms 的
+   12 路串行延迟链。
 
 复现命令（native 侧，vLLM 侧复用 `stage-b2-mtp2-vllm-g1`）：
 
