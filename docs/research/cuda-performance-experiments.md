@@ -983,3 +983,100 @@ release 制品，图边界事件。权重一遍的物理下限是 **13.07 ms/rep
 另外，整图**每节点 103 µs** 这个量级本身说明：prompt 路径的成本主要由"节点数 × 每节点固定开销"
 决定，1154 节点/次 replay 的规模下，任何节点级浪费都会被放大 1000 次；这也是为什么先把每节点的
 占比量清楚比继续调并行度更重要。
+
+## 十一、2026-10-10 Stage A/B：并发准入计价与同步消除
+
+§十 的归因把 batch4 3.50–3.56x 指向"并发准入"，本节记录当天据此落地的两批改动与实测。
+比率方向统一为 **native / vLLM**；vLLM 侧在**同机同驱动**（615.78.08）上重测
+（`stage-b2-mtp2-vllm-g1`），因为 10-09 签发基线是 615.71.09，硬件身份已不匹配。
+
+### 11.1 症结：池化序列被按"私有验证图"计价【确证】
+
+`CB_DECODE_SLOTS=4` 的槽位池本该让 4 条并发序列共享一张验证图，但准入计价对所有序列
+一视同仁地收了"私有 verify 图 + 私有 wide prompt 图"的账。结果是：**第 4 条请求进不了
+准入，落回串行私有路径**，而它又与 3 条池化序列抢同一块显存，于是"每步只跑 1 条序列
+（blocked=3）"——batch4 的 7.3–8.1x TTFT 就来自这里，不是内核慢。
+
+### 11.2 Stage A：按实际用途计价
+
+| 位置 | 改动 |
+|---|---|
+| `executor/state.rs` | 新增 `private_verification_for`：只有当池已满（`pooled >= pool.width()`）或形状不适合池化时才按私有图计价 |
+| `loading/budget.rs` | `sequence_budget(capacity, readout, private_verification)`：池化序列不再为 verify 回滚快照/批工作区付账 |
+| `loading/mod.rs`·`resident/program.rs` | 新增 `sequence_pooled`/`new_pooled`/`graph_policy`/`forfeit_verification`：池化程序不捕获私有 verify 图；显存紧张时也不捕获 wide prompt 图 |
+| `resident/capture.rs` | `record_program(graph, skip_logits)`：prefill 图把 logits 读出留给它的 `_last` 孪生图 |
+| `executor/execution.rs` | `warm_slot_pool`：装载期就捕获槽位池，第一条并发请求即可批处理（代价是启动 +≈2.7 s） |
+| `constants.rs` | `CB_SLOT_TOKENS` 4096 → 2048：池是装载期捕获的，它的 fp8 KV 与并发序列争物理显存；4096 行时池 + 4 条序列超卡 |
+
+### 11.3 Stage B1：把"浪费的同步"换成流序
+
+单流执行器里，host 只在真正要读数据时才该同步。原先 catch_up 的"零拷贝 readback"、
+commit 的部分接受 restore 都是纯同步浪费：
+
+| 位置 | 改动 |
+|---|---|
+| `device.rs` | `copy_h2d_pinned`：从 pinned 暂存区入队的异步 H2D，不在这里同步 |
+| `resident/batch.rs` | `stage_lanes`（校验+metadata staging 抽出）、`replay_detached`（state-only 图 `async_on`，不保留 future）、`barrier()` |
+| `resident/slot_batch.rs` | 每 lane 的 pinned 上传环（`EXTERNAL_UPLOAD_RING = MAX_VERIFICATION_WIDTH + 1`，无同步链内不得覆写）+ `SlotPool` 的 `Drop` barrier |
+| `resident/slot_batch/draft.rs` | `upload_external`/`upload_lanes`/`run_external_detached`：catch_up 走无同步链 |
+| `resident/slot_verify.rs` | commit 的 restore 改 `async_on`；`barrier()` 供池teardown 排空 |
+| `executor/drafting.rs` | catch_up 改用 `run_external_detached` |
+
+### 11.4 实测（2026-10-10 23:14，`mine-mtp2-native-g1`）
+
+| case | ttft | tpot | wall |
+|---|---:|---:|---:|
+| short | 1.85 | 1.58 | 1.60 |
+| long | 6.10 | 1.44 | 1.92 |
+| batch4 | 2.64 | 2.07 | 2.10 |
+| hot_long | 0.42 | 1.28 | 1.05 |
+
+- **Stage A 命中目标**：batch4 TTFT 668 → 236 ms（7.3–8.1x → 2.64x），batch4 wall
+  3.50x → 2.04–2.10x；4 条序列同时驻留。
+- **Stage B1 收益很小**：TPOT 只降 1–3%（batch4 18.96 → 18.34 ms），落在单位间漂移内。
+  说明 10-09 记的那些 host 同步原本就不在关键路径上，§十.2 的"主机回读没有成为关键路径"
+  在这里第二次被证实。
+- 三次复跑（21:33 / 21:46 / 22:49 / 23:14）互为复现，单格漂移 ≤4%。
+
+### 11.5 未决项一：native 绝对 TPOT 比 10-09 基线慢 4–25%【待归因】
+
+同一 profile、同一命令行、同一模型，10-09 签发基线（rev `2bda883`）与今天：
+
+| case | tpot 10-09 | tpot 今天 | Δ | vLLM 10-09 | vLLM 今天 |
+|---|---:|---:|---:|---:|---:|
+| short | 10.85 | 13.5 | +25% | 8.66 | 8.59 |
+| long | 12.32 | 13.0 | +6% | 9.07 | 9.10 |
+| batch4 | 16.66 | 19.0 | +14% | 9.38 | 9.19 |
+| hot_long | 11.42 | 11.9 | +4% | 7.85 | 9.26 |
+
+排除项：SM 时钟（2833 vs 2841 MHz）、功耗（205 vs 208 W）、进程 CPU（97.8% vs 97.4%，
+同为一核占满）、`config_readback` 的调度参数逐字相同；`2bda883..HEAD` 之间**没有任何**
+改动 CUDA 解码路径的提交（只有测试搬迁、文档、`fdbcb89` 的 workspace 依赖声明——Cargo.lock
+无 diff、一次 refuted 实验的 Delta value-split 且默认 split=1）。
+
+因此嫌疑集中在**环境**：驱动 615.71.09 → 615.78.08，或 cuTile 运行期 JIT 的产物变化——
+vLLM 侧绝对数字不动支持这一点（它的 kernel 是预编译的，我们是 JIT/lowering 出来的）。
+在解释清楚之前，**跨驱动的绝对数字不可比**，只有同驱动的成对比率能用；签发新基线前必须
+先复现/推翻这条。
+
+### 11.6 未决项二：池化程序放弃 wide prompt 图，代价落在单请求 prefill 上【待 A/B】
+
+`graph_policy` 为了 4 条池化序列能同时驻留，让池化程序只保留 narrow prompt 图
+（`wide_prompt = private_verification || narrow_prefill_width < PREFILL_LANES`）。
+单请求也走池化程序，于是 511-token 的 `long` 被切成更多次 replay：long TTFT
+317.6 → 396 ms（+25%），比值 4.2–4.5 → 6.10。`CB_SLOT_TOKENS` 已从 4096 收到 2048，
+腾出的显存是否够把 wide prompt 图还给池化程序，需要一次 A/B；若 4 条并发因此退化，
+则应改成"只有池已满的序列才降级"。
+
+复现命令（native 侧，vLLM 侧复用 `stage-b2-mtp2-vllm-g1`）：
+
+```sh
+bash tools/bench/safe-run.sh python3 tools/bench/serve-compare.py --engine native \
+  --model /home/r/models/Qwen3.8-27B-NVFP4 --executable target/release/infer \
+  --inputs artifacts/workloads/Qwen3.8-27B-NVFP4-inputs.json --output-dir artifacts/stage-b-20261010 \
+  --mtp 2 --tokens 64 --gpu-memory-utilization 0.88 --max-model-len 32768 --max-num-seqs 16 \
+  --run-id <新 ID> --profile-id 27b-mtp2 --checklist benchmarks/profiles/27b-mtp2.json
+python3 tools/bench/compare-results.py \
+  artifacts/stage-b-20261010/Qwen3.8-27B-NVFP4-mtp2-vllm-stage-b2-mtp2-vllm-g1.json \
+  artifacts/stage-b-20261010/Qwen3.8-27B-NVFP4-mtp2-native-<新 ID>.json
+```
