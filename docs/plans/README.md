@@ -12,21 +12,21 @@ P0 优先消除正确性和测量阻塞；P1 交付工程、服务与公共协�
 
 任务编号用于交接与查找。审查文档里的 P1/P2 是缺陷严重程度，与这里的排期优先级分别维护。
 
-| 优先级与编号 | 任务与方案 | 启动条件 | 完成标准 |
-|---|---|---|---|
-| P0 · B1 | [CUDA 三项修正](../reviews/cuda-commits-2026-10-09.md) | 可立即启动 | handle 设备/stream 归属、FP8 缓存身份、capture 前预热通过对应设备回归；保留数值规则 |
-| P0 · B2 | [采集与比较门禁修正](performance/baseline.md) | 可立即启动，与 B1 分开开发 | release 身份、配置回读、工作量、缓存、计时与统计可核验；审查中的无效对比不能误判通过 |
-| P0 · B3 | [重建并固化 baseline](performance/baseline.md) | B1、B2 的对应修正验收；固定可复现的 release 制品 | 按共同契约完成对应 profile 的完整矩阵、独立复测与复算，保存证据并签发 baseline ID |
-| P1 · E1 | [测试归属](engineering/tests.md)与[删除测试后端](engineering/remove-test-backends.md) | 可立即启动，先登记消费者和断言清单 | 按 crate 迁移测试并替换消费者；删除两个完整 CPU 测试执行器及产品 feature/CLI/IR 分叉；关键断言有去向 |
-| P1 · E2 | [构建与依赖收敛](engineering/build-and-dependencies.md) | 盘点、计划设计可立即启动；受影响消费者/feature 随 E1 收敛后集成 | 主 workspace 版本来源统一，native/cross 共用计划，host/device/model/performance 入口与 CI 职责清楚；不顺带升级依赖 |
-| P1 · S1 | [总上下文与有效服务配置](serving/agent-api.md) | CPU 规则可立即启动；设备容量验收使用受控窗口 | 所有入口共享长度预算，输出 cap 与总上下文区分，实际配置与来源可读回；只增加实际需要的参数 |
-| P1 · S2 | [基础 Agent 工具闭环](serving/agent-api.md) | parser、模板与协议可立即启动；完整接入依赖 S1 和相关测试归属约定 | typed 工具历史、结果关联、none/auto、文本 SSE 与增量 parser 通过 SDK 闭环；流式/完整返回一致 |
-| P1 · I1 | [公共 SPI 与 MTP 迁移](speculation/spi.md) | 契约设计可先做；迁移验收需要 B3、受影响 E1 迁移及 E2 的构建/feature 合同稳定 | 模型绑定、算法 provider、设备执行分开；serial/pooled 的 token、状态、资源和服务性能不回退 |
-| P1 · D1 | [DFlash2 package、模型模块与独立参考](speculation/dflash2.md) | 配置/权重检查、参考制品和资源估算可先做；独立设备模块另排窗口，共同接线等 I1 契约稳定 | 架构/词表/层抽头/窗口兼容性清楚，BF16/完整 head 的 draft 图与 selector 对照独立参考；完整资源报价可解释 |
-| P2 · R1 | [Target Record/Fold 状态重放](speculation/state-replay.md) | I1 的共同 verifier/提交契约稳定；迁移后 MTP 参考已验收 | Delta/Conv 接受前缀状态直接对照通过，serial/pooled 共用；容量、Fold 成本和完整周期有证据 |
-| P2 · D2 | [DFlash2 接入](speculation/dflash2.md)与[请求/轮次选择](speculation/composition.md) | D1、I1，以及目标设备可兑现的回滚和草稿资源能力；本轮小显存接入需 R1 与草稿预算一起解决 | 线性 greedy、拒绝后状态、池化与切换通过；实际启用算法、追赶成本和回退可见；两个 provider 分别有有效对照 |
-| P2 · C1 | [按 profile 选择 CUDA/服务优化](performance/cuda.md) | 对应 B3 baseline 与阶段计时可用；涉及草稿时还需该 provider 已验收 | 每次只改变一个可归因策略，完整服务矩阵有收益，尾延迟/显存/数值通过；可早于 D2 做普通 decode 优化 |
-| P3 · X1 | [MTP 与 DFlash2 同轮组合](speculation/composition.md) | D2 的单 provider 和切换路径稳定，组合模型条件及资源报价明确 | 优于同负载下最佳单 provider，使用相同回滚策略；不能只与关闭推测比较 |
+| 优先级与编号 | 任务与方案 | 启动条件 | 完成标准 | 状态 |
+|---|---|---|---| --- |
+| P0 · B1 | [CUDA 三项修正](../reviews/cuda-commits-2026-10-09.md) | 可立即启动 | handle 设备/stream 归属、FP8 缓存身份、capture 前预热通过对应设备回归；保留数值规则 | 本目标未覆盖（CUDA 修正，另一会话） |
+| P0 · B2 | [采集与比较门禁修正](performance/baseline.md) | 可立即启动，与 B1 分开开发 | release 身份、配置回读、工作量、缓存、计时与统计可核验；审查中的无效对比不能误判通过 | **已完成**：release 身份、配置回读、工作量、缓存、计时与统计均有门禁；并加上 profile 版本边界，旧基线仍可复核 |
+| P0 · B3 | [重建并固化 baseline](performance/baseline.md) | B1、B2 的对应修正验收；固定可复现的 release 制品 | 按共同契约完成对应 profile 的完整矩阵、独立复测与复算，保存证据并签发 baseline ID | **部分**：三条基线已签发并可复核；独立复测样本（2→5）与持续/混合负载需要设备窗口 |
+| P1 · E1 | [测试归属](engineering/tests.md)与[删除测试后端](engineering/remove-test-backends.md) | 可立即启动，先登记消费者和断言清单 | 按 crate 迁移测试并替换消费者；删除两个完整 CPU 测试执行器及产品 feature/CLI/IR 分叉；关键断言有去向 | **已完成**：两个执行器与产品 feature/CLI/IR 分叉已删除，见[验收对照](engineering/remove-test-backends.md) |
+| P1 · E2 | [构建与依赖收敛](engineering/build-and-dependencies.md) | 盘点、计划设计可立即启动；受影响消费者/feature 随 E1 收敛后集成 | 主 workspace 版本来源统一，native/cross 共用计划，host/device/model/performance 入口与 CI 职责清楚；不顺带升级依赖 | **已完成**：盘点、计划、依赖图、计数、参考环境、入口动词与 workspace 边界均有门禁或实测证据 |
+| P1 · S1 | [总上下文与有效服务配置](serving/agent-api.md) | CPU 规则可立即启动；设备容量验收使用受控窗口 | 所有入口共享长度预算，输出 cap 与总上下文区分，实际配置与来源可读回；只增加实际需要的参数 | 本目标未覆盖（服务长度规则，待 S 系列排期） |
+| P1 · S2 | [基础 Agent 工具闭环](serving/agent-api.md) | parser、模板与协议可立即启动；完整接入依赖 S1 和相关测试归属约定 | typed 工具历史、结果关联、none/auto、文本 SSE 与增量 parser 通过 SDK 闭环；流式/完整返回一致 | 本目标未覆盖（Agent 工具闭环，待 S 系列排期） |
+| P1 · I1 | [公共 SPI 与 MTP 迁移](speculation/spi.md) | 契约设计可先做；迁移验收需要 B3、受影响 E1 迁移及 E2 的构建/feature 合同稳定 | 模型绑定、算法 provider、设备执行分开；serial/pooled 的 token、状态、资源和服务性能不回退 | **部分**：步骤①（公共层算法名清零）与步骤②第一刀（接受策略成类型）已完成；其余契约与 provider 迁移待做 |
+| P1 · D1 | [DFlash2 package、模型模块与独立参考](speculation/dflash2.md) | 配置/权重检查、参考制品和资源估算可先做；独立设备模块另排窗口，共同接线等 I1 契约稳定 | 架构/词表/层抽头/窗口兼容性清楚，BF16/完整 head 的 draft 图与 selector 对照独立参考；完整资源报价可解释 | **部分**：配置/权重/几何/融合/卷积/selector/token/mask/报价已完成；arena 与图报价、tokenizer 逐 token 对照缺制品或设备 |
+| P2 · R1 | [Target Record/Fold 状态重放](speculation/state-replay.md) | I1 的共同 verifier/提交契约稳定；迁移后 MTP 参考已验收 | Delta/Conv 接受前缀状态直接对照通过，serial/pooled 共用；容量、Fold 成本和完整周期有证据 | **部分**：两组 golden 与 Rust 参考已完成；设备对照与 Fold 成本需要窗口 |
+| P2 · D2 | [DFlash2 接入](speculation/dflash2.md)与[请求/轮次选择](speculation/composition.md) | D1、I1，以及目标设备可兑现的回滚和草稿资源能力；本轮小显存接入需 R1 与草稿预算一起解决 | 线性 greedy、拒绝后状态、池化与切换通过；实际启用算法、追赶成本和回退可见；两个 provider 分别有有效对照 | 未开始：前置 D1、I1 未满足 |
+| P2 · C1 | [按 profile 选择 CUDA/服务优化](performance/cuda.md) | 对应 B3 baseline 与阶段计时可用；涉及草稿时还需该 provider 已验收 | 每次只改变一个可归因策略，完整服务矩阵有收益，尾延迟/显存/数值通过；可早于 D2 做普通 decode 优化 | 未开始：前置为对应 profile 的 B3 baseline 与阶段计时 |
+| P3 · X1 | [MTP 与 DFlash2 同轮组合](speculation/composition.md) | D2 的单 provider 和切换路径稳定，组合模型条件及资源报价明确 | 优于同负载下最佳单 provider，使用相同回滚策略；不能只与关闭推测比较 | 未开始：前置为 D2 单 provider 验收 |
 
 B3 不等待全部 E2 或完整 Agent 能力完成。先用经过修正的固定制品和当前实际配置建立基线；S1 或后续策略改变共同约束时，按基线合同创建新 profile 和交接结果。I1 不必等待整套 CI、打包和不相关 crate 的目录整理，但其涉及的测试、feature、构建合同必须已经稳定。共享 IR 的测试 feature 删除需要相关消费者一并迁移，不能只在某个局部构建中隐藏旧分叉。
 
