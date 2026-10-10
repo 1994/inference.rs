@@ -1,42 +1,16 @@
 //! Engine CLI support.
 use super::read_json;
 use crate::backend;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use crate::backend::SelectedBackend;
-#[cfg(feature = "test-backends")]
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
-#[cfg(feature = "test-backends")]
-use infer_core::ModelId;
 use infer_core::{Error, Result};
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_ir::PrecisionPlan;
-#[cfg(feature = "test-backends")]
-use infer_kernel_api::KernelRegistry;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_runtime::{Engine, RuntimeConfig};
 use std::path::Path;
 
-/// Deterministic seed for the CPU reference fixture model.
-#[cfg(feature = "test-backends")]
-const REFERENCE_FIXTURE_SEED: u64 = 7;
-
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn selected_engine(
     config: RuntimeConfig,
     model: Option<&Path>,
@@ -100,43 +74,11 @@ pub fn configured_engine(
         }
         Ok(engine)
     } else {
-        #[cfg(feature = "test-backends")]
-        if choice.kind == backend::BackendChoice::TestCpu {
-            return new_engine(config, model);
-        }
         let _ = model;
-        Err(Error::invalid(
-            "device backend requires --package; CPU fixtures require a test-backends build and --backend test-cpu",
-        ))
+        Err(Error::invalid("a device backend requires --package"))
     }
 }
-#[cfg(feature = "test-backends")]
-pub fn registry() -> Result<KernelRegistry> {
-    let mut r = KernelRegistry::default();
-    r.register(&ReferenceKernels)?;
-    Ok(r)
-}
-#[cfg(feature = "test-backends")]
-pub fn new_engine(config: RuntimeConfig, model: Option<&Path>) -> Result<Engine<SelectedBackend>> {
-    let model = if let Some(path) = model {
-        read_json(path)?
-    } else {
-        ReferenceModel::fixture(ModelId::new(1)?, REFERENCE_FIXTURE_SEED)
-    };
-    let ir = model.ir.clone();
-    Engine::new(
-        SelectedBackend::Reference(Box::new(ReferenceBackend::new(model)?)),
-        ir,
-        PrecisionPlan::f32(),
-        &registry()?,
-        config,
-    )
-}
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn config(path: Option<&Path>) -> Result<RuntimeConfig> {
     path.map(read_json)
         .transpose()

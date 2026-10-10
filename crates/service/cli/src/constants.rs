@@ -10,8 +10,6 @@ pub const GIB_U64: u64 = 1024 * MIB_U64;
 pub const DEFAULT_GPU_MEMORY_UTILIZATION: f64 = 0.9;
 /// Host-memory budget used when `--host-memory-mib` is omitted on the CPU test backend.
 /// Native device backends derive their own budget from the device instead.
-#[cfg(feature = "test-backends")]
-pub const DEFAULT_HOST_MEMORY_MIB: u64 = 512;
 /// Default temporary weight-staging budget in MiB for upload and package inspection.
 pub const DEFAULT_STAGING_MIB: usize = 4;
 /// Maximum accepted host JSON document size for requests and golden files.
@@ -33,28 +31,18 @@ pub const DEFAULT_TPOT_SLO_US: u64 = 100_000;
 /// Default tolerated p99 latency regression fraction for `compare`.
 pub const DEFAULT_MAX_P99_REGRESSION: f64 = 0.05;
 /// Engine ticks a CLI owner loop waits for its submitted workload to go idle.
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub const MAX_IDLE_TICKS: u64 = 1_000_000;
 /// Default context length in tokens for the model memory estimate.
 pub const DEFAULT_CONTEXT_TOKENS: usize = 4096;
 /// Default device memory in GiB for the model memory estimate.
 pub const DEFAULT_DEVICE_MEMORY_GIB: u64 = 32;
 /// Default KV page size in tokens when a caller does not override it.
-#[cfg(any(target_os = "macos", feature = "test-backends"))]
-pub const DEFAULT_KV_PAGE_TOKENS: usize = 16;
 /// Default maximum token rows in one native device prefill chunk.
 #[cfg(target_os = "macos")]
 pub const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
 /// Pause between polls while a device step is still in flight.
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub const DEVICE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(100);
 
 /// Default port for the local inference HTTP server.

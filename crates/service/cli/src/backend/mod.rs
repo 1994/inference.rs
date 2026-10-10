@@ -1,39 +1,18 @@
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod cuda;
 #[cfg(target_os = "macos")]
 mod metal;
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod selected;
-#[cfg(feature = "test-backends")]
-mod testing;
-#[cfg(any(
-    test,
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::{Error, Result};
 
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub use selected::{SelectedBackend, load};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum BackendChoice {
     #[default]
     Auto,
-    #[cfg(feature = "test-backends")]
-    TestCpu,
     Metal,
     Cuda,
 }
@@ -57,15 +36,11 @@ pub fn catalog() -> serde_json::Value {
     serde_json::json!({"primary_target":"cuda","supported":["cuda","metal"],"auto_priority":["cuda","metal"],
         "cuda":{"implemented":cfg!(all(target_os="linux", feature="cuda")),"available":cuda_available(),"execution":"resident CUDA graphs, synchronous provider", "build_feature":"cuda"},
         "metal":{"implemented":cfg!(target_os="macos"),"available":metal_available()},
-        "testing_backends":{"enabled":cfg!(feature="test-backends"),"supported_for_deployment":false}})
+        "testing_backends":{"enabled":false,"supported_for_deployment":false}})
 }
 #[derive(Debug, Clone)]
 #[cfg_attr(
-    not(any(
-        target_os = "macos",
-        feature = "test-backends",
-        all(target_os = "linux", feature = "cuda")
-    )),
+    not(any(target_os = "macos", all(target_os = "linux", feature = "cuda"))),
     allow(
         dead_code,
         reason = "The portable CLI parses GPU allocation options even when no native execution backend is compiled"
@@ -100,12 +75,7 @@ pub struct Selection {
     )]
     pub chunked_recurrent: bool,
 }
-#[cfg(any(
-    test,
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 fn resolve(
     choice: BackendChoice,
     cuda_available: bool,

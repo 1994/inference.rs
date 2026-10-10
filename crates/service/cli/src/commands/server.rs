@@ -1,19 +1,11 @@
 //! Server commands.
 use super::{ServeOptions, axum_serve, backend};
 use crate::support::{configured_engine, read_json};
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::ErrorCode;
 use infer_core::{Error, Result};
 
-#[cfg(any(
-    target_os = "macos",
-    feature = "test-backends",
-    all(target_os = "linux", feature = "cuda")
-))]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Result<()> {
     let ServeOptions {
         listen,

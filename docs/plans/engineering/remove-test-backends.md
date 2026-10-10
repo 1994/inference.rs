@@ -65,9 +65,20 @@ qwen-hybrid-grouped}/golden.json`）是**模型级**数值对照，只有 CPU �
 2 ignored / 0 failed** ✓，即删掉执行器后少 7 个二进制、15 个用例 ✓）；`make check-tools` ✓；
 package 12 测试 ✓。
 
-**仍未做**：CLI 里约 180 处 `#[cfg(feature = "test-backends")]` 站点（现在**不可达**：feature 已无实现
-✓，但仍是死代码 ✗，需整批删除 ✓）；`tools/validation/smoke-paged-kv.py` 的 CPU oracle 需改为对照
-登记 golden ✓。
+**CLI 的死分支已清除（收尾）**
+
+- 约 180 处 `#[cfg(feature = "test-backends")]` 站点整批删除：`any(...)` 里的备选移除、独立属性连同
+  其守护项（`Demo` 命令、测试后端加载器、gated 测试等）一并删除；随后 CLI 的 `test-backends` feature
+  **声明本身也删掉** ✓ —— 于是它无法被重新启用，`unexpected_cfgs` 会挡住任何回退 ✓。
+- 删除过程中暴露两类残留并修正：① 被删项上方遗留的孤立文档注释（rustdoc 直接拒绝 ✗）—— 脚本扫描出
+  4 处并清除；② 错误文案里"CPU fixtures require a test-backends build"之类的过时指引 → 改为"设备后端
+  需要 `--package`" ✓。
+- 测试执行器消费者从 **30 再降到 6** ✓（只剩本仓门禁按规则点名这两个名字，以及一条历史注释）。
+
+**`tools/validation/smoke-paged-kv.py`**：它的 "Host output parity" 依赖已删除的 CPU oracle ✗。登记
+golden 记录的是 fixture 的**逐前缀 logits**（1–6 token 前缀 ✓），并不能为它请求的 5 token 生成提供参照
+✗ —— 因此这条断言**没有新家**，据实删除 ✓，工具保留它真正要验收的部分（页压力下的抢占、快照捕获与重放
+✓），文档字符串明确写出原因与取舍，不用含糊措辞掩盖。
 
 ## 已保住的数值对照
 
