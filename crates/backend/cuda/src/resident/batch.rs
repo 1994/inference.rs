@@ -38,6 +38,10 @@ pub(super) struct BatchGraph {
     hidden: Vec<Arc<Tensor<f32>>>,
     logits: Vec<Arc<Tensor<f32>>>,
     pub width: usize,
+    /// Token capacity of the KV arena this graph's kernels address. Positions are rows in it,
+    /// so a chunk that would write past the end is an internal inconsistency, not a request
+    /// the engine may reject later.
+    pub capacity: usize,
     /// Positions the state writes lag the `RoPE` position by, matching the MTP KV offset.
     state_offset: i32,
     /// Optional in-graph boundary events (`INFER_CUDA_PREFILL_PROFILE`); declared after
@@ -319,6 +323,7 @@ impl BatchBuilder<'_> {
             hidden,
             logits,
             width,
+            capacity: self.capacity,
             profile: None,
             _arena: None,
         })
@@ -410,6 +415,7 @@ impl BatchBuilder<'_> {
             hidden,
             logits,
             width: self.width,
+            capacity: self.capacity,
             profile,
             _arena: Some(arena),
         })
@@ -707,6 +713,7 @@ impl BatchGraph {
             graph,
             &mut self.metadata,
             self.width,
+            self.capacity,
             tokens,
             position,
             self.state_offset,
@@ -754,6 +761,7 @@ impl BatchGraph {
         graph: &CudaGraph<()>,
         metadata: &mut [Tensor<i32>],
         width: usize,
+        capacity: usize,
         tokens: &[u32],
         position: usize,
         state_offset: i32,
@@ -766,6 +774,20 @@ impl BatchGraph {
             } else {
                 pos.saturating_add(state_offset)
             };
+            // A KV row past the arena would be written out of bounds by the state kernels, and
+            // the earlier kernels only report that on a checked load. Refuse it here, where the
+            // numbers are still host-side.
+            // `-1` is the inactive sentinel the kernels skip; anything below it, or at or past
+            // the arena depth, would address a row the state kernels do not check on store.
+            if state_pos < -1 || state_pos >= i32::try_from(capacity).map_err(device_error)? {
+                return Err(Error::new(
+                    infer_core::ErrorCode::Capacity,
+                    format!(
+                        "state position {state_pos} (base {position}, lane {lane}, offset {state_offset}) \
+                         exceeds the {capacity}-token KV arena"
+                    ),
+                ));
+            }
             super::metadata::update(
                 graph,
                 metadata,
@@ -798,10 +820,30 @@ impl BatchGraph {
             graph,
             &mut self.metadata,
             self.width,
+            self.capacity,
             tokens,
             position,
             self.state_offset,
         )?;
+        // The slot-decode path already refuses a state position past the arena
+        // (`stage_lanes`); the prompt path has to as well, because the prefill append and
+        // decode kernels address that many rows of KV without a checked load.
+        let last_row = i64::try_from(position).map_err(device_error)?
+            + i64::try_from(tokens.len()).map_err(device_error)?
+            - 1
+            + i64::from(self.state_offset);
+        if last_row >= i64::try_from(self.capacity).map_err(device_error)? {
+            return Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                format!(
+                    "prompt state rows end at {last_row} (base {position}, {} tokens, offset {}), \
+                     past the {}-token KV arena",
+                    tokens.len(),
+                    self.state_offset,
+                    self.capacity
+                ),
+            ));
+        }
         super::metadata::update(
             graph,
             self.prefill_info

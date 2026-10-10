@@ -2126,3 +2126,24 @@ attention_prefill.rs:56: partition access out of bounds: dim 0, block index >= c
 `(base, count, offset)` 与该 program 的 capacity 对一次账，凡是 `base + count + offset > capacity`
 就直接报错——这既是分页的前置（block table 绝不能越界索引），也能判定"这是既有 bug 还是我引入的"。
 在没有这个护栏之前，不再往核里加表。
+
+### 13.13 给 prompt 路补上与 slot 路同款的位置护栏：**交付级 workload 上零违规**
+
+§13.12 说下一步是"主机侧把 (base, count, offset) 与 capacity 对账"。做完之后的结论**否定了一条假设**：
+
+- `SlotDecodeGraph::stage_lanes` 早就有 `state_pos >= capacity → 报错`（`batch.rs:906`），
+  但 **prompt/batch 路没有这一条**。补上两处：
+  - 每 lane：`state_pos < -1 || state_pos >= capacity` 报错（`-1` 是"非活跃"哨兵，其余负数才会
+    让内核去索引到负行）；
+  - 整块：`base + tokens.len() - 1 + state_offset >= capacity` 报错。
+- **官方 matrix（`--chunked-recurrent`，4 个 case × 4 次）16 次 trial 全部完成、护栏零命中**。
+
+所以：**交付级 workload 上，主机侧写入 metadata 的位置从来没有越界**——第 18 轮块表那次
+"table[position/BT] 越界" **不是**"主机给了越界位置"造成的。这条假设被排除，剩下的是我自己的接线问题
+（表长/表实例与内核寻址不匹配，或内核侧算出的下标有问题）。下一次必须**在内核侧**把
+`position/BT` 与实际表长打出来，或干脆把表长从**捕获时那张 KV 张量的形状**派生（而不是从另一个
+capacity 参数），让"表长与 arena 深度"只可能有一个来源。
+
+顺带记一个自己踩的坑：护栏第一版我把下界写成 `position < 1`，于是 **base=0 的正常请求**被拒
+（日志：`prompt state rows end at 50 (base 0, 51 tokens, offset 0), past the 128-token KV arena`）。
+**护栏自己的语义也要用正常路径验一遍**——又是 matrix 把它抓出来的。
