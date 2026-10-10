@@ -30,6 +30,17 @@ python3 tools/bench/compare-results.py --allow-legacy-baseline \
 **新测量自身**在默认路径下仍必须自证 release profile ✓。三条已签发基线均以此方式复核通过（各 12 个指标，
 verdict 与 manifest 一致 ✓）。
 
+## 数字的复算
+
+`verify` 核的是哈希（证据未变 ✓）；要确认 manifest 里的数字**确实来自**这些证据 ✗，跑复算 ✓：
+
+```sh
+python3 tools/bench/verify-baseline.py
+```
+
+它用与签发时同一个比较逻辑重算每个 case 的中位数与 ratio，并与 manifest 逐项比对 ✓（多于或少于记录都失败 ✓）；
+三条已签发基线均通过 ✓。
+
 ## 目录内容
 
 | 文件 | 内容 |
