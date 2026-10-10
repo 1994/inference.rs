@@ -1289,6 +1289,7 @@ dependencies = [
  "infer-gpu-api",
  "infer-ir",
  "infer-kernel-api",
+ "infer-model-recipes",
  "infer-observe",
  "infer-quality",
  "infer-scheduler",

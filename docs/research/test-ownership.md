@@ -42,9 +42,9 @@
 | `target_os = "macos"` | 1 | Metal 用例 |
 | 需要 GPU/CUDA fixture 的 `#[ignore]` | 40 | 必须由具名 device suite 显式选择，不能靠"全 ignored"算通过 |
 
-## 执行器消费者与删除归属（67 个文件）
+## 执行器消费者与删除归属（66 个文件）
 
-| `protocol` | 15 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
+| `protocol` | 14 | 协议/状态场景：准入、背压、取消、完成身份、HTTP/SSE、actor。断言针对正式 runtime/state/actor 行为，用脚本化桩替代完整模型计算 |
 | `service` | 25 | CLI 与服务路径：帮助、doctor、错误路径可无 GPU 测试；成功推理与网络服务移到真实设备 suite |
 | `numeric` | 8 | 数值对照：单算子小型独立公式、官方 golden、真实设备验收；不允许用被测 kernel 生成 expected |
 | `fixture` | 7 | 两个执行器自身与其测试，随删除一并移除 |
@@ -122,7 +122,22 @@ crate × 模式组合会被拒绝；同时**任何没有归属的消费者都会
 计数、stage 分解与请求口径都没变；`cargo fmt --check` 与严格 clippy（`-D warnings`）通过；
 `infer-backend-reference` 从 manifest 与 `Cargo.lock` 中消失。
 
-### 对 `protocol` 归属的要求
+### 已替换：`runtime/tests/providers.rs`（`protocol` 归属第一个）
+
+`providers.rs` 现在用 `crates/engine/runtime/tests/support/mod.rs` 里的声明式替身：显式 `ModelIr`
+描述符、15 个 `Operation` 的声明、CUDA capability 样例，加上一个不执行模型的后端。替身需要额外
+声明三件事才能覆盖这个场景，都是协议管道而不是推理：
+
+- `supports_control_checkpoint() -> true`：否则 `Engine::restore` 直接拒绝；
+- `capture_execution_state`/`restore_execution_state`：替身的全部"设备状态"就是它发放过哪些
+  state，序列化这份清单即可（参考实现序列化的是 token 历史）；
+- **每个 token 一行 hidden**：引擎只在 `rows == 计划里的 context 长度` 时才把 hidden 输出交给
+  workload 的 `postprocess`，所以替身必须像参考实现那样 commit 任务的 token 并按其历史长度给出
+  行数。这一条是替换过程中最容易被忽略的：行数不对时请求会"完成"但没有输出，且不报错。
+
+`infer-runtime` 的 7 个集成 target 与单测全过，clippy 干净。
+
+### 其余 `protocol` 消费者的要求
 
 同样三件事：显式模型描述符、声明的 kernel 集合、显式 capability 样例；需要成本反馈的场景让替身
 不上报计时。`protocol` 的 15 个消费者里，`runtime/tests/{control_path,scheduling}.rs` 已有包装

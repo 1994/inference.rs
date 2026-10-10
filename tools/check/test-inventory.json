@@ -211,14 +211,6 @@
     },
     {
       "crate": "runtime",
-      "path": "crates/engine/runtime/tests/providers.rs",
-      "patterns": [
-        "infer_backend_reference"
-      ],
-      "role": "protocol"
-    },
-    {
-      "crate": "runtime",
       "path": "crates/engine/runtime/tests/runner.rs",
       "patterns": [
         "infer_backend_reference"

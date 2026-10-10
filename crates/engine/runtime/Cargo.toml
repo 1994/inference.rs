@@ -58,3 +58,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 infer-backend-reference.workspace = true
+infer-model-recipes.workspace = true

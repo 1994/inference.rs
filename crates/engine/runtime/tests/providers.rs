@@ -1,8 +1,9 @@
-use infer_backend_reference::{ReferenceBackend, ReferenceKernels, ReferenceModel};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::{ProviderMetadata, SPI_VERSION, WorkloadProvider};
 use infer_workloads::{NativeWorkloads, WorkloadRegistry};
+
+mod support;
 
 use infer_core::*;
 use infer_ir::*;
@@ -54,13 +55,12 @@ fn providers() -> WorkloadRegistry {
 }
 #[test]
 fn registered_provider_runs_through_core_and_checkpoint_requires_same_registry() {
-    let model = ReferenceModel::fixture(ModelId::new(1).unwrap(), 7);
-    let ir = model.ir.clone();
+    let ir = support::model(ModelId::new(1).unwrap());
     let mut kernels = KernelRegistry::default();
-    kernels.register(&ReferenceKernels).unwrap();
+    kernels.register(&support::DeclaredKernels).unwrap();
     let mut engine = Engine::new(
-        ReferenceBackend::new(model.clone()).unwrap(),
-        ir,
+        support::ProtocolBackend::new(2, 2, &ir).unwrap(),
+        ir.clone(),
         PrecisionPlan::f32(),
         &kernels,
         RuntimeConfig::default(),
@@ -89,14 +89,14 @@ fn registered_provider_runs_through_core_and_checkpoint_requires_same_registry()
     let snapshot = engine.snapshot().unwrap();
     assert!(
         Engine::restore(
-            ReferenceBackend::new(model.clone()).unwrap(),
+            support::ProtocolBackend::new(2, 2, &ir).unwrap(),
             &kernels,
             snapshot.clone()
         )
         .is_err()
     );
     let mut restored = Engine::restore_with_workloads(
-        ReferenceBackend::new(model).unwrap(),
+        support::ProtocolBackend::new(2, 2, &ir).unwrap(),
         &kernels,
         snapshot,
         providers(),
