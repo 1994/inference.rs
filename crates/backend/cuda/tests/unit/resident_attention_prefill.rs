@@ -145,6 +145,59 @@ fn check_case(
             expected_values[dst..dst + DIM].copy_from_slice(&value[src..src + DIM]);
         }
     }
+    // Same inputs and same reference through the tensor-core twin. q and out are bound as
+    // `[lanes, HEADS*DIM]` partitioned `[QT, DIM]` so the launch grid is (lanes/QT, HEADS) and
+    // grid axis 1 is the head; binding them as `[lanes*HEADS, DIM]` collapses that axis, pid.1
+    // becomes zero and every CTA reads KV head 0. Its compensated BF16 mma is held to the
+    // relative tolerance the attention gate uses for the same product.
+    let mut tiled = api::zeros::<f32>(&[lanes, HEADS * DIM]).sync_on(&device.stream)?;
+    let query_tiled = query_device.view(&[lanes, HEADS * DIM])?;
+    let scale = 1.0 / f32::from(u16::try_from(DIM).expect("dim fits in u16")).sqrt();
+    kernels::decode_tiled(
+        (&mut tiled).partition([LANES, DIM]),
+        &query_tiled,
+        &keys,
+        &values,
+        &metadata,
+        window,
+        1.0,
+        1.0,
+        scale,
+    )
+    .generics(vec![
+        "f32".into(),
+        DIM.to_string(),
+        (HEADS / KV_HEADS).to_string(),
+        LANES.to_string(),
+        LANES.to_string(),
+    ])
+    .sync_on(&device.stream)?;
+    let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;
+    for lane in 0..lanes {
+        let position = start + i32::try_from(lane)? + offset;
+        for head in 0..HEADS {
+            let base = (lane * HEADS + head) * DIM;
+            let expected = if lane < usize::try_from(count)? && position >= 0 {
+                reference(
+                    &query[base..base + DIM],
+                    &expected_keys,
+                    &expected_values,
+                    head,
+                    usize::try_from(position)?,
+                    usize::try_from(window)?,
+                )
+            } else {
+                vec![0.0; DIM]
+            };
+            for (dim, expected) in expected.into_iter().enumerate() {
+                let error = (f64::from(tiled_actual[base + dim]) - expected).abs();
+                assert!(
+                    error <= 1e-4 * expected.abs().max(1.0),
+                    "tiled start={start} count={count} offset={offset} window={window} lane={lane} head={head} dim={dim} error={error}"
+                );
+            }
+        }
+    }
     assert_eq!(
         keys.to_host_vec().sync_on(&device.stream)?,
         expected_keys,

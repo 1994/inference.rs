@@ -2028,3 +2028,26 @@ agentic 负载的特征决定了选项：**长且高度重复的前缀**（syste
 37/64，short/batch4 0–5/64——**这既不能证明对、也不能证明错**，必须换成**数值比较器**
 （比对 logits / attention 输出，容差按 §12.16 闸门的 1e-4 相对量级）。这一步是下一轮第一件事；
 在拿到数值结论前，该路径保持**默认关闭**，不进入交付配置。
+
+### 13.8 张量核 attention **通过数值验收**：token 分叉是贪心放大，不是 bug
+
+§13.7 留下的唯一问题是"数值对不对"。做法是把它接到**仓库已有的数值测试**上，而不是新增测试：
+`tests/unit/resident_attention_prefill.rs` 的 `check_case()` 本来就是「跑 resident 核 → 和
+`reference()` 主机参考逐元素比」的夹具，我把 `decode_tiled` 加进同一个 case（同一份 q/KV/metadata、
+同一个参考），容差用仓里给同款补偿 bf16 mma 定的相对量级（attention 闸门用的是 `1e-4 × scale`）：
+
+```
+test resident::attention_prefill::tests::chunk_attention_matches_reference_with_tails_windows_and_draft_offset ... ok
+```
+
+覆盖的是 tails / window / draft-offset / 非活跃行这些真正会出错的边界；SIMT 那条仍按 2e-5 卡死。
+**结论：绑定修对之后，张量核那条在数值上是成立的**，1e-4 相对量级内与 f32 SIMT 路一致。
+
+由此也能解释 §13.7 里 matrix 上 token 一致率很差（short/batch4 0–5/64）：**那是贪心放大的必然结果**，
+不是内核错了——§12.11 早就量过，两条 lowering 只要差 ~1e-8，64 个 token 只对上 1 个。
+所以：
+- 该路径的**正确性**已经用数值比较器确认（相对量级 1e-4）；
+- 它的**输出口径**与 f32 SIMT 路不同（同 chunked 递推的处境），因此**保持默认关闭**，
+  要和 `--chunked-recurrent` 一样由使用方显式选择；
+- 它在长上下文快 1.58×（§13.7），短块慢 12%（grid 只有 48 个 CTA）——推广前应先修短块
+  （QT 降到 16 或对 KV 循环做 split-K，把 grid 抬到数百）。
