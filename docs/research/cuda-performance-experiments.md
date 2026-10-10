@@ -2596,3 +2596,32 @@ WARN CUDA slot pool prewarm failed; will retry on the first batchable step capac
 这条比"把 KV 计价改成块数"更贴近实测瓶颈。
 
 （`CB_DECODE_SLOTS` 已回退到 4、`CB_SLOT_TOKENS` 保持 8192；matrix 复验 16/16 通过。）
+
+### 13.32 池宽的天花板是**每序列的递推状态**，不是 KV，也不是激活 arena
+
+想用"给池留出 arena 预算"来松开池宽（在 `select_prompt_width` 前扣掉池的
+`ActivationArena::required_bytes(graph, CB_DECODE_SLOTS × batch_width)`），实测**没有奏效**：
+
+```
+INFO prompt graph width selected prefill_width=256 narrow_prefill_width=64   ← 仍然选了最宽档
+WARN CUDA slot pool prewarm failed ... capacity=8192
+     last_failure=width 2: Capacity: resident F32 state exceeds available device memory
+```
+
+两个读数很有信息量：
+
+1. 扣掉池的 arena 之后**仍然够**选 256 档 ⇒ 激活 arena 那一项**不是** 16 槽场景的瓶颈（我 §13.31 的
+   推断只对了一半）；
+2. prewarm 在 **width=2** 就失败，报的是 **`resident F32 state`**，不是 arena、不是 scratch——
+   也就是**每序列的递推状态**（48 层 gated-delta/conv，本模型 ~151 MB/序列）本身放不下：
+   加载时 `resident=22.9 GiB state_budget=4.8 GiB`，16 槽 × ~170 MB ≈ 2.7 GB 还要与
+   prewarm 重试（16→15→…→2，每次都要分配再失败）的峰值叠加。
+
+**结论（对目标很关键）**：**KV 分页并不能单独提高并发**——因为 48 层递推状态**必须每序列一份**
+（这正是本目标里写明的约束），它才是池宽/并发的硬上限。这也解释了我一路测到的现象：
+- 第 25 轮"16 槽被拒"、第 36 轮"prewarm 失败"，都发生在**状态**这一侧；
+- `CB_SLOT_TOKENS`（8192）之所以能落地并带来 −13%/−22%，是因为它让**更多请求能进池**（省掉重复准备），
+  而不是因为省了 KV 显存。
+
+⇒ 想真正提高并发，需要的是**减少每序列递推状态的占用**（量化/共享 checkpoint）或**降低池的槽状态开销**，
+而不是继续在 KV 或 arena 上做文章。（`CB_DECODE_SLOTS` 已回退到 4，matrix 16/16 通过。）
