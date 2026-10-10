@@ -28,11 +28,22 @@ rust_checks() {
     python3 tools/check/golden-provenance.py
     # Each workspace boundary states the dependency or toolchain isolation it exists for.
     python3 tools/check/workspaces.py
+    # The help text and the real targets agree, so a verb cannot mean something else than it says.
+    python3 tools/check/makefile.py
     # Production dependency graphs, not just the host CLI's: each target resolves its own feature
     # set, and the plan asks for build edges, duplicates and lockfile identity to be recorded.
     python3 tools/check/release-dependencies.py
     cargo clippy --locked -p infer-backend-cuda --no-default-features --all-targets -- -D warnings
     cargo clippy --locked --workspace --exclude infer-backend-cuda --all-targets -- -D warnings
+    test_checks
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --no-deps
+    cargo build --locked --release -p infer-cli --no-default-features
+    cpu_checks
+}
+
+# The workspace test entries, the one place they are listed: `make test` runs these and nothing
+# else, while `make check-rust` runs them after linting.
+test_checks() {
     # Every test entry reports what it collected, ran, ignored and failed; an entry that only
     # compiles says `compiled` instead of leaving the reader to infer it from a long log.
     python3 tools/check/test-report.py --entry cli -- \
@@ -43,9 +54,6 @@ rust_checks() {
         cargo test --locked -p infer-backend-cuda --no-default-features
     python3 tools/check/test-report.py --entry workspace -- \
         cargo test --locked --workspace --exclude infer-backend-cuda
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --exclude infer-backend-cuda --no-deps
-    cargo build --locked --release -p infer-cli --no-default-features
-    cpu_checks
 }
 
 cpu_checks() {
@@ -126,6 +134,7 @@ case "${1:-all}" in
         if [ "$(uname -s)" = Darwin ]; then metal_checks; fi
         ;;
     rust) rust_checks ;;
+    test) test_checks ;;
     tools) tool_checks ;;
     security) security_checks ;;
     metal) metal_checks ;;
@@ -135,5 +144,5 @@ case "${1:-all}" in
     linux) linux_checks ;;
     linux-numa) linux_numa_checks ;;
     attention) bash tools/bench/safe-run.sh --memory-gib 16 bash tools/bench/attention.sh ;;
-    *) echo "usage: $0 [all|rust|tools|security|metal|cuda|cpu|msrv|linux|linux-numa|attention]" >&2; exit 2 ;;
+    *) echo "usage: $0 [all|rust|test|tools|security|metal|cuda|cpu|msrv|linux|linux-numa|attention]" >&2; exit 2 ;;
 esac

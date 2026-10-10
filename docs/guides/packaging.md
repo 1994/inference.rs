@@ -35,14 +35,15 @@ make package-macos-metal TARGET=x86_64-apple-darwin
 
 # 单独执行阶段；同样支持 TARGET
 make build TARGET=aarch64-unknown-linux-gnu
-make test TARGET=aarch64-unknown-linux-gnu
+make test-package TARGET=aarch64-unknown-linux-gnu
 ```
 
 流程：契约/SDK 预检 → 目标检查 → Zig release 编译 → ELF/Mach-O 架构核对 → 归档 → 解压完整性校验 → 本地产物目录。
 
 宿主套件（布局、策略、格式、Clippy 与工作区测试）由同一条流水线的 Rust 与 tools job 负责，
 `make package` 不再重复执行：打包 job 有 4 个目标，重复一次就等于把最贵的检查乘以 4。
-`make test` 仍是显式的宿主套件入口（宿主目标执行套件；交叉目标编译其测试）。
+`make test-package` 仍是打包流程的显式宿主套件入口（宿主目标执行套件；交叉目标编译其测试）；
+仓库自身的测试入口是 **`make test`**（等于 `gate.sh test`，只跑工作区测试条目，不触发打包）。
 
 - target 等于 host 时：启动解压后的 CLI `--version` / `--help`。
 - 交叉 target：用 Zig **编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed`、`smoke_executed: false`，以及这份包

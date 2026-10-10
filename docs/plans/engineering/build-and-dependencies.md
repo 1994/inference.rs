@@ -1,8 +1,8 @@
 # 构建入口与依赖管理统一方案
 
 状态：设计方案。基于 2026 年 10 月 9 日的 `7c79d99`。已实施：CPU protocol benchmark 并入主
-workspace（见"开发工具与独立参考环境"）；成员依赖版本继承加上门禁；打包路径去掉重复的宿主套件。
-Makefile 的入口命名收敛与 preflight 统一尚未开始。
+workspace（见"开发工具与独立参考环境"）；成员依赖版本继承加上门禁；打包路径去掉重复的宿主套件；
+本机构建与打包共用计划与 preflight；入口动词职责分离并有门禁（见下）。
 
 整体排期与任务状态见 [路线图](../README.md) 的 E2；消费者与测试迁移由 E1 交接。本文维护本项设计与验收。
 
@@ -184,6 +184,22 @@ package 计划一致"从约定变成可执行检查。`local-build` 与 `package
 
 验证：`make local-build` 在本机跑通并产出 `target/release/infer`（计划解析为 cuda backend，包含
 `--features cuda`），`./target/release/infer --version` 正常；打包单测、`check-tools`、`ruff` 干净。
+
+## 已实施：入口动词职责分离，并由门禁保证文档与目标一致
+
+方案早先指出 `make test` "**只执行打包流程中的目标 CLI 检查，不代表工作区测试**" ✗ —— 这条当时确实还成立
+✗。现在职责分离 ✓：
+
+- **`make test`** = 仓库自己的测试条目 ✓（`gate.sh test` ✓，只跑 cli / ir / cuda-no-default / workspace
+  四个测试条目 ✓，不触发打包 ✓）；
+- **`make test-package TARGET=...`** = 打包流程的宿主套件 ✓（即 `package.py test` ✓），`make build` /
+  `make package` / `verify-package` / `accept` 不变 ✓；
+- 测试条目在 `gate.sh` 里**只有一处定义** ✓（`test_checks()` ✓），`rust_checks` 直接调用它 ✓ ——
+  `make test` 跑的就是 `make check-rust` 末尾那一组 ✓，不存在两份会漂移的清单 ✓。
+
+新增 `tools/check/makefile.py` ✓：解析 `make help` 的两种写法（`make <name>` 与 "Quality gates:"
+列表 ✓），逐个用 `make -n` 验证目标**确实存在** ✓ —— 当前 **19 个**文档入口全部存在 ✓。这样"帮助文本
+承诺了一个不存在的入口"或"动词悄悄换了含义"都会在 `make check-tools` 阶段失败 ✓。
 
 ## 已实施：workspace 边界必须说明理由（最后一条也进门禁）
 

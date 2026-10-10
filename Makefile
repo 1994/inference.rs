@@ -9,10 +9,11 @@ PACKAGE_FILE ?=
 MODEL ?=
 GOLDEN ?=
 
-.PHONY: help build local-build test package verify-package accept clean-artifacts
+.PHONY: help build local-build test test-package package verify-package accept clean-artifacts
 help:
+	@echo 'Tests: make test  # the workspace test entries, nothing else'
 	@echo 'Zig target pipelines (Linux/CUDA or macOS/Metal):'
-	@echo '  make build | test | package TARGET=<rust-target>[.<glibc>]'
+	@echo '  make build | test-package | package TARGET=<rust-target>[.<glibc>]'
 	@echo '  make local-build  # native release CLI with the platform backend'
 	@echo '  make package-linux-cuda | package-macos-metal TARGET=<target>'
 	@echo '  make setup-build  # install cargo-zigbuild; requires Zig'
@@ -23,8 +24,13 @@ help:
 	@echo '  test-cuda, test-metal, bench (aliases: check-cuda, check-metal, check-cpu),'
 	@echo '  check-attention, check-msrv, check-linux, check-linux-numa, check-package'
 
-build test package:
-	$(PYTHON) tools/package/package.py $@ --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
+# `test` is the repository's own test entries. The packaging pipeline's host suite is
+# `test-package`, so the two cannot be confused by name.
+test:
+	./tools/check/gate.sh test
+
+build test-package package:
+	$(PYTHON) tools/package/package.py $(patsubst test-package,test,$@) --platform auto --target "$(TARGET)" --out "$(DIST_DIR)"
 
 # Cargo features are compile-time and cannot be selected by the CLI at runtime. The native entry
 # point resolves the same plan and preflight as packaging, so a native build and a package of the
