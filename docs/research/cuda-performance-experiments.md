@@ -1186,3 +1186,103 @@ python3 tools/bench/compare-results.py \
   artifacts/stage-b-20261010/Qwen3.8-27B-NVFP4-mtp2-vllm-stage-b2-mtp2-vllm-g1.json \
   artifacts/stage-b-20261010/Qwen3.8-27B-NVFP4-mtp2-native-<新 ID>.json
 ```
+
+## 十二、prefill 逐算子浪费归因（2026-10-10）
+
+触发这个问题的是服务层的一个规律：**prompt 越长，比值越差**（short 1.81 → long 6.04），
+而 native 的 GPU 利用率**高于** vLLM（53.5% vs 41.6%）。利用率更高却更慢，说明差距不是
+"GPU 没吃饱"，而是**每个有用 token 上烧掉的周期更多**。本节把 prefill 的每次 replay
+拆到算子级，并用"有用 FLOPs / 有用字节"两个下界去卡每个算子。
+
+### 12.1 复现口径
+
+`INFER_CUDA_PREFILL_PROFILE`（逐节点，不加 `GRAPH_ONLY`），单条 `long`（511 token）请求，
+release 制品。profile 每条记录带 `tokens` 与 `position`，因此可以直接读出**每个 prompt
+graph replay 实际吃了多少 token**：
+
+| graph | tokens | position | node_count | total_ms |
+|---|---:|---:|---:|---:|
+| prefill | 64 | 256 | 1154 | 45.4 |
+| prefill | 64 | 320 | 1154 | 45.8 |
+| prefill | 64 | 384 | 1154 | 46.4 |
+| prefill_last | 63 | 448 | 1155 | 47.5 |
+
+→ **511 token 被切成 8 次 replay，每次 64 token**（8 × 46 ms ≈ 368 ms，与服务层
+long TTFT 394 ms 一致；vLLM 同负载 65 ms）。
+
+### 12.2 每次 replay（64 token，46.1 ms）的构成与下界
+
+权重一遍 = 15.79 GB（48 层线性注意力 249 MB + 16 层全注意力 239 MB，FP4 按 0.5 B/参数、
+FP8 按 1 B/参数）→ 带宽下界 **8.82 ms**；GEMM 有用 FLOPs = 2·64·24.3 G = **3.11 TFLOP**。
+
+| 算子 | ms | 占比 | 节点 | µs/节点 | µs/token | 有用下界 | 结论 |
+|---|---:|---:|---:|---:|---:|---|---|
+| **linear** | 22.46 | 48.7% | 496 | 45.3 | 351 | 8.82 ms（带宽） | 2.5×；实测 138 TFLOP/s = FP8 峰值 ~16%、704 GB/s = 峰值带宽 ~39%，**先撞发射/算力，不是带宽** |
+| **delta** | 16.00 | 34.7% | 48 | **333** | **250** | ~0.1 ms（FLOPs）/ 0.17 ms（字节） | **~150×**，实测 ~0.5 TFLOP/s = fp32 峰值 ~0.5% |
+| **attention** | 3.25 | 7.1% | 16 | 203 | 51 | ~0.02 ms | **~160×** |
+| norm | 1.17 | 2.5% | 161 | 7.3 | 18 | ~0.2 ms | 5×，且 161 个独立节点 |
+| gated_norm | 0.94 | 2.0% | 48 | 19.5 | 15 | ~0.06 ms | 15× |
+| conv | 0.67 | 1.5% | 48 | 14.0 | 10 | ~0.05 ms | 13× |
+| add / multiply / silu / rope / split / sigmoid / embedding | 1.70 | 3.7% | 321 | 4–97 | 17 | ~0.5 ms | 3–5× |
+
+**每个有用 token 的 prefill 设备时间是 720 µs**，其中 GEMM 351 µs、**非 GEMM 369 µs（51%）**。
+vLLM 整条 prefill 的每 token 预算只有 ~128 µs —— 也就是说**光是我们的 delta 一项
+（250 µs/token）就超过 vLLM 做完整个 token 的预算**。这才是"native 计算量更大"的实处。
+
+### 12.3 无效计算在哪：delta 与 attention 是同一个病
+
+`recurrent_prefill::delta`（`crates/backend/cuda/src/resident/recurrent_prefill.rs:16`）是
+**逐 token 串行扫描**：网格 = VH × SW = 48 × 1 = **48 个 CTA（170 SM）**，每个 CTA 把 chunk
+的 LANES 个 token 一个个循环过去，每个 token 做两次"跨线程归约 key 维 D=128"：
+
+- 算法本身每 token 每 head 需要 3×D² ≈ 49 K FLOP（状态衰减、rank-1 更新、读出），
+  ×48 head ×48 层 = 113 MFLOP/token。**这部分 FLOP 是不可避免的**；
+- 但每个 token 要付两次跨线程归约（`reduce_sum(..., 0i32)`）的同步/共享内存代价，
+  64 个 token 就是 128 次归约/CTA，而只有 48 个 CTA 去遮这段延迟。
+
+§十.1 已经把"值维分块（SW=4 → 192 CTA）"实测否掉了：**加 CTA 没用**，因为限制不是占用率，
+而是每个 token 的归约依赖链。**跨 chunk 宽度的对照也支持这一点**：同一次 profile 里
+decode 的 delta 节点是 53.7 µs / 12 lane（4.5 µs/token/层，走 per-lane 核），prefill 是
+333 µs / 64 lane（5.2 µs/token/层，走 chunked 核）—— **两者每 token 成本几乎相同**，
+说明 chunked 核并没有把逐 token 的开销摊掉，只是把状态留在了寄存器里。
+
+所以正路是**把逐 token 的串行扫描换成 chunk 级矩阵乘**（WY / chunked linear attention：
+intra-chunk 用 (C×C)×D 的张量核矩阵乘，状态更新用 D×(C)×(C×D) 一次算完），把"每 token
+两次归约"变成"每 chunk 两次归约"。
+
+`attention`（3.25 ms / 16 节点 / 203 µs）是同一类：C=64、KV≤320 的 prefill attention
+有用 FLOPs 只有 ~8 GFLOP/replay，本该是几个张量核矩阵乘 + softmax，实测 ~160× 于下界。
+
+### 12.4 另外两条
+
+1. **chunk 宽度与图宽度脱节**：`select_prompt_width` 对 quantized-recurrent 模型给出的
+   `narrow_prefill_width = 64`、`prefill_width = 256`；而 Stage A 之后池化程序
+   `graph_policy` 只捕 narrow 那张 → 池化序列的 prompt 图 **只有 64 lane**，
+   于是 chunk = 64。私有程序捕 256 → chunk = 256，511 token 只要 2 次 replay。
+   这就是 §11.6 里 long TTFT 317 → 396 ms 的**全部原因**：replay 次数 2 → 8。
+   但把 256 lane 图给池化程序又有 §11.6 的代价（51-token prompt 从 56 → 99 ms，
+   因为掩码 lane 也要付钱）。**修完 12.3 之后这条才值得再谈**：非 GEMM 的每 token
+   成本塌下去以后，chunk 宽度的收益才会体现为权重流量（8 遍 → 2 遍，126 GB → 32 GB）。
+2. **linear 是"发射受限"而非带宽受限**：138 TFLOP/s（FP8 峰值 ~16%）而字节只用到
+   704 GB/s（39%）。所以 tile 形状（§11.7 已扫完，`[16,64]` 是优解）不是出路，
+   出路是同形状换更高效的核 —— §二 杠杆 A 的 cuBLASLt 委托。
+
+### 12.5 结论与动作顺序
+
+| 序 | 动作 | 依据 | 预期 |
+|---|---|---|---|
+| 1 | **delta 改 chunk 级矩阵乘**（WY 形式） | 34.7% 的 prefill 设备时间，150× 于下界，且 §十.1 已排除占用率 | replay 46 → ~31 ms；long TTFT 394 → ~280 ms；decode 也减 ~2.6 ms/replay |
+| 2 | **prefill attention 同批处理** | 7.1%，160× 于下界 | replay 再 −3 ms |
+| 3 | 窄算子融合（norm+add 等 537 节点/4.5 ms） | 9.7%，3–15× 于下界 | replay −2 ms 量级 |
+| 4 | GEMM 委托 cuBLASLt（§二 杠杆 A） | linear 48.7%，138 TFLOP/s = 16% 峰值 | 隔离 1.6–1.7×，须服务矩阵验收 |
+| 5 | 再谈 chunk 宽度/单图双区间（§11.6） | 依赖 1 落地 | 权重流量 4× |
+
+抓取命令（单条 long、逐节点画像）：
+
+```sh
+pkill -f '^target/release/infer'
+INFER_CUDA_PREFILL_PROFILE=/tmp/gp.jsonl target/release/infer /home/r/models/Qwen3.8-27B-NVFP4 \
+  --listen 127.0.0.1:38091 --num-speculative-tokens 2 --gpu-memory-utilization 0.88 \
+  --max-model-len 32768 --max-num-seqs 16 &
+python3 /tmp/repro-case.py http://127.0.0.1:38091 long   # 先跑一遍预热，再删 profile 重跑
+```
