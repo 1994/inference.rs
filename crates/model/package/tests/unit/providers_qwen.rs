@@ -46,7 +46,7 @@ fn qwen3_vl_configuration_imports_with_its_image_encoder() -> Result<()> {
     let imported = provider.import(ModelId::ONE, bytes)?;
     assert_eq!(imported.model.hidden_size, 2048);
     assert_eq!(imported.model.vocab_size, 151_936);
-    assert_eq!(imported.mtp_layers, 0);
+    assert_eq!(imported.draft_layers, 0);
     assert_eq!(imported.model.position.multimodal_sections, [24, 20, 20]);
     assert!(imported.model.position.interleaved);
     assert!((imported.model.position.rope_theta - 5_000_000.0).abs() < f64::EPSILON);
@@ -98,7 +98,7 @@ fn imports_pinned_qwen38_hybrid_architecture() {
     assert_eq!(imported.model.hidden_size, 5120);
     assert_eq!(imported.model.vocab_size, 248_320);
     assert!(imported.model.modalities.contains(&Modality::Image));
-    assert_eq!(imported.mtp_layers, 1);
+    assert_eq!(imported.draft_layers, 1);
 }
 #[test]
 fn official_bf16_package_does_not_fit_32_gib() {

@@ -201,7 +201,7 @@ impl LoadedModel {
         infer_ir::ExecutionProfileInspection {
             prefill_width: self.weights.prefill_width,
             batch_width: self.weights.batch_width,
-            mtp_depth: self.mtp_depth,
+            draft_depth: self.mtp_depth,
             automatic_prefill: self.automatic_prefill,
             arena_budget_bytes: self.profile.arena_budget_bytes(),
         }

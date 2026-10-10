@@ -58,6 +58,18 @@ MTP 与 DFlash2 各自负责草稿生成，共用目标模型验证、状态提�
 （注释与 `#[cfg(test)]` 块除外，规则针对会分支的代码），清单条目一旦被移除而条目还在，也会失败，
 强制同步清理。当前 34 个 tools 单测通过，其中 5 个覆盖这条规则。
 
+**公共层的算法名已清零（I1 步骤①完成）**
+
+E1 删除执行器后，公共层只剩两处算法命名 ✗：`infer-ir` 诊断里的 `mtp_depth` 与 `infer-spi` 模型绑定里的
+`mtp_layers`。现在分别改为 **`draft_depth`**（"已解析的**草稿**深度，无论由哪个算法提供提议" ✓）与
+**`draft_layers`**（"配置声明的**草稿**层数" ✓），生产端（`infer-models` 的 qwen provider ✓）与其测试
+同步改名 ✓；CUDA 自身那个**属于设备执行**的 `MtpOptions::mtp_depth` 保持原名 ✓（按分层它本就该由
+backend 持有 ✓），只把构造 `infer_ir::ExecutionProfileInspection` 的字面量字段改为 `draft_depth` ✓。
+
+因此**算法中立棘轮清零** ✓：`policy.py` 的 `ALGORITHM_NAME_BASELINE` 从四条变成 **空表** ✓，规则退化为
+"公共层不得出现任何算法名" ✓（`infer-ir` / `infer-spi` / `infer-workloads` ✓），而"条目过期即失败"的
+机制保留着，供将来的迁移继续使用 ✓。
+
 **两条边界现在由门禁强制，而不只是写在方案里**
 
 方案要求"公共算法实现仅依赖共有 IR/SPI 和模型描述，不反向依赖 `infer-backend-cuda`、

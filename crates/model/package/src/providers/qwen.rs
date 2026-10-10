@@ -427,12 +427,12 @@ impl TextConfig {
 /// the result and never branch on a model name.
 fn family_description(
     model: ModelIr,
-    mtp_layers: usize,
+    draft_layers: usize,
     format: WeightFormat,
     placeholders: Vec<ModalityPlan>,
     encoder: Option<&ModalityEncoder>,
 ) -> ImportedModel {
-    let mut imported = ImportedModel::new(model, mtp_layers);
+    let mut imported = ImportedModel::new(model, draft_layers);
     imported.precision = match format {
         WeightFormat::Nvfp4 => {
             PrecisionPolicy::Preferred(vec![PrecisionPlan::nvfp4_block(), PrecisionPlan::bf16()])
@@ -442,9 +442,9 @@ fn family_description(
         }
         WeightFormat::Dense => PrecisionPolicy::default(),
     };
-    imported.speculation = (mtp_layers > 0).then(|| SpeculationPlan {
+    imported.speculation = (draft_layers > 0).then(|| SpeculationPlan {
         prefix: MTP_PREFIX.into(),
-        layers: mtp_layers,
+        layers: draft_layers,
         fusion: Some(FusionPlan {
             projection: "fc.weight".into(),
             norms: [

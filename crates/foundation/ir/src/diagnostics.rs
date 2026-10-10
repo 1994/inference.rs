@@ -54,8 +54,8 @@ pub struct ExecutionProfileInspection {
     pub prefill_width: usize,
     /// Candidate rows one captured verification graph processes per replay.
     pub batch_width: usize,
-    /// Resolved multi-token-prediction depth.
-    pub mtp_depth: usize,
+    /// Resolved speculative draft depth, whichever algorithm supplies the proposals.
+    pub draft_depth: usize,
     /// Whether the prompt graph width came from automatic device policy.
     pub automatic_prefill: bool,
     /// Activation arena budget the prompt width was validated against.

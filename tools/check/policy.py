@@ -300,10 +300,7 @@ COMMON_LAYERS = (
 # I1's removal list: the common layers still name MTP in these symbols. The rule is a ratchet, so
 # the list may only shrink - the migration that removes a symbol also removes its entry, and a stale
 # entry fails rather than lingering.
-ALGORITHM_NAME_BASELINE = {
-    "crates/foundation/ir/src/diagnostics.rs": {"mtp_depth"},
-    "crates/foundation/spi/src/model.rs": {"mtp_layers"},
-}
+ALGORITHM_NAME_BASELINE = {}
 
 
 def check_algorithm_neutrality(root=ROOT, baseline=None):

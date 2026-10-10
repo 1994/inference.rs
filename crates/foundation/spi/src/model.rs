@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 pub struct ImportedModel {
     /// Backbone description every backend consumes.
     pub model: ModelIr,
-    /// MTP draft layers declared by the configuration; zero disables speculation.
-    pub mtp_layers: usize,
+    /// Draft layers the configuration declares; zero disables speculation.
+    pub draft_layers: usize,
     /// Device capabilities this family requires; validated before any weight is bound.
     #[serde(default)]
     pub requirements: CapabilityRequirements,
@@ -32,10 +32,10 @@ pub struct ImportedModel {
 impl ImportedModel {
     /// Family description with only the canonical model and draft depth set.
     #[must_use]
-    pub fn new(model: ModelIr, mtp_layers: usize) -> Self {
+    pub fn new(model: ModelIr, draft_layers: usize) -> Self {
         Self {
             model,
-            mtp_layers,
+            draft_layers,
             requirements: CapabilityRequirements::default(),
             precision: PrecisionPolicy::default(),
             speculation: None,
