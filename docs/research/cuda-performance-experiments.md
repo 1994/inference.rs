@@ -1489,6 +1489,12 @@ chunked 在 mtp0 上 TPOT **不动**（−0.0 ~ −2.1%）。此后所有 A/B �
   决定，不是核成本；mtp0 上它们是不动的。
 - 因此开关的取舍是一个**输出数值口径**决定，而不是性能决定；性能这一侧的代价基本不存在。
 
+**适用范围**：chunked 递推只对**含 gated-delta 层**的量化 checkpoint 有意义。本仓两个 profile 里，
+27B（`Qwen3_5ForConditionalGeneration`，48 层线性注意力 + 16 层全注意力、NVFP4/FP8）适用；
+2B（`Qwen3VLForConditionalGeneration`，标准全注意力、无 delta 层）**根本没有这条路径**
+——`Workspace::new` 只会为 `TensorOp::Delta` 建 buffer，没有 Delta 节点就是空 workspace，
+`record()` 直接返回 false。所以这条开关对 2B 是 no-op，两个 profile 之间没有回退风险。
+
 ### 12.14 委托路（B2b）的结论：FP8 也不是免 swizzle 的 drop-in【确证，已否】
 
 §二 杠杆 A 记着一条推断：FP4 需要 128×64 的 scale swizzle，但 **"FP8 那条更简单：
