@@ -96,6 +96,9 @@ fn bench_case(
                 vh.to_string(),
                 dim.to_string(),
                 lanes.to_string(),
+                // The whole value dimension in one block: this benchmark pairs the chunked kernel
+                // against the per-lane one at the split the model actually captures.
+                dim.to_string(),
             ]),
         )?;
         scope.record(
