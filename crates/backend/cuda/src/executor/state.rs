@@ -87,11 +87,31 @@ impl CudaBackend {
                 .checked_add(budget)
                 .is_none_or(|n| n > self.budget)
         {
+            let active = self.active_budget()?;
+            let (pool_slots, pool_free_slots) = self
+                .slots
+                .as_ref()
+                .map_or((0, 0), |pool| (pool.width(), pool.free_slots()));
+            tracing::debug!(
+                target: "infer::cuda_admission",
+                phase = "reservation_accounting",
+                state = id.get(),
+                capacity,
+                private_verification,
+                needed_bytes = budget,
+                active_bytes = active,
+                budget_bytes = self.budget,
+                active_states = self.states.len(),
+                maximum_states = self.maximum_states,
+                pool_slots,
+                pool_free_slots,
+                "CUDA resident reservation rejected"
+            );
             return Err(Error::new(
                 ErrorCode::Capacity,
                 format!(
                     "CUDA resident state admission budget exhausted: needed={budget}, active={}, budget={}, states={}, maximum={}",
-                    self.active_budget()?,
+                    active,
                     self.budget,
                     self.states.len(),
                     self.maximum_states

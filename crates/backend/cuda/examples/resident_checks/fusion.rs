@@ -63,6 +63,10 @@ pub fn run(device: &CudaDevice) -> Result<()> {
         .flat_map(|v| vec![bf16::from_f32(v); d])
         .collect();
     let weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: std::sync::Arc::new(
+            infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
+        ),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,

@@ -1,0 +1,336 @@
+use super::*;
+
+fn profile() -> DeviceProfile {
+    DeviceProfile {
+        name: "test-device".into(),
+        architecture: "sm_test".into(),
+        multiprocessors: 12,
+        total_memory_bytes: 8 << 30,
+        memory_clock_khz: 1000,
+        memory_bus_width_bits: 128,
+        l2_cache_bytes: 1 << 20,
+    }
+}
+
+fn key() -> Result<ResidentGemmKey> {
+    ResidentGemmKey::new(
+        &profile(),
+        13000,
+        [64, 67, 272],
+        Some("test-driver-build".into()),
+        "test-kernel-fingerprint".into(),
+    )
+}
+
+fn times(speedup: f32) -> PairedTimes {
+    PairedTimes {
+        baseline_ms: vec![speedup; 10],
+        candidate_ms: vec![1.0; 10],
+        baseline_median_ms: speedup,
+        candidate_median_ms: 1.0,
+        speedup,
+    }
+}
+
+fn entry(key: ResidentGemmKey) -> ResidentGemmEntry {
+    let config = GemmConfig {
+        tile_m: 64,
+        tile_n: 128,
+        main_loop: MainLoop::Prefetch8,
+    };
+    ResidentGemmEntry {
+        key,
+        selected: config,
+        bitwise_verified: true,
+        trials: vec![],
+        confirmation: GemmTrial {
+            config,
+            cold: times(1.03),
+            warm: times(1.03),
+        },
+    }
+}
+
+#[test]
+fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result<()> {
+    let original = key()?;
+    let mut table = TilingTable::default();
+    table.resident_gemm.push(entry(original.clone()));
+    assert!(matches!(
+        decision(Some(&table), &original, false)?,
+        Decision::Cached(_)
+    ));
+    let mut variants = Vec::new();
+    let mut changed = original.clone();
+    changed.m += 1;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.n += 1;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.k += 16;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.driver_version += 1;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.driver_build = Some("different-release-build".into());
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.driver_build = None;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed
+        .kernel_fingerprint
+        .push_str("-changed-frontend-or-assembler");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.kernel_schema.push_str("-changed");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.activation_mode = "different-scale-mode".into();
+    variants.push(changed);
+    let mut hardware = profile();
+    hardware.multiprocessors += 1;
+    variants.push(ResidentGemmKey::new(
+        &hardware,
+        13000,
+        [64, 67, 272],
+        original.driver_build.clone(),
+        original.kernel_fingerprint.clone(),
+    )?);
+    let mut hardware = profile();
+    hardware.l2_cache_bytes += 1;
+    variants.push(ResidentGemmKey::new(
+        &hardware,
+        13000,
+        [64, 67, 272],
+        original.driver_build.clone(),
+        original.kernel_fingerprint.clone(),
+    )?);
+    for variant in variants {
+        assert_eq!(decision(Some(&table), &variant, false)?, Decision::Baseline);
+        assert_eq!(decision(Some(&table), &variant, true)?, Decision::Measure);
+    }
+    Ok(())
+}
+
+#[test]
+fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices() -> Result<()> {
+    let key = key()?;
+    assert_eq!(decision(None, &key, false)?, Decision::Baseline);
+    assert_eq!(decision(None, &key, true)?, Decision::Measure);
+    let mut table = TilingTable::default();
+    table.resident_gemm.push(entry(key.clone()));
+    assert!(matches!(
+        decision(Some(&table), &key, false)?,
+        Decision::Cached(_)
+    ));
+    table.resident_gemm[0].bitwise_verified = false;
+    assert!(decision(Some(&table), &key, true).is_err());
+    let expired = ResidentTuningSession {
+        started: OnceLock::new(),
+        budget: Duration::ZERO,
+    };
+    let fresh = ResidentTuningSession::default();
+    assert!(!expired.permits_search());
+    assert!(fresh.permits_search());
+    use crate::resident::nvfp4_gemm::Workspace;
+    assert_eq!(
+        Workspace::captured_widths(3, 256, 64, false, false),
+        vec![1, 64]
+    );
+    assert_eq!(
+        Workspace::captured_widths(3, 256, 64, true, true),
+        vec![1, 3, 64, 256]
+    );
+    assert_eq!(
+        Workspace::captured_widths(0, 128, 0, true, true),
+        vec![1, 128]
+    );
+    assert_eq!(
+        Workspace::captured_widths(3, 256, 0, false, true),
+        vec![1, 256]
+    );
+    assert_eq!(Workspace::captured_widths(3, 3, 0, true, true), vec![1, 3]);
+    Ok(())
+}
+
+#[test]
+fn resident_cache_rejects_incomplete_noisy_or_illegal_evidence() -> Result<()> {
+    let mut valid = entry(key()?);
+    assert!(valid.valid());
+    valid.confirmation.warm.speedup = 1.019;
+    assert!(!valid.valid());
+    valid.confirmation.warm.speedup = 1.03;
+    valid.confirmation.cold.candidate_ms = vec![];
+    assert!(!valid.valid());
+    valid.confirmation.cold = times(1.03);
+    valid.selected.tile_n = 256;
+    assert!(!valid.valid());
+    valid.selected.tile_n = 128;
+    valid.confirmation.cold.baseline_ms[0] = f32::NAN;
+    assert!(!valid.valid());
+    valid.confirmation.cold = times(1.03);
+    valid.confirmation.cold.speedup = 1.04;
+    assert!(!valid.valid());
+    valid.confirmation.cold = times(1.03);
+    valid.confirmation.cold.baseline_ms.fill(1.04);
+    assert!(!valid.valid());
+    valid.confirmation.cold = times(1.03);
+    valid.confirmation.cold.candidate_ms.pop();
+    assert!(!valid.valid());
+    valid.confirmation.cold = times(1.03);
+    valid.confirmation.cold.baseline_ms = vec![1.04, 1.03, 1.03, 1.02];
+    valid.confirmation.cold.candidate_ms = vec![1.0; 4];
+    assert!(valid.valid());
+    Ok(())
+}
+
+#[test]
+fn bitwise_gate_checks_all_outputs_lengths_finiteness_and_signed_zero() -> Result<()> {
+    assert!(verify_bitwise(&[], &[]).is_err());
+    let expected = [1.0, -2.5, 0.0];
+    verify_bitwise(&expected, &expected)?;
+    assert!(verify_bitwise(&expected[..2], &expected).is_err());
+    assert!(verify_bitwise(&[1.0, -2.5, -0.0], &expected).is_err());
+    assert!(verify_bitwise(&[1.0, -2.5, f32::INFINITY], &expected).is_err());
+    assert!(verify_bitwise(&[1.0, f32::NAN, 0.0], &expected).is_err());
+    assert!(
+        verify_bitwise(
+            &[f32::from_bits(1.0_f32.to_bits() + 1), -2.5, 0.0],
+            &expected
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn scalar_and_resident_sections_round_trip_and_share_atomic_updates() -> Result<()> {
+    let path = std::env::temp_dir().join(format!(
+        "resident-tuning-test-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(device_error)?
+            .as_nanos()
+    ));
+    let mut scalar = TilingTable::default();
+    scalar.devices.insert(
+        "scalar-device".into(),
+        vec![super::super::TuningEntry {
+            dtype: "nvfp4".into(),
+            rows: 67,
+            columns: 272,
+            tile_rows: 4,
+            tile_columns: 128,
+        }],
+    );
+    let encoded = serde_json::to_string(&scalar).map_err(device_error)?;
+    std::fs::write(&path, encoded).map_err(device_error)?;
+    let resident = entry(key()?);
+    assert!(super::super::update_table(Some(&path), |table| table
+        .resident_gemm
+        .push(resident.clone())));
+    let loaded = TilingTable::load(&path)?;
+    assert_eq!(loaded.devices.len(), 1);
+    assert_eq!(loaded.resident_gemm.len(), 1);
+    assert_eq!(loaded.resident_gemm[0].key, resident.key);
+    assert_eq!(loaded.resident_gemm[0].selected, resident.selected);
+    assert!(loaded.resident_gemm[0].valid());
+    // A scalar update must retain the resident section, using the very same writer lock.
+    assert!(super::super::update_table(Some(&path), |table| {
+        table.devices.insert("second-scalar-device".into(), vec![]);
+    }));
+    let loaded = TilingTable::load(&path)?;
+    assert_eq!(loaded.devices.len(), 2);
+    assert_eq!(loaded.resident_gemm.len(), 1);
+    assert_eq!(
+        loaded.tiling_for("scalar-device", "nvfp4", 67, 272)?,
+        Some(crate::strategy::LinearTiling::new(4, 128)?)
+    );
+    std::fs::remove_file(&path).map_err(device_error)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; root runs release serially"]
+fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for shape in [
+        [1, 67, 272],
+        [3, 65, 528],
+        [17, 129, 256],
+        [65, 67, 272],
+        [129, 129, 528],
+    ] {
+        let [m, n, k] = shape;
+        let packed = (0..n * k / 2)
+            .map(|i| {
+                f4e2m1fnx2::from_bits(u8::try_from((i * 13 + i / 9) % 256).unwrap_or_default())
+            })
+            .collect();
+        let scales = (0..n * k / 16)
+            .map(|i| f8e4m3fn(48 + u8::try_from(i % 16).unwrap_or_default()))
+            .collect();
+        let weight = ProjectionWeight::Fp4(
+            device.upload(packed, &[n, k / 2])?,
+            device.upload(scales, &[n, k / 16])?,
+            0.75,
+        );
+        let base = Captured::new(&device, &weight, 1.25, shape, GemmConfig::baseline(m))?;
+        base.run(&device)?;
+        let expected = device.read(&base.output)?;
+        for tile_m in TILE_M_SEARCH {
+            for tile_n in TILE_N_SEARCH {
+                for main_loop in LOOP_SEARCH {
+                    let config = GemmConfig {
+                        tile_m,
+                        tile_n,
+                        main_loop,
+                    };
+                    let candidate = Captured::new(&device, &weight, 1.25, shape, config)?;
+                    candidate.run(&device)?;
+                    verify_bitwise(&device.read(&candidate.output)?, &expected)?;
+                }
+            }
+        }
+        let session = ResidentTuningSession::default();
+        let choice = GemmConfig {
+            tile_m: 64,
+            tile_n: 128,
+            main_loop: MainLoop::Plain,
+        };
+        let key = ResidentGemmKey::new(
+            device.profile()?,
+            CudaDevice::driver_version()?,
+            shape,
+            Some("gpu-test-build".into()),
+            "gpu-test-kernel".into(),
+        )?;
+        assert_eq!(
+            verified_config(&device, &weight, 1.25, &key, choice, &session)?,
+            choice
+        );
+        let ProjectionWeight::Fp4(codes, scales, _) = &weight else {
+            return Err(Error::invariant("GPU test FP4 weight"));
+        };
+        let invalid_weight = ProjectionWeight::Fp4(Arc::clone(codes), Arc::clone(scales), 0.0);
+        assert_eq!(
+            verified_config(&device, &invalid_weight, 1.25, &key, choice, &session)?,
+            GemmConfig::baseline(m)
+        );
+        assert_eq!(
+            verified_config(&device, &weight, 0.0, &key, choice, &session)?,
+            GemmConfig::baseline(m)
+        );
+        // A failed scalar/weight gate must leave the previously validated projection usable.
+        assert_eq!(
+            verified_config(&device, &weight, 1.25, &key, choice, &session)?,
+            choice
+        );
+    }
+    Ok(())
+}

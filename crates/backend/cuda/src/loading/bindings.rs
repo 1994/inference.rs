@@ -22,7 +22,15 @@ pub(super) fn load(
     options: &LoadOptions,
 ) -> Result<(ProgramWeights, Option<Draft>, TuningReport)> {
     let path = table_path();
-    let table = resolve_table(path.as_deref())?;
+    let mut tuning = TuningReport::default();
+    let table = match resolve_table(path.as_deref()) {
+        Ok(table) => table,
+        Err(error) => {
+            tuning.fallback.push(format!("tuning cache: {error}"));
+            tracing::warn!(target: "infer::tuning", %error, "invalid tuning cache; using conservative fallback");
+            None
+        }
+    };
     let shipped = shipped_table()?;
     let tuning_source = TilingSource {
         local: table.as_ref(),
@@ -30,7 +38,6 @@ pub(super) fn load(
         path,
         autotune: options.autotune,
     };
-    let mut tuning = TuningReport::default();
     let mut weights = empty_weights(options);
     let weights_phase = phase::Phase::start(
         "weights",
@@ -79,6 +86,8 @@ pub(super) fn load(
 /// Weights with their graph-independent fields set; graph tensors are bound by [`bind_tensors`].
 fn empty_weights(options: &LoadOptions) -> ProgramWeights {
     ProgramWeights {
+        autotune: options.autotune,
+        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         batch_width: options.verification_width.max(
             if options.prefill_width == crate::constants::FUSED_VERIFY_LANES {
                 crate::constants::FUSED_VERIFY_LANES
@@ -239,6 +248,8 @@ fn draft_weights(
         .map(|n| n.inputs[1])
         .collect();
     let mut weights = ProgramWeights {
+        autotune: target.autotune,
+        resident_tuning: Arc::clone(&target.resident_tuning),
         // The draft captures the widest prompt graph so priming runs one pass per chunk instead
         // of one single-token pass per prompt token; a 32-lane graph turned a 511-token prompt
         // into sixteen replays. It has no verify batch: the target verifies, the draft only

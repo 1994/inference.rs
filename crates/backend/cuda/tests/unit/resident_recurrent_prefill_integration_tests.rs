@@ -111,6 +111,10 @@ fn fixture_at(
         &[16, out_columns],
     )?;
     let weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: std::sync::Arc::new(
+            crate::tuning::resident_gemm::ResidentTuningSession::default(),
+        ),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 1,

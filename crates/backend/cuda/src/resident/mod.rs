@@ -15,7 +15,7 @@ mod fp8_gemm;
 mod kernels;
 mod linear_batch;
 mod metadata;
-mod nvfp4_gemm;
+pub(crate) mod nvfp4_gemm;
 mod prefill_gemm;
 mod prefill_projection;
 mod profile;

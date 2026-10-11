@@ -6,6 +6,10 @@ use std::collections::BTreeMap;
 #[test]
 fn admission_charges_shared_projection_geometry_once() -> Result<()> {
     let mut weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: std::sync::Arc::new(
+            crate::tuning::resident_gemm::ResidentTuningSession::default(),
+        ),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 32,
@@ -68,6 +72,10 @@ fn admission_charges_shared_projection_geometry_once() -> Result<()> {
 #[test]
 fn kv_block_bytes_counts_attention_states_in_storage_bytes() -> Result<()> {
     let mut weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: std::sync::Arc::new(
+            crate::tuning::resident_gemm::ResidentTuningSession::default(),
+        ),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 32,

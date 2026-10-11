@@ -337,6 +337,17 @@ impl CudaDevice {
         u32::try_from(value).map_err(device_error)
     }
 
+    /// CUDA driver API version, used to invalidate measured kernel decisions.
+    /// # Errors
+    /// Returns a driver error when the installed driver cannot report its version.
+    pub(crate) fn driver_version() -> Result<u32> {
+        let mut version = 0;
+        // SAFETY: version is a live output pointer; this query requires no current context.
+        let status = unsafe { cuda_core::sys::cuDriverGetVersion(&raw mut version) };
+        driver_status(status)?;
+        u32::try_from(version).map_err(device_error)
+    }
+
     /// Cached hardware facts and derived policy for this device.
     /// # Errors
     /// Returns a driver error if any device attribute or memory size cannot be queried.

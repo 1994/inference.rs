@@ -48,6 +48,10 @@ fn check_projection(
 ) -> Result<()> {
     let mut graph = DataflowGraph::default();
     let mut weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: std::sync::Arc::new(
+            infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
+        ),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 3,

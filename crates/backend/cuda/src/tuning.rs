@@ -1,4 +1,6 @@
 //! Paired graph measurements on loaded model weights, isolated from model adapters.
+pub mod resident_gemm;
+
 use crate::{
     benchmark::Trial,
     device::{CudaDevice, device_error},
@@ -13,8 +15,12 @@ use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    io::Write,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -239,17 +245,55 @@ pub struct TuningEntry {
     pub tile_columns: usize,
 }
 
-/// Machine-local GEMV tiling decisions. The table is data, not code: it records what was
-/// measured on one device, so a different GPU or model never inherits foreign tiles.
+/// Machine-local GEMV tiling decisions, scoped to each measured device identity.
+///
+/// Old single-device tables are migrated on read. Entries without a device identity are discarded:
+/// there is no evidence that their measurements apply to the running hardware.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "StoredTilingTable")]
 pub struct TilingTable {
-    /// Device identity the entries were measured on, from `DeviceProfile::identity`; a mismatch
-    /// discards them instead of trusting tiles measured on other hardware.
-    #[serde(default, alias = "gpu")]
-    pub device: String,
-    /// Measured entries for this device.
+    /// Measured entries per `DeviceProfile::identity`; one cache can retain several GPUs.
+    pub devices: BTreeMap<String, Vec<TuningEntry>>,
+    /// Multirow W4A4 decisions are independent of scalar GEMV entries.
     #[serde(default)]
-    pub entries: Vec<TuningEntry>,
+    pub resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
+}
+
+/// Read both the current per-device table and the former top-level `device`/`entries` format.
+#[derive(Deserialize)]
+struct StoredTilingTable {
+    #[serde(default, alias = "gpu")]
+    device: String,
+    #[serde(default)]
+    entries: Vec<TuningEntry>,
+    #[serde(default)]
+    devices: BTreeMap<String, Vec<TuningEntry>>,
+    #[serde(default)]
+    resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
+}
+
+impl From<StoredTilingTable> for TilingTable {
+    fn from(stored: StoredTilingTable) -> Self {
+        let mut devices = stored.devices;
+        devices.remove("");
+        if !stored.device.is_empty() {
+            let entries = devices.entry(stored.device).or_default();
+            for legacy in stored.entries {
+                // Explicit per-device entries win over a legacy duplicate during migration.
+                if !entries.iter().any(|entry| {
+                    entry.dtype == legacy.dtype
+                        && entry.rows == legacy.rows
+                        && entry.columns == legacy.columns
+                }) {
+                    entries.push(legacy);
+                }
+            }
+        }
+        Self {
+            devices,
+            resident_gemm: stored.resident_gemm,
+        }
+    }
 }
 
 impl TilingTable {
@@ -263,29 +307,21 @@ impl TilingTable {
     }
     /// Record one trial for `device`, replacing any previous entry for the same geometry.
     pub fn record(&mut self, device: &str, trial: &ProjectionTrial) {
+        if device.is_empty() {
+            return;
+        }
         let dtype = key_dtype(&trial.key).to_owned();
-        self.entries.retain(|entry| {
+        let entries = self.devices.entry(device.to_owned()).or_default();
+        entries.retain(|entry| {
             entry.dtype != dtype || entry.rows != trial.rows || entry.columns != trial.columns
         });
-        self.entries.push(TuningEntry {
+        entries.push(TuningEntry {
             dtype,
             rows: trial.rows,
             columns: trial.columns,
             tile_rows: trial.selected.rows(),
             tile_columns: trial.selected.columns(),
         });
-        device.clone_into(&mut self.device);
-    }
-    /// Measured tile for one dtype and geometry; `None` when the table has no record.
-    /// # Errors
-    /// Rejects entries whose tile dimensions are not a legal tiling.
-    pub fn entry(&self, dtype: &str, rows: usize, columns: usize) -> Result<Option<LinearTiling>> {
-        for entry in &self.entries {
-            if entry.dtype == dtype && entry.rows == rows && entry.columns == columns {
-                return LinearTiling::new(entry.tile_rows, entry.tile_columns).map(Some);
-            }
-        }
-        Ok(None)
     }
     /// Measured tile for one device, dtype and geometry; `None` when nothing measured it.
     ///
@@ -301,10 +337,17 @@ impl TilingTable {
         rows: usize,
         columns: usize,
     ) -> Result<Option<LinearTiling>> {
-        if !self.device.is_empty() && self.device != device {
+        if device.is_empty() {
             return Ok(None);
         }
-        self.entry(dtype, rows, columns)
+        if let Some(entries) = self.devices.get(device) {
+            for entry in entries {
+                if entry.dtype == dtype && entry.rows == rows && entry.columns == columns {
+                    return LinearTiling::new(entry.tile_rows, entry.tile_columns).map(Some);
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -368,8 +411,25 @@ pub(crate) struct TilingSource<'a> {
     pub autotune: bool,
 }
 
-/// Geometry key of one measured projection tiling: dtype, rows and columns.
-type TilingKey = (String, usize, usize);
+/// Device identity plus geometry of one measured projection tiling.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct TilingKey {
+    device: String,
+    projection: String,
+    rows: usize,
+    columns: usize,
+}
+
+impl TilingKey {
+    fn new(device: &str, projection: &str, rows: usize, columns: usize) -> Self {
+        Self {
+            device: device.to_owned(),
+            projection: projection.to_owned(),
+            rows,
+            columns,
+        }
+    }
+}
 /// In-process memo of autotuned tilings.
 type MeasuredTilings = Mutex<BTreeMap<TilingKey, LinearTiling>>;
 
@@ -384,11 +444,22 @@ fn measured() -> &'static MeasuredTilings {
 /// Best effort by design: a missing, unreadable or read-only cache only costs re-measurement on the
 /// next start. Returns whether the trial was written, so the caller can report it truthfully.
 fn persist(path: Option<&Path>, device: &str, trial: &ProjectionTrial) -> bool {
+    if device.is_empty() {
+        return false;
+    }
+    update_table(path, |table| table.record(device, trial))
+}
+
+/// Shared read/merge/write lock for scalar and resident measurements in the same table.
+fn update_table(path: Option<&Path>, update: impl FnOnce(&mut TilingTable)) -> bool {
+    static WRITER: Mutex<()> = Mutex::new(());
     let Some(path) = path else {
         return false;
     };
+    let Ok(_writer) = WRITER.lock() else {
+        return false;
+    };
     let mut table = if path.is_file() {
-        // Never clobber a cache that cannot be parsed; this load still uses the in-process memo.
         let Ok(table) = TilingTable::load(path) else {
             return false;
         };
@@ -396,17 +467,45 @@ fn persist(path: Option<&Path>, device: &str, trial: &ProjectionTrial) -> bool {
     } else {
         TilingTable::default()
     };
-    table.record(device, trial);
+    update(&mut table);
     let Ok(text) = serde_json::to_string_pretty(&table) else {
         return false;
     };
-    if let Some(parent) = path.parent() {
-        let create = std::fs::create_dir_all(parent);
-        drop(create);
+    write_atomic(path, &text).is_ok()
+}
+
+/// Replace a cache only after its full contents reach a file in the same directory.
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let filename = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("CUDA tuning cache has no filename"))?;
+    let temporary = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        filename.to_string_lossy(),
+        std::process::id(),
+        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let written = file
+        .write_all(text.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    let result = written.and_then(|()| std::fs::rename(&temporary, path));
+    if result.is_err() {
+        // Only remove files created by this call, including failed writes or renames.
+        let cleanup = std::fs::remove_file(&temporary);
+        drop(cleanup);
     }
-    let write = std::fs::write(path, text);
-    drop(write);
-    true
+    result
 }
 
 /// Tile for one projection: local measurements, the shipped baseline, then measuring it here.
@@ -424,6 +523,7 @@ pub(crate) fn select_tiling(
 ) -> Result<LinearTiling> {
     let (key, rows, columns) = projection_key(weight)?;
     let identity = profile.identity();
+    let memo_key = TilingKey::new(&identity, &key, rows, columns);
     // Local measurements win over the shipped baseline; both are scoped to this device identity.
     for table in [source.local, source.shipped].into_iter().flatten() {
         if let Some(tiling) = table.tiling_for(&identity, key_dtype(&key), rows, columns)? {
@@ -437,7 +537,7 @@ pub(crate) fn select_tiling(
     let cached = measured()
         .lock()
         .map_err(|_| Error::invariant("CUDA tuning cache poisoned"))?
-        .get(&(key.clone(), rows, columns))
+        .get(&memo_key)
         .copied();
     if let Some(tiling) = cached {
         return Ok(tiling);
@@ -454,7 +554,7 @@ pub(crate) fn select_tiling(
     measured()
         .lock()
         .map_err(|_| Error::invariant("CUDA tuning cache poisoned"))?
-        .insert((key.clone(), rows, columns), trial.selected);
+        .insert(memo_key, trial.selected);
     report.cached |= persist(source.path.as_deref(), &identity, &trial);
     report.measured.push(MeasuredTiling {
         key,

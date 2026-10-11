@@ -66,6 +66,10 @@ impl FusionWorkspace {
 }
 
 pub struct ProgramWeights {
+    /// Measure uncovered resident GEMM geometries before graph capture.
+    pub autotune: bool,
+    /// One finite new-shape tuning allowance for this loaded model, shared with its draft.
+    pub resident_tuning: Arc<crate::tuning::resident_gemm::ResidentTuningSession>,
     pub batch_width: usize,
     /// Widest captured prompt graph.
     pub prefill_width: usize,
@@ -325,6 +329,8 @@ impl DeviceProgram {
         if self.batch.is_some() || weights.batch_width < 2 {
             return Ok(());
         }
+        self.nvfp4
+            .ensure_width(&self.device, graph, weights, weights.batch_width)?;
         let mut builder = super::batch::BatchBuilder {
             device: &self.device,
             graph,
@@ -438,6 +444,28 @@ impl DeviceProgram {
         )
     }
 
+    fn projection_workspaces(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        policy: (bool, bool),
+    ) -> Result<(
+        super::nvfp4_gemm::Workspace,
+        crate::device::cublaslt::Support,
+    )> {
+        let (verification, wide_prompt) = policy;
+        let nvfp4 = super::nvfp4_gemm::Workspace::program(
+            device,
+            graph,
+            weights,
+            verification,
+            wide_prompt,
+        )?;
+        let mut delegated = crate::device::cublaslt::Support::new(device);
+        warm_delegated(&mut delegated, weights);
+        Ok((nvfp4, delegated))
+    }
+
     fn new_impl(
         device: &CudaDevice,
         graph: &DataflowGraph,
@@ -447,15 +475,15 @@ impl DeviceProgram {
         vocabulary: usize,
         private_verification: bool,
     ) -> Result<Self> {
-        let (private_verification, wide_prompt) = Self::graph_policy(weights, private_verification);
+        let policy = Self::graph_policy(weights, private_verification);
+        let (private_verification, wide_prompt) = policy;
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
-        let mut nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights)?;
-        let mut delegated = crate::device::cublaslt::Support::new(device);
-        warm_delegated(&mut delegated, weights);
+        let (mut nvfp4, mut delegated) =
+            Self::projection_workspaces(device, graph, weights, policy)?;
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;

@@ -92,13 +92,33 @@ impl CudaBackend {
             || needed > self.physical_available()?
         {
             if !self.pool.evict() && !self.prefix.evict() {
+                let physical_available = self.physical_available()?;
+                let (pool_slots, pool_free_slots) = self
+                    .slots
+                    .as_ref()
+                    .map_or((0, 0), |pool| (pool.width(), pool.free_slots()));
+                tracing::debug!(
+                    target: "infer::cuda_admission",
+                    phase = "memory_after_reclaim",
+                    needed_bytes = needed,
+                    active_bytes = active,
+                    cached_bytes = self.pool.bytes,
+                    prefix_bytes = self.prefix.bytes(),
+                    physical_available_bytes = physical_available,
+                    budget_bytes = self.budget,
+                    active_states = self.states.len(),
+                    maximum_states = self.maximum_states,
+                    pool_slots,
+                    pool_free_slots,
+                    "CUDA resident reservation rejected"
+                );
                 return Err(Error::new(
                     infer_core::ErrorCode::Capacity,
                     format!(
                         "CUDA resident state admission budget exhausted: needed={needed}, active={active}, cached={}, prefix={}, physical={}, budget={}",
                         self.pool.bytes,
                         self.prefix.bytes(),
-                        self.physical_available()?,
+                        physical_available,
                         self.budget
                     ),
                 ));

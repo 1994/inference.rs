@@ -18,7 +18,10 @@ type Fp8Key = (usize, usize, usize);
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
-    multiprocessors: usize,
+    strategies: BTreeMap<
+        (crate::tuning::resident_gemm::WeightKey, usize, usize, usize),
+        crate::tuning::resident_gemm::GemmConfig,
+    >,
     buffers: BTreeMap<(usize, usize), Quantized>,
     /// Keyed by `(rows, columns, scale_columns)`: per-channel and block-scaled FP8 share an
     /// operand geometry but need different activation-scale extents, so geometry alone would let
@@ -31,10 +34,41 @@ impl Workspace {
         device: &CudaDevice,
         graph: &DataflowGraph,
         weights: &ProgramWeights,
+        verification: bool,
+        wide_prompt: bool,
     ) -> Result<Self> {
-        let mut widths = vec![1, weights.batch_width];
-        widths.extend(weights.prompt_widths());
+        let widths = Self::captured_widths(
+            weights.batch_width,
+            weights.prefill_width,
+            weights.narrow_prefill_width,
+            verification,
+            wide_prompt,
+        );
         Self::new(device, graph, weights, &widths)
+    }
+
+    pub(crate) fn captured_widths(
+        batch: usize,
+        wide: usize,
+        narrow: usize,
+        verification: bool,
+        wide_prompt: bool,
+    ) -> Vec<usize> {
+        captured_widths(batch, wide, narrow, verification, wide_prompt)
+    }
+
+    pub(crate) fn ensure_width(
+        &mut self,
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        width: usize,
+    ) -> Result<()> {
+        let mut extra = Self::new(device, graph, weights, &[width])?;
+        self.strategies.append(&mut extra.strategies);
+        self.buffers.append(&mut extra.buffers);
+        self.fp8.append(&mut extra.fp8);
+        Ok(())
     }
 
     pub(crate) fn new(
@@ -45,6 +79,7 @@ impl Workspace {
     ) -> Result<Self> {
         let mut buffers = BTreeMap::new();
         let mut fp8 = BTreeMap::new();
+        let mut strategies = BTreeMap::new();
         for node in &graph.nodes {
             if node.op != TensorOp::Linear
                 || (!weights.input_scales.contains_key(&node.inputs[1])
@@ -85,6 +120,34 @@ impl Workspace {
                 }
                 continue;
             }
+            if let Some(weight @ ProjectionWeight::Fp4(..)) =
+                weights.projections.get(&node.inputs[1])
+                && let Some(&scale) = weights.input_scales.get(&node.inputs[1])
+            {
+                let outputs = graph
+                    .tensors
+                    .iter()
+                    .find(|tensor| tensor.id == node.outputs[0])
+                    .ok_or_else(|| Error::invariant("FP4 output tensor"))?
+                    .elements()?;
+                let weight_key = crate::tuning::resident_gemm::WeightKey::new(weight, scale)?;
+                for &rows in widths {
+                    if rows > 0 {
+                        strategies
+                            .entry((weight_key, rows, outputs, columns))
+                            .or_insert_with(|| {
+                                crate::tuning::resident_gemm::select(
+                                    device,
+                                    weight,
+                                    scale,
+                                    [rows, outputs, columns],
+                                    weights.autotune,
+                                    &weights.resident_tuning,
+                                )
+                            });
+                    }
+                }
+            }
             for &rows in widths {
                 if rows == 0 || buffers.contains_key(&(rows, columns)) {
                     continue;
@@ -105,10 +168,8 @@ impl Workspace {
                 );
             }
         }
-        let multiprocessors =
-            usize::try_from(device.profile()?.multiprocessors).map_err(device_error)?;
         Ok(Self {
-            multiprocessors,
+            strategies,
             buffers,
             fp8,
         })
@@ -123,7 +184,7 @@ impl Workspace {
         output: &mut Tensor<f32>,
         columns: usize,
     ) -> std::result::Result<(), DeviceError> {
-        let ProjectionWeight::Fp4(w, s, global) = weight else {
+        let ProjectionWeight::Fp4(..) = weight else {
             return Err(super::super::capture::error("FP4 workspace weight"));
         };
         let rows = output.size()
@@ -142,40 +203,31 @@ impl Workspace {
             .generics(vec![columns.to_string()]),
         )?;
         let outputs = usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
-        let tile = crate::constants::nvfp4_gemm_tile(rows, outputs, self.multiprocessors);
-        let generics = vec![
-            columns.to_string(),
-            tile[0].to_string(),
-            tile[1].to_string(),
-        ];
-        // Pipeline only the wider tile; unchanged grids keep the original main loop.
-        if rows > crate::constants::QUANT_GEMM_TILE[0]
-            && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
-        {
-            scope.record(
-                kernels::packed_prefill(
-                    output.partition(tile),
-                    &*q,
-                    &*qs,
-                    w,
-                    s,
-                    1.0 / (global * scale),
-                )
-                .generics(generics),
-            )?;
-            return Ok(());
+        let mut config = self
+            .strategies
+            .get(&(
+                crate::tuning::resident_gemm::WeightKey::new(weight, scale)
+                    .map_err(super::super::capture::error)?,
+                rows,
+                outputs,
+                columns,
+            ))
+            .copied()
+            .unwrap_or_else(|| crate::tuning::resident_gemm::GemmConfig::baseline(rows));
+        // An explicit experimental override never enters the measured table or memo.
+        if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
+            let tile = crate::constants::quant_gemm_tile(rows);
+            config.tile_m = tile[0];
+            config.tile_n = tile[1];
+            config.main_loop = if rows > crate::constants::QUANT_GEMM_TILE[0]
+                && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
+            {
+                crate::tuning::resident_gemm::MainLoop::Prefetch8
+            } else {
+                crate::tuning::resident_gemm::MainLoop::Plain
+            };
         }
-        scope.record(
-            kernels::packed(
-                output.partition(tile),
-                &*q,
-                &*qs,
-                w,
-                s,
-                1.0 / (global * scale),
-            )
-            .generics(generics),
-        )?;
+        config.record(scope, weight, scale, &*q, &*qs, output, columns)?;
         Ok(())
     }
     pub(super) fn record_fp8(
@@ -248,4 +300,25 @@ impl Workspace {
         }
         Ok(())
     }
+}
+
+/// Mirrors `BatchBuilder`'s capture decisions; allocation and tuning share this exact list.
+pub fn captured_widths(
+    batch: usize,
+    wide: usize,
+    narrow: usize,
+    verification: bool,
+    wide_prompt: bool,
+) -> Vec<usize> {
+    let mut widths = vec![1];
+    if verification && batch > 1 {
+        widths.push(batch);
+    }
+    if narrow >= crate::constants::PREFILL_LANES && (narrow < wide || !wide_prompt) {
+        widths.push(narrow);
+    }
+    if wide_prompt && wide >= crate::constants::PREFILL_LANES && !widths.contains(&wide) {
+        widths.push(wide);
+    }
+    widths
 }

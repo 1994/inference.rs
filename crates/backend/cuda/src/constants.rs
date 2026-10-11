@@ -65,24 +65,6 @@ mod device {
             QUANT_GEMM_TILE
         }
     }
-    /// Wider NVFP4 prompt tile, used only when at least two row tiles have useful work
-    /// and its grid supplies at least half a device wave. Narrow grids retain the
-    /// existing column tile instead of trading parallelism for operand reuse.
-    pub fn nvfp4_gemm_tile(rows: usize, outputs: usize, multiprocessors: usize) -> [usize; 2] {
-        if let Some(tile) = quant_gemm_tile_override() {
-            return tile;
-        }
-        let tile = quant_gemm_tile(rows);
-        let wide = [tile[0], tile[1] * 2];
-        let blocks = rows
-            .div_ceil(wide[0])
-            .saturating_mul(outputs.div_ceil(wide[1]));
-        if multiprocessors > 0 && rows >= 2 * tile[0] && blocks >= multiprocessors.div_ceil(2) {
-            wide
-        } else {
-            tile
-        }
-    }
     /// `INFER_CUDA_QUANT_TILE=rows,cols` replaces both the decode and the prompt tile, so a sweep
     /// can move the prompt tile the decode sweep in §11.7 never covered. Capture-time read, once
     /// per process, exactly like the other experiment switches.

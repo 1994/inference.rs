@@ -87,6 +87,8 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
         .collect();
     let embedding = device.upload(dense, &[32, 32])?;
     let weights = ProgramWeights {
+        autotune: false,
+        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 3,
