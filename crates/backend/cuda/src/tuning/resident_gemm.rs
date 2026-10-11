@@ -18,9 +18,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Bump when the quantizer, K loop, accumulation, layout or output arithmetic changes.
-const KERNEL_SCHEMA: &str =
-    "cutile0.4-nvfp4-v1:block16-e4m3:quant512:mma-k256:f32:full-output:alpha1/(wg*xs)";
+/// Bump when quantization, arithmetic or the paired measurement protocol changes.
+const KERNEL_SCHEMA: &str = "cutile0.4-nvfp4-v2:search-ab:confirm-ba:block16-e4m3:quant512:mma-k256:f32:full-output:alpha1/(wg*xs)";
 const ACTIVATION_MODE: &str = "nvfp4-w4a4-block16";
 /// Resident projection geometry is (activation rows, output columns, reduction columns).
 const GEMM_RANK: usize = 3;
@@ -223,11 +222,29 @@ pub struct PairedTimes {
     pub speedup: f32,
 }
 
+/// First measured arm of every pair, retained so cached evidence is auditable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MeasurementOrder {
+    /// Legacy entries lack the arm order and cannot satisfy the current protocol.
+    #[default]
+    Unspecified,
+    BaselineFirst,
+    CandidateFirst,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GemmTrial {
     pub config: GemmConfig,
+    #[serde(default)]
+    pub order: MeasurementOrder,
     pub cold: PairedTimes,
     pub warm: PairedTimes,
+}
+
+impl GemmTrial {
+    fn valid(&self) -> bool {
+        self.config.valid() && times_valid(&self.cold) && times_valid(&self.warm)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,9 +267,18 @@ impl ResidentGemmEntry {
                 .is_none_or(|build| !build.is_empty())
             && self.selected.valid()
             && self.confirmation.config == self.selected
-            && times_valid(&self.confirmation.cold)
-            && times_valid(&self.confirmation.warm)
-            && (self.selected == GemmConfig::baseline(self.key.m) || confirmed(&self.confirmation))
+            && self.confirmation.order == MeasurementOrder::CandidateFirst
+            && self.confirmation.valid()
+            && self
+                .trials
+                .iter()
+                .all(|trial| trial.order == MeasurementOrder::BaselineFirst && trial.valid())
+            && (self.selected == GemmConfig::baseline(self.key.m)
+                || (confirmed(&self.confirmation)
+                    && self
+                        .trials
+                        .iter()
+                        .any(|trial| trial.config == self.selected && confirmed(trial))))
     }
 }
 
@@ -302,8 +328,7 @@ fn times_valid(times: &PairedTimes) -> bool {
 }
 
 fn confirmed(trial: &GemmTrial) -> bool {
-    times_valid(&trial.cold)
-        && times_valid(&trial.warm)
+    trial.valid()
         && trial.cold.speedup >= MIN_CONFIRM_SPEEDUP
         && trial.warm.speedup >= MIN_CONFIRM_SPEEDUP
 }
@@ -806,11 +831,39 @@ fn verify_bitwise(actual: &[f32], expected: &[f32]) -> Result<()> {
     Ok(())
 }
 
+fn ordered_times(first: &[f32], second: &[f32], order: MeasurementOrder) -> Result<PairedTimes> {
+    let (baseline, candidate) = match order {
+        MeasurementOrder::BaselineFirst => (first, second),
+        MeasurementOrder::CandidateFirst => (second, first),
+        MeasurementOrder::Unspecified => {
+            return Err(Error::invalid(
+                "resident GEMM measurement arm order missing",
+            ));
+        }
+    };
+    let baseline_median_ms = sample_median(baseline)
+        .ok_or_else(|| Error::invalid("resident GEMM baseline timing samples"))?;
+    let candidate_median_ms = sample_median(candidate)
+        .ok_or_else(|| Error::invalid("resident GEMM candidate timing samples"))?;
+    let times = PairedTimes {
+        baseline_ms: baseline.to_vec(),
+        candidate_ms: candidate.to_vec(),
+        baseline_median_ms,
+        candidate_median_ms,
+        speedup: baseline_median_ms / candidate_median_ms,
+    };
+    if !times_valid(&times) {
+        return Err(Error::invalid("resident GEMM paired timing samples"));
+    }
+    Ok(times)
+}
+
 fn measure(
     device: &CudaDevice,
     baseline: &Captured,
     candidate: &Captured,
     clear_l2: bool,
+    order: MeasurementOrder,
 ) -> Result<PairedTimes> {
     let options = BenchOptions {
         warmup: Duration::from_millis(WARMUP_MS),
@@ -826,20 +879,18 @@ fn measure(
             .sync_on(&device.stream)
             .map_err(|e| cutile::error::tensor_error(&e.to_string()))
     };
-    let (a, b) = do_bench_paired(
-        &device.stream,
-        &options,
-        |_| run(baseline),
-        |_| run(candidate),
-    )
-    .map_err(device_error)?;
-    Ok(PairedTimes {
-        baseline_ms: a.times_ms().to_vec(),
-        candidate_ms: b.times_ms().to_vec(),
-        baseline_median_ms: a.median_ms(),
-        candidate_median_ms: b.median_ms(),
-        speedup: a.median_ms() / b.median_ms(),
-    })
+    let (first, second) = match order {
+        MeasurementOrder::BaselineFirst => (baseline, candidate),
+        MeasurementOrder::CandidateFirst => (candidate, baseline),
+        MeasurementOrder::Unspecified => {
+            return Err(Error::invalid(
+                "resident GEMM measurement arm order missing",
+            ));
+        }
+    };
+    let (a, b) = do_bench_paired(&device.stream, &options, |_| run(first), |_| run(second))
+        .map_err(device_error)?;
+    ordered_times(a.times_ms(), b.times_ms(), order)
 }
 
 fn trial(
@@ -847,12 +898,40 @@ fn trial(
     base: &Captured,
     candidate: &Captured,
     config: GemmConfig,
+    order: MeasurementOrder,
 ) -> Result<GemmTrial> {
     Ok(GemmTrial {
         config,
-        cold: measure(device, base, candidate, true)?,
-        warm: measure(device, base, candidate, false)?,
+        order,
+        cold: measure(device, base, candidate, true, order)?,
+        warm: measure(device, base, candidate, false, order)?,
     })
+}
+
+/// One known-good baseline and immutable real-weight inputs for candidate trials.
+struct CandidateSearch<'a> {
+    device: &'a CudaDevice,
+    weight: &'a ProjectionWeight,
+    scale: f32,
+    shape: [usize; GEMM_RANK],
+    base: &'a Captured,
+    expected: &'a [f32],
+}
+
+impl CandidateSearch<'_> {
+    fn trial(&self, config: GemmConfig, order: MeasurementOrder) -> Result<GemmTrial> {
+        let candidate = Captured::new(self.device, self.weight, self.scale, self.shape, config)?;
+        candidate.run(self.device)?;
+        verify_bitwise(&self.device.read(&candidate.output)?, self.expected)?;
+        let measured = trial(self.device, self.base, &candidate, config, order)?;
+        verify_bitwise(&self.device.read(&candidate.output)?, self.expected)?;
+        Ok(measured)
+    }
+
+    fn verify_baseline(&self) -> Result<()> {
+        self.base.run(self.device)?;
+        verify_bitwise(&self.device.read(&self.base.output)?, self.expected)
+    }
 }
 
 fn tune(
@@ -880,6 +959,14 @@ fn tune(
     base.run(device)?;
     let expected = device.read(&base.output)?;
     verify_bitwise(&expected, &expected)?;
+    let search = CandidateSearch {
+        device,
+        weight,
+        scale,
+        shape,
+        base: &base,
+        expected: &expected,
+    };
     let mut selected = baseline;
     let mut best = 1.0_f32;
     let mut trials = Vec::new();
@@ -897,37 +984,36 @@ fn tune(
                 if session.exhausted(&key) {
                     return Ok(None);
                 }
-                let candidate = Captured::new(device, weight, scale, shape, config)?;
-                candidate.run(device)?;
-                verify_bitwise(&device.read(&candidate.output)?, &expected)?;
-                let measured = trial(device, &base, &candidate, config)?;
-                verify_bitwise(&device.read(&candidate.output)?, &expected)?;
-                let score = measured.cold.speedup.min(measured.warm.speedup);
-                if times_valid(&measured.cold) && times_valid(&measured.warm) && score > best {
-                    best = score;
-                    selected = config;
+                match search.trial(config, MeasurementOrder::BaselineFirst) {
+                    Ok(measured) => {
+                        let score = measured.cold.speedup.min(measured.warm.speedup);
+                        if confirmed(&measured) && score > best {
+                            best = score;
+                            selected = config;
+                        }
+                        trials.push(measured);
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "infer::tuning", ?key, ?config, %error,
+                            "resident GEMM candidate rejected; no evidence retained");
+                        // A baseline/device failure still aborts the search; no recovery is assumed.
+                        search.verify_baseline()?;
+                    }
                 }
-                trials.push(measured);
             }
         }
     }
-    // A new capture and independent cold/warm measurements confirm the search winner.
+    // A new capture measures candidate first to confirm both cache states in reverse order.
     if session.exhausted(&key) {
         return Ok(None);
     }
-    let candidate = Captured::new(device, weight, scale, shape, selected)?;
-    candidate.run(device)?;
-    verify_bitwise(&device.read(&candidate.output)?, &expected)?;
-    let mut confirmation = trial(device, &base, &candidate, selected)?;
-    verify_bitwise(&device.read(&candidate.output)?, &expected)?;
+    let mut confirmation = search.trial(selected, MeasurementOrder::CandidateFirst)?;
     if selected != baseline && !confirmed(&confirmation) {
         if session.exhausted(&key) {
             return Ok(None);
         }
         selected = baseline;
-        let fallback = Captured::new(device, weight, scale, shape, baseline)?;
-        confirmation = trial(device, &base, &fallback, baseline)?;
-        verify_bitwise(&device.read(&fallback.output)?, &expected)?;
+        confirmation = search.trial(baseline, MeasurementOrder::CandidateFirst)?;
     }
     let entry = ResidentGemmEntry {
         key,

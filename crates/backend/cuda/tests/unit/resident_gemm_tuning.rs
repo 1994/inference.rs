@@ -42,9 +42,15 @@ fn entry(key: ResidentGemmKey) -> ResidentGemmEntry {
         key,
         selected: config,
         bitwise_verified: true,
-        trials: vec![],
+        trials: vec![GemmTrial {
+            config,
+            order: MeasurementOrder::BaselineFirst,
+            cold: times(1.03),
+            warm: times(1.03),
+        }],
         confirmation: GemmTrial {
             config,
+            order: MeasurementOrder::CandidateFirst,
             cold: times(1.03),
             warm: times(1.03),
         },
@@ -54,6 +60,7 @@ fn entry(key: ResidentGemmKey) -> ResidentGemmEntry {
 #[test]
 fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result<()> {
     let original = key()?;
+    assert!(original.kernel_schema.contains("search-ab:confirm-ba"));
     let mut table = TilingTable::default();
     table.resident_gemm.push(entry(original.clone()));
     assert!(matches!(
@@ -86,6 +93,11 @@ fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result
     variants.push(changed);
     let mut changed = original.clone();
     changed.kernel_schema.push_str("-changed");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.kernel_schema = changed
+        .kernel_schema
+        .replace("-v2:search-ab:confirm-ba", "-v1");
     variants.push(changed);
     let mut changed = original.clone();
     changed.activation_mode = "different-scale-mode".into();
@@ -184,6 +196,42 @@ fn resident_cache_rejects_incomplete_noisy_or_illegal_evidence() -> Result<()> {
     valid.confirmation.cold.baseline_ms = vec![1.04, 1.03, 1.03, 1.02];
     valid.confirmation.cold.candidate_ms = vec![1.0; 4];
     assert!(valid.valid());
+    let complete = entry(key()?);
+    for (cold, warm) in [(1.019, 1.03), (1.03, 1.019)] {
+        let mut search_failure = complete.clone();
+        search_failure.trials[0].cold = times(cold);
+        search_failure.trials[0].warm = times(warm);
+        assert!(!search_failure.valid());
+        let mut confirmation_failure = complete.clone();
+        confirmation_failure.confirmation.cold = times(cold);
+        confirmation_failure.confirmation.warm = times(warm);
+        assert!(!confirmation_failure.valid());
+    }
+    let mut same_order = complete.clone();
+    same_order.confirmation.order = MeasurementOrder::BaselineFirst;
+    assert!(!same_order.valid());
+    let mut missing_search = complete.clone();
+    missing_search.trials.clear();
+    assert!(!missing_search.valid());
+    let mut legacy = serde_json::to_value(&complete).map_err(device_error)?;
+    legacy["confirmation"]
+        .as_object_mut()
+        .ok_or_else(|| Error::invariant("trial fixture object"))?
+        .remove("order");
+    let legacy: ResidentGemmEntry = serde_json::from_value(legacy).map_err(device_error)?;
+    assert!(!legacy.valid());
+    // Timing records keep operator names even when the first measured arm is reversed.
+    let ab = ordered_times(&[8.0, 10.0], &[2.0, 4.0], MeasurementOrder::BaselineFirst)?;
+    let ba = ordered_times(&[2.0, 4.0], &[8.0, 10.0], MeasurementOrder::CandidateFirst)?;
+    for evidence in [ab, ba] {
+        assert_eq!(evidence.baseline_ms, vec![8.0, 10.0]);
+        assert_eq!(evidence.candidate_ms, vec![2.0, 4.0]);
+        assert_eq!(evidence.baseline_median_ms.to_bits(), 9.0_f32.to_bits());
+        assert_eq!(evidence.candidate_median_ms.to_bits(), 3.0_f32.to_bits());
+        assert_eq!(evidence.speedup.to_bits(), 3.0_f32.to_bits());
+        assert!(times_valid(&evidence));
+    }
+    assert!(ordered_times(&[1.0], &[2.0], MeasurementOrder::Unspecified).is_err());
     Ok(())
 }
 

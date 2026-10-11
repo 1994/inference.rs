@@ -47,7 +47,7 @@ pub struct Cli {
     /// Bounded temporary weight upload memory, independent of device residency.
     #[arg(long, global = true)]
     pub(super) upload_staging_mib: Option<usize>,
-    /// Keep the conservative built-in tile instead of measuring the best one per projection.
+    /// Disable new tuning measurements; reuse validated cached choices or conservative defaults.
     #[arg(long, global = true)]
     pub(super) no_autotune: bool,
     /// Prefill a quantized checkpoint's gated-delta layers with one chunk kernel instead of one
