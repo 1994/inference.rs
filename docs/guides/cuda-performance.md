@@ -59,4 +59,20 @@ MLP 的 `MlpConfig.pdl` 默认关闭，仅控制 SiLU×up → down projection �
 5. 用 profiler 定位访存、提交、occupancy 或 spill，再决定融合与流水化；功能边界由通用 API 保持。
 6. 解码 slot 数与 KV 容量改变会影响常驻显存、准入与并发，必须连同完整服务负载重测。
 
+NVFP4 prompt GEMM 在捕获时按输入行数、输出列数和 driver 查询的 SM 数选择列 tile：
+至少两个有效行 tile、且宽列 tile 的 grid 能覆盖半个设备 wave 时，扩大列 tile 以复用激活。
+较窄的 grid 保留原列 tile 和 main loop；decode-width graph 也保留原 main loop，FP8 的 tile 选择独立。
+只有采用宽列 tile 的 prompt main loop 使用 cuTile 的安全流水加载提示，
+保留 256 元素 K 步长和 block-16 scale 算术。
+此选择不依赖 GPU 型号或模型名称，其他设备仍需数值与性能验收。
+
+可用下列 release 对照保存逐形状冷/热 L2、三轮 A/B 交替的 CUDA event 样本；
+计时范围为预分配的“激活量化 + GEMM” graph replay，不含加载、分配或首次 JIT：
+
+```sh
+bash tools/bench/safe-run.sh --memory-gib 8 cargo test --locked --release \
+  -p infer-backend-cuda --features cuda --lib nvfp4_prefill_performance_comparison \
+  -- --ignored --nocapture --test-threads=1
+```
+
 投影自动 tile 选择与缓存规则见 [CUDA 后端](../../crates/backend/cuda/README.md#自动-tile-选择)。缓存匹配不能替代工具链或 kernel 变更后的回归验证。

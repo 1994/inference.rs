@@ -18,6 +18,7 @@ type Fp8Key = (usize, usize, usize);
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
+    multiprocessors: usize,
     buffers: BTreeMap<(usize, usize), Quantized>,
     /// Keyed by `(rows, columns, scale_columns)`: per-channel and block-scaled FP8 share an
     /// operand geometry but need different activation-scale extents, so geometry alone would let
@@ -104,7 +105,13 @@ impl Workspace {
                 );
             }
         }
-        Ok(Self { buffers, fp8 })
+        let multiprocessors =
+            usize::try_from(device.profile()?.multiprocessors).map_err(device_error)?;
+        Ok(Self {
+            multiprocessors,
+            buffers,
+            fp8,
+        })
     }
 
     pub(super) fn record(
@@ -134,7 +141,30 @@ impl Workspace {
             )
             .generics(vec![columns.to_string()]),
         )?;
-        let tile = crate::constants::quant_gemm_tile(rows);
+        let outputs = usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+        let tile = crate::constants::nvfp4_gemm_tile(rows, outputs, self.multiprocessors);
+        let generics = vec![
+            columns.to_string(),
+            tile[0].to_string(),
+            tile[1].to_string(),
+        ];
+        // Pipeline only the wider tile; unchanged grids keep the original main loop.
+        if rows > crate::constants::QUANT_GEMM_TILE[0]
+            && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
+        {
+            scope.record(
+                kernels::packed_prefill(
+                    output.partition(tile),
+                    &*q,
+                    &*qs,
+                    w,
+                    s,
+                    1.0 / (global * scale),
+                )
+                .generics(generics),
+            )?;
+            return Ok(());
+        }
         scope.record(
             kernels::packed(
                 output.partition(tile),
@@ -144,11 +174,7 @@ impl Workspace {
                 s,
                 1.0 / (global * scale),
             )
-            .generics(vec![
-                columns.to_string(),
-                tile[0].to_string(),
-                tile[1].to_string(),
-            ]),
+            .generics(generics),
         )?;
         Ok(())
     }

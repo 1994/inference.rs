@@ -41,6 +41,7 @@ fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std:
         (3, 64, 256, 16.0),
         (17, 129, 128, 0.25),
         (32, 64, 512, 1024.0),
+        (65, 129, 784, 1.0),
     ] {
         let input: Vec<_> = (0..m * k)
             .map(|i| {
@@ -77,23 +78,6 @@ fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std:
         )
         .generics(vec![k.to_string()])
         .sync_on(&device.stream)?;
-        let output = kernels::packed(
-            api::zeros::<f32>(&[m, n]).partition([16, 64]),
-            &quantized_input,
-            &input_scales,
-            &w,
-            &s,
-            1.0 / global,
-        )
-        .generics(vec![
-            k.to_string(),
-            QUANT_TILE_ROWS.to_string(),
-            QUANT_TILE_COLUMNS.to_string(),
-        ])
-        .first()
-        .unpartition()
-        .sync_on(&device.stream)?;
-        let output = output.to_host_vec().sync_on(&device.stream)?;
         let mut quantized = input.clone();
         for values in quantized.as_chunks_mut::<16>().0 {
             let maximum = values.iter().copied().map(f32::abs).fold(0.0, f32::max);
@@ -109,26 +93,67 @@ fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std:
                 };
             }
         }
-        for row in 0..m {
-            for col in 0..n {
-                let expected: f64 = (0..k)
-                    .map(|i| {
-                        let code = codes[col * k + i];
-                        let weight =
-                            f4[usize::from(code & 7)] * if code & 8 == 0 { 1.0 } else { -1.0 };
-                        f64::from(quantized[row * k + i])
-                            * f64::from(weight * fp8(scale_codes[col * k / 16 + i / 16]))
-                    })
-                    .sum();
-                let actual = f64::from(output[row * n + col]);
-                assert!(
-                    (actual - expected).abs() <= 1e-4 * expected.abs().max(1.0),
-                    "{m}x{n}x{k} [{row},{col}]: {actual} != {expected}"
-                );
-            }
+        for tile in [[16, 64], [64, 64], [64, 128]] {
+            let generics = vec![k.to_string(), tile[0].to_string(), tile[1].to_string()];
+            let output = if tile == [16, 64] {
+                kernels::packed(
+                    api::zeros::<f32>(&[m, n]).partition(tile),
+                    &quantized_input,
+                    &input_scales,
+                    &w,
+                    &s,
+                    1.0 / global,
+                )
+                .generics(generics)
+                .first()
+                .unpartition()
+                .sync_on(&device.stream)?
+            } else {
+                kernels::packed_prefill(
+                    api::zeros::<f32>(&[m, n]).partition(tile),
+                    &quantized_input,
+                    &input_scales,
+                    &w,
+                    &s,
+                    1.0 / global,
+                )
+                .generics(generics)
+                .first()
+                .unpartition()
+                .sync_on(&device.stream)?
+            };
+            let output = output.to_host_vec().sync_on(&device.stream)?;
+            check_product((m, n, k), &codes, &scale_codes, &quantized, &output);
         }
     }
     Ok(())
+}
+
+fn check_product(
+    (m, n, k): (usize, usize, usize),
+    codes: &[u8],
+    scale_codes: &[u8],
+    quantized: &[f32],
+    output: &[f32],
+) {
+    let f4 = [0.0_f32, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
+    for row in 0..m {
+        for col in 0..n {
+            let expected: f64 = (0..k)
+                .map(|i| {
+                    let code = codes[col * k + i];
+                    let weight = f4[usize::from(code & 7)] * if code & 8 == 0 { 1.0 } else { -1.0 };
+                    f64::from(quantized[row * k + i])
+                        * f64::from(weight * fp8(scale_codes[col * k / 16 + i / 16]))
+                })
+                .sum();
+            let actual = f64::from(output[row * n + col]);
+            assert!(
+                (actual - expected).abs() <= 1e-4 * expected.abs().max(1.0),
+                "{m}x{n}x{k} [{row},{col}]: {actual} != {expected}"
+            );
+        }
+    }
 }
 
 #[test]
