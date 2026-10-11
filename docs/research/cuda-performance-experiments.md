@@ -650,8 +650,9 @@ sm_90 Hopper，**无 FP4 Tensor Core：NVFP4 在 H200 上没有硬件路径，FP
    逐元素统计（`INFER_GAP_INDEX=1`）：1×1 时 **6144 个 output 里 4634 个、786432 个 state 里
    59412 个**在末位不同 —— 大面积末位差，即同一个表达式树在 cuTile 里被收缩/调度成不同指令。
    已验证与载入形状无关（把 q/k/v/beta 换成与逐 lane 完全相同的扁平 `[D]`/`[1]` 分区+索引，
-   数字一模一样）。**结论：这不是 kernel 源码能修的 bug，需要编译器级开关（例如禁止 FP
-   contraction），或让两条路复用同一个 kernel。** chunked 递推因此作为显式数值选择保留
+   数字一模一样）。**当时据此推断是编译器收缩/调度，但未证明 FMA 是原因，也未排除
+   归约顺序差异；不能据此断言源码无法修复。** 2026-10-11 的优化等级扫描见 16.11。
+   chunked 递推因此作为显式数值选择保留
    （`INFER_CUDA_CHUNKED_RECURRENT=1`），默认仍是逐 lane。
 
    收益已实测并记录：long TTFT −24%、wall −10%、TPOT −4%，各用例 TTFT 全面 −10~24%；
@@ -1440,7 +1441,8 @@ short/hot_long 的回退是**内容相关的接受率二阶效应**，不是可�
   （cuTile lowering 的 1 ULP 差 → 贪心续写不同），不是性能。
 - 打开之后剩下的靶子：`linear` 占 replay 的 **61.8%**（138 TFLOP/s = FP8 峰值 ~16%，
   704 GB/s = 39% 带宽）；`attention` 9.3%、200 µs/节点，与 delta 同类。
-  **委托那条路见 §12.14：FP8 也不是"免 swizzle 的 drop-in"**，两条都要求重新量化。
+  **§12.14 的委托否定结论已被 16.10 的真实 API/计算证据修正**：FP8 scalar raw GEMM
+  加原顺序 epilogue，以及 NVFP4 无损 scale 重排，均不必重新量化 checkpoint。
 - 已彻底关闭的低成本路线：值维分块（§十.1）、tile 形状（§11.7）、delta 代数重排（§12.6）、
   以及"图内比隔离慢"这条伪线索（§12.9）。
 
@@ -1495,7 +1497,11 @@ chunked 在 mtp0 上 TPOT **不动**（−0.0 ~ −2.1%）。此后所有 A/B �
 ——`Workspace::new` 只会为 `TensorOp::Delta` 建 buffer，没有 Delta 节点就是空 workspace，
 `record()` 直接返回 false。所以这条开关对 2B 是 no-op，两个 profile 之间没有回退风险。
 
-### 12.14 委托路（B2b）的结论：FP8 也不是免 swizzle 的 drop-in【确证，已否】
+### 12.14 早期委托模式探测【历史结论已修正，见 16.10】
+
+本节的 OUTER_VEC 模式失败记录仍有效，但旧探针遗漏 SCALAR_32F，不能据此排除所有
+FP8 委托路径。NVFP4 scale 的无损布局重排也不等于重新量化。以下否定结论属于当时的
+推断，2026-10-11 已由真实计算探针推翻；服务收益仍待验证。
 
 §二 杠杆 A 记着一条推断：FP4 需要 128×64 的 scale swizzle，但 **"FP8 那条更简单：
 `CUBLASLT_MATMUL_MATRIX_SCALE_OUTER_VEC_32F` 正好是每行 A 缩放 × 每行 B 缩放，与
@@ -1529,8 +1535,8 @@ N_cb = token，所以 A-slot（权重）的 scale 长 N_cb 个 = 每个输出通
 
 （TN 与 NN、带/不带 workspace 上限都试过；mode 3 从未返回过算法。）
 
-**所以：唯一能让"权重不重新量化就直接委托"的模式，在这块消费级 Blackwell 上不存在。**
-能用的 FP8 mode 是 2（mxfp8），代价是：
+**当时误将 OUTER_VEC 视为唯一无需重新量化的模式，因而过度排除了委托路径。**
+以下描述的是当时探测到的 FP8 mode 2（mxfp8）代价，不涵盖后续验证的 scalar 路径：
 
 1. 权重必须**重新量化**成 e4m3 + **UE8M0（2 的幂）每 32 元素 K 块**的 scale，而 checkpoint
    存的是每通道 BF16 scale —— 这是换量化口径，不是换 GEMM；
@@ -1539,8 +1545,8 @@ N_cb = token，所以 A-slot（权重）的 scale 长 N_cb 个 = 每个输出通
    `(rm, rk, 32, 4, 4)` **分块/重排**布局，不是扁平向量 —— "无需 swizzle" 在 mode 2 上
    同样不成立（本轮的 heuristic 接受扁平张量，但没有验证核实际按哪种布局读，**未验证**）。
 
-**结论：B2b 作为"同形状换更快的核"的 drop-in 路线关闭** —— FP4 与 FP8 两条都要求改变
-checkpoint 的量化布局。要拿这部分收益，前提是先做一次**离线重新量化**（把权重存成
+**当时的“B2b 路线关闭”结论已撤回（见 16.10）。** 上述失败只适用于探测过的模式；
+必须区分 checkpoint 数值重编码与可逆的 scale 字节重排。要拿这部分收益，前提是先做一次**离线重新量化**（把权重存成
 mxfp8 或 NVFP4 的 cublasLt 布局），那是模型打包层的工程，不是推理核的调优。在这之前，
 decode 的 `linear` 只能靠自研核效率（138 TFLOP/s = FP8 峰值 ~16%）。
 
@@ -2693,7 +2699,7 @@ attention.rs:113: partition access out of bounds: dim 1, block index >= ceil(?/3
 `reserved_tokens` 本来就是"prompt + max_new_tokens"（§13.30 更正），而 1.12 GB 的报价大头是
 **固定激活 arena**，不是 KV ⇒ 减 KV 减错了项。
 
-**试过并否定的路径**（省得重走）：cuBLASLt 委派（需离线重量化）、GEMM tile 扫描、
+**当时试过的路径**：cuBLASLt 部分模式失败（“必须离线重量化”的结论已由 16.10 修正）、GEMM tile 扫描、
 SDPA `load_pipelined::<4>` TMA、delta 代数重写、value-dim 拆分、per-node outlier 理论、
 "池变宽"路线（§13.18/13.25/13.31/13.32 四次否证）、prefill rung 预算（§13.32）。
 
@@ -3036,3 +3042,85 @@ baseline 没有 4-token slot decode 或 12-token slot verify，候选分别出�
 推断；要区分 arena 容量、admission 计价与调度政策的因果贡献，需要下一轮分项对照。
 图级诊断原始文件在 `last-logits/profile-diagnostic/`，两端冻结二进制与源码身份沿用
 16.7 的 baseline/M32 候选，插桩运行的整组时间约 2002.44→1363.56 ms 只作辅助观察。
+
+
+### 16.9 MTP 外部 hidden 上传合并：数值通过，服务收益不足
+
+在干净基线 40f3b76 与 detached 候选 a227677 上，将逐 lane 的 host upload 改为一次连续
+upload，再在同一 stream 上绑定各 lane。回归覆盖连续 priming、KV/rollback、草稿 offset、
+无效输入与不同宽度；目标 hidden/logits/KV 的逐位检查通过。CUDA 默认测试 28 passed，
+生产 CUDA Clippy 通过。候选未进入默认路径。
+
+27B/MTP2 四场景运行顺序为 A1/B1/B2/A2，每个进程排除一次热身、测量三次。第一对在
+构建期间相隔 418.344 s，只能作漂移诊断；第二对间隔 8.640 s，其 TTFT 变化为 short
++2.52%、long -0.02%、batch4 -0.64%、hot_long +1.20%，TPOT 变化约 -0.04% 到 -0.46%。
+所有 21 个测量请求的 greedy token 在两对中均一致；报告没有 MTP accepted/proposed 计数。
+这些数据不支持默认采纳，也未满足至少五个独立 fresh-process 配对单位的签发要求。
+
+原始数据位于 45 上
+`/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/mtp-upload/`，摘要为
+`summary.json`；冻结基线 SHA256 为
+`cfd3e17af78383f40adb5bf698ad0934e226c6c5e952ff371ac68f38ca18b02d`，
+候选为 `03213597b7f6618c0828f84fa2f26d732d5113862f39e39a368c223d6dd46e8c`。
+
+### 16.10 cuBLASLt raw FP8 与原 NVFP4 布局：真实计算可行，服务收益未签发
+
+复查旧探针发现其只测试 mode 3/4/1/2，遗漏 mode 0（SCALAR_32F）。保持原 FP8 E4M3
+bytes，使用 scalar 1 做 F32 raw GEMM，再按原顺序执行
+`(acc * activation_scale[row]) * weight_scale[column]`，不改变 activation quantizer 或
+checkpoint scale。NVFP4 的 packed E2M1 bytes 和 block16 E4M3 scales 也能保持数值编码，
+仅对 scale 进行可逆的布局重排。它们不适用于当前 FP8 block128 路径。
+
+CUDA 13.4 / cuBLASLt 130800、验证卡 sm120 上，typed-header heuristic 探针的 FP8
+F32 输出 28/28、NVFP4 F32 输出 14/14 找到算法；随后独立 CUDA 程序的 32 个真实 matmul
+用例均通过数值 guard。小用例对全部输出使用 F64 oracle；大用例只对固定 35–37 个输出做
+oracle，并对全部输出检查 finite，不能冒充大矩阵逐元素证明。FP4 GPU scale swizzle 与 CPU
+映射字节相同，抽样值匹配；FP8 保持两次分别舍入的 scale 乘法。合成输入的通过不等于
+真实 checkpoint 或整模型质量验收。
+
+CUDA graph 计时包含 FP8 epilogue / NVFP4 activation-scale swizzle，尚不包含原 activation
+quantizer。cold 每次在计时前刷掉约 4 倍设备 L2；30 次 replay 是同一进程内测量。
+例如 M64 的 N/K=17408/5120、5120/17408、5120/5120，cold 总时间 FP8 为
+69.632/73.728/28.672 us，NVFP4 为 38.912/38.944/16.384 us。
+这些是 vendor 单路结果，不能作为 native GEMM 或服务加速比。
+
+因此重新打开委托调查，但默认 dispatch 保持不变。下一门禁需包含原 quantizer 的同输入
+native/vendor 对照、真实 checkpoint 输出，以及独立服务配对；若算术顺序改变，须声明
+新的数值 profile 并按预先确定的质量门禁验收。生产 dispatch 应按设备能力/shape/可用算法
+选择和回退，不能绑定某个显卡型号。
+
+证据为同目录 `lt-heuristic.jsonl`、`lt-matmul.jsonl` 和对应日志。
+真实计算探针源码 SHA256：
+`582c0199e29eb7ba2152f2dd6643d9c0a476bdf9e05e0e266008c740bf874f20`。
+模式、默认 scalar 与布局规范参见
+[cuBLAS 13.4](https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmulmatrixscale-t)。
+
+### 16.11 GDN 编译优化等级排查与资源准备指标语义
+
+保留 legacy kernel 的 O3，chunk 路分别用 opt_level 0/1/2/3 编译。在独立工作树中运行
+`chunk_delta_opt_level_sweep`：每级覆盖 16 个 case（零计数、tail/full、offset、split 与
+跨 chunk 持续状态），四个等级各汇总 2,829,844 个不一致 F32 元素，所有已记录 case 指标不因等级变化；日志没有完整 tensor hash，不能断言跨级完整数组
+逐位相同。差异计数累加各快照，空 chunk 可能再次计入已有 state 漂移。诊断测试总体通过只表示扫描完成，不能视为 exact 数值门禁通过。编译优化等级包含在
+cuTile 的缓存身份中；没有把四组运行混为同一缓存。原始数据在同根目录
+`gdn-opt-level/sweep.log`，补丁指纹
+`1cdee5a3c1b4b32979627ffb4a9119e693f6e918326eedf54bd43bb588a5c3b3`。
+
+这进一步否定“仅降编译等级即可修复”的方向，未证明差异来自 FMA。Tile IR 的浮点归约
+允许实现选择求值顺序；下一诊断需要逐阶段定位 norm、prediction、update 和 readout，
+再用未插桩结果验证诊断没有改变被测行为。
+[Tile IR reduce 规范](https://docs.nvidia.com/cuda/tile-ir/13.4/sections/operations.html#cuda-tile-reduce)
+
+另复核 `metrics.resource_preparation`：其 wall_time 从请求首次 park 到最终
+ResourceAcknowledged，包含容量拒绝重试、等前面请求释放资源、控制队列和 poll 延迟，
+不等于 CUDA backend 的实际 prepare 时间。batch4 的八次 count 通常来自四个 Reserve 与
+四个 Prefix 最终 ack，失败重试不另产生最终 ack。因此 2.1–2.3 s 的合计值支持存在入场/
+资源等待，但不能直接判定 GPU arena 捕获耗时为 2.1–2.3 s。40f3b76 与 3a188f4 的
+这一指标实现相同。
+
+默认 256 宽与显式 64 宽的同二进制 fresh-process 诊断已完成，但仅一个独立对照单位。
+64 宽让 batch4 TTFT 中位数 593.25→171.93 ms，同时 TPOT 14.61→16.32 ms，整组时间
+2122.92→2098.78 ms；请求从两早两迟变为三早一迟。long TTFT 365.02→396.08 ms。
+hot_long 的 prefix reuse 从 3584→1536，TTFT 74.61→2163.24 ms，实际重算工作量不等，
+不能把它签发为相同热前缀工作量的 kernel 加速对照。该联合策略改变 graph/chunk/runtime
+token budget，当前不适合全局默认。原始数据与 argv 在
+`mtp-upload/stage64-plan/`，source 为干净 40f3b76，二进制沿用 16.9 基线。
