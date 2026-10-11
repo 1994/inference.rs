@@ -180,3 +180,72 @@ fn gathering_the_conv_window_is_the_recorded_commit() {
     );
     assert_eq!(golden["replay_property"]["holds"], true);
 }
+
+#[test]
+fn a_delta_commit_covers_zero_partial_and_full_prefixes() {
+    let (geometry, golden) = delta();
+    let steps = recorded_steps(&golden);
+    let base = numbers(&golden["base_state"]);
+    // R1's acceptance names zero commit, partial acceptance and full acceptance as separate
+    // cases: each has to land on the state the recorded run held at that point.
+    for accepted in 0..=steps.len() {
+        let folded = geometry
+            .fold(&base, &steps, accepted)
+            .expect("the fold runs");
+        let expected = if accepted == 0 {
+            base.clone()
+        } else {
+            numbers(&golden["states"][accepted - 1])
+        };
+        close(&folded, &expected, 1e-6, "delta prefix commit");
+    }
+}
+
+#[test]
+fn a_delta_commit_then_the_remaining_steps_propagate() {
+    let (geometry, golden) = delta();
+    let steps = recorded_steps(&golden);
+    let base = numbers(&golden["base_state"]);
+    // Multi-round propagation: fold the accepted prefix, then run the rest as ordinary steps.
+    // It has to arrive where the uninterrupted run did, which is what lets a rejected tail
+    // continue without replaying the whole history.
+    for accepted in 0..steps.len() {
+        let mut state = geometry
+            .fold(&base, &steps, accepted)
+            .expect("the fold runs");
+        for rows in &steps[accepted..] {
+            let borrowed: Vec<&[f32]> = rows.iter().map(Vec::as_slice).collect();
+            geometry.step(&mut state, &borrowed).expect("the step fits");
+        }
+        close(
+            &state,
+            &numbers(&golden["states"][steps.len() - 1]),
+            1e-6,
+            "delta propagated state",
+        );
+    }
+}
+
+#[test]
+fn a_conv_commit_covers_zero_partial_and_full_prefixes() {
+    let (geometry, golden) = conv();
+    let accepted: Vec<Vec<f32>> = golden["declared_inputs"]["rows"]
+        .as_array()
+        .expect("recorded steps")
+        .iter()
+        .map(|row| numbers(&row["activation"]))
+        .collect();
+    let base = numbers(&golden["base_history"]);
+    let histories = golden["histories"].as_array().expect("histories");
+    for taken in 0..=accepted.len() {
+        let folded = geometry
+            .fold(&base, &accepted[..taken])
+            .expect("the gather runs");
+        let expected = if taken == 0 {
+            base.clone()
+        } else {
+            numbers(&histories[taken - 1])
+        };
+        close(&folded, &expected, 1e-6, "conv prefix commit");
+    }
+}
