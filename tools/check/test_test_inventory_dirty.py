@@ -16,19 +16,29 @@ class DirtyPathsTest(unittest.TestCase):
         porcelain = (
             " M crates/engine/runtime/src/pipeline/mod.rs\n"
             "?? crates/engine/runtime/tests/new.rs\n"
-            "M  tools/check/test-inventory.json\n"
+            "MM crates/engine/runtime/src/twice.rs\n"
         )
         self.assertEqual(
             test_inventory.dirty_paths(porcelain),
             {
                 "crates/engine/runtime/src/pipeline/mod.rs",
                 "crates/engine/runtime/tests/new.rs",
-                "tools/check/test-inventory.json",
+                "crates/engine/runtime/src/twice.rs",
             },
         )
 
-    def test_a_rename_resolves_to_the_new_name(self):
+    def test_a_staged_change_is_not_dirty(self):
+        # `M ` is what will be committed, which is exactly what the record has to describe.
+        self.assertEqual(test_inventory.dirty_paths("M  tools/check/test-inventory.json\n"), set())
+        self.assertEqual(test_inventory.dirty_paths("A  crates/x/tests/new.rs\n"), set())
+
+    def test_a_staged_rename_is_not_dirty(self):
+        # Renaming is part of what will be committed, so it does not exclude the file.
         porcelain = "R  crates/old/tests/a.rs -> crates/new/tests/b.rs\n"
+        self.assertEqual(test_inventory.dirty_paths(porcelain), set())
+
+    def test_an_unstaged_rename_resolves_to_the_new_name(self):
+        porcelain = " R crates/old/tests/a.rs -> crates/new/tests/b.rs\n"
         self.assertEqual(test_inventory.dirty_paths(porcelain), {"crates/new/tests/b.rs"})
 
     def test_a_clean_tree_has_no_paths(self):

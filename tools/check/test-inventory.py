@@ -131,15 +131,23 @@ def uncommitted():
 
 
 def dirty_paths(porcelain):
-    """The paths in `git status --porcelain` output, renames resolved to the new name."""
+    """Paths whose working-tree content is not what the index holds.
+
+    Porcelain's two status columns are the index and the worktree. A staged change (`M `) is what
+    will be committed and counts; an edit after staging (`MM`), an unstaged edit (` M`) or an
+    untracked file (`??`) does not, because the record must describe the branch rather than the
+    checkout. Renames resolve to the new name.
+    """
     paths = set()
     for line in porcelain.splitlines():
         if len(line) < 4:
             continue
-        name = line[3:].strip()
-        if " -> " in name:
-            name = name.split(" -> ", 1)[1]
-        paths.add(name.strip('"'))
+        index, worktree = line[0], line[1]
+        if index == "?" or worktree != " ":
+            name = line[3:].strip()
+            if " -> " in name:
+                name = name.split(" -> ", 1)[1]
+            paths.add(name.strip('"'))
     return paths
 
 

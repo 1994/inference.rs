@@ -553,3 +553,86 @@ fn the_draft_shares_its_targets_token_boundaries() {
         "{error}"
     );
 }
+
+#[test]
+fn the_required_bytes_are_the_components_of_the_quote() {
+    let quote = fixture().quote(2);
+    assert_eq!(
+        quote.required_bytes(3, 512),
+        quote.weights_bytes
+            + 3 * (quote.window_kv_bytes + quote.conv_history_bytes_per_sequence)
+            + 512 * (quote.kv_bytes_per_token + quote.feature_bytes_per_token)
+            + quote.rollback_bytes_per_round
+    );
+}
+
+#[test]
+fn a_budget_that_covers_the_request_admits_it() {
+    let quote = fixture().quote(2);
+    let required = quote.required_bytes(1, 2048);
+    for budget in [required, required + 1, required * 2] {
+        let admission = quote.admit(budget, 1, 2048);
+        assert!(admission.admitted(), "{admission:?}");
+        assert!(admission.shortfall.is_empty());
+        assert_eq!(admission.required_bytes, required);
+        assert_eq!(admission.budget_bytes, budget);
+    }
+}
+
+#[test]
+fn a_shortfall_names_what_the_budget_does_not_cover() {
+    let quote = fixture().quote(2);
+    // Components are charged weights, window, cache, rollback; each of these budgets reaches one
+    // step further than the last, so the uncovered list is exactly the remainder.
+    let weights = quote.weights_bytes;
+    let window = quote.window_kv_bytes + quote.conv_history_bytes_per_sequence;
+    let cache = 2048 * (quote.kv_bytes_per_token + quote.feature_bytes_per_token);
+    assert_eq!(
+        quote.admit(weights - 1, 1, 2048).shortfall,
+        vec![
+            DraftCost::Weights,
+            DraftCost::Window,
+            DraftCost::Cache,
+            DraftCost::Rollback
+        ]
+    );
+    assert_eq!(
+        quote.admit(weights, 1, 2048).shortfall,
+        vec![DraftCost::Window, DraftCost::Cache, DraftCost::Rollback]
+    );
+    assert_eq!(
+        quote.admit(weights + window, 1, 2048).shortfall,
+        vec![DraftCost::Cache, DraftCost::Rollback]
+    );
+    assert_eq!(
+        quote.admit(weights + window + cache, 1, 2048).shortfall,
+        vec![DraftCost::Rollback]
+    );
+    let covered = weights + window + cache + quote.rollback_bytes_per_round;
+    assert!(quote.admit(covered, 1, 2048).admitted());
+    assert!(!quote.admit(covered - 1, 1, 2048).admitted());
+}
+
+#[test]
+fn the_released_draft_is_admitted_or_rejected_with_a_reason() {
+    let quote = fixture().quote(2);
+    // The BF16 draft needs a little over 3.8 GiB of weights, so a 24 GiB device holds it and a
+    // 4 GiB device still does - the window, cache and rollback buffer fit beside the weights.
+    let admitted = quote.admit(24 * 1024 * 1024 * 1024, 1, 2048);
+    assert!(admitted.admitted(), "{admitted:?}");
+    let tight = quote.admit(4 * 1024 * 1024 * 1024, 1, 2048);
+    assert!(tight.admitted(), "{tight:?}");
+    assert!(tight.required_bytes <= tight.budget_bytes);
+    // One byte more than the weights is enough to load them and nothing else, and the result says
+    // which parts are missing rather than only that it failed.
+    let weights_only = quote.admit(quote.weights_bytes + 1, 1, 2048);
+    assert!(!weights_only.admitted());
+    assert_eq!(
+        weights_only.shortfall,
+        vec![DraftCost::Window, DraftCost::Cache, DraftCost::Rollback]
+    );
+    // One byte less than the weights names the weights first.
+    let too_small = quote.admit(quote.weights_bytes - 1, 1, 2048);
+    assert_eq!(too_small.shortfall.first(), Some(&DraftCost::Weights));
+    assert!(too_small.required_bytes > too_small.budget_bytes);
+}

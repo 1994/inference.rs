@@ -368,6 +368,87 @@ pub struct DraftQuote {
     pub rollback_bytes_per_round: usize,
 }
 
+/// Which part of a draft's cost a budget cannot cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftCost {
+    /// The weights the draft loads at all.
+    Weights,
+    /// The attention window one sequence keeps.
+    Window,
+    /// Key/value and retained target features for the tokens in flight.
+    Cache,
+    /// The draft key/value a rejected round discards.
+    Rollback,
+}
+
+/// Whether a device can hold a draft, and - when it cannot - which parts are uncovered.
+///
+/// The stage-1 acceptance asks for an explainable admit-or-reject result without executing the
+/// model, so this is arithmetic over the quote rather than a measurement: components are charged
+/// in the order weights, window, cache, rollback, and the ones the budget does not reach are
+/// named. A caller that needs a different order can read the quote directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftAdmission {
+    pub budget_bytes: usize,
+    /// The bytes the requested shape needs in total.
+    pub required_bytes: usize,
+    /// The components the budget does not cover, in the order they are charged.
+    pub shortfall: Vec<DraftCost>,
+}
+
+impl DraftAdmission {
+    /// Whether the whole request fits; `shortfall` says what does not when it is false.
+    #[must_use]
+    pub fn admitted(&self) -> bool {
+        self.shortfall.is_empty()
+    }
+}
+
+impl DraftQuote {
+    /// The bytes this quote needs at its peak: weights, the windows, the cache, and the buffer a
+    /// rejected round discards. The rollback buffer is charged even though it is released after the
+    /// round, because the round cannot run without room for it.
+    #[must_use]
+    pub fn required_bytes(&self, sequences: usize, tokens: usize) -> usize {
+        self.weights_bytes
+            + sequences * (self.window_kv_bytes + self.conv_history_bytes_per_sequence)
+            + tokens * (self.kv_bytes_per_token + self.feature_bytes_per_token)
+            + self.rollback_bytes_per_round
+    }
+
+    /// Admit or reject this quote against a device budget, naming what does not fit.
+    #[must_use]
+    pub fn admit(&self, budget_bytes: usize, sequences: usize, tokens: usize) -> DraftAdmission {
+        let components = [
+            (DraftCost::Weights, self.weights_bytes),
+            (
+                DraftCost::Window,
+                sequences * (self.window_kv_bytes + self.conv_history_bytes_per_sequence),
+            ),
+            (
+                DraftCost::Cache,
+                tokens * (self.kv_bytes_per_token + self.feature_bytes_per_token),
+            ),
+            (DraftCost::Rollback, self.rollback_bytes_per_round),
+        ];
+        let mut remaining = budget_bytes;
+        let mut shortfall = Vec::new();
+        for (cost, bytes) in components {
+            if bytes > remaining {
+                shortfall.push(cost);
+                remaining = 0;
+            } else {
+                remaining -= bytes;
+            }
+        }
+        DraftAdmission {
+            budget_bytes,
+            required_bytes: self.required_bytes(sequences, tokens),
+            shortfall,
+        }
+    }
+}
+
 /// The values `z-lab/Qwen3.8-27B-DFlash2` declares, named so the contract holds no bare numbers.
 mod released {
     pub const HIDDEN_SIZE: usize = 5_120;
