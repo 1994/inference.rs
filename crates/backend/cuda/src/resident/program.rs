@@ -85,6 +85,7 @@ pub struct ProgramWeights {
     pub fp8_inputs: std::collections::BTreeSet<TensorId>,
     /// Capture the chunked gated-delta prompt kernel rather than the per-token one.
     pub chunked_recurrent: bool,
+    pub expert_banks: BTreeMap<TensorId, super::moe::ExpertBank>,
     pub constants: BTreeMap<TensorId, Arc<Tensor<f32>>>,
     pub embeddings: BTreeMap<TensorId, Arc<Tensor<bf16>>>,
     pub rope_axes: BTreeMap<infer_core::OpId, Arc<Tensor<i32>>>,
@@ -487,10 +488,27 @@ impl DeviceProgram {
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
-        let reset_graph = capture_reset(device, &mut states)?;
         let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
+        let mut builder = super::batch::BatchBuilder {
+            device,
+            graph,
+            weights,
+            nvfp4: &mut nvfp4,
+            delegated: Some(&mut delegated),
+            attention: &mut attention,
+            states: &mut states,
+            fp8_states: &mut fp8_states,
+            external: &external,
+            lane_external: &mut lane_external,
+            lane_fusion: &mut lane_fusion,
+            tables: std::slice::from_ref(&table),
+            capacity,
+            width: weights.batch_width,
+        };
+        let (batch, prompt_batch, prompt_narrow) =
+            builder.build_pair(private_verification, wide_prompt)?;
         let mut capture_graph = |skip_logits: bool| {
             CudaGraph::scope(&device.stream, |scope| {
                 capture::Capture {
@@ -514,24 +532,8 @@ impl DeviceProgram {
         };
         let graph_exec = capture_graph(false)?;
         let prefill = capture_graph(true)?;
-        let mut builder = super::batch::BatchBuilder {
-            device,
-            graph,
-            weights,
-            nvfp4: &mut nvfp4,
-            delegated: Some(&mut delegated),
-            attention: &mut attention,
-            states: &mut states,
-            fp8_states: &mut fp8_states,
-            external: &external,
-            lane_external: &mut lane_external,
-            lane_fusion: &mut lane_fusion,
-            tables: std::slice::from_ref(&table),
-            capacity,
-            width: weights.batch_width,
-        };
-        let (batch, prompt_batch, prompt_narrow) =
-            builder.build_pair(private_verification, wide_prompt)?;
+        // Forward captures finalize the resident state bindings before reset records them.
+        let reset_graph = capture_reset(device, &mut states)?;
         let reclaimable_bytes = Self::program_retained_bytes(
             graph,
             &states,
@@ -985,19 +987,8 @@ fn capture_reset(
 ) -> Result<CudaGraph<()>> {
     CudaGraph::scope(&device.stream, |scope| {
         for tensors in states.values_mut() {
-            for _ in 0..tensors.len() {
-                let tensor = tensors.remove(0);
-                let shape = tensor
-                    .shape()
-                    .iter()
-                    .map(|v| usize::try_from(*v).map_err(capture::error))
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                let size = tensor.size();
-                let mut tensor = tensor.reshape(&[size])?;
-                scope.record(super::kernels::aux::zero(
-                    (&mut tensor).partition([crate::constants::AUX_KERNEL_TILE]),
-                ))?;
-                tensors.push(tensor.reshape(&shape)?);
+            for tensor in tensors {
+                scope.record(super::reset::Clear(tensor))?;
             }
         }
         Ok(())

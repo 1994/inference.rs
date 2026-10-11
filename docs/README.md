@@ -26,6 +26,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 
 | 文档 | 内容 |
 |---|---|
+| [MoE 单卡验证](guides/moe-validation.md) | 5090 缩小模型、独立参考与当前支持范围 |
 | [质量门禁](guides/quality-gates.md) | 本地/CI 检查、Attention 对照与验收要求 |
 | [CPU 性能测量](guides/cpu-performance.md) | 分配计数、延迟与测量范围 |
 | [CUDA 性能测量](guides/cuda-performance.md) | 现有算子/模型/服务工具、能力探针与测量边界 |

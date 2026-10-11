@@ -230,7 +230,10 @@ const fn category(op: &TensorOp) -> &'static str {
         TensorOp::GatedNorm { .. } => "gated_norm",
         TensorOp::Silu => "silu",
         TensorOp::Sigmoid => "sigmoid",
-        TensorOp::Multiply => "multiply",
+        TensorOp::Multiply | TensorOp::Scale => "multiply",
+        TensorOp::MoeRoute { .. } => "moe_route",
+        TensorOp::ExpertLinear { .. } => "expert_linear",
+        TensorOp::MoeCombine { .. } => "moe_combine",
         TensorOp::Add => "add",
     }
 }

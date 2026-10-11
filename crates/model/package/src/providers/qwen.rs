@@ -86,12 +86,17 @@ const fn head_dim() -> usize {
     DEFAULT_HEAD_DIM
 }
 #[derive(Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The external checkpoint configuration declares independent numerical policies"
+)]
 struct TextConfig {
     hidden_size: usize,
     vocab_size: usize,
     num_hidden_layers: usize,
     num_attention_heads: usize,
     num_key_value_heads: usize,
+    #[serde(default)]
     intermediate_size: usize,
     max_position_embeddings: usize,
     #[serde(default = "head_dim")]
@@ -130,6 +135,25 @@ struct TextConfig {
     hidden_act: Option<String>,
     #[serde(default)]
     attention_bias: bool,
+    #[serde(default)]
+    num_experts: usize,
+    #[serde(default)]
+    full_attention_interval: usize,
+    #[serde(default)]
+    num_experts_per_tok: usize,
+    #[serde(default)]
+    moe_intermediate_size: usize,
+    #[serde(default)]
+    norm_topk_prob: bool,
+    #[serde(default)]
+    shared_expert_intermediate_size: usize,
+    #[serde(default = "default_sparse_step")]
+    decoder_sparse_step: usize,
+    #[serde(default)]
+    mlp_only_layers: Vec<usize>,
+}
+const fn default_sparse_step() -> usize {
+    1
 }
 pub struct QwenProvider;
 impl QwenProvider {
@@ -140,20 +164,39 @@ impl QwenProvider {
         let config: HfConfig =
             serde_json::from_slice(bytes).map_err(|e| Error::invalid(e.to_string()))?;
         let hybrid = match config.model_type.as_str() {
-            "qwen3_5" | "qwen3_5_text" => true,
-            "qwen3" | "qwen3_vl" | "qwen3_vl_text" => false,
+            "qwen3_5" | "qwen3_5_text" | "qwen3_5_moe" | "qwen3_5_moe_text" | "qwen3_next" => true,
+            "qwen3" | "qwen3_moe" | "qwen3_vl" | "qwen3_vl_text" => false,
             other => return Err(Error::unsupported(format!("model type {other}"))),
         };
         // Read the family description before the configuration fields are moved into `text`.
         let placeholders = modality_placeholders(&config.text);
         let format = weight_format(config.quantization_config.as_ref());
-        let text = if let Some(text) = config.text_config {
+        let mut text = if let Some(text) = config.text_config {
             text
         } else {
             serde_json::from_value(serde_json::Value::Object(config.text))
                 .map_err(|e| Error::invalid(e.to_string()))?
         };
+        if config.model_type == "qwen3_next" {
+            text.attn_output_gate = true;
+            if text.layer_types.is_empty() {
+                if text.full_attention_interval == 0 {
+                    return Err(Error::invalid("full_attention_interval must be positive"));
+                }
+                text.layer_types = (0..text.num_hidden_layers)
+                    .map(|layer| {
+                        if (layer + 1) % text.full_attention_interval == 0 {
+                            "full_attention"
+                        } else {
+                            "linear_attention"
+                        }
+                        .to_owned()
+                    })
+                    .collect();
+            }
+        }
         let (mixers, state) = text.import_layers(hybrid)?;
+        let feed_forward = text.import_feed_forward()?;
         let rope = text
             .rope_parameters
             .or(text.rope_scaling)
@@ -188,9 +231,7 @@ impl QwenProvider {
             hidden_size: text.hidden_size,
             max_sequence: text.max_position_embeddings,
             mixers,
-            feed_forward: FeedForward::Dense {
-                intermediate: text.intermediate_size,
-            },
+            feed_forward,
             position: PositionSpec {
                 rope_theta: rope.rope_theta.unwrap_or(text.rope_theta),
                 rotary_fraction: rope.partial_rotary_factor,
@@ -288,11 +329,19 @@ impl ModelProvider for QwenProvider {
         // `model_type` and `architectures` values Qwen text and hybrid configurations use.
         &[
             "qwen3",
+            "qwen3_moe",
+            "qwen3_next",
+            "Qwen3NextForCausalLM",
+            "qwen3_5_moe",
+            "qwen3_5_moe_text",
             "qwen3_5",
             "qwen3_5_text",
             "qwen3_vl",
             "qwen3_vl_text",
             "Qwen3ForCausalLM",
+            "Qwen3MoeForCausalLM",
+            "Qwen3_5MoeForCausalLM",
+            "Qwen3_5MoeForConditionalGeneration",
             "Qwen3_5ForCausalLM",
             "Qwen3_5ForConditionalGeneration",
             "Qwen3VLForConditionalGeneration",
@@ -316,6 +365,42 @@ impl ModelProvider for QwenProvider {
 }
 
 impl TextConfig {
+    fn import_feed_forward(&self) -> Result<FeedForward> {
+        if self.num_experts == 0 {
+            if self.num_experts_per_tok != 0
+                || self.moe_intermediate_size != 0
+                || self.shared_expert_intermediate_size != 0
+            {
+                return Err(Error::invalid("MoE configuration requires num_experts"));
+            }
+            return Ok(FeedForward::Dense {
+                intermediate: self.intermediate_size,
+            });
+        }
+        if self.decoder_sparse_step == 0
+            || self
+                .mlp_only_layers
+                .iter()
+                .any(|layer| *layer >= self.num_hidden_layers)
+        {
+            return Err(Error::invalid("invalid sparse layer placement"));
+        }
+        let dense_layers = (0..self.num_hidden_layers)
+            .filter(|layer| {
+                self.mlp_only_layers.contains(layer) || (layer + 1) % self.decoder_sparse_step != 0
+            })
+            .collect();
+        Ok(FeedForward::Moe {
+            experts: self.num_experts,
+            active: self.num_experts_per_tok,
+            intermediate: self.moe_intermediate_size,
+            normalize_topk: self.norm_topk_prob,
+            shared_intermediate: (self.shared_expert_intermediate_size > 0)
+                .then_some(self.shared_expert_intermediate_size),
+            dense_layers,
+            dense_intermediate: self.intermediate_size,
+        })
+    }
     fn import_layers(&self, hybrid: bool) -> Result<(Vec<Mixer>, Vec<StateRequirement>)> {
         if self.hidden_act.as_deref().is_some_and(|s| s != "silu")
             || self.attention_bias

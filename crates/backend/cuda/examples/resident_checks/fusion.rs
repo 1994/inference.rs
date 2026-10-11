@@ -86,6 +86,7 @@ pub fn run(device: &CudaDevice) -> Result<()> {
         fp8_inputs: std::collections::BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),

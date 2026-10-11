@@ -11,3 +11,38 @@ fn checkpoint_kv_storage_is_declared_independently_of_weights() -> Result<()> {
     assert!(declared_kv_dtype(&scheme).is_err());
     Ok(())
 }
+
+#[test]
+fn packed_expert_views_are_bounded_and_match_individual_weights() -> Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
+    let mut ordinary = QuantizedPackage::open(root.join("qwen-moe-tiny"), ModelId::ONE)?;
+    let mut packed = QuantizedPackage::open(root.join("qwen-moe-packed-tiny"), ModelId::ONE)?;
+    for slot in [
+        "layers.0.mlp.experts.1.gate_proj.weight",
+        "layers.1.mlp.experts.3.up_proj.weight",
+        "layers.0.mlp.experts.2.down_proj.weight",
+    ] {
+        let first = ordinary.weights[slot].data.clone();
+        let second = packed.weights[slot].data.clone();
+        assert_eq!(ordinary.read(&first, 1024)?, packed.read(&second, 1024)?);
+        assert!(packed.read(&second, second.bytes - 1).is_err());
+        let mut invalid = second;
+        invalid.view.as_mut().unwrap().element_offset = u64::MAX;
+        assert!(packed.read(&invalid, 1024).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn fused_linear_projection_rejects_out_of_range_gather_rows() -> Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-next-moe-tiny");
+    let mut package = QuantizedPackage::open(root, ModelId::ONE)?;
+    let mut source = package.weights["layers.0.linear_attn.in_proj_z.weight"]
+        .data
+        .clone();
+    assert_eq!(package.read(&source, 1024)?.len() as u64, source.bytes);
+    assert!(package.read_view(&source, 1024).is_err());
+    source.view.as_mut().unwrap().rows[0] = usize::MAX;
+    assert!(package.read(&source, 1024).is_err());
+    Ok(())
+}

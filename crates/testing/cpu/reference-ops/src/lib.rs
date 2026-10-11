@@ -8,3 +8,5 @@
 mod kernels;
 
 pub use kernels::{execute as reference_operation, sigmoid};
+
+mod moe;

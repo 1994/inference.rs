@@ -24,7 +24,17 @@ pub enum Projection {
 /// # Errors
 /// Rejects invalid storage, unsupported floating formats or failed reads.
 pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<Vec<f32>> {
-    let bytes = package.read_view(source, STAGING)?;
+    let gathered = source
+        .view
+        .as_ref()
+        .filter(|view| !view.rows.is_empty())
+        .map(|_| package.read(source, STAGING))
+        .transpose()?;
+    let bytes = if let Some(bytes) = &gathered {
+        bytes.as_slice()
+    } else {
+        package.read_view(source, STAGING)?
+    };
     let converted = convert_float_bytes(bytes, source.dtype)?;
     Ok(converted
         .as_chunks::<{ crate::constants::F32_BYTES }>()

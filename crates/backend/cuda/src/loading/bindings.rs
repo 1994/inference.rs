@@ -104,6 +104,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         chunked_recurrent: options.chunked_recurrent,
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),
@@ -120,6 +121,8 @@ fn bind_tensors(
     tuning: &mut TuningReport,
     weights: &mut ProgramWeights,
 ) -> Result<()> {
+    let (banks, bank_ids) = super::experts::load(device, package)?;
+    weights.expert_banks = banks;
     let projections: BTreeSet<_> = package
         .graph
         .nodes
@@ -145,6 +148,9 @@ fn bind_tensors(
         let TensorStorage::Weight { slot } = tensor.storage else {
             continue;
         };
+        if bank_ids.contains(&tensor.id) {
+            continue;
+        }
         let source = package
             .weights
             .get(&slot)
@@ -212,6 +218,14 @@ fn draft(
     report: &mut TuningReport,
 ) -> Result<Draft> {
     // The draft head's prefix, depth and fusion slots come from the model provider.
+    if matches!(
+        package.imported.model.feed_forward,
+        infer_ir::FeedForward::Moe { .. }
+    ) {
+        return Err(Error::unsupported(
+            "MoE MTP draft binding is not yet implemented",
+        ));
+    }
     let plan = package
         .imported
         .speculation
@@ -272,6 +286,7 @@ fn draft_weights(
         chunked_recurrent: target.chunked_recurrent,
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),

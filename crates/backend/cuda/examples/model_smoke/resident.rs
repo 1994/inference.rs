@@ -41,6 +41,7 @@ pub fn prepare(
             .iter()
             .map(|(id, p)| (*id, p.resident()))
             .collect(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),

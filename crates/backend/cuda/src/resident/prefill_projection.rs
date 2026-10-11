@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 /// output slot is reshaped to `[32, rows]` in place; no packing kernels remain.
 /// Fp4 weights split the K loop across `PREFILL_SPLIT_K` CTAs per output tile:
 /// the prompt GEMM is latency-bound at one wave, so wider grids hide DRAM latency.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Projection capture keeps the explicit storage-format dispatch together"
+)]
 pub(super) fn record(
     scope: &Scope,
     node: &TensorNode,
@@ -52,6 +56,10 @@ pub(super) fn record(
             return Err(error("block FP8 requires the resident FP8 GEMM"));
         }
         ProjectionWeight::Dense(w) => {
+            if records_precise_sparse(scope, weights, &input, w, &mut output, columns)? {
+                arena.buffers[slot] = Some(output.reshape(&[flat])?);
+                return Ok(());
+            }
             // Wide projections are worth a vendor GEMM, square ones are not: `record_dense`
             // decides from the measured shape table.
             let rows = flat / width;
@@ -133,4 +141,27 @@ fn records_vendor_gemm(
         return Ok(false);
     };
     delegated.record_dense(scope, input, weight, output, (width, rows, columns))
+}
+
+// Preserve F32 router inputs through a high BF16 term and a low residual term.
+fn records_precise_sparse(
+    scope: &Scope,
+    weights: &ProgramWeights,
+    input: &TensorView<'_, f32>,
+    weight: &Tensor<cutile::half::bf16>,
+    output: &mut Tensor<f32>,
+    columns: usize,
+) -> Result<bool, DeviceError> {
+    if weights.expert_banks.is_empty() {
+        return Ok(false);
+    }
+    scope.record(
+        super::small_gemm::kernels::dense(output.partition([16, 32]), input, weight).generics(
+            vec![
+                cutile::half::bf16::DTYPE.as_str().into(),
+                columns.to_string(),
+            ],
+        ),
+    )?;
+    Ok(true)
 }

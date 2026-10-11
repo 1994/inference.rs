@@ -130,3 +130,52 @@ fn rejects_shard_path_traversal() {
     let bytes = br#"{"metadata":{"total_size":4},"weight_map":{"weight":"../weight.safetensors"}}"#;
     assert!(crate::SafetensorsIndex::parse(bytes).is_err());
 }
+
+#[test]
+fn moe_hybrid_import_preserves_routing_and_dense_layer_policy() -> Result<()> {
+    let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../examples/qwen-next-moe-tiny/config.json"
+    ))
+    .map_err(|e| Error::invalid(e.to_string()))?;
+    config["decoder_sparse_step"] = 2.into();
+    let bytes = serde_json::to_vec(&config).map_err(|e| Error::invalid(e.to_string()))?;
+    let imported = QwenProvider.import_manifest(ModelId::ONE, &bytes)?;
+    let FeedForward::Moe {
+        experts,
+        active,
+        shared_intermediate,
+        dense_layers,
+        ..
+    } = &imported.model.feed_forward
+    else {
+        return Err(Error::invariant("expected MoE"));
+    };
+    assert_eq!((*experts, *active), (4, 2));
+    assert_eq!(*shared_intermediate, Some(16));
+    assert_eq!(dense_layers, &[0]);
+    assert!(matches!(
+        imported.model.mixers[0],
+        Mixer::LinearAttention { .. }
+    ));
+    assert!(matches!(
+        imported.model.mixers[1],
+        Mixer::Attention {
+            output_gate: true,
+            ..
+        }
+    ));
+    config["num_experts_per_tok"] = 5.into();
+    assert!(
+        QwenProvider
+            .import_manifest(ModelId::ONE, &serde_json::to_vec(&config).unwrap())
+            .is_err()
+    );
+    config["num_experts_per_tok"] = 2.into();
+    config["decoder_sparse_step"] = 0.into();
+    assert!(
+        QwenProvider
+            .import_manifest(ModelId::ONE, &serde_json::to_vec(&config).unwrap())
+            .is_err()
+    );
+    Ok(())
+}

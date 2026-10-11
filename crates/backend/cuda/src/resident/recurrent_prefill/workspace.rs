@@ -46,6 +46,14 @@ impl Workspace {
                 ..Self::default()
             });
         }
+        // MoE parity at head width 128 found invalid generated scratch atomics in
+        // the chunk delta kernel under Compute Sanitizer. Keep its per-row twin.
+        if !weights.expert_banks.is_empty() {
+            return Ok(Self {
+                lanes,
+                ..Self::default()
+            });
+        }
         let mut buffers = BTreeMap::new();
         for node in &graph.nodes {
             if let TensorOp::Delta {

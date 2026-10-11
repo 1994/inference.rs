@@ -122,6 +122,7 @@ fn fixture_at(
         fusion: None,
         embeddings,
         projections: BTreeMap::from([(TensorId::new(11)?, ProjectionWeight::Dense(dense))]),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::from([
             (
                 TensorId::new(7)?,

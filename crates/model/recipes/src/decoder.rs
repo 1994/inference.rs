@@ -4,7 +4,7 @@ use infer_ir::{
     TensorOp, TensorSpec, TensorStorage,
 };
 
-struct Builder {
+pub(crate) struct Builder {
     ids: IdAllocator,
     graph: DataflowGraph,
     layer: Option<usize>,
@@ -20,7 +20,7 @@ impl Builder {
         });
         Ok(id)
     }
-    fn weight(&mut self, slot: String, shape: Vec<usize>) -> Result<TensorId> {
+    pub(crate) fn weight(&mut self, slot: String, shape: Vec<usize>) -> Result<TensorId> {
         self.tensor(shape, TensorStorage::Weight { slot })
     }
     fn node(
@@ -44,10 +44,15 @@ impl Builder {
         });
         Ok(outputs)
     }
-    fn one(&mut self, op: TensorOp, inputs: Vec<TensorId>, size: usize) -> Result<TensorId> {
+    pub(crate) fn one(
+        &mut self,
+        op: TensorOp,
+        inputs: Vec<TensorId>,
+        size: usize,
+    ) -> Result<TensorId> {
         Ok(self.node(op, inputs, &[size], vec![])?[0])
     }
-    fn linear(
+    pub(crate) fn linear(
         &mut self,
         x: TensorId,
         slot: String,
@@ -57,7 +62,7 @@ impl Builder {
         let weight = self.weight(slot, vec![output, input])?;
         self.one(TensorOp::Linear, vec![x, weight], output)
     }
-    fn norm(
+    pub(crate) fn norm(
         &mut self,
         x: TensorId,
         slot: String,
@@ -90,9 +95,6 @@ pub fn lower(model: &ModelIr) -> Result<DataflowGraph> {
     if !matches!(model.backbone, BackboneKind::Decoder | BackboneKind::Hybrid) {
         return Err(Error::unsupported("non-decoder dataflow provider required"));
     }
-    let FeedForward::Dense { intermediate } = model.feed_forward else {
-        return Err(Error::unsupported("MoE graph provider required"));
-    };
     let hidden_size = model.hidden_size;
     let mut b = Builder {
         ids: IdAllocator::default(),
@@ -116,7 +118,19 @@ pub fn lower(model: &ModelIr) -> Result<DataflowGraph> {
         )?;
         let projected = b.mixer(norm, mixer, &prefix, model, layer)?;
         x = b.one(TensorOp::Add, vec![x, projected], hidden_size)?;
-        x = b.feed_forward(x, &prefix, intermediate, model)?;
+        x = match &model.feed_forward {
+            FeedForward::Dense { intermediate } => {
+                b.feed_forward(x, &prefix, *intermediate, model)?
+            }
+            FeedForward::Moe {
+                dense_layers,
+                dense_intermediate,
+                ..
+            } if dense_layers.contains(&layer) => {
+                b.feed_forward(x, &prefix, *dense_intermediate, model)?
+            }
+            FeedForward::Moe { .. } => b.moe(x, &prefix, model)?,
+        };
     }
     b.layer = None;
     let hidden = b.norm(x, "norm.weight".into(), hidden_size, hidden_size, model)?;

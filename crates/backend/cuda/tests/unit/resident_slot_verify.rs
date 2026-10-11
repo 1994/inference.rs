@@ -100,6 +100,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
         fp8_inputs: std::collections::BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::from([(TensorId::new(6)?, ProjectionWeight::Dense(embedding))]),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::from([(TensorId::new(3)?, device.upload(vec![0.25; 128], &[32, 4])?)]),
         rope_axes: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),

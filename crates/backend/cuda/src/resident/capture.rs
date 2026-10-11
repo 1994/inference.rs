@@ -130,6 +130,18 @@ impl Capture<'_> {
         part: usize,
     ) -> Result<Tensor<f32>, DeviceError> {
         match &node.op {
+            TensorOp::MoeRoute { .. }
+            | TensorOp::ExpertLinear { .. }
+            | TensorOp::MoeCombine { .. } => {
+                output = self.record_moe(node, output)?;
+            }
+            TensorOp::Scale => {
+                self.scope.record(super::moe::kernels::scale(
+                    (&mut output).partition([256]),
+                    &self.input(node.inputs[0])?,
+                    &self.input(node.inputs[1])?,
+                ))?;
+            }
             TensorOp::Embedding => {
                 self.embedding(node, &mut output)?;
             }

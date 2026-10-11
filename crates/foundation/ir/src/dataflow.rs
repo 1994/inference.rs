@@ -67,9 +67,28 @@ pub enum TensorOp {
         head_dim: usize,
         epsilon: f32,
     },
+    /// Stable top-k softmax routing, encoded as [expert ids, probabilities].
+    MoeRoute {
+        experts: usize,
+        active: usize,
+        normalize: bool,
+    },
+    /// Selected expert matrices; inputs are activation, routes, then one matrix per expert.
+    ExpertLinear {
+        experts: usize,
+        active: usize,
+        input: usize,
+        output: usize,
+        routed_input: bool,
+    },
+    MoeCombine {
+        active: usize,
+        hidden: usize,
+    },
     Silu,
     Sigmoid,
     Multiply,
+    Scale,
     Add,
 }
 impl TensorOp {
@@ -87,9 +106,12 @@ impl TensorOp {
             Self::Conv { .. } => O::Convolution,
             Self::Delta { .. } => O::LinearAttention,
             Self::GatedNorm { .. } => O::GatedNorm,
+            Self::MoeRoute { .. } => O::MoeRoute,
+            Self::ExpertLinear { .. } => O::ExpertMatMul,
+            Self::MoeCombine { .. } => O::MoeCombine,
             Self::Silu => O::Silu,
             Self::Sigmoid => O::Sigmoid,
-            Self::Multiply => O::Multiply,
+            Self::Multiply | Self::Scale => O::Multiply,
             Self::Add => O::Residual,
         }
     }

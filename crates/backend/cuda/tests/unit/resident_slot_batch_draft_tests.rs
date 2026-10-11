@@ -90,6 +90,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
         }),
         embeddings: BTreeMap::from([(TensorId::ONE, device.upload(values(32 * 32), &[32, 32])?)]),
         projections: BTreeMap::new(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),

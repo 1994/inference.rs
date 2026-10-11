@@ -317,6 +317,14 @@ impl MetalBackend {
     fn node_params(&self, node: &TensorNode, mut p: Params) -> Result<(Params, usize)> {
         let mut threads = p.n as usize;
         match &node.op {
+            TensorOp::MoeRoute { .. }
+            | TensorOp::ExpertLinear { .. }
+            | TensorOp::MoeCombine { .. }
+            | TensorOp::Scale => {
+                return Err(Error::unsupported(
+                    "MoE currently requires the CUDA backend",
+                ));
+            }
             TensorOp::Linear => p.a = u32_size(self.specs[&node.inputs[0]].elements()?)?,
             TensorOp::Norm {
                 epsilon,

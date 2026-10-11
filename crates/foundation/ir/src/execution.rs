@@ -44,6 +44,9 @@ pub enum Operation {
     Sigmoid,
     Multiply,
     GatedNorm,
+    MoeRoute,
+    ExpertMatMul,
+    MoeCombine,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationIr {

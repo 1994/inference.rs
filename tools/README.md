@@ -12,6 +12,7 @@
 | `validation` | [smoke-paged-kv.py](validation/smoke-paged-kv.py) | 页池压力、抢占、checkpoint、golden 与所有权排空 |
 | `validation` | [cpu-open-loop.py](validation/cpu-open-loop.py) | 固定到达 HTTP 负载、控制延迟与显式容量拒绝 |
 | `fixtures` | [export-qwen-golden.py](fixtures/export-qwen-golden.py)、[export-text-golden.py](fixtures/export-text-golden.py) | 独立参考的模型与文本 golden 导出 |
+| `fixtures` | [export-moe-golden.py](fixtures/export-moe-golden.py)、[export-moe-operators.py](fixtures/export-moe-operators.py) | [MoE 单卡验证](../docs/guides/moe-validation.md)的模型与 FP8 独立参考 |
 | `fixtures` | [requirements.txt](fixtures/requirements.txt) | 参考导出环境的固定依赖 |
 | `bench/cpu` | [Cargo.toml](bench/cpu/Cargo.toml) | 隔离的 release 分配计数与协议测量，通过 `make check-cpu` 运行 |
 | `bench` | [cuda-baseline.sh](bench/cuda-baseline.sh) | CUDA 投影基线采集，用法见 [CUDA 性能指南](../docs/guides/cuda-performance.md) |

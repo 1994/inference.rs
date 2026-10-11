@@ -32,3 +32,7 @@ pub use arena::ActivationArena;
 pub use program::{DeviceProgram, FusionWeights, ProgramWeights};
 
 mod conv_prefill;
+
+pub mod moe;
+
+mod reset;

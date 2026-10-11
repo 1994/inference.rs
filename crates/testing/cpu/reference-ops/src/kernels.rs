@@ -68,6 +68,10 @@ pub fn execute(
             // Shape/row width is resolved by the caller; input is the selected row.
             one(weight.to_vec())
         }
+        TensorOp::MoeRoute { .. }
+        | TensorOp::ExpertLinear { .. }
+        | TensorOp::MoeCombine { .. }
+        | TensorOp::Scale => crate::moe::execute(op, inputs),
         TensorOp::Linear => linear(inputs),
         TensorOp::Norm {
             epsilon,

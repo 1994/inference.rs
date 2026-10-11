@@ -62,6 +62,7 @@ fn check_projection(
         fp8_inputs: std::collections::BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
+        expert_banks: BTreeMap::new(),
         constants: BTreeMap::new(),
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),

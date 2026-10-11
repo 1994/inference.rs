@@ -15,12 +15,18 @@ pub(super) fn validate(graph: &DataflowGraph, weights: &ProgramWeights) -> Resul
     let specs: BTreeMap<_, _> = graph.tensors.iter().map(|spec| (spec.id, spec)).collect();
     for node in &graph.nodes {
         let (inputs, outputs, states) = match &node.op {
-            TensorOp::Embedding | TensorOp::Silu | TensorOp::Sigmoid | TensorOp::Rope { .. } => {
-                (1, 1, 0)
-            }
-            TensorOp::Linear | TensorOp::Norm { .. } | TensorOp::Add | TensorOp::Multiply => {
-                (2, 1, 0)
-            }
+            TensorOp::Embedding
+            | TensorOp::Silu
+            | TensorOp::Sigmoid
+            | TensorOp::Rope { .. }
+            | TensorOp::MoeRoute { .. } => (1, 1, 0),
+            TensorOp::Linear
+            | TensorOp::Norm { .. }
+            | TensorOp::Add
+            | TensorOp::Multiply
+            | TensorOp::Scale
+            | TensorOp::MoeCombine { .. } => (2, 1, 0),
+            TensorOp::ExpertLinear { experts, .. } => (2 + experts, 1, 0),
             TensorOp::Split { widths, .. } => (1, widths.len(), 0),
             TensorOp::GatedNorm { .. } => (GATED_NORM_INPUTS, 1, 0),
             TensorOp::Conv { .. } => (2, 1, 1),
@@ -35,6 +41,7 @@ pub(super) fn validate(graph: &DataflowGraph, weights: &ProgramWeights) -> Resul
         }
         let output = specs[&node.outputs[0]].elements()?;
         let input = specs[&node.inputs[0]].elements()?;
+        super::moe::validate_node(node, &specs, weights, input, output)?;
         if node.op == TensorOp::Linear {
             weights
                 .projections
@@ -80,8 +87,15 @@ pub(super) fn validate(graph: &DataflowGraph, weights: &ProgramWeights) -> Resul
             }
         }
     }
+    let bank_ids: std::collections::BTreeSet<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, TensorOp::ExpertLinear { .. }))
+        .flat_map(|node| node.inputs[2..].iter().copied())
+        .collect();
     for spec in &graph.tensors {
         if matches!(spec.storage, TensorStorage::Weight { .. })
+            && !bank_ids.contains(&spec.id)
             && !weights.constants.contains_key(&spec.id)
             && !weights.projections.contains_key(&spec.id)
             && !weights.embeddings.contains_key(&spec.id)

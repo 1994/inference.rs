@@ -41,6 +41,14 @@ pub enum FeedForward {
         experts: usize,
         active: usize,
         intermediate: usize,
+        #[serde(default)]
+        normalize_topk: bool,
+        #[serde(default)]
+        shared_intermediate: Option<usize>,
+        #[serde(default)]
+        dense_layers: Vec<usize>,
+        #[serde(default)]
+        dense_intermediate: usize,
     },
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,13 +164,24 @@ impl ModelIr {
                 _ => {}
             }
         }
-        match self.feed_forward {
+        match &self.feed_forward {
             FeedForward::Dense { intermediate: 0 } => return Err(Error::invalid("empty FFN")),
             FeedForward::Moe {
                 experts,
                 active,
                 intermediate,
-            } if experts == 0 || active == 0 || active > experts || intermediate == 0 => {
+                shared_intermediate,
+                dense_layers,
+                dense_intermediate,
+                ..
+            } if *experts == 0
+                || *active == 0
+                || active > experts
+                || *intermediate == 0
+                || *shared_intermediate == Some(0)
+                || dense_layers.iter().any(|layer| *layer >= self.mixers.len())
+                || (!dense_layers.is_empty() && *dense_intermediate == 0) =>
+            {
                 return Err(Error::invalid("invalid MoE"));
             }
             _ => {}

@@ -4,6 +4,7 @@ mod weights;
 pub use kv_scales::load as load_kv_scales;
 mod bindings;
 mod budget;
+mod experts;
 mod phase;
 use crate::{
     device::CudaDevice,

@@ -27,6 +27,14 @@ pub enum WeightEncoding {
     Nvfp4,
 }
 
+/// Contiguous view into an immutable validated stored tensor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeightView {
+    pub stored_shape: Vec<usize>,
+    pub element_offset: u64,
+    #[serde(default)]
+    pub rows: Vec<usize>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeightSource {
     pub name: String,
@@ -34,6 +42,8 @@ pub struct WeightSource {
     pub dtype: TensorDtype,
     pub shape: Vec<usize>,
     pub bytes: u64,
+    #[serde(default)]
+    pub view: Option<WeightView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,7 +136,53 @@ impl QuantizedPackage {
     /// # Errors
     /// Returns errors for a foreign source descriptor, I/O failure, or exceeded budget.
     pub fn read(&mut self, source: &WeightSource, budget: u64) -> Result<Vec<u8>> {
-        Ok(self.read_view(source, budget)?.to_vec())
+        let Some(view) = source.view.as_ref().filter(|view| !view.rows.is_empty()) else {
+            return Ok(self.read_view(source, budget)?.to_vec());
+        };
+        let file = self
+            .shards
+            .get(&source.shard)
+            .ok_or_else(|| Error::invalid("unknown weight shard"))?;
+        let header = file
+            .tensors
+            .get(&source.name)
+            .ok_or_else(|| Error::invalid("unknown weight tensor"))?;
+        let [stored_rows, columns] = header.shape.as_slice() else {
+            return Err(Error::invalid("gathered weight rank"));
+        };
+        let bytes = view
+            .rows
+            .len()
+            .checked_mul(*columns)
+            .and_then(|n| (n as u64).checked_mul(source.dtype.bytes()))
+            .ok_or_else(|| Error::invalid("gathered weight size overflow"))?;
+        if source.bytes != bytes
+            || source.shape != [view.rows.len(), *columns]
+            || view.stored_shape != header.shape
+            || view.element_offset != 0
+            || source.dtype != header.dtype
+            || view.rows.iter().any(|row| *row >= *stored_rows)
+        {
+            return Err(Error::invalid("gathered weight descriptor changed"));
+        }
+        if bytes > budget {
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "gathered weight exceeds staging budget",
+            ));
+        }
+        let row_bytes = columns
+            .checked_mul(
+                usize::try_from(source.dtype.bytes()).map_err(|e| Error::invalid(e.to_string()))?,
+            )
+            .ok_or_else(|| Error::invalid("weight row overflow"))?;
+        let stored = file.bytes(&source.name, u64::MAX)?;
+        let mut output =
+            Vec::with_capacity(usize::try_from(bytes).map_err(|e| Error::invalid(e.to_string()))?);
+        for row in &view.rows {
+            output.extend_from_slice(&stored[row * row_bytes..(row + 1) * row_bytes]);
+        }
+        Ok(output)
     }
 
     /// Borrow one stored tensor directly from its mapped shard.
@@ -141,10 +197,46 @@ impl QuantizedPackage {
             .tensors
             .get(&source.name)
             .ok_or_else(|| Error::invalid("unknown weight tensor"))?;
-        if header.shape != source.shape
-            || header.dtype != source.dtype
-            || header.byte_len() != source.bytes
-        {
+        if header.dtype != source.dtype {
+            return Err(Error::invalid("weight source dtype changed"));
+        }
+        if let Some(view) = &source.view {
+            if !view.rows.is_empty() {
+                return Err(Error::unsupported("gathered weight requires owned read"));
+            }
+            let elements = source
+                .shape
+                .iter()
+                .try_fold(1u64, |n, d| n.checked_mul(*d as u64))
+                .ok_or_else(|| Error::invalid("weight view shape overflow"))?;
+            let bytes = elements
+                .checked_mul(source.dtype.bytes())
+                .ok_or_else(|| Error::invalid("weight view size overflow"))?;
+            let start = view
+                .element_offset
+                .checked_mul(source.dtype.bytes())
+                .ok_or_else(|| Error::invalid("weight view offset overflow"))?;
+            let end = start
+                .checked_add(bytes)
+                .ok_or_else(|| Error::invalid("weight view range overflow"))?;
+            if header.shape != view.stored_shape || source.bytes != bytes || end > header.byte_len()
+            {
+                return Err(Error::invalid("weight view descriptor changed"));
+            }
+            if bytes > budget {
+                return Err(Error::new(
+                    ErrorCode::Capacity,
+                    "weight view exceeds staging budget",
+                ));
+            }
+            let start = usize::try_from(start).map_err(|e| Error::invalid(e.to_string()))?;
+            let end = usize::try_from(end).map_err(|e| Error::invalid(e.to_string()))?;
+            return file
+                .bytes(&source.name, u64::MAX)?
+                .get(start..end)
+                .ok_or_else(|| Error::invalid("weight view bounds"));
+        }
+        if header.shape != source.shape || header.byte_len() != source.bytes {
             return Err(Error::invalid("weight source descriptor changed"));
         }
         file.bytes(&source.name, budget)
@@ -159,6 +251,9 @@ impl QuantizedPackage {
         row: usize,
         budget: u64,
     ) -> Result<Vec<f32>> {
+        if source.view.is_some() {
+            return Err(Error::unsupported("embedding row from weight view"));
+        }
         let file = self
             .shards
             .get_mut(&source.shard)
@@ -191,6 +286,7 @@ impl QuantizedPackage {
             dtype: header.dtype,
             shape: header.shape.clone(),
             bytes: header.byte_len(),
+            view: None,
         })
     }
 
@@ -207,11 +303,245 @@ impl QuantizedPackage {
         for spec in &self.graph.tensors {
             if let TensorStorage::Weight { slot } = &spec.storage {
                 let name = self.provider.weight_source(slot, prefix);
-                weights.insert(slot.clone(), self.bind(&name, &spec.shape)?);
+                weights.insert(
+                    slot.clone(),
+                    self.bind_expert_or_matrix(&name, &spec.shape)?,
+                );
             }
         }
         self.weights = weights;
         Ok(())
+    }
+
+    fn bind_expert_or_matrix(&self, name: &str, shape: &[usize]) -> Result<DeviceWeight> {
+        if self.tensor_map.contains_key(name)
+            || self
+                .tensor_map
+                .contains_key(&name.replace(".weight", ".weight_packed"))
+        {
+            return self.bind(name, shape);
+        }
+        let Some((prefix, suffix)) = name.rsplit_once(".experts.") else {
+            if let Some(weight) = self.bind_linear_view(name, shape)? {
+                return Ok(weight);
+            }
+            return self.bind(name, shape);
+        };
+        let Some((expert, projection)) = suffix.split_once('.') else {
+            return self.bind(name, shape);
+        };
+        let expert = expert
+            .parse::<usize>()
+            .map_err(|e| Error::invalid(e.to_string()))?;
+        let [rows, columns] = shape else {
+            return Err(Error::invalid("expert matrix shape"));
+        };
+        let (bank, part) = match projection {
+            "gate_proj.weight" => ("gate_up_proj", 0),
+            "up_proj.weight" => ("gate_up_proj", 1),
+            "down_proj.weight" => ("down_proj", 0),
+            _ => return self.bind(name, shape),
+        };
+        let base = [
+            format!("{prefix}.experts.{bank}"),
+            format!("{prefix}.experts.{bank}.weight"),
+        ]
+        .into_iter()
+        .find(|candidate| self.tensor_map.contains_key(candidate))
+        .ok_or_else(|| Error::invalid(format!("unbound expert weight {name}")))?;
+        let source = self.source(&base)?;
+        let width = if bank == "gate_up_proj" {
+            rows.checked_mul(2)
+                .ok_or_else(|| Error::invalid("fused expert shape overflow"))?
+        } else {
+            *rows
+        };
+        let data = Self::expert_view(source, expert, part * rows, *rows, width, *columns)?;
+        let mut weight = DeviceWeight {
+            shape: shape.to_vec(),
+            encoding: WeightEncoding::Float,
+            data,
+            scale: None,
+            global_scale: None,
+            input_global_scale: None,
+            weight_block: None,
+            fp8_token_input: false,
+        };
+        if weight.data.dtype == TensorDtype::F8E4m3 {
+            let scale_base = base.strip_suffix(".weight").unwrap_or(&base);
+            if let Some([block_rows, block_columns]) =
+                activations::Rule::weight_block_for_module(&self.activation_rules, scale_base)?
+            {
+                if !rows.is_multiple_of(block_rows) || !columns.is_multiple_of(block_columns) {
+                    return Err(Error::invalid("expert FP8 block shape"));
+                }
+                let scale = self.source(&format!("{scale_base}.weight_scale_inv"))?;
+                weight.scale = Some(Self::expert_view(
+                    scale,
+                    expert,
+                    part * rows / block_rows,
+                    rows / block_rows,
+                    width / block_rows,
+                    columns / block_columns,
+                )?);
+                weight.encoding = WeightEncoding::Fp8Block;
+                weight.weight_block = Some([block_rows, block_columns]);
+            } else {
+                let scale = self.source(&format!("{scale_base}.weight_scale"))?;
+                weight.scale = Some(Self::expert_view(
+                    scale,
+                    expert,
+                    part * rows,
+                    *rows,
+                    width,
+                    1,
+                )?);
+                weight.encoding = WeightEncoding::Fp8Channel;
+            }
+            weight.fp8_token_input =
+                activations::Rule::for_module(&self.activation_rules, scale_base)?;
+        } else if !weight.data.dtype.is_host_float() {
+            return Err(Error::unsupported("packed expert weight dtype"));
+        }
+        Ok(weight)
+    }
+
+    fn bind_linear_view(&self, name: &str, shape: &[usize]) -> Result<Option<DeviceWeight>> {
+        let Some((prefix, slot)) = name.rsplit_once(".linear_attn.") else {
+            return Ok(None);
+        };
+        let Some(layer) = prefix
+            .rsplit('.')
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+        else {
+            return Ok(None);
+        };
+        let Some(infer_ir::Mixer::LinearAttention {
+            key_heads,
+            value_heads,
+            key_dim,
+            value_dim,
+            ..
+        }) = self.imported.model.mixers.get(layer)
+        else {
+            return Ok(None);
+        };
+        let ratio = value_heads / key_heads;
+        let group = 2 * key_dim + 2 * ratio * value_dim;
+        let (bank, indices): (&str, Vec<usize>) = match slot {
+            "in_proj_qkv.weight" => (
+                "in_proj_qkvz.weight",
+                (0..*key_heads)
+                    .flat_map(|h| (0..*key_dim).map(move |d| h * group + d))
+                    .chain(
+                        (0..*key_heads)
+                            .flat_map(|h| (0..*key_dim).map(move |d| h * group + key_dim + d)),
+                    )
+                    .chain((0..*key_heads).flat_map(|h| {
+                        (0..ratio * value_dim).map(move |d| h * group + 2 * key_dim + d)
+                    }))
+                    .collect(),
+            ),
+            "in_proj_z.weight" => (
+                "in_proj_qkvz.weight",
+                (0..*key_heads)
+                    .flat_map(|h| {
+                        (0..ratio * value_dim)
+                            .map(move |d| h * group + 2 * key_dim + ratio * value_dim + d)
+                    })
+                    .collect(),
+            ),
+            "in_proj_b.weight" => (
+                "in_proj_ba.weight",
+                (0..*key_heads)
+                    .flat_map(|h| (0..ratio).map(move |d| h * 2 * ratio + d))
+                    .collect(),
+            ),
+            "in_proj_a.weight" => (
+                "in_proj_ba.weight",
+                (0..*key_heads)
+                    .flat_map(|h| (0..ratio).map(move |d| h * 2 * ratio + ratio + d))
+                    .collect(),
+            ),
+            _ => return Ok(None),
+        };
+        let fused = format!("{prefix}.linear_attn.{bank}");
+        if !self.tensor_map.contains_key(&fused) {
+            return Ok(None);
+        }
+        let mut data = self.source(&fused)?;
+        let [stored_rows, columns] = data.shape.as_slice() else {
+            return Err(Error::invalid("fused linear projection rank"));
+        };
+        if shape != [indices.len(), *columns]
+            || indices.iter().any(|row| *row >= *stored_rows)
+            || !data.dtype.is_host_float()
+        {
+            return Err(Error::unsupported(
+                "fused linear projection shape or quantization",
+            ));
+        }
+        let bytes = (indices.len() as u64)
+            .checked_mul(*columns as u64)
+            .and_then(|n| n.checked_mul(data.dtype.bytes()))
+            .ok_or_else(|| Error::invalid("fused projection size overflow"))?;
+        data.view = Some(WeightView {
+            stored_shape: data.shape.clone(),
+            element_offset: 0,
+            rows: indices,
+        });
+        data.shape = shape.to_vec();
+        data.bytes = bytes;
+        Ok(Some(DeviceWeight {
+            shape: shape.to_vec(),
+            encoding: WeightEncoding::Float,
+            data,
+            scale: None,
+            global_scale: None,
+            input_global_scale: None,
+            weight_block: None,
+            fp8_token_input: false,
+        }))
+    }
+
+    fn expert_view(
+        mut source: WeightSource,
+        expert: usize,
+        start_row: usize,
+        rows: usize,
+        stored_rows: usize,
+        columns: usize,
+    ) -> Result<WeightSource> {
+        let [experts, actual_rows, actual_columns] = source.shape.as_slice() else {
+            return Err(Error::invalid("packed experts must be rank three"));
+        };
+        if expert >= *experts
+            || *actual_rows != stored_rows
+            || *actual_columns != columns
+            || start_row
+                .checked_add(rows)
+                .is_none_or(|end| end > stored_rows)
+        {
+            return Err(Error::invalid("packed expert shape"));
+        }
+        let offset = expert
+            .checked_mul(stored_rows)
+            .and_then(|n| n.checked_add(start_row))
+            .and_then(|n| n.checked_mul(columns))
+            .ok_or_else(|| Error::invalid("expert view offset overflow"))?;
+        let bytes = rows
+            .checked_mul(columns)
+            .and_then(|n| (n as u64).checked_mul(source.dtype.bytes()))
+            .ok_or_else(|| Error::invalid("expert view size overflow"))?;
+        source.view = Some(WeightView {
+            stored_shape: source.shape.clone(),
+            element_offset: offset as u64,
+            rows: Vec::new(),
+        });
+        source.shape = vec![rows, columns];
+        source.bytes = bytes;
+        Ok(source)
     }
 
     fn bind(&self, name: &str, shape: &[usize]) -> Result<DeviceWeight> {
