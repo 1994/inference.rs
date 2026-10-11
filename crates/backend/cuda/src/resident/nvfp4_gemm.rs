@@ -117,6 +117,41 @@ pub(crate) mod kernels {
         }
         out.store(acc * alpha.broadcast(shape![M, N]));
     }
+
+    /// Prefill main loop with compiler-scheduled operand and scale prefetching.
+    /// Keep the native 256-element K step and block-16 scale arithmetic unchanged.
+    /// Output geometry is chosen from shape and driver-reported parallelism at capture time.
+    #[cutile::entry()]
+    fn packed_prefill<const K: i32, const M: i32, const N: i32>(
+        out: &mut Tensor<f32, { [M, N] }>,
+        input: &Tensor<f4e2m1fnx2, { [-1, -1] }>,
+        input_scales: &Tensor<f8e4m3fn, { [-1, -1] }>,
+        weight: &Tensor<f4e2m1fnx2, { [-1, -1] }>,
+        scales: &Tensor<f8e4m3fn, { [-1, -1] }>,
+        alpha: f32,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![M, 128]);
+        let xs = input_scales.partition(shape![M, 16]);
+        let wp = weight.partition(shape![N, 128]);
+        let sp = scales.partition(shape![N, 16]);
+        let mut acc: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
+        for k in 0i32..((K + 255) / 256) {
+            let x = xp.load_pipelined::<8>([pid.0, k]).unpack(shape![M, 256]);
+            let w = wp
+                .load_pipelined::<8>([pid.1, k])
+                .unpack(shape![N, 256])
+                .transpose();
+            acc = mmaf_scaled(
+                x,
+                w,
+                acc,
+                xs.load_pipelined::<8>([pid.0, k]),
+                sp.load_pipelined::<8>([pid.1, k]).transpose(),
+            );
+        }
+        out.store(acc * alpha.broadcast(shape![M, N]));
+    }
 }
 
 /// Record only when the checkpoint declares an activation scale for packed FP4 weights.
@@ -149,3 +184,7 @@ pub(super) fn record(
 #[cfg(test)]
 #[path = "../../tests/unit/resident_nvfp4_gemm.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_nvfp4_pipeline.rs"]
+mod pipeline_tests;
