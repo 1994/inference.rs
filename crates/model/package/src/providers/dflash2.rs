@@ -379,6 +379,10 @@ pub enum DraftCost {
     Cache,
     /// The draft key/value a rejected round discards.
     Rollback,
+    /// The activation arena, which needs device facts.
+    Arena,
+    /// The captured graph, which needs device facts.
+    Graph,
 }
 
 /// Whether a device can hold a draft, and - when it cannot - which parts are uncovered.
@@ -394,6 +398,10 @@ pub struct DraftAdmission {
     pub required_bytes: usize,
     /// The components the budget does not cover, in the order they are charged.
     pub shortfall: Vec<DraftCost>,
+    /// The costs this quote cannot state: the plan's resource row asks for the arena and the
+    /// captured graph too, and both need device facts the package layer does not have. Naming them
+    /// here keeps an admission from reading as a complete answer when it is a partial one.
+    pub deferred: Vec<DraftCost>,
 }
 
 impl DraftAdmission {
@@ -405,8 +413,16 @@ impl DraftAdmission {
 }
 
 impl DraftQuote {
+    /// The costs the package layer cannot quote without device facts.
+    #[must_use]
+    pub fn deferred() -> Vec<DraftCost> {
+        vec![DraftCost::Arena, DraftCost::Graph]
+    }
+
     /// The bytes this quote needs at its peak: weights, the windows, the cache, and the buffer a
-    /// rejected round discards. The rollback buffer is charged even though it is released after the
+    /// rejected round discards. The target's own state and cache are not part of it, because the
+    /// target runs whether or not a draft does; the draft's arena and graph are deferred, see
+    /// [`Self::deferred`]. The rollback buffer is charged even though it is released after the
     /// round, because the round cannot run without room for it.
     #[must_use]
     pub const fn required_bytes(&self, sequences: usize, tokens: usize) -> usize {
@@ -445,6 +461,7 @@ impl DraftQuote {
             budget_bytes,
             required_bytes: self.required_bytes(sequences, tokens),
             shortfall,
+            deferred: Self::deferred(),
         }
     }
 }

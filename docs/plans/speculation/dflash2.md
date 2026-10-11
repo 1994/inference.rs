@@ -198,6 +198,19 @@ attends(q, k) = (q / block_size == k / block_size) || (k <= q && q - k < sliding
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。
 
+### 已实施：报价是"草稿的边际成本"，且**明确声明**了它报不出的部分
+
+D1 的资源验收要求报价覆盖"**权重、target/draft 状态、feature 历史、arena、graph 和回滚开销**"✓。
+`DraftQuote` 报得出四项 ✓（权重 ✓、attention 窗口即 draft 状态 ✓、KV+feature 历史 ✓、回滚缓冲 ✓），
+而 **arena 与 graph 需要设备事实** ✗ —— 这一点此前只写在 `weights_bytes` 的文档注释里 ✗，读报价的人
+**看不出报价是不完整的** ✗。
+
+现在它由 API 说出来 ✓：`DraftCost` 增列 `Arena`/`Graph` ✓，`DraftQuote::deferred()` 返回
+`[Arena, Graph]` ✓，`DraftAdmission` 带上 `deferred` 字段 ✓ —— 于是"准入结果"本身**不会**被误读成完整
+答案 ✓。另外文档写明：**target 自身的状态与缓存不计入** ✓，因为无论有没有草稿，target 都要跑 ✓（所以这是
+草稿的**边际**成本 ✓，不是整个 feature 的成本 ✓）。arena 与 graph 的正式报价仍**等设备窗口** ✓，
+在此之前它们是被声明的缺口 ✓，而不是被忘记的字段 ✓。
+
 ## Target 特征捕获
 
 模型 provider 声明抽头语义，backend 在 target 图中捕获指定位置。prefill 和 verification 必须使用同一特征定义。首先通过逐层独立参考确认 layer 编号、norm 前后位置、token 位置以及 fc 融合结果，再录制常驻图。

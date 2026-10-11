@@ -555,6 +555,19 @@ fn the_draft_shares_its_targets_token_boundaries() {
 }
 
 #[test]
+fn an_admission_says_what_it_could_not_price() {
+    let quote = fixture().quote(2);
+    let admission = quote.admit(quote.required_bytes(1, 2048), 1, 2048);
+    // The plan's resource row also asks for the arena and the captured graph; both need device
+    // facts, so the result names them instead of implying the total is complete.
+    assert_eq!(
+        DraftQuote::deferred(),
+        vec![DraftCost::Arena, DraftCost::Graph]
+    );
+    assert_eq!(admission.deferred, DraftQuote::deferred());
+}
+
+#[test]
 fn the_required_bytes_are_the_components_of_the_quote() {
     let quote = fixture().quote(2);
     assert_eq!(
