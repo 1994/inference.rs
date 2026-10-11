@@ -11,7 +11,7 @@ mod capture_attention;
 mod capture_rope;
 mod capture_state;
 mod fp8_cache;
-mod fp8_gemm;
+pub(crate) mod fp8_gemm;
 mod kernels;
 mod linear_batch;
 mod metadata;

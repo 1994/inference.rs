@@ -188,3 +188,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_nvfp4_pipeline.rs"]
 mod pipeline_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_vendor_fp8.rs"]
+mod vendor_tests;

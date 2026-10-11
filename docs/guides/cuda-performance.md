@@ -55,18 +55,52 @@ MLP 的 `MlpConfig.pdl` 默认关闭，仅控制 SiLU×up → down projection �
 1. 候选先校验独立参考、尾块、非整除维度与状态语义，再测量。
 2. 按实际 dtype、shape、layout、执行阶段和设备测量；prefill、decode、MTP 不共享未经验证的性能结论。
 3. 构建身份、配置对齐、冷/热条件、采样统计与证据按性能基线方案核验。
-4. 搜索结束后独立 A/B 复测，不能用最快一次样本替换默认实现。
+4. 搜索结束后独立复测；驻留 GEMM 用 AB 搜索、反序 BA 确认，不能用最快一次样本替换默认实现。
 5. 用 profiler 定位访存、提交、occupancy 或 spill，再决定融合与流水化；功能边界由通用 API 保持。
 6. 解码 slot 数与 KV 容量改变会影响常驻显存、准入与并发，必须连同完整服务负载重测。
 
-NVFP4 prompt GEMM 在捕获时按输入行数、输出列数和 driver 查询的 SM 数选择列 tile：
-至少两个有效行 tile、且宽列 tile 的 grid 能覆盖半个设备 wave 时，扩大列 tile 以复用激活。
-较窄的 grid 保留原列 tile 和 main loop；decode-width graph 也保留原 main loop，FP8 的 tile 选择独立。
-只有采用宽列 tile 的 prompt main loop 使用 cuTile 的安全流水加载提示，
-保留 256 元素 K 步长和 block-16 scale 算术。
-此选择不依赖 GPU 型号或模型名称，其他设备仍需数值与性能验收。
+### 驻留 GEMM 自动择优
 
-可用下列 release 对照保存逐形状冷/热 L2、三轮 A/B 交替的 CUDA event 样本；
+驻留 NVFP4 与按通道缩放的 FP8 GEMM 在实际图捕获前选择配置，使用同一 `tuning.json` 的独立
+typed section，避免与标量 GEMV 策略混淆。缓存和迁移规则见
+[CUDA 后端](../../crates/backend/cuda/README.md#自动-tile-选择)：GEMV 本地测量优先于 shipped 基线，
+旧单设备条目迁移到多设备表，缺失设备身份的记录不复用。
+
+驻留 key 隔离硬件事实、CUDA API 与真实 NVRM driver build、编译器及 kernel fingerprint、
+实际 `M/N/K`、激活模式、scale/布局与数值合同；Lt 另外隔离库版本和 typed 算法配置。
+同形状可复用首份真实权重的性能搜索，但每份实际权重和 scale 仍需通过所选配置的完整输出
+finite/bitwise 验收。验收记录关联仍存活的权重 owner，不靠形状或可复用裸地址跳过新权重检查。
+
+默认原生 NVFP4 搜索现有 row/column tile 及 plain/prefetch main loop，保留 K 步长、block scale
+和量化算术；原生 FP8 搜索同一 K 累积顺序的 tile。选择由实测决定，原先按 SM wave 阈值放大
+NVFP4 列 tile 的策略已删除。设备能力、合法布局、对齐、workspace 和容量/显存上限仍是硬约束，
+不能通过测量绕过。Attention、图宽度和 GEMV/GEMM crossover 尚未全部纳入这个 chooser。
+
+性能搜索用固定顺序的 AB 配对；赢家以新的 capture 做反序 BA 独立确认。搜索与确认分别覆盖
+冷 L2 和暖 L2，非 baseline 配置在四组比较中都至少优于保守配置 2%。原始 samples、两臂名称、
+中位数、比值和顺序随策略保存，读缓存时校验完整性。计时范围是预分配的“激活量化 + GEMM”
+graph replay，不含模型加载、分配或首次 JIT。单候选的 capture、数值或测量失败不终止其余合法
+候选；基线失败仍回退，不能据此假设 CUDA 错误已恢复。
+
+每次模型加载的 target、draft 和 program 共享 30 秒驻留调优软预算，首次驻留身份解析、搜索或
+数值验收才启动，后续新候选和新权重验收继续检查剩余预算。单次已经开始的 JIT/测量不可中断；
+超时或未完成证据时回退，不把未测 baseline 当成完整调优证据缓存。`--no-autotune` 不做新的
+性能搜索，但可读取有效缓存并做当前权重数值验收。诊断用 `INFER_CUDA_QUANT_TILE` 与
+`INFER_CUDA_VENDOR_FP8` 的覆盖结果不写入调优证据。
+
+### FP8 Lt 显式数值 profile
+
+默认只允许原生 FP8 tile 候选。设 `INFER_CUDA_FP8_LT_AUTOTUNE=1` 或 `true`，才会搜索
+合法 cuBLASLt 算法，并继续接受真实权重的四种激活 pattern、完整输出 finite/bitwise 门禁，
+以及冷/暖 AB 搜索和 BA 独立确认。其描述符、算法可用性和零 workspace 在 capture 前准备。
+
+cuBLASLt SDK 不保证与原生 kernel 使用相同 K 累积顺序，四种输入 pattern 的逐位一致也不是
+所有输入的数学等价证明。该开关明确启用一个数值 profile，不能据此改成默认 Lt 路径。
+`INFER_CUDA_VENDOR_FP8=1`（或 `true`）只用于绕过 chooser 的独立诊断，不产生 tuned 证据。
+这些算子层门禁尚不能证明完整服务性能收益；正式采用仍按模型 token、状态和服务负载验收。
+
+下列 release 入口是独立候选 sweep，可保存逐形状冷/热 L2、三轮 A/B 交替的 CUDA event 样本；
+它不替代 chooser 的反序确认、实际权重验收或服务对照。
 计时范围为预分配的“激活量化 + GEMM” graph replay，不含加载、分配或首次 JIT：
 
 ```sh

@@ -70,7 +70,7 @@ impl Default for ResidentTuningSession {
 }
 
 impl ResidentTuningSession {
-    fn permits_search(&self) -> bool {
+    pub(crate) fn permits_search(&self) -> bool {
         self.started.get_or_init(Instant::now).elapsed() < self.budget
     }
 

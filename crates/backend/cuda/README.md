@@ -25,22 +25,40 @@ bindgen 找不到 C 标准头时，将实际主机 include 路径传给 `BINDGEN
 
 ## 自动 tile 选择
 
-tile 尺寸是运行设备的属性，所以加载时自动决定，不需要操作者配置：
+自动调优目前覆盖标量 GEMV、驻留 NVFP4 GEMM 和按通道缩放的驻留 FP8 GEMM。设备能力与
+dtype、布局、对齐、workspace 和显存预算先限定合法候选，再用实测择优；不按 GPU 型号或模型名分派。
+Attention 拆分、图宽度和 GEMV/GEMM crossover 等策略尚未全部接入同一调优表。
 
-1. 先用运行设备的 identity（`名称|架构|显存MiB`）查仓库内置基线 `baselines/tuning.json`，再查机器本地
-   测量缓存 `~/.cache/infer-cuda/tuning.json`（路径可用 `INFER_CUDA_TUNING_TABLE` 覆盖）。
-2. 两者都没覆盖的几何在加载时现场测量（`[1,4,8,16] × [128,256,512]`、2% 确认门槛、逐候选数值校验），
-   结果按设备 identity 落盘，下次启动直接复用；测量内容打印到 stderr。
-3. `--no-autotune` 或测量失败时使用与硬件无关的保守 tile。测量失败只回退并在报告里注明原因，
-   不会让模型加载失败。
+机器本地缓存默认是 `~/.cache/infer-cuda/tuning.json`，遵循 `XDG_CACHE_HOME`，可用
+`INFER_CUDA_TUNING_TABLE` 指定路径。GEMV 先查本地测量，再查仓库内置 `baselines/tuning.json`，
+两者都按运行设备 identity（`名称|架构|显存MiB`）和 `(dtype, rows, columns)` 匹配。
+缓存支持多个设备；旧的单设备 `device/entries` 格式读取时迁移，没有设备 identity 的条目不会复用。
 
-换一张卡或换一个模型只影响“要不要测”，不影响“会不会用错别处的 tile”：任何条目都只在设备 identity
-完全一致时命中。
+驻留 GEMM 在同一个文件中使用独立的 typed section，与 GEMV 共用写入锁和原子替换，不混用策略。
+其 key 包含真实硬件事实、CUDA API 版本、NVRM driver release/build、量化与数值合同、实际
+`M/N/K`、激活模式及编译器/kernel fingerprint；FP8 Lt 还隔离库版本、算法配置和显式数值 profile。
+无法取得可靠 driver build 时不跨进程复用驻留策略。性能搜索用首份真实权重代表同形状；
+其他权重和 scale 使用缓存配置前，仍须通过各自完整输出的 finite/bitwise 检查。相同且仍存活的
+权重 owner 可复用数值验收，形状命中不能替代新权重验收。
 
-条目按 `(dtype, rows, columns)` 索引，**从不按模型名索引**：任何模型只要投影几何相同就直接复用，
-模型自己的权重（包括 MTP 的 fusion 投影）也走同一条 `select_tiling` 路径。因此新增模型同样零配置——
-只有出现没测过的 `(dtype, 形状)` 时才测一次，其余沿用已有数据。
+NVFP4 和 FP8 共享每次模型加载的 30 秒驻留调优预算，target、draft 与后续 program 共用这份预算。
+预算从首次驻留身份解析、搜索或数值验收开始，逐候选检查；已开始的 JIT 或测量不能强制中断，
+因此它是软上限。仅为实际将捕获的图宽度准备策略。预算耗尽、身份或证据未完成时使用保守配置，
+不把未完成的 baseline 写成已测缓存结果。
 
+搜索按 baseline→candidate（AB）交替，独立新 capture 按 candidate→baseline（BA）确认。
+两轮都分别测冷 L2 和暖 L2，非 baseline 配置须在四组比较中均达到至少 2% 收益，并保持原量化与
+数值合同；计时包含激活量化和 GEMM replay。单个候选不支持、数值不同或测量失败时淘汰该候选，
+失败原因写入日志，基线失败则保守回退。kernel 测量门禁通过不等于已证明服务 TTFT、TPOT 或吞吐提升。
+
+`--no-autotune` 禁止新的性能搜索，仍可复用有效缓存；驻留配置仍需当前真实权重的数值验收，
+未验收或预算不足时回退。`INFER_CUDA_QUANT_TILE` 和 `INFER_CUDA_VENDOR_FP8` 属于诊断覆盖，
+其结果不作为自动择优证据落盘。
+
+FP8 默认只搜索保持原生 K 累积顺序的 tile。`INFER_CUDA_FP8_LT_AUTOTUNE=1`（或 `true`）
+才将 cuBLASLt 加入候选；SDK 不承诺它与原生 kernel 的 K 累积顺序相同。
+四种激活 pattern 的全部输出通过 finite/bitwise 检查，只证明这些验收输入，不能证明所有输入等价。
+因此 Lt 是显式数值 profile，不是默认路径；`INFER_CUDA_VENDOR_FP8` 仅用于独立诊断。
 
 ## 验收入口
 

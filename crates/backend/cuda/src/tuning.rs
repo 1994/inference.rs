@@ -1,4 +1,5 @@
 //! Paired graph measurements on loaded model weights, isolated from model adapters.
+pub mod fp8_gemm;
 pub mod resident_gemm;
 
 use crate::{
@@ -257,6 +258,8 @@ pub struct TilingTable {
     /// Multirow W4A4 decisions are independent of scalar GEMV entries.
     #[serde(default)]
     pub resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
+    #[serde(default)]
+    pub resident_fp8_gemm: Vec<fp8_gemm::Entry>,
 }
 
 /// Read both the current per-device table and the former top-level `device`/`entries` format.
@@ -270,6 +273,8 @@ struct StoredTilingTable {
     devices: BTreeMap<String, Vec<TuningEntry>>,
     #[serde(default)]
     resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
+    #[serde(default)]
+    resident_fp8_gemm: Vec<fp8_gemm::Entry>,
 }
 
 impl From<StoredTilingTable> for TilingTable {
@@ -292,6 +297,7 @@ impl From<StoredTilingTable> for TilingTable {
         Self {
             devices,
             resident_gemm: stored.resident_gemm,
+            resident_fp8_gemm: stored.resident_fp8_gemm,
         }
     }
 }

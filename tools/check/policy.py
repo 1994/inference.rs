@@ -133,6 +133,7 @@ def check_exceptions():
                         ROOT / "tools/bench/attention/src/device.rs",
                         ROOT / "crates/backend/cuda/src/device/readback.rs",
                         ROOT / "crates/backend/cuda/src/device/cublaslt.rs",
+                        ROOT / "crates/backend/cuda/src/device/vendor_fp8.rs",
                         ROOT / "crates/backend/cuda/src/mlp/pdl.rs",
                         ROOT / "crates/backend/cuda/src/mlp/pdl_consumers.rs",
                         ROOT / "crates/backend/cuda/src/resident/arena.rs",

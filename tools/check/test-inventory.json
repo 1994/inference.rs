@@ -28,13 +28,13 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 81
+      "tests": 91
     },
     "frontdoor": {
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 58
+      "tests": 65
     },
     "ir": {
       "benches": 0,
@@ -64,7 +64,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 115
+      "tests": 126
     },
     "quality": {
       "benches": 0,
@@ -146,7 +146,9 @@
     "target_os = \"macos\"": 1
   },
   "ignored_reasons": {
-    "requires CUDA hardware; root runs release serially": 1,
+    "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run": 1,
+    "requires CUDA hardware and a real FP8 channel checkpoint; root runs release serially": 1,
+    "requires CUDA hardware; root runs release serially": 3,
     "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 1,
     "requires CUDA hardware; run inside safe-run": 18,
     "requires CUDA hardware; run release inside safe-run": 1,
@@ -154,6 +156,8 @@
     "requires CUDA hardware; run under safe-run in release": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
     "requires CUDA; run inside safe-run with --test-threads 1": 2,
+    "requires CUDA; run release serially inside safe-run": 1,
+    "requires CUDA; run serially inside safe-run": 1,
     "requires GPU and INFER_ATTENTION_BENCH fixtures; run under tools/bench/safe-run.sh": 1,
     "requires GPU and INFER_ATTENTION_GATE; use make check-attention": 1,
     "requires Linux NUMA policy and move_pages query permission; make check-linux-numa": 1,
@@ -275,6 +279,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/resident/nvfp4_gemm.rs",
+      "mount": "../../tests/unit/resident_vendor_fp8.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/resident/prefill_gemm.rs",
       "mount": "../../tests/unit/resident_prefill_gemm_bench_check.rs"
     },
@@ -327,6 +336,11 @@
       "crate": "cuda",
       "file": "src/target.rs",
       "mount": "../tests/unit/target.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/fp8_gemm.rs",
+      "mount": "../../tests/unit/fp8_gemm_tuning.rs"
     },
     {
       "crate": "cuda",
@@ -685,11 +699,11 @@
     }
   ],
   "totals": {
-    "all": 494,
+    "all": 522,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 494
+    "tests": 522
   }
 }

@@ -153,6 +153,7 @@ mod readback;
     )
 )]
 pub(crate) mod cublaslt;
+pub(crate) mod vendor_fp8;
 pub(crate) use readback::{ReadbackSource, Readbacks};
 
 #[derive(Clone)]
