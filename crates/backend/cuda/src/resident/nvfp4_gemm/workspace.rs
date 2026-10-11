@@ -186,6 +186,27 @@ impl Workspace {
         output: &mut Tensor<f32>,
         columns: usize,
     ) -> std::result::Result<(), DeviceError> {
+        let rows = usize::try_from(output.shape()[0]).map_err(super::super::capture::error)?;
+        self.record_fp8_tiled(
+            scope,
+            weight,
+            input,
+            output,
+            columns,
+            crate::constants::quant_gemm_tile(rows),
+        )
+    }
+
+    /// Keep the full prompt tile's arithmetic when recording a single terminal output row.
+    pub(in crate::resident) fn record_fp8_tiled(
+        &mut self,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        input: &TensorView<'_, f32>,
+        output: &mut Tensor<f32>,
+        columns: usize,
+        tile: [usize; 2],
+    ) -> std::result::Result<(), DeviceError> {
         use super::super::{capture::error, fp8_gemm::kernels};
         if !matches!(
             weight,
@@ -203,7 +224,6 @@ impl Workspace {
             .fp8
             .get_mut(&(rows, columns, scale_columns))
             .ok_or_else(|| error("FP8 quantization workspace missing"))?;
-        let tile = crate::constants::quant_gemm_tile(rows);
         let generics = vec![
             columns.to_string(),
             tile[0].to_string(),

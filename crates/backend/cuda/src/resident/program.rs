@@ -10,7 +10,7 @@ use crate::{
 };
 use cutile::{half::bf16, prelude::*};
 use infer_core::{Error, Result, TensorId};
-use infer_ir::{DataflowGraph, StateKind, TensorStorage};
+use infer_ir::{DataflowGraph, StateKind, TensorOp, TensorStorage};
 use std::collections::BTreeMap;
 
 pub struct FusionWeights {
@@ -120,6 +120,77 @@ impl ProgramWeights {
         self.prompt_widths().into_iter().sum()
     }
 
+    /// Only the last valid prompt row is consumed from a terminal dense or FP8 vocabulary head.
+    /// Vendor projections keep their existing full-width capture and accumulation policy.
+    pub(crate) fn compact_prompt_logits(&self, graph: &DataflowGraph) -> Option<TensorId> {
+        #[cfg(test)]
+        if super::prefill_projection::FULL_LOGITS.with(std::cell::Cell::get) {
+            return None;
+        }
+        let logits = graph.logits?;
+        if graph.hidden == Some(logits)
+            || std::env::var_os("INFER_CUBLAS_PROJECTIONS").is_some()
+            || graph.nodes.iter().any(|node| node.inputs.contains(&logits))
+        {
+            return None;
+        }
+        let mut producers = graph
+            .nodes
+            .iter()
+            .filter(|node| node.outputs.contains(&logits));
+        let node = producers.next()?;
+        if producers.next().is_some()
+            || node.op != TensorOp::Linear
+            || node.outputs.len() != 1
+            || node.inputs.len() != 2
+            || !node.states.is_empty()
+            || self.constants.contains_key(&node.inputs[0])
+        {
+            return None;
+        }
+        match (
+            self.projections.get(&node.inputs[1]),
+            self.activation_quantization(node.inputs[1]),
+        ) {
+            (Some(ProjectionWeight::Dense(_) | ProjectionWeight::Fp8(..)), None)
+            | (
+                Some(ProjectionWeight::Fp8(..) | ProjectionWeight::Fp8Block(..)),
+                Some(ActivationQuantization::Fp8Token),
+            ) => Some(logits),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn prompt_activation_bytes(
+        &self,
+        graph: &DataflowGraph,
+        width: usize,
+    ) -> Result<usize> {
+        let compact = self.compact_prompt_logits(graph);
+        let arena = ActivationArena::required_prompt_bytes(graph, width, compact)?;
+        let scratch = if let Some(logits) = compact {
+            let input = graph
+                .nodes
+                .iter()
+                .find(|node| node.outputs.contains(&logits))
+                .ok_or_else(|| Error::invariant("prompt logits producer"))?
+                .inputs[0];
+            graph
+                .tensors
+                .iter()
+                .find(|tensor| tensor.id == input)
+                .ok_or_else(|| Error::invalid("prompt logits input"))?
+                .elements()?
+                .checked_mul(F32_BYTES)
+                .ok_or_else(|| Error::invalid("prompt scratch overflow"))?
+        } else {
+            0
+        };
+        arena
+            .checked_add(scratch)
+            .ok_or_else(|| Error::invalid("prompt activation overflow"))
+    }
+
     pub(super) fn activation_quantization(&self, id: TensorId) -> Option<ActivationQuantization> {
         self.input_scales
             .get(&id)
@@ -174,7 +245,7 @@ pub struct DeviceProgram {
 
 /// Conservative lower bound on uniquely owned device storage; excludes graph metadata,
 /// readback buffers and auxiliary workspaces. Idle-state admission can reclaim this much.
-/// `verify`/`prompt` are the lane counts actually captured; a pool-bound program captured
+/// `verify` counts captured lanes and `prompt_bytes` counts the actual prompt storage; a pool-bound program captured
 /// no verification graph (and possibly no wide prompt graph), so those snapshots and arena
 /// shares are not retained either.
 fn retained_tensor_bytes(
@@ -183,10 +254,10 @@ fn retained_tensor_bytes(
     fp8: &super::fp8_cache::Fp8Caches,
     activation_bytes: usize,
     verify: usize,
-    prompt: usize,
+    prompt_bytes: usize,
 ) -> u64 {
     let verify = if verify > 1 { verify } else { 0 };
-    let activations = activation_bytes as u64 * (1 + verify + prompt) as u64;
+    let activations = activation_bytes as u64 * (1 + verify) as u64 + prompt_bytes as u64;
     let state_bytes = states
         .values()
         .flatten()
@@ -298,10 +369,10 @@ impl DeviceProgram {
         let prompt: usize = [self.prompt_batch.as_ref(), self.prompt_narrow.as_ref()]
             .into_iter()
             .flatten()
-            .map(|g| g.width)
+            .map(super::batch::BatchGraph::activation_bytes)
             .sum();
         self.reclaimable_bytes =
-            state_bytes + packed_bytes + self.activation_bytes as u64 * (1 + prompt) as u64;
+            state_bytes + packed_bytes + self.activation_bytes as u64 + prompt as u64;
         self.released_verification_bytes = before - self.reclaimable_bytes;
         true
     }
@@ -345,7 +416,7 @@ impl DeviceProgram {
         let prompt: usize = [self.prompt_batch.as_ref(), self.prompt_narrow.as_ref()]
             .into_iter()
             .flatten()
-            .map(|graph| graph.width)
+            .map(super::batch::BatchGraph::activation_bytes)
             .sum();
         self.reclaimable_bytes = retained_tensor_bytes(
             graph,
@@ -434,7 +505,11 @@ impl DeviceProgram {
             fp8,
             activation_bytes,
             batch.map_or(0, |graph| graph.width),
-            prompts.into_iter().flatten().map(|graph| graph.width).sum(),
+            prompts
+                .into_iter()
+                .flatten()
+                .map(super::batch::BatchGraph::activation_bytes)
+                .sum(),
         )
     }
 

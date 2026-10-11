@@ -33,6 +33,8 @@ pub(super) struct BatchGraph {
     /// declared after the graphs so their executables drop first.
     _partials: BTreeMap<usize, Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
+    last_input: Option<Tensor<f32>>,
+    compact_logits: bool,
     metadata: Vec<Tensor<i32>>,
     prefill_info: Option<Tensor<i32>>,
     hidden: Vec<Arc<Tensor<f32>>>,
@@ -49,7 +51,7 @@ pub(super) struct BatchGraph {
     profile: Option<profile::PrefillProfile>,
     // Batched width-32 arena anchors every slot allocation past graph replays;
     // declared last so it drops after the graphs that reference its rows.
-    _arena: Option<ActivationArena>,
+    arena: Option<ActivationArena>,
 }
 
 pub(super) struct BatchBuilder<'a> {
@@ -323,6 +325,8 @@ impl BatchBuilder<'_> {
             restore,
             _partials: BTreeMap::new(),
             _recurrent: super::recurrent_prefill::Workspace::default(),
+            last_input: None,
+            compact_logits: false,
             prefill_info: None,
             metadata,
             hidden,
@@ -330,16 +334,18 @@ impl BatchBuilder<'_> {
             width,
             capacity: self.capacity,
             profile: None,
-            _arena: None,
+            arena: None,
         })
     }
 
     /// Prefill width 32: one batched arena, one metadata tensor per lane.
     fn build32(&mut self) -> Result<BatchGraph> {
-        let mut arena = ActivationArena::new_batched(
+        let compact = self.weights.compact_prompt_logits(self.graph);
+        let mut arena = ActivationArena::new_prompt(
             self.device,
             self.graph,
             self.width,
+            compact,
             usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
         )?;
         let mut metadata = Vec::with_capacity(self.width);
@@ -350,6 +356,75 @@ impl BatchBuilder<'_> {
                     .map_err(device_error)?,
             );
         }
+        let mut partials = self.prefill_partials()?;
+        let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+            .sync_on(&self.device.stream)
+            .map_err(device_error)?;
+        let mut recurrent = super::recurrent_prefill::Workspace::new(
+            self.device,
+            self.graph,
+            self.weights,
+            self.width,
+        )?;
+        let mut last_input = if let Some(logits) = compact {
+            let input = self
+                .graph
+                .nodes
+                .iter()
+                .find(|node| node.outputs.contains(&logits))
+                .ok_or_else(|| Error::invariant("prompt logits producer"))?
+                .inputs[0];
+            let columns = arena.get(input)?.size() / self.width;
+            Some(
+                api::zeros::<f32>(&[columns])
+                    .sync_on(&self.device.stream)
+                    .map_err(device_error)?,
+            )
+        } else {
+            None
+        };
+        let mut profile = profile::PrefillProfile::from_env(self.device);
+        let prefill = self.capture32(
+            &mut arena,
+            &metadata,
+            &prefill_info,
+            false,
+            profile.as_mut(),
+            (&mut partials, &mut recurrent, &mut last_input),
+        )?;
+        let prefill_last = self.capture32(
+            &mut arena,
+            &metadata,
+            &prefill_info,
+            true,
+            profile.as_mut(),
+            (&mut partials, &mut recurrent, &mut last_input),
+        )?;
+        let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
+        let logits = vec![take_result(&mut arena, self.graph.logits)?];
+        Ok(BatchGraph {
+            graph: None,
+            state_offset: Self::state_offset(self.weights),
+            readbacks: crate::device::Readbacks::default(),
+            prefill,
+            prefill_last,
+            restore: Vec::new(),
+            _partials: partials,
+            _recurrent: recurrent,
+            last_input,
+            compact_logits: compact.is_some(),
+            prefill_info: Some(prefill_info),
+            metadata,
+            hidden,
+            logits,
+            width: self.width,
+            capacity: self.capacity,
+            profile,
+            arena: Some(arena),
+        })
+    }
+
+    fn prefill_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
         let mut partials = BTreeMap::new();
         for node in &self.graph.nodes {
             if node.op != TensorOp::Linear
@@ -378,52 +453,7 @@ impl BatchBuilder<'_> {
                     .map_err(device_error)?,
             );
         }
-        let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
-            .sync_on(&self.device.stream)
-            .map_err(device_error)?;
-        let mut recurrent = super::recurrent_prefill::Workspace::new(
-            self.device,
-            self.graph,
-            self.weights,
-            self.width,
-        )?;
-        let mut profile = profile::PrefillProfile::from_env(self.device);
-        let prefill = self.capture32(
-            &mut arena,
-            &metadata,
-            &prefill_info,
-            false,
-            profile.as_mut(),
-            (&mut partials, &mut recurrent),
-        )?;
-        let prefill_last = self.capture32(
-            &mut arena,
-            &metadata,
-            &prefill_info,
-            true,
-            profile.as_mut(),
-            (&mut partials, &mut recurrent),
-        )?;
-        let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
-        let logits = vec![take_result(&mut arena, self.graph.logits)?];
-        Ok(BatchGraph {
-            graph: None,
-            state_offset: Self::state_offset(self.weights),
-            readbacks: crate::device::Readbacks::default(),
-            prefill,
-            prefill_last,
-            restore: Vec::new(),
-            _partials: partials,
-            _recurrent: recurrent,
-            prefill_info: Some(prefill_info),
-            metadata,
-            hidden,
-            logits,
-            width: self.width,
-            capacity: self.capacity,
-            profile,
-            _arena: Some(arena),
-        })
+        Ok(partials)
     }
 
     fn capture(
@@ -498,9 +528,10 @@ impl BatchBuilder<'_> {
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
             &mut super::recurrent_prefill::Workspace,
+            &mut Option<Tensor<f32>>,
         ),
     ) -> Result<CudaGraph<()>> {
-        let (partials, recurrent) = workspaces;
+        let (partials, recurrent, last_input) = workspaces;
         CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
             let mut no_fusion = None;
@@ -512,31 +543,22 @@ impl BatchBuilder<'_> {
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
                 }
+                if logits && let Some(input) = last_input.as_mut() {
+                    super::prefill_projection::record_last(
+                        scope,
+                        node,
+                        arena,
+                        self.weights,
+                        prefill_info,
+                        input,
+                        self.nvfp4,
+                    )?;
+                    continue;
+                }
                 if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
                     continue;
                 }
-                if matches!(node.op, TensorOp::Attention { .. } | TensorOp::Rope { .. })
-                    && !node
-                        .inputs
-                        .iter()
-                        .any(|id| self.weights.constants.contains_key(id))
-                {
-                    Capture {
-                        scope,
-                        arena: &mut *arena,
-                        weights: self.weights,
-                        nvfp4: self.nvfp4,
-                        attention: self.attention,
-                        states: self.states,
-                        fp8_states: self.fp8_states,
-                        metadata: prefill_info,
-                        table: &self.tables[0],
-                        external: self.external,
-                        capacity: self.capacity,
-                        fusion: &mut no_fusion,
-                        mode: CaptureMode::Prefill,
-                    }
-                    .record(node)?;
+                if self.record_prefill_attention(scope, node, arena, prefill_info)? {
                     continue;
                 }
                 match dispatch32(node, self.weights) {
@@ -601,6 +623,41 @@ impl BatchBuilder<'_> {
             Ok(())
         })
         .map_err(device_error)
+    }
+
+    fn record_prefill_attention(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        prefill_info: &Tensor<i32>,
+    ) -> std::result::Result<bool, DeviceError> {
+        if !matches!(node.op, TensorOp::Attention { .. } | TensorOp::Rope { .. })
+            || node
+                .inputs
+                .iter()
+                .any(|id| self.weights.constants.contains_key(id))
+        {
+            return Ok(false);
+        }
+        let mut no_fusion = None;
+        Capture {
+            scope,
+            arena: &mut *arena,
+            weights: self.weights,
+            nvfp4: self.nvfp4,
+            attention: self.attention,
+            states: self.states,
+            fp8_states: self.fp8_states,
+            metadata: prefill_info,
+            table: &self.tables[0],
+            external: self.external,
+            capacity: self.capacity,
+            fusion: &mut no_fusion,
+            mode: CaptureMode::Prefill,
+        }
+        .record(node)?;
+        Ok(true)
     }
 
     fn allocate_lanes(&self, width: usize) -> Result<Vec<Lane>> {
@@ -903,7 +960,8 @@ impl BatchGraph {
             ],
         )?;
         let hidden_dim = self.hidden[0].size() / self.width;
-        let vocabulary = self.logits[0].size() / self.width;
+        let logit_rows = if self.compact_logits { 1 } else { self.width };
+        let vocabulary = self.logits[0].size() / logit_rows;
         let sources = [
             read_hidden.then(|| ReadbackSource {
                 tensor: Arc::clone(&self.hidden[0]),
@@ -912,7 +970,11 @@ impl BatchGraph {
             }),
             (prefill == Some(true)).then(|| ReadbackSource {
                 tensor: Arc::clone(&self.logits[0]),
-                skip: (tokens.len() - 1) * vocabulary,
+                skip: if self.compact_logits {
+                    0
+                } else {
+                    (tokens.len() - 1) * vocabulary
+                },
                 len: vocabulary,
             }),
         ];
@@ -944,6 +1006,14 @@ impl BatchGraph {
                 Ok((hidden, logits))
             })
             .collect()
+    }
+
+    pub(super) fn activation_bytes(&self) -> usize {
+        self.arena.as_ref().map_or(0, ActivationArena::bytes)
+            + self
+                .last_input
+                .as_ref()
+                .map_or(0, |tensor| tensor.size() * crate::constants::F32_BYTES)
     }
 
     pub fn restore(&self, device: &CudaDevice, count: usize) -> Result<()> {

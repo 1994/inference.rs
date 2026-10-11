@@ -134,3 +134,101 @@ fn records_vendor_gemm(
     };
     delegated.record_dense(scope, input, weight, output, (width, rows, columns))
 }
+
+/// Gather the last valid head input while retaining checkpoint input quantization,
+/// prompt tile geometry and K accumulation order; the MMA masks unused rows.
+pub(super) fn record_last(
+    scope: &Scope,
+    node: &TensorNode,
+    arena: &mut super::ActivationArena,
+    weights: &ProgramWeights,
+    metadata: &Tensor<i32>,
+    scratch: &mut Tensor<f32>,
+    nvfp4: &mut super::nvfp4_gemm::Workspace,
+) -> Result<(), DeviceError> {
+    let columns = scratch.size();
+    let input = arena
+        .get(node.inputs[0])
+        .map_err(error)?
+        .view(&[arena.lanes(), columns])
+        .map_err(error)?;
+    scope.record(last_row::gather(scratch.partition([128]), &input, metadata))?;
+    let slot = arena.slot(node.outputs[0]).map_err(error)?;
+    let output = arena.buffers[slot]
+        .take()
+        .ok_or_else(|| error("prompt logits output"))?;
+    let flat = output.size();
+    let mut output = output.reshape(&[1, flat])?;
+    let input = scratch.view(&[1, columns])?;
+    let weight = weights
+        .projections
+        .get(&node.inputs[1])
+        .ok_or_else(|| error("prompt head weight"))?;
+    if matches!(
+        weight,
+        ProjectionWeight::Fp8(..) | ProjectionWeight::Fp8Block(..)
+    ) && matches!(
+        weights.activation_quantization(node.inputs[1]),
+        Some(super::program::ActivationQuantization::Fp8Token)
+    ) {
+        nvfp4.record_fp8_tiled(
+            scope,
+            weight,
+            &input,
+            &mut output,
+            columns,
+            crate::constants::quant_gemm_tile(arena.lanes()),
+        )?;
+    } else {
+        let generics = vec![columns.to_string()];
+        match weight {
+            ProjectionWeight::Dense(weight) => {
+                scope.record(
+                    gemm::dense((&mut output).partition([32, 64]), &input, weight)
+                        .generics(generics),
+                )?;
+            }
+            ProjectionWeight::Fp8(weight, scales) => {
+                scope.record(
+                    gemm::fp8((&mut output).partition([32, 64]), &input, weight, scales)
+                        .generics(generics),
+                )?;
+            }
+            _ => return Err(error("unsupported compact prompt head")),
+        }
+    }
+    arena.buffers[slot] = Some(output.reshape(&[flat])?);
+    Ok(())
+}
+
+#[cutile::module]
+mod last_row {
+    use cutile::core::{
+        Reshape, Shape_0, Shape_1, Shape_2, StoreTileAtCurrentBlock, Tensor_1, Tensor_2,
+        get_tile_block_id, tile_to_scalar,
+    };
+    #[cutile::entry()]
+    fn gather(
+        out: &mut Tensor<f32, { [128] }>,
+        input: &Tensor<f32, { [-1, -1] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let count: i32 =
+            tile_to_scalar(metadata.partition(shape![1]).load([1i32]).reshape(shape![]));
+        out.store(
+            input
+                .partition(shape![1, 128])
+                .load([count - 1i32, pid.0])
+                .reshape(shape![128]),
+        );
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static FULL_LOGITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(test)]
+#[path = "../../tests/unit/resident_prefill_projection.rs"]
+mod tests;

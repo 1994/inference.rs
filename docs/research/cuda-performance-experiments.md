@@ -2937,3 +2937,28 @@ tail、window 和 draft offset。该回归验证通过。默认 dispatch 的数�
 5. 候选通过必要 correctness 检查后，CI 与性能测试并行开展；正式结论仍需要两模型及支持的
    MTP profile、全部 case 的至少五个独立交错配对，以及吞吐、尾延迟和任务质量。每格相对
    vLLM 的目标是 1.10x 以内；本轮未达到该目标。
+
+
+### 16.6 终端 logits 单行化：实现与正确性
+
+`BatchGraph` 的宽 prompt 捕获现在为符合条件的终端 Dense/FP8 Linear 输出分配一行 logits。
+先按设备端 `count - 1` 收集最后一个有效输入行，再保留旧 prompt 投影的 tile 几何、输入舍入/
+动态量化与 K 累加顺序。27B 的输出头实际是动态 per-token FP8，已覆盖这条生产路径；没有
+改用 decode 的 split-K 算法。旧 FP4 head、非 Linear 输出、被消费的 logits、hidden/logits
+同一 tensor 和 vendor 投影模式保留原有存储与投影路径。
+
+单行结果使用独立 slot，避免把曾与 logits 复用的前序 activation 也缩成一行。hidden 仍按完整
+prompt 宽度保存，Full readout 和 MTP priming 的行语义不变。admission 按每张 prompt arena
+及 gather scratch 的实际尺寸计价，回收额度也按实际保留字节计算，含重新建立/丢弃验证图的路径。
+自动宽度选择使用同一价格，但本改动没有增加新的宽度档位。
+
+45 上 release CUDA 验证：默认 lib tests **29 passed / 43 ignored**；独立存储测试覆盖旧 slot
+复用、零宽度和溢出；GPU 测试覆盖尾 K/N 与最后行边界（1/31/32/33/63/64/65/127/128/129/255/256），
+与旧 full-width BF16 MMA 的有效行逐位相同。既有宽 prompt 的尾块/标量续接测试通过。真实
+27B checkpoint 使用 511 个固定 token、128 行 prompt 图，对照旧 full-width 捕获，所有
+hidden、最后行 logits、验证结果、回滚后的连续 decode **逐位相同**。生产 CUDA lib Clippy 通过；
+全 tests Clippy 仍存在本轮以前的 fixture lint，不能表述为所有硬件门禁已绿。
+
+候选源码补丁、测试制品身份和原始日志保存于
+`/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/last-logits/`。
+服务侧 A/B 将另外记录，以上仅证明正确性与实际取消了中间行，尚不代表端到端加速签发。
