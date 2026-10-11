@@ -104,6 +104,7 @@ pub struct TextAssets {
     tool_dialect: crate::input::tool::ToolDialect,
     /// Whether the tokenizer's decoder can be applied to a token sub-list independently.
     streaming_decode: bool,
+    tool_supported: bool,
 }
 fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -195,6 +196,9 @@ impl TextAssets {
             hash.update(&bytes);
             template = Some(String::from_utf8(bytes).map_err(|e| Error::invalid(e.to_string()))?);
         }
+        let tool_supported = template.as_deref().is_some_and(|template| {
+            crate::input::tool::ToolDialect::from_template(template).is_some()
+        });
         let tool_dialect = template.as_deref().map_or(
             crate::input::tool::ToolDialect::JsonBlock,
             crate::input::tool::ToolDialect::detect,
@@ -211,7 +215,13 @@ impl TextAssets {
             max_tokens,
             tool_dialect,
             streaming_decode,
+            tool_supported,
         })
+    }
+    /// Whether the package declares a recognized tool-call envelope.
+    #[must_use]
+    pub const fn supports_tool_calls(&self) -> bool {
+        self.tool_supported
     }
     /// Tool-call dialect bound to this package's template.
     #[must_use]

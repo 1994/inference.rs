@@ -26,7 +26,7 @@ infer-ir.workspace = true
 infer-spi.workspace = true
 infer-model-recipes.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 tokenizers.workspace = true
 minijinja.workspace = true

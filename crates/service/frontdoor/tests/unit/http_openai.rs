@@ -554,7 +554,7 @@ async fn a_disconnected_stream_is_cancelled_and_freed() {
 }
 
 #[tokio::test]
-async fn a_tool_round_over_http_returns_a_normal_completion() {
+async fn tool_history_without_new_tools_returns_a_normal_completion() {
     let (handle, assets) = fixture();
     let app = router_with_text(handle.clone(), assets);
     // The client declares a tool, returns the result of the call it received, and the model
@@ -569,9 +569,6 @@ async fn a_tool_round_over_http_returns_a_normal_completion() {
             ]},
             {"role":"tool","content":"{\"temp_c\":21}","tool_call_id":"call_1"}
         ],
-        "tools":[{"type":"function","function":{
-            "name":"get_weather","parameters":{"type":"object"}
-        }}],
         "max_completion_tokens":3
     });
     let (status, body) = call(app, "/v1/chat/completions", Some(payload)).await;
@@ -581,5 +578,20 @@ async fn a_tool_round_over_http_returns_a_normal_completion() {
         "{body}"
     );
     assert_eq!(body["choices"][0]["finish_reason"], "length");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn auto_tools_require_a_package_bound_output_dialect() {
+    let (handle, assets) = fixture();
+    assert!(!assets.supports_tool_calls());
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({"model":"fixture", "messages":[{"role":"user","content":"hi"}],
+        "tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]});
+    let model = handle.inspect().await.unwrap().model_name;
+    let mut payload = payload;
+    payload["model"] = json!(model);
+    let (status, _) = call(app, "/v1/chat/completions", Some(payload)).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     handle.shutdown().await.unwrap();
 }
