@@ -22,6 +22,7 @@ impl Backend {
             states: BoundedMap::new(requests)?,
             outputs: (0..requests)
                 .map(|_| ModelOutput {
+                    next_token: None,
                     logits: vec![1.0; vocabulary],
                     hidden: Vec::new(),
                     // The output stage pushes decided tokens into this buffer, so it must

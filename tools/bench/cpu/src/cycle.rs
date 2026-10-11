@@ -193,6 +193,7 @@ impl Cycle {
         for work in &step.work {
             self.members.push(work.request);
             self.tasks.push(ExecutionTask {
+                plain_greedy: false,
                 request: work.request,
                 state: work.state,
                 tokens: ExecutionInput::Decode {
