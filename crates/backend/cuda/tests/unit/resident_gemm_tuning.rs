@@ -1,4 +1,5 @@
 use super::*;
+use crate::resident::nvfp4_gemm::Workspace;
 
 fn profile() -> DeviceProfile {
     DeviceProfile {
@@ -118,7 +119,7 @@ fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result
         13000,
         [64, 67, 272],
         original.driver_build.clone(),
-        original.kernel_fingerprint.clone(),
+        original.kernel_fingerprint,
     )?);
     for variant in variants {
         assert_eq!(decision(Some(&table), &variant, false)?, Decision::Baseline);
@@ -142,12 +143,12 @@ fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices()
     assert!(decision(Some(&table), &key, true).is_err());
     let expired = ResidentTuningSession {
         started: OnceLock::new(),
+        greedy_started: OnceLock::new(),
         budget: Duration::ZERO,
     };
     let fresh = ResidentTuningSession::default();
     assert!(!expired.permits_search());
     assert!(fresh.permits_search());
-    use crate::resident::nvfp4_gemm::Workspace;
     assert_eq!(
         Workspace::captured_widths(3, 256, 64, false, false),
         vec![1, 64]

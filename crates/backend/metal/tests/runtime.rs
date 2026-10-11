@@ -325,6 +325,7 @@ fn metal_rejects_foreign_program_and_aliased_submission_before_mutating_state() 
     };
     let tasks = [1, 2]
         .map(|id| ExecutionTask {
+            plain_greedy: false,
             request: RequestId::new(id).unwrap(),
             state,
             tokens: vec![1].into(),
@@ -364,6 +365,7 @@ fn metal_completion_ticket_cannot_cross_executor_instances_with_same_step_id() {
         quantum_overrun: false,
     };
     let tasks = vec![ExecutionTask {
+        plain_greedy: false,
         request,
         state,
         tokens: vec![1].into(),

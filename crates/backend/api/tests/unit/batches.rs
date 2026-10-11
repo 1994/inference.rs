@@ -20,6 +20,7 @@ fn fixture() -> (Arc<StepPlan>, Vec<ExecutionTask>) {
         quantum_overrun: false,
     });
     let tasks = vec![ExecutionTask {
+        plain_greedy: false,
         request: RequestId::ONE,
         state: StateId::ONE,
         tokens: vec![1, 2, 3].into(),

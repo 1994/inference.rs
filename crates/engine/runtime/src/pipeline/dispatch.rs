@@ -73,10 +73,15 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             prepared.growth.push((work.state, tokens.len()));
             prepared.ids.push(work.request);
             prepared.tasks.push(ExecutionTask {
+                plain_greedy: matches!(
+                    record.request.workload,
+                    infer_ir::Workload::Generate { .. }
+                ) && record.request.sampling.uses_plain_greedy(),
                 request: work.request,
                 state: work.state,
                 tokens,
-                // Only a backend that reports speculation can decide tokens itself.
+                // Full sampling parameters are needed only for speculative acceptance.
+                // Plain output decisions use the allocation-free request flag above.
                 sampling: (work.role == ExecutionRole::Decode
                     && self.backend.speculation_capability().draft_depth > 0)
                     .then(|| record.request.sampling.clone()),

@@ -176,3 +176,91 @@ fn measure(
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires NVIDIA GPU; run under tools/bench/safe-run.sh"]
+fn pinned_float_and_integer_graphs_complete_in_order_and_reuse_buffers() -> Result<()> {
+    let device = CudaDevice::new(0)?;
+    let float_input = device.upload(vec![3.5_f32; 5], &[5])?;
+    let mut integer_input = Arc::try_unwrap(device.upload(vec![0_i32; 6], &[6])?)
+        .map_err(|_| Error::invariant("integer fixture ownership"))?;
+    let mut middle = api::zeros::<i32>(&[6])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let mut integer_output = api::zeros::<i32>(&[6])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let mut float_output = api::zeros::<f32>(&[5])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let graph = CudaGraph::scope(&device.stream, |scope| {
+        scope.record(api::memcpy(&mut float_output, &float_input))?;
+        scope.record(api::memcpy(&mut middle, &integer_input))?;
+        Ok(())
+    })
+    .map_err(device_error)?;
+    let tail = CudaGraph::scope(&device.stream, |scope| {
+        scope.record(api::memcpy(&mut integer_output, &middle))?;
+        Ok(())
+    })
+    .map_err(device_error)?;
+    let floats = [Some(ReadbackSource::whole(Arc::new(float_output))), None];
+    let integer_output = Arc::new(integer_output);
+    let mut float_reads = Readbacks::default();
+    let mut token_reads = Readbacks::<i32>::default();
+    for round in 0..8 {
+        let expected = vec![round, 0, i32::MAX - round, 1, -round, 0];
+        let input = device.upload(expected.clone(), &[6])?;
+        graph
+            .update(api::memcpy(&mut integer_input, &input))
+            .map_err(device_error)?;
+        let (rows, tokens) = float_reads.run_with_tokens(
+            &device,
+            &graph,
+            &floats,
+            (&tail, &mut token_reads, Arc::clone(&integer_output)),
+        )?;
+        assert_eq!(rows, vec![vec![3.5; 5], Vec::new()]);
+        assert_eq!(tokens, vec![expected]);
+    }
+    let retained = Arc::clone(
+        token_reads.buffers[0]
+            .as_ref()
+            .ok_or_else(|| Error::invariant("integer pinned reuse"))?,
+    );
+    let _ = float_reads.run_with_tokens(
+        &device,
+        &graph,
+        &floats,
+        (&tail, &mut token_reads, Arc::clone(&integer_output)),
+    )?;
+    assert!(Arc::ptr_eq(
+        &retained,
+        token_reads.buffers[0]
+            .as_ref()
+            .ok_or_else(|| Error::invariant("integer pinned reuse"))?
+    ));
+    let other = CudaDevice::new(0)?;
+    assert!(
+        float_reads
+            .run_with_tokens(
+                &other,
+                &graph,
+                &floats,
+                (&tail, &mut token_reads, Arc::clone(&integer_output)),
+            )
+            .is_err()
+    );
+    token_reads.poisoned = true;
+    assert!(
+        float_reads
+            .run_with_tokens(
+                &device,
+                &graph,
+                &floats,
+                (&tail, &mut token_reads, integer_output),
+            )
+            .is_err()
+    );
+    Ok(())
+}

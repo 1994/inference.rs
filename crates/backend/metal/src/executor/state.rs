@@ -174,6 +174,7 @@ impl MetalBackend {
         };
         Ok(Sequence {
             readback: Some(infer_ir::ModelOutput {
+                next_token: None,
                 logits: Vec::with_capacity(self.model.vocab_size),
                 hidden: (0..rows)
                     .map(|_| vec![0.0; self.model.hidden_size])

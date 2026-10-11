@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 99
+      "tests": 109
     },
     "frontdoor": {
       "benches": 0,
@@ -82,7 +82,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 66
+      "tests": 69
     },
     "scheduler": {
       "benches": 0,
@@ -154,11 +154,12 @@
   "ignored_reasons": {
     "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run": 1,
     "requires CUDA hardware and a real FP8 channel checkpoint; root runs release serially": 1,
+    "requires CUDA hardware and a writable tuning cache; run under safe-run": 1,
     "requires CUDA hardware; root runs release serially": 3,
     "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 3,
     "requires CUDA hardware; run inside safe-run": 18,
     "requires CUDA hardware; run release inside safe-run": 1,
-    "requires CUDA hardware; run under safe-run": 12,
+    "requires CUDA hardware; run under safe-run": 18,
     "requires CUDA hardware; run under safe-run in release": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
     "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS": 1,
@@ -168,7 +169,7 @@
     "requires GPU and INFER_ATTENTION_BENCH fixtures; run under tools/bench/safe-run.sh": 1,
     "requires GPU and INFER_ATTENTION_GATE; use make check-attention": 1,
     "requires Linux NUMA policy and move_pages query permission; make check-linux-numa": 1,
-    "requires NVIDIA GPU; run under tools/bench/safe-run.sh": 2,
+    "requires NVIDIA GPU; run under tools/bench/safe-run.sh": 3,
     "requires a CUDA device; run inside safe-run": 2,
     "requires a Linux production host with get/set_mempolicy permitted; make check-linux-numa": 1,
     "requires an NVIDIA GPU; run under tools/bench/safe-run.sh": 4
@@ -276,6 +277,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/resident/greedy.rs",
+      "mount": "../../tests/unit/resident_greedy.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/resident/metadata.rs",
       "mount": "../../tests/unit/resident_metadata_check.rs"
     },
@@ -308,6 +314,11 @@
       "crate": "cuda",
       "file": "src/resident/profile.rs",
       "mount": "../../tests/unit/resident_profile.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/program/greedy.rs",
+      "mount": "../../../tests/unit/resident_program_greedy.rs"
     },
     {
       "crate": "cuda",
@@ -368,6 +379,11 @@
       "crate": "cuda",
       "file": "src/tuning/fp8_gemm.rs",
       "mount": "../../tests/unit/fp8_gemm_tuning.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/greedy.rs",
+      "mount": "../../tests/unit/tuning_greedy.rs"
     },
     {
       "crate": "cuda",
@@ -453,6 +469,11 @@
       "crate": "runtime",
       "file": "src/resource/waiters.rs",
       "mount": "../../tests/unit/resource_waiters.rs"
+    },
+    {
+      "crate": "runtime",
+      "file": "src/stages/output.rs",
+      "mount": "../../tests/unit/backend_token_output.rs"
     },
     {
       "crate": "runtime",
@@ -736,11 +757,11 @@
     }
   ],
   "totals": {
-    "all": 543,
+    "all": 556,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 543
+    "tests": 556
   }
 }

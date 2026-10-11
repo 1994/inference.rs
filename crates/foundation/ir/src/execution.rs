@@ -244,6 +244,9 @@ pub struct ResourceSnapshot {
 }
 #[derive(Debug, Clone)]
 pub struct ExecutionTask {
+    /// Allows a backend to replace a generation logits readout with an exact plain-greedy token.
+    /// This flag does not change speculative acceptance or the committed input timeline.
+    pub plain_greedy: bool,
     pub request: RequestId,
     pub state: StateId,
     pub tokens: crate::ExecutionInput,
@@ -253,6 +256,11 @@ pub struct ExecutionTask {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelOutput {
+    /// A backend's plain-greedy decision for the position after the accepted tokens.
+    /// The producer validates every logit as finite and preserves F32 total-order/lowest-index ties.
+    /// When present, logits are omitted; the engine validates eligibility and vocabulary bounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_token: Option<u32>,
     pub logits: Vec<f32>,
     pub hidden: Vec<Vec<f32>>,
     /// Tokens the backend already decided for this step; empty when the engine samples.

@@ -17,6 +17,14 @@ preparation → resource quote/reserve → ready queues → plan/validate
 - 资源报价与 Reserve / Reset / Prefix / Release 通过 typed command/reply pool 协调。满队列保留意图并重试，确认身份后才提交状态。
 - 独立 output worker 处理 sampling 与 projection，逐请求确认；慢 reader 不会阻塞同批其他请求的完成。
 
+## Backend token 输出合同
+
+对合法 plain-greedy 的 Generate 请求，runtime 通过 `ExecutionTask.plain_greedy` 允许 backend 返回精确选中的 `ModelOutput.next_token` 并省略 logits。该 token 位于已接受 `tokens` 前缀之后，保持独立表达；不能通过伪造 logits 或扩大 accepted prefix 代替 sampling 结果。
+
+backend 必须检查全部有效 logits 有限，并保留 F32 total-order 与最低索引并列规则。output worker 再验证 workload、sampling 条件、词表范围、空 logits 与输出容量，按 accepted prefix、next token 的顺序交付。存在 penalty 等不适用条件时继续使用 CPU sampling；旧序列化结果缺少 next token 时按原路径处理。
+
+CUDA 的必要 hidden readout 与 I32 token readout 共享 stream 和 completion fence，pinned 资源在完成前保留。当前支持范围与性能验证见[完整 GPU token readout 实验](../research/cuda-full-device-token-readout-2026-10-12.md)。
+
 ## 故障与排空
 
 - 请求级错误只终止对应请求。

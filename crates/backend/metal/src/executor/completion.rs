@@ -40,6 +40,7 @@ impl MetalBackend {
                 .get_mut(&task.state)
                 .ok_or_else(|| Error::invariant("readback sequence missing"))?;
             let mut output = s.readback.take().unwrap_or_else(|| ModelOutput {
+                next_token: None,
                 logits: Vec::with_capacity(self.model.vocab_size),
                 hidden: if task.readout == infer_ir::OutputReadout::Full {
                     (0..s.capacity)

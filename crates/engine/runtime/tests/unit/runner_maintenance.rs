@@ -233,6 +233,7 @@ impl Drop for Fixture {
 }
 fn tasks() -> Vec<ExecutionTask> {
     vec![ExecutionTask {
+        plain_greedy: false,
         request: infer_core::RequestId::ONE,
         state: StateId::ONE,
         tokens: vec![1, 2, 3].into(),

@@ -1,6 +1,6 @@
 //! Owned pinned destinations; host slices are exposed only after submission completion.
 use super::{CudaDevice, device_error};
-use cuda_core::{CudaContext, PinnedHostBuffer};
+use cuda_core::{CudaContext, DType, DeviceCopy, PinnedHostBuffer};
 use cutile::{prelude::*, tensor::KernelInputStored};
 use infer_core::{Error, ErrorCode, Result};
 use std::sync::{Arc, Mutex};
@@ -12,19 +12,20 @@ const MAX_READBACK_STAGING_BYTES: usize = 64 * crate::constants::MIB;
 #[path = "../../tests/unit/device_readback_check.rs"]
 mod check;
 
-type Buffer = Arc<Mutex<PinnedHostBuffer<f32>>>;
+type Buffer<T> = Arc<Mutex<PinnedHostBuffer<T>>>;
+type Rows<T> = Vec<Vec<T>>;
 
 /// A half-open element range `[skip, skip + len)` of a device tensor to copy out.
 #[derive(Clone)]
-pub struct ReadbackSource {
-    pub tensor: Arc<Tensor<f32>>,
+pub struct ReadbackSource<T: DType + DeviceCopy = f32> {
+    pub tensor: Arc<Tensor<T>>,
     pub skip: usize,
     pub len: usize,
 }
 
-impl ReadbackSource {
+impl<T: DType + DeviceCopy> ReadbackSource<T> {
     #[must_use]
-    pub fn whole(tensor: Arc<Tensor<f32>>) -> Self {
+    pub fn whole(tensor: Arc<Tensor<T>>) -> Self {
         let len = tensor.size();
         Self {
             tensor,
@@ -35,25 +36,45 @@ impl ReadbackSource {
 }
 
 #[derive(Default)]
-pub struct Readbacks {
+pub struct Readbacks<T: DType + DeviceCopy = f32> {
     context: Option<Arc<CudaContext>>,
-    buffers: Vec<Option<Buffer>>,
+    buffers: Vec<Option<Buffer<T>>>,
     poisoned: bool,
 }
 
-impl Readbacks {
+impl<T: DType + DeviceCopy> Readbacks<T> {
     pub(crate) fn run(
         &mut self,
         device: &CudaDevice,
         graph: &CudaGraph<()>,
-        sources: &[Option<ReadbackSource>],
-    ) -> Result<Vec<Vec<f32>>> {
+        sources: &[Option<ReadbackSource<T>>],
+    ) -> Result<Rows<T>> {
         if self.poisoned || !Arc::ptr_eq(graph.stream(), &device.stream) {
             return Err(Error::invalid(
                 "poisoned readback or mismatched CUDA graph stream",
             ));
         }
         self.prepare(device, sources)?;
+        let copies = self.copies(sources)?;
+        self.poisoned = true;
+        device
+            .stream
+            .device()
+            .bind_to_thread()
+            .map_err(device_error)?;
+        graph
+            .launch()
+            .then(move |()| copies)
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        // sync_on succeeded: every queued D2H finished. No GPU work can touch
+        // these private buffers until another exclusive &mut self call.
+        let results = self.results(sources)?;
+        self.poisoned = false;
+        Ok(results)
+    }
+
+    fn copies(&self, sources: &[Option<ReadbackSource<T>>]) -> Result<DeviceOpVec<()>> {
         let mut copies = DeviceOpVec::with_capacity(sources.len());
         for (source, buffer) in sources.iter().zip(&self.buffers) {
             if let Some(source) = source {
@@ -69,20 +90,11 @@ impl Readbacks {
                 });
             }
         }
-        self.poisoned = true;
-        device
-            .stream
-            .device()
-            .bind_to_thread()
-            .map_err(device_error)?;
-        graph
-            .launch()
-            .then(move |()| copies)
-            .sync_on(&device.stream)
-            .map_err(device_error)?;
-        // sync_on succeeded: every queued D2H finished. No GPU work can touch
-        // these private buffers until another exclusive &mut self call.
-        let results = sources
+        Ok(copies)
+    }
+
+    fn results(&self, sources: &[Option<ReadbackSource<T>>]) -> Result<Rows<T>> {
+        sources
             .iter()
             .zip(&self.buffers)
             .map(|(source, buffer)| {
@@ -94,12 +106,14 @@ impl Readbacks {
                     .ok_or_else(|| Error::invariant("pinned result"))?;
                 Ok(buffer.lock().map_err(device_error)?.as_slice().to_vec())
             })
-            .collect::<Result<Vec<_>>>()?;
-        self.poisoned = false;
-        Ok(results)
+            .collect()
     }
 
-    fn prepare(&mut self, device: &CudaDevice, sources: &[Option<ReadbackSource>]) -> Result<()> {
+    fn staging_bytes(
+        &self,
+        device: &CudaDevice,
+        sources: &[Option<ReadbackSource<T>>],
+    ) -> Result<usize> {
         let mut bytes = 0usize;
         for (index, source) in sources.iter().enumerate() {
             if let Some(source) = source {
@@ -117,7 +131,7 @@ impl Readbacks {
                     .checked_add(
                         source
                             .len
-                            .checked_mul(crate::constants::F32_BYTES)
+                            .checked_mul(size_of::<T>())
                             .ok_or_else(|| Error::invalid("pinned size overflow"))?,
                     )
                     .ok_or_else(|| Error::invalid("pinned size overflow"))?;
@@ -133,6 +147,15 @@ impl Readbacks {
                 "pinned readbacks exceed 64 MiB",
             ));
         }
+        Ok(bytes)
+    }
+
+    fn prepare(
+        &mut self,
+        device: &CudaDevice,
+        sources: &[Option<ReadbackSource<T>>],
+    ) -> Result<usize> {
+        let bytes = self.staging_bytes(device, sources)?;
         self.buffers.resize_with(sources.len(), || None);
         for (source, slot) in sources.iter().zip(&mut self.buffers) {
             let Some(source) = source else {
@@ -155,15 +178,71 @@ impl Readbacks {
                 PinnedHostBuffer::zeroed(context, source.len).map_err(device_error)?,
             )));
         }
-        Ok(())
+        Ok(bytes)
     }
 }
 
-struct PinnedCopy {
-    source: Arc<Tensor<f32>>,
+impl Readbacks<f32> {
+    /// Execute the model and token selector on one stream, then expose both readouts
+    /// after one completion fence. Either owner stays poisoned on submission failure.
+    pub(crate) fn run_with_tokens(
+        &mut self,
+        device: &CudaDevice,
+        graph: &CudaGraph<()>,
+        sources: &[Option<ReadbackSource>],
+        tail: (&CudaGraph<()>, &mut Readbacks<i32>, Arc<Tensor<i32>>),
+    ) -> Result<(Rows<f32>, Rows<i32>)> {
+        let (selector, tokens, tensor) = tail;
+        if self.poisoned
+            || tokens.poisoned
+            || !Arc::ptr_eq(graph.stream(), &device.stream)
+            || !Arc::ptr_eq(selector.stream(), &device.stream)
+        {
+            return Err(Error::invalid(
+                "poisoned readback or mismatched CUDA graph stream",
+            ));
+        }
+        let token_sources = [Some(ReadbackSource::whole(tensor))];
+        let bytes = self
+            .staging_bytes(device, sources)?
+            .checked_add(tokens.staging_bytes(device, &token_sources)?)
+            .ok_or_else(|| Error::invalid("pinned size overflow"))?;
+        if bytes > MAX_READBACK_STAGING_BYTES {
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "pinned readbacks exceed 64 MiB",
+            ));
+        }
+        self.prepare(device, sources)?;
+        tokens.prepare(device, &token_sources)?;
+        let copies = self.copies(sources)?;
+        let token_copies = tokens.copies(&token_sources)?;
+        self.poisoned = true;
+        tokens.poisoned = true;
+        device
+            .stream
+            .device()
+            .bind_to_thread()
+            .map_err(device_error)?;
+        graph
+            .launch()
+            .then(move |()| selector.launch())
+            .then(move |()| copies)
+            .then(move |_| token_copies)
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        let output = (self.results(sources)?, tokens.results(&token_sources)?);
+        self.poisoned = false;
+        tokens.poisoned = false;
+        Ok(output)
+    }
+}
+
+struct PinnedCopy<T: DType + DeviceCopy> {
+    source: Arc<Tensor<T>>,
     skip: usize,
     len: usize,
-    destination: Buffer,
+    destination: Buffer<T>,
 }
 
 #[expect(
@@ -172,7 +251,7 @@ struct PinnedCopy {
               against the source before enqueue; source access lease and pinned destination are \
               retained by the live submission"
 )]
-impl DeviceOp for PinnedCopy {
+impl<T: DType + DeviceCopy> DeviceOp for PinnedCopy<T> {
     type Output = ();
 
     unsafe fn execute(self, context: &ExecutionContext) -> std::result::Result<(), DeviceError> {
@@ -182,7 +261,7 @@ impl DeviceOp for PinnedCopy {
             .skip
             .checked_add(self.len)
             .is_none_or(|end| end > self.source.size())
-            || self.len.checked_mul(crate::constants::F32_BYTES).is_none()
+            || self.len.checked_mul(size_of::<T>()).is_none()
         {
             return Err(DeviceError::Internal(
                 "pinned copy range out of bounds".into(),
@@ -198,13 +277,13 @@ impl DeviceOp for PinnedCopy {
         if self.len == 0 {
             return Ok(());
         }
-        let bytes = self.len * crate::constants::F32_BYTES;
+        let bytes = self.len * size_of::<T>();
         let offset = self
             .skip
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(size_of::<T>())
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or_else(|| DeviceError::Internal("pinned copy offset overflow".into()))?;
-        // SAFETY: owned, initialized destination has exactly self.len f32s; the
+        // SAFETY: owned, initialized destination has exactly self.len elements; the
         // checked source range keeps the offset read inside the source tensor.
         // Both allocations outlive the submission. Host reads happen only after
         // sync_on; failures poison the owner and submission cleanup retains work.
@@ -225,7 +304,7 @@ impl DeviceOp for PinnedCopy {
     }
 }
 
-impl IntoFuture for PinnedCopy {
+impl<T: DType + DeviceCopy> IntoFuture for PinnedCopy<T> {
     type Output = std::result::Result<(), DeviceError>;
     type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
     fn into_future(self) -> Self::IntoFuture {

@@ -198,6 +198,7 @@ impl ProtocolBackend {
             identity: tag.to_owned(),
             states: BoundedMap::new(requests)?,
             template: ModelOutput {
+                next_token: None,
                 logits,
                 hidden: vec![vec![0.5; ir.hidden_size]],
                 tokens: Vec::with_capacity(8),

@@ -1,7 +1,7 @@
 //! Cross-sequence target verification with per-slot recurrent rollback.
 use super::{
     ActivationArena,
-    batch::{BatchBuilder, BatchOutput, Dispatch32, States, dispatch32, take_result},
+    batch::{BatchBuilder, BatchReadout, Dispatch32, States, dispatch32, take_result},
     capture::{Capture, CaptureMode, error},
     fp8_cache::Fp8Caches,
     profile,
@@ -26,6 +26,7 @@ pub(super) struct SlotVerifyGraph {
     /// candidate lanes of the slot committed; a fully accepted chain never restores.
     restore: Vec<Vec<CudaGraph<()>>>,
     readbacks: crate::device::Readbacks,
+    token_readout: Option<super::token_readout::TokenReadout>,
     metadata: Vec<Tensor<i32>>,
     hidden: Arc<Tensor<f32>>,
     logits: Arc<Tensor<f32>>,
@@ -277,7 +278,15 @@ impl BatchBuilder<'_> {
         }
         let hidden = take_result(&mut arena, self.graph.hidden)?;
         let logits = take_result(&mut arena, self.graph.logits)?;
+        let token_readout = super::token_readout::TokenReadout::new(
+            self.device,
+            std::slice::from_ref(&logits),
+            slots * verify,
+            logits.size() / (slots * verify),
+            self.weights,
+        )?;
         Ok(SlotVerifyGraph {
+            token_readout,
             graph,
             restore,
             readbacks: crate::device::Readbacks::default(),
@@ -301,13 +310,15 @@ impl SlotVerifyGraph {
     /// # Errors
     /// Rejects unknown slots, duplicate lanes, out-of-vocabulary tokens, cursors without
     /// room for the whole chain, positions out of capacity and CUDA replay failures.
-    pub fn run_verify(
+    pub(crate) fn run_verify_readout(
         &mut self,
         device: &CudaDevice,
         lanes: &[SlotVerifyLane],
         capacity: usize,
         vocabulary: usize,
-    ) -> Result<BatchOutput> {
+        plain_greedy: bool,
+    ) -> Result<BatchReadout> {
+        let device_tokens = plain_greedy && self.token_readout.is_some();
         if self.pending.iter().any(|&count| count != 0) {
             return Err(Error::invalid("uncommitted slot verification"));
         }
@@ -335,13 +346,36 @@ impl SlotVerifyGraph {
                 skip: lane * hidden_size,
                 len: hidden_size,
             }));
-            sources.push(active.then(|| ReadbackSource {
+            sources.push((active && !device_tokens).then(|| ReadbackSource {
                 tensor: Arc::clone(&self.logits),
                 skip: lane * vocabulary,
                 len: vocabulary,
             }));
         }
-        let rows = self.readbacks.run(device, &self.graph, &sources)?;
+        let (output, tokens) = if device_tokens {
+            let active: Vec<_> = per_lane
+                .iter()
+                .enumerate()
+                .filter_map(|(row, entry)| entry.as_ref().map(|_| row))
+                .collect();
+            let (rows, selected) = self
+                .token_readout
+                .as_mut()
+                .ok_or_else(|| Error::invariant("slot verify token readout"))?
+                .run(device, &self.graph, &mut self.readbacks, &sources, &active)?;
+            let mut tokens = vec![None; total];
+            for (&row, token) in active.iter().zip(selected) {
+                tokens[row] = Some(token);
+            }
+            (Some(rows), Some(tokens))
+        } else {
+            (None, None)
+        };
+        let rows = if output.is_none() {
+            self.readbacks.run(device, &self.graph, &sources)?
+        } else {
+            Vec::new()
+        };
         if let Some(profile) = &self.profile
             && let Some(&(.., rope_pos, _)) = lanes.first()
         {
@@ -349,6 +383,9 @@ impl SlotVerifyGraph {
         }
         for (slot, group) in per_lane.chunks_exact(self.verify).enumerate() {
             self.pending[slot] = group.iter().flatten().count();
+        }
+        if let Some(rows) = output {
+            return Ok(BatchReadout { rows, tokens });
         }
         let mut rows = rows.into_iter();
         (0..total)
@@ -360,7 +397,8 @@ impl SlotVerifyGraph {
                         .ok_or_else(|| Error::invariant("slot verify logits readback"))?,
                 ))
             })
-            .collect()
+            .collect::<Result<_>>()
+            .map(BatchReadout::host)
     }
 
     /// Commit `accepted` candidate lanes of `slot` (not counting the submitted token, which

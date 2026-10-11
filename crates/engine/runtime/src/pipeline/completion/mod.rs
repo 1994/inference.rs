@@ -51,6 +51,7 @@ impl CompletedBatch {
         Ok(std::mem::replace(
             &mut self.outputs[slot].output,
             ModelOutput {
+                next_token: None,
                 logits: Vec::new(),
                 hidden: Vec::new(),
 

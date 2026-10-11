@@ -1,5 +1,6 @@
 //! Paired graph measurements on loaded model weights, isolated from model adapters.
 pub mod fp8_gemm;
+pub mod greedy;
 pub mod resident_gemm;
 
 use crate::{
@@ -260,6 +261,9 @@ pub struct TilingTable {
     pub resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
     #[serde(default)]
     pub resident_fp8_gemm: Vec<fp8_gemm::Entry>,
+    /// Device/driver/kernel/geometry scoped exact greedy reduction decisions.
+    #[serde(default)]
+    pub greedy: Vec<greedy::Entry>,
 }
 
 /// Read both the current per-device table and the former top-level `device`/`entries` format.
@@ -275,6 +279,8 @@ struct StoredTilingTable {
     resident_gemm: Vec<resident_gemm::ResidentGemmEntry>,
     #[serde(default)]
     resident_fp8_gemm: Vec<fp8_gemm::Entry>,
+    #[serde(default)]
+    greedy: Vec<greedy::Entry>,
 }
 
 impl From<StoredTilingTable> for TilingTable {
@@ -298,6 +304,7 @@ impl From<StoredTilingTable> for TilingTable {
             devices,
             resident_gemm: stored.resident_gemm,
             resident_fp8_gemm: stored.resident_fp8_gemm,
+            greedy: stored.greedy,
         }
     }
 }

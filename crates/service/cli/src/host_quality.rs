@@ -154,6 +154,7 @@ fn verify_prefixes(
             program,
             &step,
             vec![ExecutionTask {
+                plain_greedy: false,
                 request,
                 state,
                 tokens: prefix.tokens.clone().into(),

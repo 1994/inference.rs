@@ -45,6 +45,7 @@ fn job(id: u64, projection: bool) -> Result<OutputJob> {
         generated: Vec::new().into(),
         request: Arc::new(request),
         output: ModelOutput {
+            next_token: None,
             logits: vec![0.0, 2.0, 1.0],
             hidden: vec![vec![1.0, 2.0]],
 

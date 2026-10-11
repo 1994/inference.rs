@@ -535,8 +535,18 @@ fn slot_replay(
         let position = state.history.len();
         lanes.push((slot, token, position, position));
     }
-    let rows = pool.run_lanes(device, &lanes)?;
-    for ((_, logits), &(index, _)) in rows.into_iter().zip(participants) {
+    let plain_greedy = participants
+        .iter()
+        .all(|&(index, _)| tasks[index].plain_greedy);
+    let readout = pool.run_lanes_readout(device, &lanes, plain_greedy)?;
+    for (row, ((_, logits), &(index, _))) in readout.rows.into_iter().zip(participants).enumerate()
+    {
+        let next_token = match readout.tokens.as_ref() {
+            Some(tokens) => {
+                Some(tokens[row].ok_or_else(|| Error::invariant("slot selected token"))?)
+            }
+            None => None,
+        };
         let state = states
             .get_mut(&tasks[index].state)
             .ok_or_else(|| Error::invariant("validated CUDA state"))?;
@@ -547,6 +557,7 @@ fn slot_replay(
         outputs[index] = Some(TaskOutput {
             request: tasks[index].request,
             output: ModelOutput {
+                next_token,
                 logits,
                 hidden: Vec::new(),
                 tokens: Vec::new(),
@@ -593,7 +604,13 @@ fn slot_speculate(
             lanes.push((slot, offset, token, position + offset, position + offset));
         }
     }
-    let mut rows = super::profiling::phase("verify", || pool.run_verify(device, &lanes))?;
+    let plain_greedy = participants
+        .iter()
+        .all(|&(index, _)| tasks[index].plain_greedy);
+    let mut readout = super::profiling::phase("verify", || {
+        pool.run_verify_readout(device, &lanes, plain_greedy)
+    })?;
+    let rows = &mut readout.rows;
     for (&(index, slot), chain) in participants.iter().zip(candidates) {
         let state = states
             .get_mut(&tasks[index].state)
@@ -602,6 +619,10 @@ fn slot_speculate(
             &tasks[index],
             &chain,
             &mut rows[slot * width..][..chain.len()],
+            readout
+                .tokens
+                .as_ref()
+                .map(|tokens| &tokens[slot * width..][..chain.len()]),
             defer_draft,
         )?;
         pool.commit_verify(device, slot, output.tokens.len())?;
@@ -621,7 +642,7 @@ fn slot_speculate(
             tasks,
             participants,
             outputs,
-            &rows,
+            rows,
             width,
         )?;
     }
@@ -701,8 +722,28 @@ impl Sequence {
         task: &ExecutionTask,
         chain: &[u32],
         rows: &mut [(Vec<f32>, Vec<f32>)],
+        tokens: Option<&[Option<u32>]>,
         defer_draft: bool,
     ) -> Result<ModelOutput> {
+        if let Some(sampling) = task.sampling.as_ref() {
+            sampling.validate()?;
+        }
+        if tokens.is_some()
+            && (!task.plain_greedy
+                || task
+                    .sampling
+                    .as_ref()
+                    .is_none_or(|sampling| !sampling.uses_plain_greedy()))
+        {
+            return Err(Error::invalid(
+                "selected verification requires plain greedy",
+            ));
+        }
+        if tokens
+            .is_some_and(|tokens| tokens.len() < chain.len() || tokens.iter().any(Option::is_none))
+        {
+            return Err(Error::invariant("verification selected token rows"));
+        }
         let position = self.history.len();
         task.tokens.commit(&mut self.history)?;
         let mut accepted = Vec::new();
@@ -717,9 +758,12 @@ impl Sequence {
                     scratch: &mut spec.scratch,
                 };
                 for (offset, &candidate) in chain[1..].iter().enumerate() {
-                    if sampler.pick(&rows[offset].1, position + offset + 1, &generated)?
-                        != candidate
-                    {
+                    let selected = match tokens {
+                        Some(tokens) => tokens[offset]
+                            .ok_or_else(|| Error::invariant("verification selected token"))?,
+                        None => sampler.pick(&rows[offset].1, position + offset + 1, &generated)?,
+                    };
+                    if selected != candidate {
                         break;
                     }
                     accepted.push(candidate);
@@ -738,7 +782,13 @@ impl Sequence {
             spec.last_hidden.clone_from(&rows[accepted.len()].0);
         }
         self.history.extend_from_slice(&accepted);
+        let next_token = tokens
+            .map(|tokens| {
+                tokens[accepted.len()].ok_or_else(|| Error::invariant("verification next token"))
+            })
+            .transpose()?;
         Ok(ModelOutput {
+            next_token,
             logits: std::mem::take(&mut rows[accepted.len()].1),
             hidden: Vec::new(),
             tokens: accepted,
@@ -754,6 +804,7 @@ impl Sequence {
         let speculate = self.speculation.is_some();
         let mut offset = 0;
         let mut logits = Vec::new();
+        let mut next_token = None;
         // Target hidden rows prime the draft; a chunked prefill spans several calls.
         let mut priming = Vec::new();
         while offset < tokens.len() {
@@ -778,6 +829,23 @@ impl Sequence {
                         read_hidden,
                     )
                 })?
+            } else if read_logits
+                && task.plain_greedy
+                && readout == OutputReadout::Logits
+                && self.readout != OutputReadout::Full
+            {
+                let selected = super::profiling::phase("selected_step", || {
+                    self.program
+                        .step_selected(tokens[offset], position, read_hidden)
+                })?;
+                next_token = selected
+                    .tokens
+                    .as_ref()
+                    .map(|tokens| {
+                        tokens[0].ok_or_else(|| Error::invariant("program selected token"))
+                    })
+                    .transpose()?;
+                selected.rows
             } else {
                 vec![super::profiling::phase("prefill_step", || {
                     self.program.step_readout(
@@ -808,6 +876,7 @@ impl Sequence {
         }
         task.tokens.commit(&mut self.history)?;
         Ok(ModelOutput {
+            next_token,
             logits,
             hidden: if readout == OutputReadout::Full {
                 self.hidden.clone()
@@ -920,8 +989,16 @@ impl Sequence {
         // the replacement and submits it on the next step. An extra scalar target
         // forward here repeats the rejected work and defeats weight sharing.
         let chain = self.slot_candidates(task, width)?;
-        let mut rows = self.program.step_batch(&chain, position)?;
-        let output = self.slot_decide(task, &chain, &mut rows, false)?;
+        let mut readout = self
+            .program
+            .step_batch_readout(&chain, position, task.plain_greedy)?;
+        let output = self.slot_decide(
+            task,
+            &chain,
+            &mut readout.rows,
+            readout.tokens.as_deref(),
+            false,
+        )?;
         self.program.commit_batch(output.tokens.len() + 1)?;
         Ok(Some(output))
     }
@@ -956,20 +1033,35 @@ fn propose(
 ) -> Result<Vec<u32>> {
     let mut proposals = Vec::new();
     let (mut token, start) = submitted;
-    let mut hidden = previous.to_vec();
+    sampler.sampling.validate()?;
+    let device_greedy = sampler.sampling.uses_plain_greedy() && draft.has_device_greedy();
+    let mut hidden = if device_greedy {
+        Vec::new()
+    } else {
+        previous.to_vec()
+    };
     for index in (start..).take(count) {
-        let (next_hidden, logits) = draft.step(
-            token,
-            index,
-            index - crate::constants::MTP_KV_OFFSET,
-            Some(&hidden),
-            true,
-        )?;
-        let candidate = sampler.pick(&logits, index + 1, proposed)?;
+        let candidate = if device_greedy {
+            draft.step_greedy(
+                token,
+                index,
+                index - crate::constants::MTP_KV_OFFSET,
+                (index == start).then_some(previous),
+            )?
+        } else {
+            let (next_hidden, logits) = draft.step(
+                token,
+                index,
+                index - crate::constants::MTP_KV_OFFSET,
+                Some(&hidden),
+                true,
+            )?;
+            hidden = next_hidden;
+            sampler.pick(&logits, index + 1, proposed)?
+        };
         proposed.push(candidate);
         proposals.push(candidate);
         token = candidate;
-        hidden = next_hidden;
     }
     Ok(proposals)
 }

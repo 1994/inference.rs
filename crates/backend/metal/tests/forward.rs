@@ -130,6 +130,7 @@ fn execute(
         program,
         &step,
         vec![ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: StateId::ONE,
             tokens: tokens.to_vec().into(),
@@ -223,6 +224,7 @@ fn layer_major_chunks_match_official_golden_and_reduce_dispatches() -> TestResul
         let prefix = &golden["prefixes"][5];
         let tokens: Vec<u32> = serde_json::from_value(prefix["tokens"].clone())?;
         let expected = ModelOutput {
+            next_token: None,
             logits: serde_json::from_value(prefix["logits"].clone())?,
             hidden: serde_json::from_value(prefix["hidden"].clone())?,
 

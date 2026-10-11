@@ -31,6 +31,7 @@ pub fn check(
         backend,
         program,
         &[ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: id,
             tokens: vec![0; capacity + 2].into(),
@@ -101,6 +102,7 @@ fn verify(
         backend,
         program,
         &[ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state,
             tokens: ExecutionInput::Prefill {

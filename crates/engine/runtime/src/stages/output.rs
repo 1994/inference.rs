@@ -63,6 +63,7 @@ impl OutputJob {
         workloads: &dyn WorkloadProvider,
         scratch: &mut infer_workloads::SamplingWorkspace,
     ) -> Result<ProcessedOutput> {
+        self.validate_backend_token()?;
         self.shape.validate(&self.output)?;
         if self.output.tokens.len() + usize::from(self.sample.is_some()) > DECIDED_TOKEN_CAPACITY {
             return Err(Error::invariant("backend decided token capacity exceeded"));
@@ -78,20 +79,23 @@ impl OutputJob {
             for token in tokens.as_slice() {
                 self.generated.push(*token);
             }
-            let token = infer_workloads::sample_with_history(
-                &self.output.logits,
-                &self.request.sampling,
-                self.request.id.get(),
-                position,
-                infer_workloads::SamplingHistory {
-                    prompt: match &self.request.input {
-                        infer_ir::RequestInput::Sequence { tokens, .. } => tokens,
-                        infer_ir::RequestInput::Pairs { .. } => &[],
+            let token = match self.output.next_token.take() {
+                Some(token) => token,
+                None => infer_workloads::sample_with_history(
+                    &self.output.logits,
+                    &self.request.sampling,
+                    self.request.id.get(),
+                    position,
+                    infer_workloads::SamplingHistory {
+                        prompt: match &self.request.input {
+                            infer_ir::RequestInput::Sequence { tokens, .. } => tokens,
+                            infer_ir::RequestInput::Pairs { .. } => &[],
+                        },
+                        generated: &self.generated,
                     },
-                    generated: &self.generated,
-                },
-                scratch,
-            )?;
+                    scratch,
+                )?,
+            };
             tokens.push(token);
             return Ok(ProcessedOutput {
                 output: Some(self.output),
@@ -119,10 +123,39 @@ impl OutputJob {
             projection: None,
         })
     }
+
+    fn validate_backend_token(&self) -> Result<()> {
+        if self.output.next_token.is_none() {
+            return Ok(());
+        }
+        self.request.sampling.validate()?;
+        if self.sample.is_none()
+            || self.project.is_some()
+            || !matches!(self.request.workload, infer_ir::Workload::Generate { .. })
+            || !self.request.sampling.uses_plain_greedy()
+            || self.shape.rows != 0
+        {
+            return Err(Error::invariant(
+                "backend token outside plain-greedy generation",
+            ));
+        }
+        Ok(())
+    }
 }
 impl OutputShape {
     fn validate(self, output: &ModelOutput) -> Result<()> {
-        if output.logits.len() != self.logits
+        let logits_valid = output
+            .next_token
+            .map_or(output.logits.len() == self.logits, |token| {
+                output.logits.is_empty()
+                    && self.logits > 0
+                    && usize::try_from(token).is_ok_and(|token| token < self.logits)
+            });
+        if !logits_valid
+            || output
+                .tokens
+                .iter()
+                .any(|&token| usize::try_from(token).map_or(true, |token| token >= self.logits))
             || output.hidden.len() != self.rows
             || output
                 .hidden
@@ -135,3 +168,7 @@ impl OutputShape {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/backend_token_output.rs"]
+mod backend_token_tests;

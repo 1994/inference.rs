@@ -135,6 +135,15 @@ impl CanonicalRequest {
 }
 
 impl Sampling {
+    /// Whether validated parameters select the highest F32 total-order logit directly.
+    /// This does not validate the parameter ranges.
+    #[must_use]
+    pub fn uses_plain_greedy(&self) -> bool {
+        self.temperature == 0.0
+            && self.presence_penalty == 0.0
+            && self.repetition_penalty.to_bits() == 1.0_f32.to_bits()
+    }
+
     /// # Errors
     /// Rejects non-finite values and invalid probability/penalty ranges.
     pub fn validate(&self) -> Result<()> {

@@ -70,6 +70,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
         &program,
         &step(&program, &[StateId::ONE], 3)?,
         vec![ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: StateId::ONE,
             tokens: vec![1, 2, 3].into(),
@@ -95,6 +96,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
         .replace(backend.gpu.zeros(1)?);
     let tasks = vec![
         ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: StateId::ONE,
             tokens: vec![1, 2, 3, 5].into(),
@@ -102,6 +104,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
             sampling: None,
         },
         ExecutionTask {
+            plain_greedy: false,
             request: RequestId::new(2)?,
             state: second,
             tokens: vec![1, 2, 3, 8].into(),
@@ -130,6 +133,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
         &program,
         &step(&program, &[second], 1)?,
         vec![ExecutionTask {
+            plain_greedy: false,
             request: RequestId::new(2)?,
             state: second,
             tokens: vec![1, 2, 3, 8].into(),

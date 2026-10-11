@@ -250,6 +250,7 @@ fn execute(
             p,
             &step,
             vec![ExecutionTask {
+                plain_greedy: false,
                 request: rid,
                 state: sid,
                 tokens: tokens.into(),

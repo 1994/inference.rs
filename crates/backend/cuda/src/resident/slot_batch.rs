@@ -426,7 +426,17 @@ impl SlotPool {
     /// Replay one decode step for the active lanes; see [`SlotDecodeGraph::run_lanes`].
     /// # Errors
     /// Rejects invalid lanes or positions, a speculation pool and CUDA replay failures.
+    #[cfg(test)]
     pub fn run_lanes(&mut self, device: &CudaDevice, lanes: &[SlotLane]) -> Result<BatchOutput> {
+        Ok(self.run_lanes_readout(device, lanes, false)?.rows)
+    }
+
+    pub(crate) fn run_lanes_readout(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        plain_greedy: bool,
+    ) -> Result<super::batch::BatchReadout> {
         if self
             .decode
             .as_ref()
@@ -440,21 +450,38 @@ impl SlotPool {
         self.decode
             .as_mut()
             .ok_or_else(|| Error::invalid("slot pool has no decode graph"))?
-            .run_lanes(device, lanes, self.capacity, self.vocabulary, true)
+            .run_lanes_readout(
+                device,
+                lanes,
+                self.capacity,
+                self.vocabulary,
+                true,
+                plain_greedy,
+            )
     }
 
-    /// Replay one pooled speculation step; see [`SlotVerifyGraph::run_verify`].
+    /// Replay one pooled speculation step; see [`SlotVerifyGraph::run_verify_readout`].
     /// # Errors
     /// Rejects invalid lanes or positions, a decode-only pool and CUDA replay failures.
+    #[cfg(test)]
     pub fn run_verify(
         &mut self,
         device: &CudaDevice,
         lanes: &[SlotVerifyLane],
     ) -> Result<BatchOutput> {
+        Ok(self.run_verify_readout(device, lanes, false)?.rows)
+    }
+
+    pub(crate) fn run_verify_readout(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotVerifyLane],
+        plain_greedy: bool,
+    ) -> Result<super::batch::BatchReadout> {
         self.verify
             .as_mut()
             .ok_or_else(|| Error::invalid("slot pool has no verify graph"))?
-            .run_verify(device, lanes, self.capacity, self.vocabulary)
+            .run_verify_readout(device, lanes, self.capacity, self.vocabulary, plain_greedy)
     }
 
     /// Commit one slot's accepted candidates; see [`SlotVerifyGraph::commit`].

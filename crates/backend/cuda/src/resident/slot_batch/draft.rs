@@ -102,6 +102,32 @@ impl SlotPool {
             .run_lanes(device, lanes, self.capacity, self.vocabulary, read_logits)
     }
 
+    pub(crate) fn run_external_selected(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        hidden: &[&[f32]],
+        plain_greedy: bool,
+    ) -> Result<crate::resident::batch::BatchReadout> {
+        if !plain_greedy {
+            return self
+                .run_external(device, lanes, hidden)
+                .map(crate::resident::batch::BatchReadout::host);
+        }
+        self.upload_lanes(device, lanes, hidden)?;
+        self.decode
+            .as_mut()
+            .ok_or_else(|| Error::invariant("external decode graph"))?
+            .run_lanes_readout(
+                device,
+                lanes,
+                self.capacity,
+                self.vocabulary,
+                true,
+                plain_greedy,
+            )
+    }
+
     /// Draft catch-up replay: the state-only graph's outputs are never read, so the
     /// launch detaches — no readback, no sync. Completion rides the next pool readback
     /// or the drop barrier; stream order keeps it ahead of any later replay.

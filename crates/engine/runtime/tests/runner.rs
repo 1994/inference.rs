@@ -334,6 +334,7 @@ fn batch_metadata_is_shared_across_the_device_owner_handoff() -> Result<()> {
         &program,
         step.clone(),
         vec![ExecutionTask {
+            plain_greedy: false,
             request: infer_core::RequestId::ONE,
             state: StateId::ONE,
             tokens: vec![1, 2, 3].into(),
@@ -389,6 +390,7 @@ fn dropped_compute_ticket_waits_for_fence_then_allows_next_submission() -> Resul
         quantum_overrun: false,
     });
     let tasks = vec![ExecutionTask {
+        plain_greedy: false,
         request: infer_core::RequestId::ONE,
         state: StateId::ONE,
         tokens: vec![1, 2, 3].into(),

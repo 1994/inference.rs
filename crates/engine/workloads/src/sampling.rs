@@ -96,10 +96,7 @@ pub fn sample_with_history(
     scratch: &mut SamplingWorkspace,
 ) -> Result<u32> {
     sampling.validate()?;
-    if sampling.temperature == 0.0
-        && sampling.presence_penalty == 0.0
-        && sampling.repetition_penalty.to_bits() == 1.0_f32.to_bits()
-    {
+    if sampling.uses_plain_greedy() {
         return greedy(logits);
     }
     if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) {

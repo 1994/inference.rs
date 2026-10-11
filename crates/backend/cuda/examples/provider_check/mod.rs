@@ -80,6 +80,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         &mut backend,
         &program,
         &[ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: states[0],
             tokens: prompt.clone().into(),
@@ -122,12 +123,14 @@ fn prefill_tasks(prompt: &[u32], states: [StateId; 2]) -> Result<Vec<ExecutionTa
     let input: infer_ir::TokenBuffer = prompt.to_vec().into();
     Ok(vec![
         ExecutionTask {
+            plain_greedy: false,
             request: RequestId::ONE,
             state: states[0],
             tokens: prompt.to_vec().into(),
             sampling: None,
         },
         ExecutionTask {
+            plain_greedy: false,
             request: RequestId::new(2)?,
             state: states[1],
             tokens: ExecutionInput::Prefill {
@@ -161,6 +164,7 @@ fn generate(
                 backend,
                 program,
                 &[ExecutionTask {
+                    plain_greedy: false,
                     request: RequestId::new(index as u64 + 1)?,
                     state: states[index],
                     tokens: ExecutionInput::Decode {

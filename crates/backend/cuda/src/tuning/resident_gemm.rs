@@ -57,6 +57,7 @@ const MODEL_SEARCH_BUDGET: Duration = Duration::from_secs(30);
 /// The allowance starts at its first new resident search or numerical proof, after weight binding.
 pub struct ResidentTuningSession {
     started: OnceLock<Instant>,
+    greedy_started: OnceLock<Instant>,
     budget: Duration,
 }
 
@@ -64,12 +65,18 @@ impl Default for ResidentTuningSession {
     fn default() -> Self {
         Self {
             started: OnceLock::new(),
+            greedy_started: OnceLock::new(),
             budget: MODEL_SEARCH_BUDGET,
         }
     }
 }
 
 impl ResidentTuningSession {
+    /// A separate finite allowance lets greedy tuning run after GEMM searches finish.
+    pub(crate) fn permits_greedy_search(&self) -> bool {
+        self.greedy_started.get_or_init(Instant::now).elapsed() < self.budget
+    }
+
     pub(crate) fn permits_search(&self) -> bool {
         self.started.get_or_init(Instant::now).elapsed() < self.budget
     }

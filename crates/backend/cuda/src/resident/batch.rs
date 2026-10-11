@@ -17,6 +17,16 @@ use std::collections::BTreeMap;
 pub type States = BTreeMap<TensorId, Vec<Tensor<f32>>>;
 pub type BatchOutput = Vec<(Vec<f32>, Vec<f32>)>;
 
+pub struct BatchReadout {
+    pub rows: BatchOutput,
+    pub tokens: Option<Vec<Option<u32>>>,
+}
+impl BatchReadout {
+    pub(super) const fn host(rows: BatchOutput) -> Self {
+        Self { rows, tokens: None }
+    }
+}
+
 pub(super) struct Lane {
     pub arena: ActivationArena,
     metadata: Tensor<i32>,
@@ -26,6 +36,7 @@ pub(super) struct Lane {
 pub(super) struct BatchGraph {
     graph: Option<CudaGraph<()>>,
     readbacks: crate::device::Readbacks,
+    token_readout: Option<super::token_readout::TokenReadout>,
     prefill: CudaGraph<()>,
     prefill_last: CudaGraph<()>,
     restore: Vec<CudaGraph<()>>,
@@ -80,6 +91,7 @@ pub(super) struct SlotDecodeGraph {
     graph: CudaGraph<()>,
     state_only: Option<CudaGraph<()>>,
     readbacks: crate::device::Readbacks,
+    token_readout: Option<super::token_readout::TokenReadout>,
     metadata: Vec<Tensor<i32>>,
     // Batched hidden rows stay allocated for the graph's writes but are never read back.
     hidden: Arc<Tensor<f32>>,
@@ -176,83 +188,34 @@ impl BatchBuilder<'_> {
         let mut arena = slot_arena(self.device, self.graph, width)?;
         let metadata = slot_metadata(self.device, width)?;
         let mut profile = profile::SlotProfile::from_env(self.device);
-        let mut capture = |read_logits: bool| {
-            CudaGraph::scope(&self.device.stream, |scope| {
-                let mut no_fusion = None;
-                for (index, node) in self.graph.nodes.iter().enumerate() {
-                    if !read_logits && node.outputs.iter().any(|id| Some(*id) == self.graph.logits)
-                    {
-                        continue;
-                    }
-                    if read_logits && let Some(profile) = profile.as_mut() {
-                        profile.graph().boundary(scope, index, node)?;
-                    }
-                    if node.op == TensorOp::Linear {
-                        super::batch_projection::record_slots(
-                            scope,
-                            node,
-                            &mut arena,
-                            self.weights,
-                            self.nvfp4,
-                        )?;
-                        continue;
-                    }
-                    match dispatch32(node, self.weights) {
-                        Dispatch32::Linear => return Err(error("slot decode linear dispatch")),
-                        Dispatch32::Batched => Capture {
-                            scope,
-                            arena: &mut arena,
-                            weights: self.weights,
-                            nvfp4: self.nvfp4,
-                            attention: self.attention,
-                            states: self.states,
-                            fp8_states: self.fp8_states,
-                            metadata: &metadata[0],
-                            table: &self.tables[0],
-                            external: self.external,
-                            capacity: self.capacity,
-                            fusion: &mut no_fusion,
-                            mode: CaptureMode::Batched,
-                        }
-                        .record(node)?,
-                        Dispatch32::Row => {
-                            for lane in 0..width {
-                                Capture {
-                                    scope,
-                                    arena: &mut arena,
-                                    weights: self.weights,
-                                    nvfp4: self.nvfp4,
-                                    attention: self.attention,
-                                    states: &mut lane_states[lane],
-                                    fp8_states: &mut lane_fp8[lane],
-                                    metadata: &metadata[lane],
-                                    table: &self.tables[lane],
-                                    external: &self.lane_external[lane],
-                                    capacity: self.capacity,
-                                    fusion: &mut self.lane_fusion[lane],
-                                    mode: CaptureMode::Row(lane),
-                                }
-                                .record_row(node, lane)?;
-                            }
-                        }
-                    }
-                }
-                if read_logits && let Some(profile) = profile.as_mut() {
-                    profile.graph().finish(scope)?;
-                }
-                Ok(())
-            })
-            .map_err(device_error)
-        };
-        let graph = capture(true)?;
+        let graph = self.capture_slots(
+            &mut arena,
+            &metadata,
+            (lane_states, lane_fp8),
+            &mut profile,
+            true,
+        )?;
         let state_only = if self.weights.fusion.is_some() {
-            Some(capture(false)?)
+            Some(self.capture_slots(
+                &mut arena,
+                &metadata,
+                (lane_states, lane_fp8),
+                &mut profile,
+                false,
+            )?)
         } else {
             None
         };
         let hidden = take_result(&mut arena, self.graph.hidden)?;
         let logits = take_result(&mut arena, self.graph.logits)?;
+        let token_readout = super::token_readout::TokenReadout::contiguous(
+            self.device,
+            &logits,
+            width,
+            self.weights,
+        )?;
         Ok(SlotDecodeGraph {
+            token_readout,
             graph,
             state_only,
             readbacks: crate::device::Readbacks::default(),
@@ -265,6 +228,111 @@ impl BatchBuilder<'_> {
             profile,
             _arena: arena,
         })
+    }
+
+    fn capture_slots(
+        &mut self,
+        arena: &mut ActivationArena,
+        metadata: &[Tensor<i32>],
+        states: (&mut [States], &mut [Fp8Caches]),
+        profile: &mut Option<profile::SlotProfile>,
+        read_logits: bool,
+    ) -> Result<CudaGraph<()>> {
+        let (lane_states, lane_fp8) = states;
+        let width = lane_states.len();
+        CudaGraph::scope(&self.device.stream, |scope| {
+            let mut no_fusion = None;
+            for (index, node) in self.graph.nodes.iter().enumerate() {
+                if !read_logits && node.outputs.iter().any(|id| Some(*id) == self.graph.logits) {
+                    continue;
+                }
+                if read_logits && let Some(profile) = profile.as_mut() {
+                    profile.graph().boundary(scope, index, node)?;
+                }
+                if node.op == TensorOp::Linear {
+                    super::batch_projection::record_slots(
+                        scope,
+                        node,
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                    )?;
+                    continue;
+                }
+                match dispatch32(node, self.weights) {
+                    Dispatch32::Linear => return Err(error("slot decode linear dispatch")),
+                    Dispatch32::Batched => Capture {
+                        scope,
+                        arena,
+                        weights: self.weights,
+                        nvfp4: self.nvfp4,
+                        attention: self.attention,
+                        states: self.states,
+                        fp8_states: self.fp8_states,
+                        metadata: &metadata[0],
+                        table: &self.tables[0],
+                        external: self.external,
+                        capacity: self.capacity,
+                        fusion: &mut no_fusion,
+                        mode: CaptureMode::Batched,
+                    }
+                    .record(node)?,
+                    Dispatch32::Row => {
+                        for lane in 0..width {
+                            Capture {
+                                scope,
+                                arena,
+                                weights: self.weights,
+                                nvfp4: self.nvfp4,
+                                attention: self.attention,
+                                states: &mut lane_states[lane],
+                                fp8_states: &mut lane_fp8[lane],
+                                metadata: &metadata[lane],
+                                table: &self.tables[lane],
+                                external: &self.lane_external[lane],
+                                capacity: self.capacity,
+                                fusion: &mut self.lane_fusion[lane],
+                                mode: CaptureMode::Row(lane),
+                            }
+                            .record_row(node, lane)?;
+                        }
+                    }
+                }
+            }
+            if read_logits && let Some(profile) = profile.as_mut() {
+                profile.graph().finish(scope)?;
+            }
+            Ok(())
+        })
+        .map_err(device_error)
+    }
+
+    pub(super) fn capture_single(
+        &mut self,
+        arena: &mut ActivationArena,
+        metadata: &Tensor<i32>,
+        fusion: &mut Option<super::program::FusionWorkspace>,
+        skip_logits: bool,
+    ) -> Result<CudaGraph<()>> {
+        CudaGraph::scope(&self.device.stream, |scope| {
+            Capture {
+                scope,
+                arena,
+                weights: self.weights,
+                nvfp4: self.nvfp4,
+                attention: self.attention,
+                states: self.states,
+                fp8_states: self.fp8_states,
+                metadata,
+                table: &self.tables[0],
+                external: self.external,
+                capacity: self.capacity,
+                fusion,
+                mode: CaptureMode::Flat,
+            }
+            .record_program(self.graph, skip_logits)
+        })
+        .map_err(device_error)
     }
 
     pub fn build(&mut self) -> Result<BatchGraph> {
@@ -314,7 +382,15 @@ impl BatchBuilder<'_> {
             logits.push(take_result(&mut lane.arena, self.graph.logits)?);
             metadata.push(lane.metadata);
         }
+        let token_readout = super::token_readout::TokenReadout::new(
+            self.device,
+            &logits,
+            width,
+            logits[0].size(),
+            self.weights,
+        )?;
         Ok(BatchGraph {
+            token_readout,
             graph,
             state_offset: Self::state_offset(self.weights),
             readbacks: crate::device::Readbacks::default(),
@@ -407,6 +483,7 @@ impl BatchBuilder<'_> {
         let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
         let logits = vec![take_result(&mut arena, self.graph.logits)?];
         Ok(BatchGraph {
+            token_readout: None,
             graph: None,
             state_offset: Self::state_offset(self.weights),
             readbacks: crate::device::Readbacks::default(),
@@ -710,9 +787,26 @@ impl BatchGraph {
         prefill: Option<bool>,
         read_hidden: bool,
     ) -> Result<BatchOutput> {
+        Ok(self
+            .run_readout(device, tokens, position, prefill, read_hidden, false)?
+            .rows)
+    }
+
+    pub(crate) fn run_readout(
+        &mut self,
+        device: &CudaDevice,
+        tokens: &[u32],
+        position: usize,
+        prefill: Option<bool>,
+        read_hidden: bool,
+        plain_greedy: bool,
+    ) -> Result<BatchReadout> {
         if self.width >= crate::constants::PREFILL_LANES {
-            return self.run32(device, tokens, position, prefill, read_hidden);
+            return self
+                .run32(device, tokens, position, prefill, read_hidden)
+                .map(BatchReadout::host);
         }
+        let device_tokens = plain_greedy && prefill.is_none() && self.token_readout.is_some();
         let graph = match prefill {
             None => self
                 .graph
@@ -766,10 +860,23 @@ impl BatchGraph {
         }
         let mut sources = Vec::with_capacity(2 * tokens.len());
         for lane in 0..tokens.len() {
-            let logits = prefill.is_none() || prefill == Some(true) && lane + 1 == tokens.len();
+            let logits = !device_tokens
+                && (prefill.is_none() || prefill == Some(true) && lane + 1 == tokens.len());
             sources
                 .push(read_hidden.then(|| ReadbackSource::whole(Arc::clone(&self.hidden[lane]))));
             sources.push(logits.then(|| ReadbackSource::whole(Arc::clone(&self.logits[lane]))));
+        }
+        if device_tokens {
+            let active: Vec<_> = (0..tokens.len()).collect();
+            let (rows, tokens) = self
+                .token_readout
+                .as_mut()
+                .ok_or_else(|| Error::invariant("batch token readout"))?
+                .run(device, graph, &mut self.readbacks, &sources, &active)?;
+            return Ok(BatchReadout {
+                rows,
+                tokens: Some(tokens.into_iter().map(Some).collect()),
+            });
         }
         let mut rows = self.readbacks.run(device, graph, &sources)?.into_iter();
         (0..tokens.len())
@@ -781,7 +888,8 @@ impl BatchGraph {
                         .ok_or_else(|| Error::invariant("batch logits readback"))?,
                 ))
             })
-            .collect()
+            .collect::<Result<_>>()
+            .map(BatchReadout::host)
     }
 
     /// State positions this graph lags its `RoPE` position by.
@@ -1026,6 +1134,21 @@ impl SlotDecodeGraph {
         vocabulary: usize,
         read_logits: bool,
     ) -> Result<BatchOutput> {
+        Ok(self
+            .run_lanes_readout(device, lanes, capacity, vocabulary, read_logits, false)?
+            .rows)
+    }
+
+    pub(crate) fn run_lanes_readout(
+        &mut self,
+        device: &CudaDevice,
+        lanes: &[SlotLane],
+        capacity: usize,
+        vocabulary: usize,
+        read_logits: bool,
+        plain_greedy: bool,
+    ) -> Result<BatchReadout> {
+        let device_tokens = read_logits && plain_greedy && self.token_readout.is_some();
         let graph = if read_logits {
             &self.graph
         } else {
@@ -1053,13 +1176,28 @@ impl SlotDecodeGraph {
                     len: self.hidden.size() / self.width,
                 }),
             );
-            sources.push(read_logits.then(|| ReadbackSource {
+            sources.push((read_logits && !device_tokens).then(|| ReadbackSource {
                 tensor: Arc::clone(&self.logits),
                 skip: slot * vocabulary,
                 len: vocabulary,
             }));
         }
-        let rows = self.readbacks.run(device, graph, &sources)?;
+        let (output, tokens) = if device_tokens {
+            let active: Vec<_> = lanes.iter().map(|&(slot, ..)| slot).collect();
+            let (rows, tokens) = self
+                .token_readout
+                .as_mut()
+                .ok_or_else(|| Error::invariant("slot token readout"))?
+                .run(device, graph, &mut self.readbacks, &sources, &active)?;
+            (Some(rows), Some(tokens.into_iter().map(Some).collect()))
+        } else {
+            (None, None)
+        };
+        let rows = if output.is_none() {
+            self.readbacks.run(device, graph, &sources)?
+        } else {
+            Vec::new()
+        };
         if read_logits
             && let Some(profile) = &self.profile
             && let Some(&(.., rope_pos, _)) = lanes.first()
@@ -1069,6 +1207,9 @@ impl SlotDecodeGraph {
         let mut rows = rows.into_iter();
         for &(slot, ..) in lanes {
             self.cursors[slot] += 1;
+        }
+        if let Some(rows) = output {
+            return Ok(BatchReadout { rows, tokens });
         }
         lanes
             .iter()
@@ -1080,7 +1221,8 @@ impl SlotDecodeGraph {
                         .ok_or_else(|| Error::invariant("slot logits readback"))?,
                 ))
             })
-            .collect()
+            .collect::<Result<_>>()
+            .map(BatchReadout::host)
     }
 
     /// Replay the state-only graph for `lanes` without a readback or a stream sync: a

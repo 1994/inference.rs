@@ -1,4 +1,5 @@
-use super::{ActivationArena, capture};
+use super::ActivationArena;
+mod greedy;
 use crate::{
     constants::{
         CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, MAX_CAPACITY_TOKENS, MAX_HIDDEN_SIZE,
@@ -146,6 +147,8 @@ pub struct DeviceProgram {
     /// Second, narrower prompt graph; chunks at most this wide replay here instead.
     prompt_narrow: Option<super::batch::BatchGraph>,
     graph: CudaGraph<()>,
+    greedy: Option<greedy::DeviceGreedy>,
+    token_readout: Option<super::token_readout::TokenReadout>,
     readbacks: crate::device::Readbacks,
     prefill: CudaGraph<()>,
     metadata: Tensor<i32>,
@@ -175,6 +178,42 @@ pub struct DeviceProgram {
     pub activation_bytes: usize,
     pub(crate) reclaimable_bytes: u64,
     released_verification_bytes: u64,
+}
+
+enum ExternalInput<'a> {
+    Host(&'a [f32]),
+    Device(&'a Tensor<f32>),
+}
+impl ExternalInput<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Host(values) => values.len(),
+            Self::Device(tensor) => tensor.size(),
+        }
+    }
+    fn update(
+        self,
+        device: &CudaDevice,
+        graph: &CudaGraph<()>,
+        destination: &mut Tensor<f32>,
+    ) -> Result<()> {
+        match self {
+            Self::Host(values) => {
+                let uploaded = device.upload(values.to_vec(), &[values.len()])?;
+                graph
+                    .update(api::memcpy(destination, &uploaded))
+                    .map_err(device_error)
+            }
+            Self::Device(tensor) => {
+                if tensor.device_id() != device.stream.device().ordinal() {
+                    return Err(Error::invalid("external hidden device mismatch"));
+                }
+                graph
+                    .update(api::memcpy(destination, tensor))
+                    .map_err(device_error)
+            }
+        }
+    }
 }
 
 /// Conservative lower bound on uniquely owned device storage; excludes graph metadata,
@@ -509,29 +548,8 @@ impl DeviceProgram {
         };
         let (batch, prompt_batch, prompt_narrow) =
             builder.build_pair(private_verification, wide_prompt)?;
-        let mut capture_graph = |skip_logits: bool| {
-            CudaGraph::scope(&device.stream, |scope| {
-                capture::Capture {
-                    scope,
-                    arena: &mut arena,
-                    weights,
-                    nvfp4: &mut nvfp4,
-                    attention: &mut attention,
-                    states: &mut states,
-                    fp8_states: &mut fp8_states,
-                    metadata: &metadata,
-                    table: &table,
-                    external: &external,
-                    capacity,
-                    fusion: &mut fusion,
-                    mode: capture::CaptureMode::Flat,
-                }
-                .record_program(graph, skip_logits)
-            })
-            .map_err(device_error)
-        };
-        let graph_exec = capture_graph(false)?;
-        let prefill = capture_graph(true)?;
+        let graph_exec = builder.capture_single(&mut arena, &metadata, &mut fusion, false)?;
+        let prefill = builder.capture_single(&mut arena, &metadata, &mut fusion, true)?;
         // Forward captures finalize the resident state bindings before reset records them.
         let reset_graph = capture_reset(device, &mut states)?;
         let reclaimable_bytes = Self::program_retained_bytes(
@@ -542,8 +560,12 @@ impl DeviceProgram {
             batch.as_ref(),
             [prompt_batch.as_ref(), prompt_narrow.as_ref()],
         );
-        let hidden = super::batch::take_result(&mut arena, graph.hidden)?;
-        let logits = super::batch::take_result(&mut arena, graph.logits)?;
+        let greedy::ProgramReadouts {
+            hidden,
+            logits,
+            greedy,
+            token_readout,
+        } = greedy::ProgramReadouts::new(device, &mut arena, graph, weights, vocabulary)?;
         Ok(Self {
             table,
             nvfp4,
@@ -554,6 +576,8 @@ impl DeviceProgram {
             prompt_narrow,
             last_batch: None,
             graph: graph_exec,
+            greedy,
+            token_readout,
             readbacks: crate::device::Readbacks::default(),
             prefill,
             metadata,
@@ -610,6 +634,47 @@ impl DeviceProgram {
         )
     }
 
+    pub(crate) fn step_selected(
+        &mut self,
+        token: u32,
+        position: usize,
+        read_hidden: bool,
+    ) -> Result<super::batch::BatchReadout> {
+        if self.token_readout.is_none() {
+            return self
+                .step_readout(token, position, position, None, true, read_hidden)
+                .map(|row| super::batch::BatchReadout::host(vec![row]));
+        }
+        self.prepare_step(
+            token,
+            [position; infer_models::mrope::ROTARY_AXES],
+            position,
+            None,
+            true,
+        )?;
+        let sources = [
+            read_hidden.then(|| crate::device::ReadbackSource::whole(Arc::clone(&self.hidden))),
+            None,
+        ];
+        let (rows, tokens) = self
+            .token_readout
+            .as_mut()
+            .ok_or_else(|| Error::invariant("program token readout"))?
+            .run(
+                &self.device,
+                &self.graph,
+                &mut self.readbacks,
+                &sources,
+                &[0],
+            )?;
+        self.last_batch = None;
+        self.next_position = position + 1;
+        Ok(super::batch::BatchReadout {
+            rows,
+            tokens: Some(tokens.into_iter().map(Some).collect()),
+        })
+    }
+
     /// Execute with independent time/height/width coordinates and a sequential KV index.
     /// # Errors
     /// Rejects invalid tokens, coordinates, overrides or device operations.
@@ -633,46 +698,18 @@ impl DeviceProgram {
         read_logits: bool,
         read_hidden: bool,
     ) -> Result<(Vec<f32>, Vec<f32>)> {
-        if kv_position >= self.capacity
-            || usize::try_from(token).map_err(device_error)? >= self.vocabulary
-        {
-            return Err(Error::invalid(
-                "resident token or KV position out of bounds",
-            ));
-        }
-        if self.requires_external && external.is_none() {
-            return Err(Error::invalid("MTP requires previous hidden state"));
-        }
-        if external.is_some_and(|values| values.len() != self.external.size()) {
-            return Err(Error::invalid("external hidden dimensions"));
-        }
-        if kv_position == 0 {
-            self.reset()?;
-        }
-        if kv_position != self.next_position {
-            return Err(Error::invalid("nonsequential device state position"));
-        }
-        let metadata = [
-            i32::try_from(position[0]).map_err(device_error)?,
-            i32::try_from(token).map_err(device_error)?,
-            i32::try_from(kv_position).map_err(device_error)?,
-            i32::from(external.is_some()),
-        ];
+        self.prepare_step(
+            token,
+            position,
+            kv_position,
+            external.map(ExternalInput::Host),
+            read_logits,
+        )?;
         let graph = if read_logits {
             &self.graph
         } else {
             &self.prefill
         };
-        super::metadata::update_rotary(graph, &mut self.metadata, metadata, position)?;
-        if let Some(values) = external {
-            if values.len() != self.external.size() {
-                return Err(Error::invalid("external hidden dimensions"));
-            }
-            let uploaded = self.device.upload(values.to_vec(), &[values.len()])?;
-            graph
-                .update(api::memcpy(&mut self.external, &uploaded))
-                .map_err(device_error)?;
-        }
         let mut rows = self
             .readbacks
             .run(
@@ -697,6 +734,54 @@ impl DeviceProgram {
         Ok(result)
     }
 
+    fn prepare_step(
+        &mut self,
+        token: u32,
+        position: [usize; infer_models::mrope::ROTARY_AXES],
+        kv_position: usize,
+        external: Option<ExternalInput<'_>>,
+        read_logits: bool,
+    ) -> Result<()> {
+        if kv_position >= self.capacity
+            || usize::try_from(token).map_err(device_error)? >= self.vocabulary
+        {
+            return Err(Error::invalid(
+                "resident token or KV position out of bounds",
+            ));
+        }
+        if self.requires_external && external.is_none() {
+            return Err(Error::invalid("MTP requires previous hidden state"));
+        }
+        if external
+            .as_ref()
+            .is_some_and(|values| values.len() != self.external.size())
+        {
+            return Err(Error::invalid("external hidden dimensions"));
+        }
+        if kv_position == 0 {
+            self.reset()?;
+        }
+        if kv_position != self.next_position {
+            return Err(Error::invalid("nonsequential device state position"));
+        }
+        let metadata = [
+            i32::try_from(position[0]).map_err(device_error)?,
+            i32::try_from(token).map_err(device_error)?,
+            i32::try_from(kv_position).map_err(device_error)?,
+            i32::from(external.is_some()),
+        ];
+        let graph = if read_logits {
+            &self.graph
+        } else {
+            &self.prefill
+        };
+        super::metadata::update_rotary(graph, &mut self.metadata, metadata, position)?;
+        if let Some(external) = external {
+            external.update(&self.device, graph, &mut self.external)?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn batch_width(&self) -> usize {
         self.batch.as_ref().map_or(1, |batch| batch.width)
@@ -706,6 +791,15 @@ impl DeviceProgram {
     /// # Errors
     /// Rejects invalid positions, unsupported widths or failed device execution.
     pub fn step_batch(&mut self, tokens: &[u32], position: usize) -> Result<super::BatchOutput> {
+        Ok(self.step_batch_readout(tokens, position, false)?.rows)
+    }
+
+    pub(crate) fn step_batch_readout(
+        &mut self,
+        tokens: &[u32],
+        position: usize,
+        plain_greedy: bool,
+    ) -> Result<super::batch::BatchReadout> {
         let width = self.batch_width();
         if tokens.is_empty()
             || tokens.len() > width
@@ -729,7 +823,7 @@ impl DeviceProgram {
             .batch
             .as_mut()
             .ok_or_else(|| Error::invariant("batch graph"))?
-            .run(&self.device, tokens, position, None, true)?;
+            .run_readout(&self.device, tokens, position, None, true, plain_greedy)?;
         self.next_position = position + width;
         self.last_batch = Some((position, tokens.len()));
         self.commit_batch(tokens.len())?;

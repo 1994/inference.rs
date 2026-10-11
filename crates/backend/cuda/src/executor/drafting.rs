@@ -49,6 +49,16 @@ pub(super) fn propose(
         hidden.push(spec.last_hidden.clone());
         counts.push(spec.depth.min(width - 1).min(state.capacity - position - 1));
     }
+    let plain_greedy = participants
+        .iter()
+        .all(|&(index, _)| tasks[index].plain_greedy);
+    for &(index, _) in participants {
+        tasks[index]
+            .sampling
+            .as_ref()
+            .ok_or_else(|| Error::invariant("draft sampling"))?
+            .validate()?;
+    }
     for step in 0..counts.iter().copied().max().unwrap_or(0) {
         let active: Vec<_> = (0..participants.len())
             .filter(|&i| step < counts[i])
@@ -62,8 +72,8 @@ pub(super) fn propose(
             })
             .collect();
         let external: Vec<_> = active.iter().map(|&i| hidden[i].as_slice()).collect();
-        let rows = pool.run_external(device, &lanes, &external)?;
-        for (&i, (next_hidden, logits)) in active.iter().zip(rows) {
+        let readout = pool.run_external_selected(device, &lanes, &external, plain_greedy)?;
+        for (row, (&i, (next_hidden, logits))) in active.iter().zip(readout.rows).enumerate() {
             let (index, _) = participants[i];
             let task = &tasks[index];
             let state = states
@@ -73,23 +83,28 @@ pub(super) fn propose(
                 .speculation
                 .as_mut()
                 .ok_or_else(|| Error::invariant("draft sampling program"))?;
-            let prompt_len = spec
-                .prompt_len
-                .ok_or_else(|| Error::invariant("draft prompt length"))?;
-            let mut generated = state.history[prompt_len..].to_vec();
-            generated.extend_from_slice(&chains[i]);
-            let token = infer_workloads::sample_with_history(
-                &logits,
-                task.sampling
-                    .as_ref()
-                    .ok_or_else(|| Error::invariant("draft sampling"))?,
-                task.request.get(),
-                state.history.len() + step + 1,
-                infer_workloads::SamplingHistory {
-                    prompt: &state.history[..prompt_len],
-                    generated: &generated,
+            let token = readout.tokens.as_ref().map_or_else(
+                || {
+                    let prompt_len = spec
+                        .prompt_len
+                        .ok_or_else(|| Error::invariant("draft prompt length"))?;
+                    let mut generated = state.history[prompt_len..].to_vec();
+                    generated.extend_from_slice(&chains[i]);
+                    infer_workloads::sample_with_history(
+                        &logits,
+                        task.sampling
+                            .as_ref()
+                            .ok_or_else(|| Error::invariant("draft sampling"))?,
+                        task.request.get(),
+                        state.history.len() + step + 1,
+                        infer_workloads::SamplingHistory {
+                            prompt: &state.history[..prompt_len],
+                            generated: &generated,
+                        },
+                        &mut spec.scratch,
+                    )
                 },
-                &mut spec.scratch,
+                |tokens| tokens[row].ok_or_else(|| Error::invariant("draft selected token")),
             )?;
             chains[i].push(token);
             hidden[i] = next_hidden;
