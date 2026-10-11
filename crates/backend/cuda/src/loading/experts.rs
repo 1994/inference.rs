@@ -1,6 +1,11 @@
 //! Bind expert banks once; kernels read only the selected matrices.
 use super::floats;
-use crate::{device::CudaDevice, mlp::ProjectionWeight, resident::moe::ExpertBank};
+use crate::{
+    constants::{F32_BYTES, FP8_BLOCK_COLUMNS},
+    device::CudaDevice,
+    mlp::ProjectionWeight,
+    resident::moe::ExpertBank,
+};
 use cuda_core::f8e4m3fn;
 use cutile::half::bf16;
 use infer_core::{Error, ErrorCode, Result, TensorId};
@@ -103,13 +108,13 @@ fn admit(device: &CudaDevice, encoding: WeightEncoding, rows: usize, columns: us
     let scales = match encoding {
         WeightEncoding::Fp8Channel => rows,
         WeightEncoding::Fp8Block => rows
-            .checked_mul(columns / 128)
+            .checked_mul(columns / FP8_BLOCK_COLUMNS)
             .ok_or_else(|| Error::invalid("expert scale size overflow"))?,
         _ => 0,
     };
     let bytes = elements
         .checked_mul(element_bytes)
-        .and_then(|n| scales.checked_mul(4).and_then(|s| n.checked_add(s)))
+        .and_then(|n| scales.checked_mul(F32_BYTES).and_then(|s| n.checked_add(s)))
         .ok_or_else(|| Error::invalid("expert storage size overflow"))?;
     let available = device
         .memory_info()?
@@ -158,7 +163,10 @@ fn fp8(
             let [block_rows, block_columns] = part
                 .weight_block
                 .ok_or_else(|| Error::invalid("expert block scale"))?;
-            if block_columns != 128 || block_rows == 0 || !input.is_multiple_of(block_columns) {
+            if block_columns != FP8_BLOCK_COLUMNS
+                || block_rows == 0
+                || !input.is_multiple_of(block_columns)
+            {
                 return Err(Error::unsupported(
                     "expert FP8 block columns must divide input width in blocks of 128",
                 ));
@@ -188,7 +196,7 @@ fn fp8(
     } else {
         Ok(ProjectionWeight::Fp8Block(
             data,
-            device.upload(scaling, &[rows, input / 128])?,
+            device.upload(scaling, &[rows, input / FP8_BLOCK_COLUMNS])?,
         ))
     }
 }

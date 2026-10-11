@@ -137,7 +137,7 @@ impl Capture<'_> {
             }
             TensorOp::Scale => {
                 self.scope.record(super::moe::kernels::scale(
-                    (&mut output).partition([256]),
+                    (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
                     &self.input(node.inputs[0])?,
                     &self.input(node.inputs[1])?,
                 ))?;

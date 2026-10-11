@@ -8,10 +8,6 @@ use std::collections::BTreeMap;
 /// output slot is reshaped to `[32, rows]` in place; no packing kernels remain.
 /// Fp4 weights split the K loop across `PREFILL_SPLIT_K` CTAs per output tile:
 /// the prompt GEMM is latency-bound at one wave, so wider grids hide DRAM latency.
-#[expect(
-    clippy::too_many_lines,
-    reason = "Projection capture keeps the explicit storage-format dispatch together"
-)]
 pub(super) fn record(
     scope: &Scope,
     node: &TensorNode,
@@ -94,37 +90,62 @@ pub(super) fn record(
                 .generics(generics),
             )?;
         }
-        ProjectionWeight::Fp4(w, scales, global) => {
-            if width != crate::constants::PREFILL_LANES {
-                return Err(error("legacy FP4 split prefill requires width 32"));
-            }
-            let rows = flat / width;
-            let partial = partials
-                .get_mut(&rows)
-                .ok_or_else(|| error("prefill split partials"))?;
-            let windows = columns.div_ceil(crate::constants::PREFILL_GEMM_TILE_K);
-            let k_tiles = i32::try_from(windows.div_ceil(crate::constants::PREFILL_SPLIT_K))
-                .map_err(|_| error("prefill split window"))?;
-            scope.record(
-                gemm::nvfp4_split(
-                    partial.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
-                    &input,
-                    w,
-                    scales,
-                    k_tiles,
-                )
-                .generics(generics),
+        ProjectionWeight::Fp4(..) => {
+            record_legacy_fp4(
+                scope,
+                weight,
+                &input,
+                &mut output,
+                partials,
+                (width, columns),
+                generics,
             )?;
-            scope.record(gemm::reduce_split(
-                (&mut output).partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
-                &*partial,
-                global.recip(),
-                i32::try_from(crate::constants::PREFILL_SPLIT_K)
-                    .map_err(|_| error("prefill split count"))?,
-            ))?;
         }
     }
     arena.buffers[slot] = Some(output.reshape(&[flat])?);
+    Ok(())
+}
+
+/// Record the established split-K projection with its existing operands and reduction.
+fn record_legacy_fp4(
+    scope: &Scope,
+    weight: &ProjectionWeight,
+    input: &TensorView<'_, f32>,
+    output: &mut Tensor<f32>,
+    partials: &mut BTreeMap<usize, Tensor<f32>>,
+    (width, columns): (usize, usize),
+    generics: Vec<String>,
+) -> Result<(), DeviceError> {
+    let ProjectionWeight::Fp4(w, scales, global) = weight else {
+        return Err(error("legacy FP4 prompt weight"));
+    };
+    if width != crate::constants::PREFILL_LANES {
+        return Err(error("legacy FP4 split prefill requires width 32"));
+    }
+    let rows = output.size() / width;
+    let partial = partials
+        .get_mut(&rows)
+        .ok_or_else(|| error("prefill split partials"))?;
+    let windows = columns.div_ceil(crate::constants::PREFILL_GEMM_TILE_K);
+    let k_tiles = i32::try_from(windows.div_ceil(crate::constants::PREFILL_SPLIT_K))
+        .map_err(|_| error("prefill split window"))?;
+    scope.record(
+        gemm::nvfp4_split(
+            partial.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
+            input,
+            w,
+            scales,
+            k_tiles,
+        )
+        .generics(generics),
+    )?;
+    scope.record(gemm::reduce_split(
+        output.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
+        &*partial,
+        global.recip(),
+        i32::try_from(crate::constants::PREFILL_SPLIT_K)
+            .map_err(|_| error("prefill split count"))?,
+    ))?;
     Ok(())
 }
 
@@ -156,12 +177,15 @@ fn records_precise_sparse(
         return Ok(false);
     }
     scope.record(
-        super::small_gemm::kernels::dense(output.partition([16, 32]), input, weight).generics(
-            vec![
-                cutile::half::bf16::DTYPE.as_str().into(),
-                columns.to_string(),
-            ],
-        ),
+        super::small_gemm::kernels::dense(
+            output.partition(crate::constants::SMALL_GEMM_TILE),
+            input,
+            weight,
+        )
+        .generics(vec![
+            cutile::half::bf16::DTYPE.as_str().into(),
+            columns.to_string(),
+        ]),
     )?;
     Ok(true)
 }

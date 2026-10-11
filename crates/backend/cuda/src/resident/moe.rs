@@ -4,6 +4,11 @@ use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_ir::{TensorNode, TensorOp};
 
+/// Matches the fixed output Tensor tile declared by all selected-expert kernel entries.
+const EXPERT_PROJECTION_TILE: [usize; 2] = [1, 4];
+/// Existing supported routing reduction extent; this is a shape legality bound.
+const MAX_ROUTING_EXPERTS: usize = 4096;
+
 /// Contiguous expert-major matrices. Routing indexes this bank on the GPU.
 pub struct ExpertBank {
     pub projection: crate::mlp::ProjectionWeight,
@@ -60,7 +65,7 @@ impl Capture<'_> {
                 let mut output = output;
                 self.scope.record(
                     kernels::combine(
-                        (&mut output).partition([256]),
+                        (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
                         &self
                             .input(node.inputs[0])?
                             .view(&[active, hidden])
@@ -110,7 +115,7 @@ impl Capture<'_> {
             crate::mlp::ProjectionWeight::Dense(w) => {
                 self.scope.record(
                     kernels::dense(
-                        (&mut output).partition([1, 4]),
+                        (&mut output).partition(EXPERT_PROJECTION_TILE),
                         &x,
                         &routes,
                         &w.view(&[bank.experts, rows, input]).map_err(error)?,
@@ -126,7 +131,7 @@ impl Capture<'_> {
                 ]);
                 self.scope.record(
                     kernels::fp8(
-                        (&mut output).partition([1, 4]),
+                        (&mut output).partition(EXPERT_PROJECTION_TILE),
                         &x,
                         &routes,
                         &w.view(&[bank.experts, rows, input]).map_err(error)?,
@@ -143,12 +148,16 @@ impl Capture<'_> {
                 ]);
                 self.scope.record(
                     kernels::fp8(
-                        (&mut output).partition([1, 4]),
+                        (&mut output).partition(EXPERT_PROJECTION_TILE),
                         &x,
                         &routes,
                         &w.view(&[bank.experts, rows, input]).map_err(error)?,
                         &scales
-                            .view(&[bank.experts, rows, input / 128])
+                            .view(&[
+                                bank.experts,
+                                rows,
+                                input / crate::constants::FP8_BLOCK_COLUMNS,
+                            ])
                             .map_err(error)?,
                     )
                     .generics(generics),
@@ -200,7 +209,7 @@ pub(super) fn validate_node(
         experts, active, ..
     } = node.op
         && (experts == 0
-            || experts > 4096
+            || experts > MAX_ROUTING_EXPERTS
             || active == 0
             || active > experts
             || input != experts

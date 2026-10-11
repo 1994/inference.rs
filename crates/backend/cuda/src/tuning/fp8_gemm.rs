@@ -868,6 +868,75 @@ fn confirm_best(
     Ok(None)
 }
 
+enum SearchTrial {
+    BudgetExhausted,
+    Rejected,
+    Measured(Trial),
+}
+
+fn search_trial(
+    device: &CudaDevice,
+    support: &mut vendor_fp8::Support,
+    weight: &ProjectionWeight,
+    key: &Key,
+    choice: Choice,
+    session: &ResidentTuningSession,
+    (base, expected): (&Captured, &[f32]),
+) -> Result<SearchTrial> {
+    let shape = [key.m, key.n, key.k];
+    let valid = match verify(device, support, weight, shape, choice, session) {
+        Ok(Some(valid)) => valid,
+        Ok(None) => return Ok(SearchTrial::BudgetExhausted),
+        Err(error) => {
+            tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate rejected before measurement");
+            false
+        }
+    };
+    if !valid {
+        return Ok(SearchTrial::Rejected);
+    }
+    remember(weight, key, choice, true)?;
+    measure_verified_trial(device, support, weight, key, choice, base, expected)
+}
+
+fn measure_verified_trial(
+    device: &CudaDevice,
+    support: &mut vendor_fp8::Support,
+    weight: &ProjectionWeight,
+    key: &Key,
+    choice: Choice,
+    base: &Captured,
+    expected: &[f32],
+) -> Result<SearchTrial> {
+    let shape = [key.m, key.n, key.k];
+    let candidate = match Captured::new(device, support, weight, shape, choice, 0) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate capture rejected");
+            return Ok(SearchTrial::Rejected);
+        }
+    };
+    let measured = match trial(device, base, &candidate, choice, false) {
+        Ok(measured) => measured,
+        Err(error) => {
+            tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate measurement rejected; remaining candidates continue");
+            return Ok(SearchTrial::Rejected);
+        }
+    };
+    if let Err(error) = bitwise(&device.read_borrowed(&candidate.output)?, expected) {
+        remember(weight, key, choice, false)?;
+        tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate changed bits after measurement; remaining candidates continue");
+        return Ok(SearchTrial::Rejected);
+    }
+    Ok(
+        if times_valid(&measured.cold) && times_valid(&measured.warm) {
+            SearchTrial::Measured(measured)
+        } else {
+            SearchTrial::Rejected
+        },
+    )
+}
+
 fn tune(
     device: &CudaDevice,
     support: &mut vendor_fp8::Support,
@@ -914,39 +983,18 @@ fn tune(
         if !permits(session, shape) {
             return Ok(None);
         }
-        let valid = match verify(device, support, weight, shape, choice, session) {
-            Ok(Some(valid)) => valid,
-            Ok(None) => return Ok(None),
-            Err(error) => {
-                tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate rejected before measurement");
-                false
-            }
-        };
-        if !valid {
-            continue;
-        }
-        remember(weight, &key, choice, true)?;
-        let candidate = match Captured::new(device, support, weight, shape, choice, 0) {
-            Ok(candidate) => candidate,
-            Err(error) => {
-                tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate capture rejected");
-                continue;
-            }
-        };
-        let measured = match trial(device, &base, &candidate, choice, false) {
-            Ok(measured) => measured,
-            Err(error) => {
-                tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate measurement rejected; remaining candidates continue");
-                continue;
-            }
-        };
-        if let Err(error) = bitwise(&device.read_borrowed(&candidate.output)?, &expected) {
-            remember(weight, &key, choice, false)?;
-            tracing::warn!(target:"infer::tuning",?shape,?choice,%error,"FP8 candidate changed bits after measurement; remaining candidates continue");
-            continue;
-        }
-        if times_valid(&measured.cold) && times_valid(&measured.warm) {
-            trials.push(measured);
+        match search_trial(
+            device,
+            support,
+            weight,
+            &key,
+            choice,
+            session,
+            (&base, &expected),
+        )? {
+            SearchTrial::BudgetExhausted => return Ok(None),
+            SearchTrial::Rejected => {}
+            SearchTrial::Measured(measured) => trials.push(measured),
         }
     }
     let Some(confirmation) = confirm_best(device, support, weight, &key, session, &base, &trials)?

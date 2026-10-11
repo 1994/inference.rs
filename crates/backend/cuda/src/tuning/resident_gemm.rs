@@ -675,11 +675,39 @@ fn resolve(
         tracing::warn!(target: "infer::tuning", "driver build unavailable: persistent resident GEMM decisions disabled");
         None
     };
-    let (config, source) = match decision(table.as_ref(), &key, autotune)? {
+    let Some((config, source)) = selected_config(
+        device,
+        weight,
+        scale,
+        &key,
+        table.as_ref(),
+        session,
+        (autotune, path.as_deref()),
+    )?
+    else {
+        return Ok(baseline);
+    };
+    memo()
+        .lock()
+        .map_err(|_| Error::invariant("resident tuning cache poisoned"))?
+        .insert(key.clone(), config);
+    tracing::info!(target: "infer::tuning", ?key, ?config, source, "resident GEMM selected");
+    verified_config(device, weight, scale, &key, config, session)
+}
+
+fn selected_config(
+    device: &CudaDevice,
+    weight: &ProjectionWeight,
+    scale: f32,
+    key: &ResidentGemmKey,
+    table: Option<&TilingTable>,
+    session: &ResidentTuningSession,
+    (autotune, path): (bool, Option<&std::path::Path>),
+) -> Result<Option<(GemmConfig, &'static str)>> {
+    let selected = match decision(table, key, autotune)? {
         Decision::Cached(config) => {
-            if let Some(entry) = table
-                .as_ref()
-                .and_then(|table| table.resident_gemm.iter().find(|entry| entry.key == key))
+            if let Some(entry) =
+                table.and_then(|table| table.resident_gemm.iter().find(|entry| entry.key == *key))
             {
                 tracing::info!(target: "infer::tuning", ?key, ?config, source="table-cache",
                     cold_baseline_ms=entry.confirmation.cold.baseline_median_ms,
@@ -691,58 +719,69 @@ fn resolve(
             (config, "table-cache")
         }
         Decision::Baseline => {
+            let baseline = GemmConfig::baseline(key.m);
             tracing::info!(target: "infer::tuning", ?key, ?baseline, source="autotune-disabled", "resident GEMM selected");
-            return Ok(baseline);
+            return Ok(None);
         }
         Decision::Measure => {
-            let entry = match tune(device, weight, scale, key.clone(), session) {
-                Ok(Some(entry)) => entry,
-                Ok(None) => return Ok(baseline),
-                Err(error) => {
-                    tracing::warn!(target: "infer::tuning", ?key, ?baseline, %error,
-                        source="measurement-fallback", "resident GEMM conservative fallback");
-                    memo()
-                        .lock()
-                        .map_err(|_| Error::invariant("resident tuning cache poisoned"))?
-                        .insert(key.clone(), baseline);
-                    return Ok(baseline);
-                }
+            let Some(config) = measured_config(device, weight, scale, key, session, path)? else {
+                return Ok(None);
             };
-            let config = entry.selected;
-            // Search and independent confirmation already proved this exact weight and scale.
-            if config != baseline {
-                remember_verification(
-                    weight,
-                    VerificationKey {
-                        geometry: key.clone(),
-                        weight: WeightKey::new(weight, scale)?,
-                        config,
-                    },
-                    true,
-                )?;
-            }
-            let cached = key.driver_build.is_some()
-                && super::update_table(path.as_deref(), |table| {
-                    table.resident_gemm.retain(|old| old.key != entry.key);
-                    table.resident_gemm.push(entry.clone());
-                });
-            tracing::info!(target: "infer::tuning", ?key, ?config, cached,
-                cold_speedup=entry.confirmation.cold.speedup, warm_speedup=entry.confirmation.warm.speedup,
-                cold_baseline_ms=entry.confirmation.cold.baseline_median_ms,
-                cold_candidate_ms=entry.confirmation.cold.candidate_median_ms,
-                warm_baseline_ms=entry.confirmation.warm.baseline_median_ms,
-                warm_candidate_ms=entry.confirmation.warm.candidate_median_ms,
-                source="measured", "resident GEMM selected");
-            tracing::debug!(target: "infer::tuning", evidence=%serde_json::to_string(&entry).map_err(device_error)?, "resident GEMM paired timings");
             (config, "measured")
         }
     };
-    memo()
-        .lock()
-        .map_err(|_| Error::invariant("resident tuning cache poisoned"))?
-        .insert(key.clone(), config);
-    tracing::info!(target: "infer::tuning", ?key, ?config, source, "resident GEMM selected");
-    verified_config(device, weight, scale, &key, config, session)
+    Ok(Some(selected))
+}
+
+fn measured_config(
+    device: &CudaDevice,
+    weight: &ProjectionWeight,
+    scale: f32,
+    key: &ResidentGemmKey,
+    session: &ResidentTuningSession,
+    path: Option<&std::path::Path>,
+) -> Result<Option<GemmConfig>> {
+    let baseline = GemmConfig::baseline(key.m);
+    let entry = match tune(device, weight, scale, key.clone(), session) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            tracing::warn!(target: "infer::tuning", ?key, ?baseline, %error,
+                source="measurement-fallback", "resident GEMM conservative fallback");
+            memo()
+                .lock()
+                .map_err(|_| Error::invariant("resident tuning cache poisoned"))?
+                .insert(key.clone(), baseline);
+            return Ok(None);
+        }
+    };
+    let config = entry.selected;
+    // Search and independent confirmation already proved this exact weight and scale.
+    if config != baseline {
+        remember_verification(
+            weight,
+            VerificationKey {
+                geometry: key.clone(),
+                weight: WeightKey::new(weight, scale)?,
+                config,
+            },
+            true,
+        )?;
+    }
+    let cached = key.driver_build.is_some()
+        && super::update_table(path, |table| {
+            table.resident_gemm.retain(|old| old.key != entry.key);
+            table.resident_gemm.push(entry.clone());
+        });
+    tracing::info!(target: "infer::tuning", ?key, ?config, cached,
+        cold_speedup=entry.confirmation.cold.speedup, warm_speedup=entry.confirmation.warm.speedup,
+        cold_baseline_ms=entry.confirmation.cold.baseline_median_ms,
+        cold_candidate_ms=entry.confirmation.cold.candidate_median_ms,
+        warm_baseline_ms=entry.confirmation.warm.baseline_median_ms,
+        warm_candidate_ms=entry.confirmation.warm.candidate_median_ms,
+        source="measured", "resident GEMM selected");
+    tracing::debug!(target: "infer::tuning", evidence=%serde_json::to_string(&entry).map_err(device_error)?, "resident GEMM paired timings");
+    Ok(Some(config))
 }
 
 struct Captured {
