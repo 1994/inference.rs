@@ -10,6 +10,9 @@ pub struct ReadyIndex {
     pub versions: Vec<u64>,
     pub epoch: u64,
     pub candidates: Vec<RequestId>,
+    pub priority_epoch: u64,
+    pub priority_sweep_epoch: u64,
+    pub priority_cursor: Option<RequestId>,
 }
 impl ReadyIndex {
     pub fn new(capacity: usize, limit: usize, query: CostQuery) -> Result<Self> {
@@ -26,6 +29,9 @@ impl ReadyIndex {
             versions: vec![u64::MAX; capacity],
             epoch: 0,
             candidates,
+            priority_epoch: 0,
+            priority_sweep_epoch: 0,
+            priority_cursor: None,
         })
     }
     pub fn invalidate(&mut self, slot: usize) -> Result<()> {

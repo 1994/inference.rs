@@ -1,21 +1,23 @@
-use super::{BlockedOn, FairKey, QueueState, RequestQueue, TenantKey, index::Index};
+use super::{BlockedOn, FairKey, QueueState, RequestQueue};
 use infer_core::{Error, RequestId, Result, StepId};
+use std::{
+    cmp::Reverse,
+    ops::Bound::{Excluded, Unbounded},
+};
 
 impl RequestQueue {
-    fn next_tenant(
-        index: &Index<TenantKey>,
-        head: FairKey,
-        position: usize,
-    ) -> Option<(FairKey, usize)> {
-        index
-            .next_at(position)
-            .filter(|(_, key)| key.0 == head.3)
-            .map(|(position, (_, time, id))| ((head.0, time, id, head.3), position))
+    fn next_tenant(&self, head: FairKey) -> Option<FairKey> {
+        self.tenant_ready
+            .range((Excluded((head.3, head.1, head.2)), Unbounded))
+            .next()
+            .filter(|key| key.0 == head.3)
+            .map(|(_, time, id)| (head.0, *time, *id, head.3))
     }
-    /// Priority visits are bounded by K: aging, near deadlines, then hierarchical WFQ.
-    /// Reuses caller scratch and fixed frontier nodes; never walks the request table.
+    /// Capture at most K candidates: aging, latest-start urgency, then hierarchical WFQ.
+    /// An unsuccessful window continues by request identity on the next attempt, so a
+    /// resource-heavy priority prefix cannot hide all executable work. Scratch never grows.
     /// # Errors
-    /// Rejects insufficient caller scratch or corrupt tenant frontier capacity without growing storage.
+    /// Rejects insufficient scratch or corrupt lifecycle ownership.
     pub fn candidates_into(
         &mut self,
         output: &mut Vec<RequestId>,
@@ -32,75 +34,113 @@ impl RequestQueue {
                 "candidate scratch too small",
             ));
         }
+        if limit == 0 {
+            return Ok(());
+        }
+        if let Some(after) = self.scan_after {
+            output.extend(
+                self.ready
+                    .range((Excluded(after), Unbounded))
+                    .chain(self.ready.range(..=after))
+                    .take(limit)
+                    .copied(),
+            );
+            return Ok(());
+        }
+        self.scratch.begin();
         if let Some(threshold) = now.checked_sub(max_wait) {
+            // Aging is an identity-unique index, so no duplicate lookups are needed here.
             for (_, id) in self
                 .aging
                 .iter()
                 .take_while(|key| key.0 <= threshold)
                 .take(limit)
             {
-                output.push(id);
+                let slot = self
+                    .entries
+                    .get(id)
+                    .ok_or_else(|| Error::invariant("aging owner missing"))?
+                    .slot;
+                self.scratch.visit(slot);
+                output.push(*id);
             }
         }
+        let threshold = i128::from(now) + i128::from(urgency);
         for (_, id) in self
             .deadlines
             .iter()
-            .take_while(|key| key.0 <= now.saturating_add(urgency))
+            .take_while(|key| key.0 <= threshold)
             .take(limit)
         {
             if output.len() == limit {
                 break;
             }
-            if !output.contains(&id) {
-                output.push(id);
+            let slot = self
+                .entries
+                .get(id)
+                .ok_or_else(|| Error::invariant("urgency owner missing"))?
+                .slot;
+            if self.scratch.visit(slot) {
+                output.push(*id);
             }
         }
-        let mut outer = self.fair.iter().peekable();
-        // At most K already visited items can precede the next fair item.
+        // The tree cursor is held separately from the mutable generation marks and merge heap.
+        let mut outer = self.fair.iter().copied().peekable();
         for _ in 0..limit.saturating_mul(2) {
             if output.len() == limit {
                 break;
             }
-            let staged = self.frontier.first();
-            let entry = match (outer.peek().copied(), staged) {
-                (Some(head), Some((next, _))) if head <= next => {
-                    outer.next();
-                    self.tenant_ready
-                        .position((head.3, head.1, head.2))
-                        .map(|slot| (head, slot))
-                }
-                (None | Some(_), Some(next)) => {
-                    self.frontier.pop();
-                    Some(next)
-                }
-                (Some(head), None) => {
-                    outer.next();
-                    self.tenant_ready
-                        .position((head.3, head.1, head.2))
-                        .map(|slot| (head, slot))
-                }
+            let staged = self.scratch.frontier.peek().map(|Reverse(key)| *key);
+            let head = match (outer.peek().copied(), staged) {
+                (Some(head), Some(next)) if head <= next => outer.next(),
+                (None | Some(_), Some(_)) => self.scratch.frontier.pop().map(|Reverse(key)| key),
+                (Some(_), None) => outer.next(),
                 (None, None) => None,
             };
-            let Some((head, position)) = entry else {
+            let Some(head) = head else {
                 break;
             };
-            if !output.contains(&head.2) {
+            let slot = self
+                .entries
+                .get(&head.2)
+                .ok_or_else(|| Error::invariant("fair owner missing"))?
+                .slot;
+            if self.scratch.visit(slot) {
                 output.push(head.2);
             }
-            if let Some(next) = Self::next_tenant(&self.tenant_ready, head, position)
-                && let Err(error) = self.frontier.insert(next)
-            {
-                self.frontier.clear();
-                output.clear();
-                return Err(error);
+            if let Some(next) = self.next_tenant(head) {
+                self.scratch.frontier.push(Reverse(next));
             }
         }
-        self.frontier.clear();
+        self.scratch.frontier.clear();
+        Ok(())
+    }
+    /// Continue an unproductive captured window; dispatch resets normal priority selection.
+    pub const fn advance_candidate_window(&mut self, last: RequestId) {
+        self.scan_after = Some(last);
+    }
+    /// Update urgency after a cost epoch without changing blocked or flight ownership.
+    /// # Errors
+    /// Rejects missing request identities.
+    pub fn update_priority(&mut self, id: RequestId, latest_start_us: Option<i128>) -> Result<()> {
+        let entry = self
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| Error::invalid("unknown priority owner"))?;
+        if entry.state == QueueState::Ready {
+            if let Some(previous) = entry.request.latest_start_us {
+                self.deadlines.remove(&(previous, id));
+            }
+            if let Some(next) = latest_start_us {
+                self.deadlines.insert((next, id));
+            }
+        }
+        entry.request.latest_start_us = latest_start_us;
         Ok(())
     }
     /// Wake a bounded number of resource waiters into reusable scratch.
     /// # Errors
-    /// Rejects corrupt waiter ownership rather than dropping an acknowledgement.
+    /// Rejects insufficient scratch or corrupt waiter ownership.
     pub fn wake_into(
         &mut self,
         reason: BlockedOn,
@@ -109,9 +149,15 @@ impl RequestQueue {
         output: &mut Vec<RequestId>,
     ) -> Result<()> {
         output.clear();
+        if output.capacity() < limit.min(self.waiters.len()) {
+            return Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                "waiter scratch too small",
+            ));
+        }
         output.extend(
             self.waiters
-                .from((reason, 0, RequestId::ONE))
+                .range((reason, 0, RequestId::ONE)..)
                 .take_while(|key| key.0 == reason && key.1 < epoch)
                 .take(limit)
                 .map(|key| key.2),
@@ -132,28 +178,35 @@ impl RequestQueue {
         }
         output
     }
-    /// Populate caller scratch with bounded deadline work. Running wait deadlines are suspended.
+    /// Capture bounded expiry work without quadratic duplicate searches. Flight wait timeouts pause.
     pub fn expired_into(&self, now: u64, limit: usize, output: &mut Vec<RequestId>) {
         output.clear();
-        for (_, id) in self
-            .hard_expiry
-            .iter()
-            .take_while(|key| key.0 <= now)
-            .take(limit)
-            .chain(
-                self.wait_expiry
-                    .iter()
-                    .take_while(|key| key.0 <= now)
-                    .take(limit),
-            )
-        {
-            if !output.contains(&id) {
-                output.push(id);
-            }
-            if output.len() == limit {
-                break;
-            }
+        if limit == 0 {
+            return;
         }
+        output.extend(
+            self.hard_expiry
+                .iter()
+                .take_while(|key| key.0 <= now)
+                .take(limit)
+                .map(|key| key.1),
+        );
+        let remaining = limit.saturating_sub(output.len());
+        output.extend(
+            self.wait_expiry
+                .iter()
+                .take_while(|key| key.0 <= now)
+                .filter(|key| {
+                    !self.entries.get(&key.1).is_some_and(|entry| {
+                        entry
+                            .request
+                            .hard_deadline_us
+                            .is_some_and(|deadline| deadline <= now)
+                    })
+                })
+                .take(remaining)
+                .map(|key| key.1),
+        );
         output.sort_unstable();
     }
     #[must_use]
@@ -163,23 +216,26 @@ impl RequestQueue {
         output
     }
     pub fn ready_ids(&self) -> impl Iterator<Item = RequestId> + '_ {
-        self.aging.iter().map(|key| key.1)
+        self.ready.iter().copied()
+    }
+    /// Identity-ordered cursor for bounded cost-epoch maintenance.
+    pub fn ready_ids_after(
+        &self,
+        after: Option<RequestId>,
+    ) -> impl Iterator<Item = RequestId> + '_ {
+        self.ready
+            .range((after.map_or(Unbounded, Excluded), Unbounded))
+            .copied()
     }
     /// # Errors
     /// Independently rebuilds cold indexes and checks exact membership/counters and flight ownership.
     pub fn check_invariants(&self) -> Result<()> {
-        self.tenant_service.validate()?;
-        self.flights.validate()?;
-        self.tenant_ready.validate()?;
-        self.fair.validate()?;
-        self.frontier.validate()?;
-        self.aging.validate()?;
-        self.deadlines.validate()?;
-        self.hard_expiry.validate()?;
-        self.wait_expiry.validate()?;
-        self.waiters.validate()?;
-        if !self.frontier.is_empty() || self.names.len() != self.capacity {
-            return Err(Error::invariant("queue scratch or capacity corrupt"));
+        self.scratch.validate(self.capacity)?;
+        if self.names.len() != self.capacity
+            || self.entries.capacity() != self.capacity
+            || self.tenants.capacity() != self.capacity
+        {
+            return Err(Error::invariant("queue lifecycle capacity corrupt"));
         }
         let mut expected = Self::new(self.capacity)?;
         let mut flights = std::collections::BTreeMap::<StepId, Vec<RequestId>>::new();
@@ -221,11 +277,29 @@ impl RequestQueue {
             return Err(Error::invariant("tenant free slots incomplete"));
         }
         expected.free_tenants.clone_from(&self.free_tenants);
+        let mut slots = vec![false; self.capacity];
+        for slot in &self.free_entries {
+            if *slot >= self.capacity || std::mem::replace(&mut slots[*slot], true) {
+                return Err(Error::invariant("request free slots corrupt"));
+            }
+        }
         for (id, entry) in self.entries.iter() {
+            if entry.slot >= self.capacity
+                || std::mem::replace(&mut slots[entry.slot], true)
+                || self.names.get(entry.tenant).and_then(Option::as_ref)
+                    != Some(&entry.request.tenant)
+            {
+                return Err(Error::invariant("request slot or tenant ownership corrupt"));
+            }
             if *id != entry.request.request {
                 return Err(Error::invariant("queue entry identity mismatch"));
             }
             expected.enqueue(entry.request.clone())?;
+            expected
+                .entries
+                .get_mut(id)
+                .ok_or_else(|| Error::invariant("reference queue owner missing"))?
+                .slot = entry.slot;
             if let QueueState::Blocked { reason, epoch } = entry.state {
                 expected.block(*id, reason, epoch)?;
             }
@@ -241,6 +315,11 @@ impl RequestQueue {
                 }
             }
         }
+        if slots.contains(&false) {
+            return Err(Error::invariant("request slots incomplete"));
+        }
+        expected.free_entries.clone_from(&self.free_entries);
+        expected.scan_after = self.scan_after;
         if *self != expected {
             return Err(Error::invariant(
                 "queue indexes disagree with lifecycle entries",

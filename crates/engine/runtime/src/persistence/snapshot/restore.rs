@@ -9,7 +9,7 @@ use infer_workloads::NativeWorkloads;
 impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
     ///
     /// # Errors
-    /// Returns a validation, backend, or invariant error for incompatible checkpoint versions, identities, providers, programs, or state ownership.
+    /// Returns a validation, backend, or invariant error for incompatible checkpoint identities, providers, programs, or state ownership.
     pub fn restore(
         backend: B,
         registry: &KernelRegistry,
@@ -87,6 +87,9 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
             engine.host.requests.insert(id, record)?;
         }
         engine.host.cost_epoch = snapshot.cost_epoch;
+        engine.host.ready_index.priority_epoch = snapshot.priority_epoch;
+        engine.host.ready_index.priority_sweep_epoch = snapshot.priority_sweep_epoch;
+        engine.host.ready_index.priority_cursor = snapshot.priority_cursor;
         engine.validate_backend_state()?;
         engine.seen_requests = snapshot.seen_requests;
         engine.retired_request_floor = snapshot.retired_request_floor;

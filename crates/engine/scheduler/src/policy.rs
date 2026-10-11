@@ -93,14 +93,33 @@ fn target(item: &ReadyWork) -> Option<u64> {
     .min_by_key(|(t, c)| i128::from(*t) - i128::from(*c))
     .map(|(t, _)| t)
 }
-fn slack(item: &ReadyWork, now: u64) -> Option<i64> {
+/// Earliest time at which remaining deadline or latency work must start.
+/// Signed arithmetic preserves requests whose forecast already exceeds their target.
+#[must_use]
+pub fn latest_start(
+    deadline_us: Option<u64>,
+    remaining_completion_us: u64,
+    latency_deadline_us: Option<u64>,
+    remaining_latency_us: u64,
+) -> Option<i128> {
     [
-        (item.deadline_us, item.remaining_completion_us),
-        (item.latency_deadline_us, item.remaining_latency_us),
+        (deadline_us, remaining_completion_us),
+        (latency_deadline_us, remaining_latency_us),
     ]
     .into_iter()
-    .filter_map(|(t, c)| t.map(|t| i128::from(t) - i128::from(now) - i128::from(c)))
+    .filter_map(|(deadline, remaining)| {
+        deadline.map(|deadline| i128::from(deadline) - i128::from(remaining))
+    })
     .min()
+}
+fn slack(item: &ReadyWork, now: u64) -> Option<i64> {
+    latest_start(
+        item.deadline_us,
+        item.remaining_completion_us,
+        item.latency_deadline_us,
+        item.remaining_latency_us,
+    )
+    .map(|start| start - i128::from(now))
     .map(|s| i64::try_from(s).unwrap_or(if s < 0 { i64::MIN } else { i64::MAX }))
 }
 #[must_use]
@@ -254,7 +273,7 @@ impl SchedulingPolicy for CostAwarePolicy {
         .pack_into(context.decision, context.step, output)
     }
     fn identity(&self) -> &'static str {
-        "slack-wfq-mixed-v3"
+        "slack-wfq-mixed-v4"
     }
     fn plan(
         &self,

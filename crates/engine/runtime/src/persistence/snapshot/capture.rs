@@ -7,7 +7,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub(crate) fn snapshot_for_diagnostic(&self) -> RuntimeSnapshot {
         RuntimeSnapshot {
             fault: self.fault.clone(),
-            schema_version: crate::constants::SNAPSHOT_SCHEMA_VERSION,
             backend_identity: self.backend.identity().into(),
             policy_identity: self.policy.identity().into(),
             workload_identity: self.workloads.identity().into(),
@@ -20,6 +19,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             queues: self.host.queues.clone(),
             resource_epoch: self.resource_epoch,
             cost_epoch: self.host.cost_epoch,
+            priority_epoch: self.host.ready_index.priority_epoch,
+            priority_sweep_epoch: self.host.ready_index.priority_sweep_epoch,
+            priority_cursor: self.host.ready_index.priority_cursor,
             seen_requests: self.seen_requests.clone(),
             retired_request_floor: self.retired_request_floor,
             tenants: self.tenants.clone(),

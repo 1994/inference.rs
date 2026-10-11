@@ -51,7 +51,6 @@ impl ReplayAction {
 pub struct RuntimeSnapshot {
     #[serde(default)]
     pub fault: Option<crate::EngineFault>,
-    pub schema_version: u32,
     pub backend_identity: String,
     pub policy_identity: String,
     pub workload_identity: String,
@@ -64,6 +63,10 @@ pub struct RuntimeSnapshot {
     pub queues: infer_scheduler::RequestQueue,
     pub resource_epoch: u64,
     pub cost_epoch: u64,
+    /// Completed and active calibration sweeps; the cursor may refer to a retired owner.
+    pub priority_epoch: u64,
+    pub priority_sweep_epoch: u64,
+    pub priority_cursor: Option<RequestId>,
     pub seen_requests: BTreeSet<RequestId>,
     pub retired_request_floor: u64,
     pub(crate) tenants: infer_core::map::BoundedMap<std::sync::Arc<str>, TenantService>,

@@ -91,7 +91,6 @@ assert len(executed["results"]) == 4 and all(
 assert executed["execution"]["state"]["sequences"] == 0
 assert any("CostFeedback" in a for a in json.loads(journal.read_text()))
 captured_run = json.loads(snapshot.read_text())
-assert captured_run["schema_version"] == 6
 assert any(d["step"] and d["step"]["role"] == "Mixed" for d in captured_run["decisions"])
 for name, option, path in [
     ("journal-replay", "--journal", journal),
@@ -216,7 +215,6 @@ try:
         assert capture_clock < 10000
         captured = rpc("snapshot.capture", {"now_us": capture_clock})
     assert not captured["pending"] and captured["snapshot"]["execution_state"]
-    assert captured["snapshot"]["schema_version"] == 6
     save("mid-generation-snapshot", captured["snapshot"])
     probes = rpc("executor.probes")
     assert probes and {p["layer"] for p in probes} == {0, 1}

@@ -6,7 +6,8 @@ mod policy;
 pub use admission::ResourceAdmission;
 pub use cost::{CalibratedCosts, FallbackCosts, aggregate, update_summary};
 pub use policy::{
-    CostAwarePolicy, PackingWorkspace, preemption_order, service_charge, validate_scheduler,
+    CostAwarePolicy, PackingWorkspace, latest_start, preemption_order, service_charge,
+    validate_scheduler,
 };
 
 pub mod queue;

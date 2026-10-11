@@ -99,7 +99,7 @@ impl Cycle {
                 tenant: Arc::from(row.tenant.as_str()),
                 virtual_finish: 0,
                 last_service_us: 0,
-                deadline_us: None,
+                latest_start_us: None,
                 hard_deadline_us: None,
                 wait_deadline_us: u64::MAX,
             })?;
@@ -216,7 +216,7 @@ impl Cycle {
                 QueueTiming {
                     phase: ExecutionRole::Decode,
                     last_service_us: self.iteration,
-                    deadline_us: None,
+                    latest_start_us: None,
                     wait_deadline_us: u64::MAX,
                 },
             )?;

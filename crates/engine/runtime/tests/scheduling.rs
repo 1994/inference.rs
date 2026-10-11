@@ -553,19 +553,6 @@ fn measured_cost_feedback_is_replayed_and_checkpointed_deterministically() {
             restored.request(id).unwrap().completed
         );
     }
-    let mut outdated = original.snapshot().unwrap();
-    outdated.schema_version = 2;
-    assert!(
-        Engine::restore(
-            TimedBackend {
-                inner: backend(),
-                elapsed: 800
-            },
-            &registry(),
-            outdated
-        )
-        .is_err()
-    );
 }
 
 #[test]
@@ -632,4 +619,195 @@ fn memory_blocked_decode_preempts_even_when_another_request_is_feasible() {
                 .output
         );
     }
+}
+
+#[test]
+fn bounded_runtime_window_uses_remaining_ttft_service() -> Result<()> {
+    let mut config = RuntimeConfig {
+        candidate_limit: 1,
+        max_num_batched_tokens: 1,
+        cost_per_token_us: 250,
+        ..RuntimeConfig::default()
+    };
+    config.scheduler.prefill_chunk_tokens = 1;
+    let mut e = engine(config);
+    let mut short = request(1, 2);
+    short.qos.ttft_slo_us = Some(20_000);
+    let mut long = request(2, 100);
+    long.qos.ttft_slo_us = Some(30_000);
+    e.submit(short)?;
+    e.submit(long)?;
+    e.tick(0)?;
+    let selected = e
+        .decisions()
+        .back()
+        .and_then(|decision| decision.selected.first())
+        .ok_or_else(|| Error::invariant("missing first selection"))?;
+    assert_eq!(selected.request, RequestId::new(2)?);
+    e.check_invariants()
+}
+
+struct PressureBackend {
+    inner: ProtocolBackend,
+    blocked: std::collections::BTreeSet<StateId>,
+}
+impl BackendProvider for PressureBackend {
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
+    fn identity(&self) -> &str {
+        self.inner.identity()
+    }
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.inner.capabilities()
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
+    fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
+        self.inner.validate_program(model, program)
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        tokens: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        self.inner.reserve_state_for(state, tokens, readout)
+    }
+    fn release_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.release_state(state)
+    }
+    fn submit(
+        &mut self,
+        program: &ExecutionProgram,
+        step: &StepPlan,
+        tasks: Vec<ExecutionTask>,
+    ) -> Result<Self::Ticket> {
+        self.inner.submit(program, step, tasks)
+    }
+    fn submit_borrowed(
+        &mut self,
+        program: &ExecutionProgram,
+        step: &StepPlan,
+        tasks: &[ExecutionTask],
+    ) -> Result<Self::Ticket> {
+        self.inner.submit_borrowed(program, step, tasks)
+    }
+    fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
+        self.inner.poll(ticket)
+    }
+    fn free_state_bytes(&self) -> Result<Option<u64>> {
+        Ok((!self.blocked.is_empty()).then_some(0))
+    }
+    fn state_page_growth(&self, state: StateId) -> Result<Option<PageGrowth>> {
+        Ok(self.blocked.contains(&state).then_some(PageGrowth {
+            block_size: 1,
+            allocated_pages: usize::MAX,
+            bytes_per_page: 1,
+            cow_tail: true,
+        }))
+    }
+}
+
+#[test]
+fn all_blocked_priority_candidates_do_not_hide_a_feasible_request() -> Result<()> {
+    let b = PressureBackend {
+        inner: backend(),
+        blocked: std::collections::BTreeSet::new(),
+    };
+    let mut e = Engine::new(
+        b,
+        support::model(ModelId::ONE),
+        PrecisionPlan::f32(),
+        &registry(),
+        RuntimeConfig {
+            candidate_limit: 2,
+            ..RuntimeConfig::default()
+        },
+    )?;
+    for id in 1..=3 {
+        e.submit(request(id, 3))?;
+    }
+    for id in 1..=2 {
+        let state = e
+            .request(RequestId::new(id)?)?
+            .state
+            .ok_or_else(|| Error::invariant("missing request state"))?;
+        e.backend_mut().blocked.insert(state);
+    }
+    e.tick(0)?;
+    assert!(
+        e.decisions()
+            .back()
+            .is_some_and(|decision| decision.step.is_none())
+    );
+    e.tick(1)?;
+    assert!(e.decisions().back().is_some_and(|decision| {
+        decision
+            .selected
+            .iter()
+            .any(|selected| selected.request.get() == 3)
+    }));
+    assert!(e.inspect().inflight_step.is_some());
+    e.check_invariants()
+}
+
+#[test]
+fn continuous_calibration_covers_the_queue_and_resumes_its_checkpoint_cursor() -> Result<()> {
+    let mut config = RuntimeConfig::default();
+    config.cpu.maintenance_items = 1;
+    let mut original = engine(config);
+    for id in 1..=4 {
+        let mut r = request(id, 16);
+        r.qos.ttft_slo_us = Some(100_000);
+        original.submit(r)?;
+    }
+    let snapshot = original.snapshot()?;
+    let query = CostQuery::from_unit(
+        snapshot.program.id,
+        snapshot.program.backend,
+        ExecutionRole::Prefill,
+        1,
+        1,
+        CostEstimate {
+            gpu_us: snapshot.config.cost_per_token_us,
+            workspace_bytes: snapshot.program.workspace_bytes,
+            ..Default::default()
+        },
+    );
+    let feedback = ReplayAction::CostFeedback(CostObservation {
+        step: StepId::ONE,
+        work: vec![query].into(),
+        timing: ExecutionTiming {
+            elapsed_us: 100,
+            source: TimingSource::CudaGpu,
+        },
+    });
+    original.replay(std::slice::from_ref(&feedback))?;
+    original.poll_completed(1)?;
+    let checkpoint = original.snapshot()?;
+    assert_eq!(checkpoint.priority_cursor, Some(RequestId::ONE));
+    let mut restored = Engine::restore(backend(), &registry(), checkpoint.clone())?;
+    for tick in 2..=4 {
+        for e in [&mut original, &mut restored] {
+            e.replay(std::slice::from_ref(&feedback))?;
+            e.poll_completed(tick)?;
+        }
+        let a = original.snapshot()?;
+        let b = restored.snapshot()?;
+        assert_eq!(a.priority_cursor, Some(RequestId::new(tick)?));
+        assert_eq!(a.priority_cursor, b.priority_cursor);
+        assert_eq!(a.priority_sweep_epoch, 1);
+        assert_eq!(a.queues, b.queues);
+    }
+    original.poll_completed(5)?;
+    let finished = original.snapshot()?;
+    assert_eq!(finished.priority_cursor, None);
+    assert_eq!(finished.priority_epoch, 1);
+    assert_eq!(finished.cost_epoch, 4);
+    original.poll_completed(6)?;
+    assert_eq!(original.snapshot()?.priority_cursor, Some(RequestId::ONE));
+    let mut corrupted = checkpoint;
+    corrupted.priority_sweep_epoch = corrupted.cost_epoch + 1;
+    assert!(Engine::restore(backend(), &registry(), corrupted).is_err());
+    Ok(())
 }

@@ -47,7 +47,7 @@ pub(super) fn register<B: AgentBackend>(
         &[],
         "Validate and atomically replace live engine from checkpoint",
         CommandEffect::Control,
-        json!({"type":"object","description":"RuntimeSnapshot schema 6; identities and ownership validated during restore"}),
+        json!({"type":"object","description":"RuntimeSnapshot; identities and ownership validated during restore"}),
         restore,
     )?;
     Ok(())

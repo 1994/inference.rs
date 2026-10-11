@@ -33,8 +33,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     .as_mut()
                     .map(|r| std::mem::take(&mut r.tenant))
                     .unwrap_or_default();
-                let row =
-                    self.ready_request_with_tenant(id, self.host.requests.known(id)?, tenant)?;
+                let row = self.ready_request_with_tenant(
+                    id,
+                    self.host.requests.known(id)?,
+                    Some(tenant),
+                )?;
                 self.host.ready_index.rows[slot] = Some(row);
                 self.host.ready_index.versions[slot] = self.host.cost_epoch;
             }
@@ -79,15 +82,18 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         Ok(())
     }
     pub(crate) fn ready_request(&self, id: RequestId, r: &RequestRecord) -> Result<ReadyWork> {
-        self.ready_request_with_tenant(id, r, String::new())
+        self.ready_request_with_tenant(id, r, Some(String::new()))
     }
     fn ready_request_with_tenant(
         &self,
         id: RequestId,
         r: &RequestRecord,
-        mut tenant: String,
+        tenant: Option<String>,
     ) -> Result<ReadyWork> {
-        tenant.clone_from(&r.request.qos.tenant);
+        let tenant = tenant.map_or_else(String::new, |mut tenant| {
+            tenant.clone_from(&r.request.qos.tenant);
+            tenant
+        });
         let generate = matches!(r.request.workload, Workload::Generate { .. });
         let role = if generate && r.prefill_done == r.prefill_target {
             ExecutionRole::Decode
@@ -194,35 +200,72 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     fn queue_timing(&self, id: RequestId) -> Result<infer_scheduler::QueueTiming> {
         let r = self.host.requests.known(id)?;
-        let phase = if !matches!(r.request.workload, Workload::Generate { .. }) {
+        let generate = matches!(r.request.workload, Workload::Generate { .. });
+        let phase = if !generate {
             ExecutionRole::Forward
         } else if r.prefill_done == r.prefill_target {
             ExecutionRole::Decode
         } else {
             ExecutionRole::Prefill
         };
-        let latency_deadline = if r.first_token_us.is_none() {
-            r.request
-                .qos
-                .ttft_slo_us
-                .map(|slo| r.accepted_us.saturating_add(slo))
+        let has_latency_target = generate
+            && if r.first_token_us.is_none() {
+                r.request.qos.ttft_slo_us.is_some()
+            } else {
+                r.request.qos.tpot_slo_us.is_some() && r.last_token_us.is_some()
+            };
+        let latest_start_us = if r.request.qos.deadline_us.is_some() || has_latency_target {
+            let forecast = self.ready_request_with_tenant(id, r, None)?;
+            infer_scheduler::latest_start(
+                forecast.deadline_us,
+                forecast.remaining_completion_us,
+                forecast.latency_deadline_us,
+                forecast.remaining_latency_us,
+            )
         } else {
-            r.request
-                .qos
-                .tpot_slo_us
-                .and_then(|slo| r.last_token_us.map(|last| last.saturating_add(slo)))
+            None
         };
         Ok(infer_scheduler::QueueTiming {
             phase,
             last_service_us: r.last_service_us,
-            deadline_us: [r.request.qos.deadline_us, latency_deadline]
-                .into_iter()
-                .flatten()
-                .min(),
+            latest_start_us,
             wait_deadline_us: r
                 .last_service_us
                 .saturating_add(self.config.max_queue_wait_us),
         })
+    }
+    /// Refresh a bounded identity window after calibration changes. Newly ready requests
+    /// already receive current forecasts in their lifecycle transition. New feedback
+    /// does not restart an active sweep: every ready request gets refreshed even
+    /// during continuous calibration. A changed epoch triggers another full sweep.
+    pub(crate) fn refresh_queue_priorities(&mut self) -> Result<()> {
+        if self.host.ready_index.priority_epoch == self.host.cost_epoch {
+            return Ok(());
+        }
+        if self.host.ready_index.priority_cursor.is_none() {
+            self.host.ready_index.priority_sweep_epoch = self.host.cost_epoch;
+        }
+        let mut ids = std::mem::take(&mut self.host.wake_buffer);
+        ids.clear();
+        ids.extend(
+            self.host
+                .queues
+                .ready_ids_after(self.host.ready_index.priority_cursor)
+                .take(self.config.cpu.maintenance_items),
+        );
+        let result = ids.iter().copied().try_for_each(|id| {
+            let timing = self.queue_timing(id)?;
+            self.host.queues.update_priority(id, timing.latest_start_us)
+        });
+        if result.is_ok() {
+            self.host.ready_index.priority_cursor = ids.last().copied();
+            if ids.len() < self.config.cpu.maintenance_items {
+                self.host.ready_index.priority_epoch = self.host.ready_index.priority_sweep_epoch;
+                self.host.ready_index.priority_cursor = None;
+            }
+        }
+        self.host.wake_buffer = ids;
+        result
     }
 
     pub(crate) fn queue_request(&self, id: RequestId) -> Result<infer_scheduler::QueueRequest> {
@@ -238,7 +281,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 .ok_or_else(|| Error::invariant("tenant missing"))?
                 .virtual_finish,
             last_service_us: timing.last_service_us,
-            deadline_us: timing.deadline_us,
+            latest_start_us: timing.latest_start_us,
             hard_deadline_us: r.request.qos.deadline_us,
             wait_deadline_us: timing.wait_deadline_us,
         })

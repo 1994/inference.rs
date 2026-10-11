@@ -14,9 +14,6 @@ impl RuntimeSnapshot {
         costs: &impl CostModelProvider,
         admission: &impl AdmissionPolicy,
     ) -> Result<()> {
-        if self.schema_version != crate::constants::SNAPSHOT_SCHEMA_VERSION {
-            return Err(Error::unsupported("snapshot schema version"));
-        }
         if self.fault.is_some() {
             return Err(Error::invalid(
                 "cannot restore a quarantined diagnostic snapshot",
@@ -54,6 +51,12 @@ impl RuntimeSnapshot {
     pub(super) fn validate_capacities(&self) -> Result<()> {
         self.state.check_invariants()?;
         self.queues.check_invariants()?;
+        if self.priority_epoch > self.priority_sweep_epoch
+            || self.priority_sweep_epoch > self.cost_epoch
+            || (self.priority_cursor.is_some() && self.priority_sweep_epoch == self.priority_epoch)
+        {
+            return Err(Error::invalid("snapshot priority refresh epochs mismatch"));
+        }
         self.ids.validate_after(
             self.decisions
                 .iter()

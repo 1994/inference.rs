@@ -64,7 +64,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 110
+      "tests": 115
     },
     "quality": {
       "benches": 0,
@@ -76,13 +76,13 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 61
+      "tests": 64
     },
     "scheduler": {
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 34
+      "tests": 41
     },
     "spi": {
       "benches": 0,
@@ -428,6 +428,11 @@
       "mount": "../../tests/unit/policy_packing.rs"
     },
     {
+      "crate": "scheduler",
+      "file": "src/queue/ordered.rs",
+      "mount": "../../tests/unit/ordered.rs"
+    },
+    {
       "crate": "state",
       "file": "src/logical/mod.rs",
       "mount": "../../tests/unit/logical.rs"
@@ -674,11 +679,11 @@
     }
   ],
   "totals": {
-    "all": 467,
+    "all": 482,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 467
+    "tests": 482
   }
 }

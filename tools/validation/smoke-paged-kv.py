@@ -110,7 +110,6 @@ try:
         time.sleep(0.001)
         metal.now += 1
         checkpoint = metal.rpc("snapshot.capture", {"now_us": metal.now})
-    assert checkpoint["snapshot"]["schema_version"] == 6
     assert checkpoint["snapshot"]["preemption_focus"] is not None
     metal.rpc("snapshot.replay", checkpoint["snapshot"])
     metal.now += 1

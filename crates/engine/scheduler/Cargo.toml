@@ -33,7 +33,7 @@ path = "tests/policy.rs"
 workspace = true
 
 [dependencies]
-ahash.workspace = true
+btree-slab.workspace = true
 infer-core.workspace = true
 infer-ir.workspace = true
 infer-spi.workspace = true

@@ -96,13 +96,19 @@ fn engine(requests: usize, batch: usize) -> Result<Engine<backend::Backend>> {
         },
     )
 }
-fn request(id: usize, tokens: usize, generated: usize) -> Result<CanonicalRequest> {
-    serde_json::from_value(serde_json::json!({
+fn request(id: usize, tokens: usize, generated: usize, slo: bool) -> Result<CanonicalRequest> {
+    let mut request: CanonicalRequest = serde_json::from_value(serde_json::json!({
         "id":id,"model":1,"input":{"Sequence":{"tokens":vec![1; tokens]}},
         "sampling":{"temperature":0.7,"top_k":8,"seed":42},
         "workload":{"Generate":{"max_new_tokens":generated}}
     }))
-    .map_err(|error| Error::invalid(error.to_string()))
+    .map_err(|error| Error::invalid(error.to_string()))?;
+    if slo {
+        request.qos.deadline_us = Some(60_000_000);
+        request.qos.ttft_slo_us = Some(30_000_000);
+        request.qos.tpot_slo_us = Some(1_000);
+    }
+    Ok(request)
 }
 fn measured(operation: impl FnOnce() -> Result<()>) -> Result<Counts> {
     allocator::start();
@@ -118,9 +124,15 @@ const fn add(total: &mut Counts, sample: Counts) {
     total.requested_bytes += sample.requested_bytes;
 }
 pub fn run(requests: usize, batch: usize) -> Result<Case> {
+    run_inner(requests, batch, false)
+}
+pub fn run_slo(requests: usize, batch: usize) -> Result<Case> {
+    run_inner(requests, batch, true)
+}
+fn run_inner(requests: usize, batch: usize, slo: bool) -> Result<Case> {
     let mut engine = engine(requests, batch)?;
     for id in 1..=requests {
-        engine.submit(request(id, 1024, 16384)?)?;
+        engine.submit(request(id, 1024, 16384, slo)?)?;
     }
     let mut output = Vec::with_capacity(batch * 2);
     let mut prefill = Counts::default();
@@ -165,7 +177,7 @@ pub fn run(requests: usize, batch: usize) -> Result<Case> {
     }
     let mut terminal = self::engine(requests, batch)?;
     for id in 1..=requests {
-        terminal.submit(request(id, 1, 1)?)?;
+        terminal.submit(request(id, 1, 1, slo)?)?;
     }
     let mut completion = Counts::default();
     for tick in 1..1000 {

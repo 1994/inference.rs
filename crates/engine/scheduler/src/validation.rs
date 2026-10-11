@@ -12,6 +12,7 @@ pub struct ValidationScratch {
     evidence: Vec<u8>,
     ready: Vec<(infer_core::RequestId, usize)>,
     work_index: Vec<usize>,
+    states: Vec<infer_core::StateId>,
 }
 impl ValidationScratch {
     /// # Errors
@@ -33,11 +34,16 @@ impl ValidationScratch {
         work_index
             .try_reserve_exact(candidates)
             .map_err(|e| Error::new(infer_core::ErrorCode::Capacity, e.to_string()))?;
+        let mut states = Vec::new();
+        states
+            .try_reserve_exact(candidates)
+            .map_err(|e| Error::new(infer_core::ErrorCode::Capacity, e.to_string()))?;
         Ok(Self {
             queries,
             evidence,
             ready,
             work_index,
+            states,
         })
     }
     fn prepare(&mut self, ready: &[ReadyWork]) -> Result<()> {
@@ -54,6 +60,12 @@ impl ValidationScratch {
         self.ready.sort_unstable();
         if self.ready.windows(2).any(|pair| pair[0].0 == pair[1].0) {
             return Err(Error::invariant("duplicate validation candidate"));
+        }
+        self.states.clear();
+        self.states.extend(ready.iter().map(|item| item.state));
+        self.states.sort_unstable();
+        if self.states.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Error::invariant("aliased validation state"));
         }
         self.work_index.clear();
         self.work_index.resize(ready.len(), usize::MAX);
@@ -117,7 +129,7 @@ pub fn any_feasible(
     costs: &dyn CostModelProvider,
 ) -> Result<bool> {
     for item in ready {
-        let c = costs.estimate(&[item.cost_query])?;
+        let c = costs.estimate(&[work_query(item, 1)])?;
         if c.gpu_us <= r.scheduler.max_singleton_gpu_us
             && c.workspace_bytes <= r.workspace_bytes
             && c.num_gpu_blocks <= r.free_state_pages
@@ -169,7 +181,6 @@ fn validate_prepared_step(
         || step.work.len() > scratch.queries.capacity()
         || step.work.len() > r.max_num_seqs
         || step.program != program
-        || step.graph.is_some()
     {
         return Err(Error::invariant("invalid scheduler step/program/graph"));
     }
@@ -184,6 +195,13 @@ fn validate_prepared_step(
             ExecutionRole::Mixed => 0,
         };
         if scratch.work_index[position] != usize::MAX
+            || item.program != step.program
+            || item.cost_query.program != step.program
+            || item.cost_query.role != item.role
+            || scratch
+                .queries
+                .first()
+                .is_some_and(|first| first.backend != item.cost_query.backend)
             || work.state != item.state
             || work.role != item.role
             || work.token_count == 0
@@ -203,7 +221,20 @@ fn validate_prepared_step(
     } else {
         ExecutionRole::Mixed
     };
-    let predicted = costs.estimate(&scratch.queries)?;
+    let mut predicted = costs.estimate(&scratch.queries)?;
+    if let Some(graph) = &step.graph {
+        if step.role != ExecutionRole::Decode
+            || step.quantum_overrun
+            || !r.graphs.contains(graph)
+            || graph.batch_capacity < step.work.len()
+            || graph.max_tokens < tokens
+            || graph.workspace_bytes > r.workspace_bytes
+            || graph.program.is_some_and(|bound| bound != step.program)
+        {
+            return Err(Error::invariant("invalid scheduler graph binding or shape"));
+        }
+        predicted.workspace_bytes = predicted.workspace_bytes.max(graph.workspace_bytes);
+    }
     let allowed_overrun = step.quantum_overrun
         && step.work.len() == 1
         && tokens == 1
@@ -266,7 +297,7 @@ pub fn validate_decision_reusing(
             || scratch.evidence[index] != 0
             || scratch.work_index[index] != usize::MAX
             || (d.reason == DeferReason::AtomicCostLimit
-                && costs.estimate(&[item.cost_query])?.gpu_us
+                && costs.estimate(&[work_query(item, 1)])?.gpu_us
                     <= resources.scheduler.max_singleton_gpu_us)
         {
             return Err(Error::invariant(

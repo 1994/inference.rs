@@ -35,15 +35,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine::run(16, 16)?,
         engine::run(64, 64)?,
     ];
+    let engine_slo = [
+        engine::run_slo(1, 1)?,
+        engine::run_slo(16, 16)?,
+        engine::run_slo(64, 64)?,
+    ];
     let primitives = primitives::run()?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "scope":"Single-thread CPU protocol cycle: queue -> bounded ready projection -> packing -> independent validation -> metadata seal -> SPSC handoff -> launch ack -> synthetic fence -> commit. No model execution, sampling, network, device driver, thread scheduling or whole-engine latency is measured.",
             "primitives_scope":"Fixed map/arena/credits/pooled resource acknowledgement, logical KV batch growth/reset, and physical KV append/fork/COW/pin/release. Prefix publication and actual GPU execution are excluded.",
-            "engine_scope":"Actual Engine CPU tick: admission/resource acknowledgement, prefill/decode scheduling, state reservations, packing, cost feedback/history, sampling, buffer recycling, completion and live cancellation. Each case runs 10000 ticks including the first prefill. Uses a persistent backend contract double; excludes native GPU execution/driver allocation, threaded owners, request parsing and network/telemetry export.",
+            "engine_scope":"Actual Engine CPU tick: admission/resource acknowledgement, prefill/decode scheduling, state reservations, packing, cost feedback/history, sampling, buffer recycling, completion and live cancellation. Each case runs 10000 ticks including the first prefill. engine_slo additionally enables completion deadline, TTFT and TPOT forecasts. Uses a persistent backend contract double; excludes native GPU execution/driver allocation, threaded owners, request parsing and network/telemetry export.",
             "allocator":"mimalloc with thread-local allocation/reallocation/deallocation counters",
-            "target":std::env::consts::ARCH,"os":std::env::consts::OS,"cycles":cycles,"primitives":primitives,"engine":engine
+            "target":std::env::consts::ARCH,"os":std::env::consts::OS,"cycles":cycles,"primitives":primitives,"engine":engine,"engine_slo":engine_slo
         }))?
     );
     Ok(())

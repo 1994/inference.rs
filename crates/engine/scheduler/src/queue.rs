@@ -1,15 +1,21 @@
 //! One lifecycle table with fixed priority indexes and hierarchical tenant service.
-mod frontier;
-mod index;
+mod checkpoint;
 mod lifecycle;
+mod ordered;
 mod planning;
-use index::Index;
+mod scratch;
 use infer_core::{Error, ErrorCode, RequestId, Result, StepId, map::BoundedMap};
 use infer_ir::ExecutionRole;
+use ordered::OrderedSet;
+use scratch::CandidateScratch;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
 
 /// Number of dispatchable execution phases (prefill, decode, forward) counted by the queue.
 const PHASE_COUNT: usize = 3;
+const fn seed_id(slot: usize) -> RequestId {
+    RequestId::from_nonzero(NonZeroU64::MIN.saturating_add(slot as u64))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum BlockedOn {
@@ -31,7 +37,8 @@ pub struct QueueRequest {
     pub tenant: std::sync::Arc<str>,
     pub virtual_finish: u64,
     pub last_service_us: u64,
-    pub deadline_us: Option<u64>,
+    /// Earliest deadline minus its remaining service forecast, in monotonic microseconds.
+    pub latest_start_us: Option<i128>,
     pub hard_deadline_us: Option<u64>,
     pub wait_deadline_us: u64,
 }
@@ -40,7 +47,8 @@ pub struct QueueRequest {
 pub struct QueueTiming {
     pub phase: ExecutionRole,
     pub last_service_us: u64,
-    pub deadline_us: Option<u64>,
+    /// Earliest deadline minus its remaining service forecast, in monotonic microseconds.
+    pub latest_start_us: Option<i128>,
     pub wait_deadline_us: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +56,7 @@ struct Entry {
     request: QueueRequest,
     state: QueueState,
     tenant: usize,
+    slot: usize,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Tenant {
@@ -63,7 +72,7 @@ struct ReadyKey {
     tenant: usize,
     service: u64,
     id: RequestId,
-    deadline: Option<u64>,
+    latest_start: Option<i128>,
 }
 impl From<&Entry> for ReadyKey {
     fn from(entry: &Entry) -> Self {
@@ -72,7 +81,7 @@ impl From<&Entry> for ReadyKey {
             tenant: entry.tenant,
             service: entry.request.last_service_us,
             id: entry.request.request,
-            deadline: entry.request.deadline_us,
+            latest_start: entry.request.latest_start_us,
         }
     }
 }
@@ -87,24 +96,27 @@ pub struct QueueInspection {
     pub cancel_pending: usize,
     pub oldest_service_us: Option<u64>,
 }
-/// Preallocated ordered nodes; no allocation on requeue, dispatch, block, wake or completion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Single-owner lifecycle table with library B-trees and reusable, preallocated nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestQueue {
     capacity: usize,
     entries: BoundedMap<RequestId, Entry>,
     tenants: BoundedMap<std::sync::Arc<str>, Tenant>,
     names: Vec<Option<std::sync::Arc<str>>>,
     free_tenants: Vec<usize>,
-    tenant_ready: Index<TenantKey>,
-    fair: Index<FairKey>,
-    tenant_service: Index<(u64, usize)>,
-    frontier: frontier::Frontier,
-    aging: Index<(u64, RequestId)>,
-    deadlines: Index<(u64, RequestId)>,
-    hard_expiry: Index<(u64, RequestId)>,
-    wait_expiry: Index<(u64, RequestId)>,
-    waiters: Index<(BlockedOn, u64, RequestId)>,
-    flights: Index<(StepId, RequestId)>,
+    free_entries: Vec<usize>,
+    ready: OrderedSet<RequestId>,
+    scan_after: Option<RequestId>,
+    tenant_ready: OrderedSet<TenantKey>,
+    fair: OrderedSet<FairKey>,
+    tenant_service: OrderedSet<(u64, usize)>,
+    scratch: CandidateScratch,
+    aging: OrderedSet<(u64, RequestId)>,
+    deadlines: OrderedSet<(i128, RequestId)>,
+    hard_expiry: OrderedSet<(u64, RequestId)>,
+    wait_expiry: OrderedSet<(u64, RequestId)>,
+    waiters: OrderedSet<(BlockedOn, u64, RequestId)>,
+    flights: OrderedSet<(StepId, RequestId)>,
     phases: [usize; PHASE_COUNT],
     running: usize,
     cancelling: usize,
@@ -118,23 +130,26 @@ impl RequestQueue {
         }
         let entries = BoundedMap::new(capacity)?;
         let tenants = BoundedMap::new(capacity)?;
-        let flights = Index::new(capacity, (StepId::ONE, RequestId::ONE))?;
+
         Ok(Self {
             capacity,
             entries,
             tenants,
-            flights,
+            flights: OrderedSet::new(capacity, |slot| (StepId::ONE, seed_id(slot))),
             names: vec![None; capacity],
             free_tenants: (0..capacity).rev().collect(),
-            tenant_ready: Index::new(capacity, (0, 0, RequestId::ONE))?,
-            fair: Index::new(capacity, (0, 0, RequestId::ONE, 0))?,
-            tenant_service: Index::new(capacity, (0, 0))?,
-            frontier: frontier::Frontier::new(capacity)?,
-            aging: Index::new(capacity, (0, RequestId::ONE))?,
-            deadlines: Index::new(capacity, (0, RequestId::ONE))?,
-            hard_expiry: Index::new(capacity, (0, RequestId::ONE))?,
-            wait_expiry: Index::new(capacity, (0, RequestId::ONE))?,
-            waiters: Index::new(capacity, (BlockedOn::Memory, 0, RequestId::ONE))?,
+            free_entries: (0..capacity).rev().collect(),
+            ready: OrderedSet::new(capacity, seed_id),
+            scan_after: None,
+            tenant_ready: OrderedSet::new(capacity, |slot| (0, 0, seed_id(slot))),
+            fair: OrderedSet::new(capacity, |slot| (0, 0, seed_id(slot), 0)),
+            tenant_service: OrderedSet::new(capacity, |slot| (0, slot)),
+            scratch: CandidateScratch::new(capacity)?,
+            aging: OrderedSet::new(capacity, |slot| (0, seed_id(slot))),
+            deadlines: OrderedSet::new(capacity, |slot| (0, seed_id(slot))),
+            hard_expiry: OrderedSet::new(capacity, |slot| (0, seed_id(slot))),
+            wait_expiry: OrderedSet::new(capacity, |slot| (0, seed_id(slot))),
+            waiters: OrderedSet::new(capacity, |slot| (BlockedOn::Memory, 0, seed_id(slot))),
             phases: [0; PHASE_COUNT],
             running: 0,
             cancelling: 0,
@@ -150,12 +165,12 @@ impl RequestQueue {
     fn head(&self, tenant: usize) -> Option<FairKey> {
         let (_, service, id) = self
             .tenant_ready
-            .from((tenant, 0, RequestId::ONE))
+            .range((tenant, 0, RequestId::ONE)..)
             .next()
             .filter(|key| key.0 == tenant)?;
         let name = self.names[tenant].as_ref()?;
         let finish = self.tenants.get(name)?.finish;
-        Some((finish, service, id, tenant))
+        Some((finish, *service, *id, tenant))
     }
     fn index(&mut self, key: ReadyKey, insert: bool) {
         let head = self.head(key.tenant);
@@ -166,16 +181,18 @@ impl RequestQueue {
         }
         let service_key = (key.service, key.id);
         if insert {
+            self.ready.insert(key.id);
             self.tenant_ready.insert(tenant_key);
             self.aging.insert(service_key);
-            if let Some(deadline) = key.deadline {
+            if let Some(deadline) = key.latest_start {
                 self.deadlines.insert((deadline, key.id));
             }
             self.phases[Self::phase_index(key.phase)] += 1;
         } else {
+            self.ready.remove(&key.id);
             self.tenant_ready.remove(&tenant_key);
             self.aging.remove(&service_key);
-            if let Some(deadline) = key.deadline {
+            if let Some(deadline) = key.latest_start {
                 self.deadlines.remove(&(deadline, key.id));
             }
             self.phases[Self::phase_index(key.phase)] -= 1;
@@ -224,7 +241,12 @@ impl RequestQueue {
         }
         self.wait_expiry
             .insert((request.wait_deadline_us, request.request));
+        let slot = self
+            .free_entries
+            .pop()
+            .ok_or_else(|| Error::invariant("request slots exhausted"))?;
         let entry = Entry {
+            slot,
             request,
             state: QueueState::Ready,
             tenant,
@@ -252,7 +274,7 @@ impl RequestQueue {
             QueueTiming {
                 phase: request.phase,
                 last_service_us: request.last_service_us,
-                deadline_us: request.deadline_us,
+                latest_start_us: request.latest_start_us,
                 wait_deadline_us: request.wait_deadline_us,
             },
         )
@@ -288,7 +310,7 @@ impl RequestQueue {
             .ok_or_else(|| Error::invariant("queue owner missing"))?;
         entry.request.phase = timing.phase;
         entry.request.last_service_us = timing.last_service_us;
-        entry.request.deadline_us = timing.deadline_us;
+        entry.request.latest_start_us = timing.latest_start_us;
         entry.request.wait_deadline_us = timing.wait_deadline_us;
         entry.state = QueueState::Ready;
         let key = ReadyKey::from(&*entry);

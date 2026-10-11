@@ -9,14 +9,21 @@ impl RequestQueue {
         if requests.is_empty()
             || self
                 .flights
-                .from((step, RequestId::ONE))
+                .range((step, RequestId::ONE)..)
                 .next()
                 .is_some_and(|key| key.0 == step)
-            || requests.iter().enumerate().any(|(at, id)| {
-                requests[..at].contains(id) || self.state(*id) != Some(QueueState::Ready)
-            })
         {
             return Err(Error::invariant("invalid queue batch dispatch"));
+        }
+        self.scratch.begin();
+        for id in requests {
+            let entry = self
+                .entries
+                .get(id)
+                .ok_or_else(|| Error::invariant("invalid queue batch dispatch"))?;
+            if entry.state != QueueState::Ready || !self.scratch.visit(entry.slot) {
+                return Err(Error::invariant("invalid queue batch dispatch"));
+            }
         }
         for id in requests {
             let entry = self
@@ -35,6 +42,7 @@ impl RequestQueue {
             self.flights.insert((step, *id));
         }
         self.running += requests.len();
+        self.scan_after = None;
         Ok(())
     }
     /// # Errors
@@ -111,7 +119,7 @@ impl RequestQueue {
         entry.state = QueueState::Ready;
         entry.request.phase = timing.phase;
         entry.request.last_service_us = timing.last_service_us;
-        entry.request.deadline_us = timing.deadline_us;
+        entry.request.latest_start_us = timing.latest_start_us;
         entry.request.wait_deadline_us = timing.wait_deadline_us;
         let key = ReadyKey::from(&*entry);
         self.wait_expiry.insert((timing.wait_deadline_us, id));
@@ -206,6 +214,7 @@ impl RequestQueue {
             .entries
             .remove(&id)
             .ok_or_else(|| Error::invariant("removed owner missing"))?;
+        self.free_entries.push(entry.slot);
         let tenant = self
             .tenants
             .get_mut(&entry.request.tenant)

@@ -125,6 +125,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         }
         self.publish_decision(decision)?;
         self.apply_deferrals(decision, emitted)?;
+        if decision.step.is_none()
+            && let Some(last) = ready.last()
+        {
+            self.host.queues.advance_candidate_window(last.request);
+        }
         if let Some(step) = decision.step.as_mut() {
             emitted.extend(self.dispatch(step, ready)?);
         }

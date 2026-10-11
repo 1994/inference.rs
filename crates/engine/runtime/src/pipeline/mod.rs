@@ -146,6 +146,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         self.wake_memory_waiters()?;
         if self.fault.is_none() {
             self.apply_cost_feedback()?;
+            self.refresh_queue_priorities()?;
         }
         self.record_action(match mode {
             DriveMode::Schedule => crate::ReplayAction::Tick { now_us },

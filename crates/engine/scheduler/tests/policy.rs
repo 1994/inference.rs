@@ -409,3 +409,54 @@ fn fixed_cost_paging_fixture_keeps_its_mixed_batch_after_slow_gpu_feedback() -> 
     }
     Ok(())
 }
+
+#[test]
+fn graph_forecast_passes_independent_validation_and_forged_graph_is_rejected() -> Result<()> {
+    let mut r = resources();
+    r.graphs = vec![GraphVariant {
+        batch_capacity: 2,
+        max_tokens: 2,
+        program: Some(ProgramId::ONE),
+        workspace_bytes: 500,
+    }];
+    let ready = [
+        work(1, ExecutionRole::Decode, 1),
+        work(2, ExecutionRole::Decode, 1),
+    ];
+    let mut decision = CostAwarePolicy.plan(&ready, &r, 0, DecisionId::ONE, StepId::ONE)?;
+    validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts)?;
+    decision
+        .step
+        .as_mut()
+        .ok_or_else(|| Error::invariant("missing graph step"))?
+        .graph
+        .as_mut()
+        .ok_or_else(|| Error::invariant("missing graph descriptor"))?
+        .batch_capacity = 1;
+    assert!(validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts).is_err());
+    Ok(())
+}
+
+#[test]
+fn independent_validator_rejects_foreign_programs_and_aliased_states() -> Result<()> {
+    let r = resources();
+    let mut foreign = work(1, ExecutionRole::Decode, 1);
+    foreign.program = ProgramId::new(2)?;
+    foreign.cost_query.program = foreign.program;
+    let ready = [foreign];
+    let mut decision = CostAwarePolicy.plan(&ready, &r, 0, DecisionId::ONE, StepId::ONE)?;
+    decision
+        .step
+        .as_mut()
+        .ok_or_else(|| Error::invariant("missing step"))?
+        .program = ProgramId::ONE;
+    assert!(validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts).is_err());
+    let mut ready = [
+        work(1, ExecutionRole::Decode, 1),
+        work(2, ExecutionRole::Decode, 1),
+    ];
+    let decision = CostAwarePolicy.plan(&ready, &r, 0, DecisionId::ONE, StepId::ONE)?;
+    ready[1].state = ready[0].state;
+    assert!(validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts).is_err());
+    Ok(())
+}
