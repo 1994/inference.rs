@@ -4,6 +4,8 @@ use cutile::prelude::*;
 use infer_ir::TensorNode;
 use std::collections::BTreeMap;
 
+const LAST_INPUT_TILE: usize = 128;
+
 /// Zero-copy prompt GEMM: the batched input slot holds all 32 rows and the
 /// output slot is reshaped to `[32, rows]` in place; no packing kernels remain.
 /// Fp4 weights split the K loop across `PREFILL_SPLIT_K` CTAs per output tile:
@@ -152,7 +154,11 @@ pub(super) fn record_last(
         .map_err(error)?
         .view(&[arena.lanes(), columns])
         .map_err(error)?;
-    scope.record(last_row::gather(scratch.partition([128]), &input, metadata))?;
+    scope.record(last_row::gather(
+        scratch.partition([LAST_INPUT_TILE]),
+        &input,
+        metadata,
+    ))?;
     let slot = arena.slot(node.outputs[0]).map_err(error)?;
     let output = arena.buffers[slot]
         .take()
@@ -184,14 +190,29 @@ pub(super) fn record_last(
         match weight {
             ProjectionWeight::Dense(weight) => {
                 scope.record(
-                    gemm::dense((&mut output).partition([32, 64]), &input, weight)
-                        .generics(generics),
+                    gemm::dense(
+                        (&mut output).partition([
+                            crate::constants::PREFILL_LANES,
+                            crate::constants::PREFILL_GEMM_TILE_N,
+                        ]),
+                        &input,
+                        weight,
+                    )
+                    .generics(generics),
                 )?;
             }
             ProjectionWeight::Fp8(weight, scales) => {
                 scope.record(
-                    gemm::fp8((&mut output).partition([32, 64]), &input, weight, scales)
-                        .generics(generics),
+                    gemm::fp8(
+                        (&mut output).partition([
+                            crate::constants::PREFILL_LANES,
+                            crate::constants::PREFILL_GEMM_TILE_N,
+                        ]),
+                        &input,
+                        weight,
+                        scales,
+                    )
+                    .generics(generics),
                 )?;
             }
             _ => return Err(error("unsupported compact prompt head")),
