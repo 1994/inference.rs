@@ -3124,3 +3124,84 @@ hot_long 的 prefix reuse 从 3584→1536，TTFT 74.61→2163.24 ms，实际重�
 不能把它签发为相同热前缀工作量的 kernel 加速对照。该联合策略改变 graph/chunk/runtime
 token budget，当前不适合全局默认。原始数据与 argv 在
 `mtp-upload/stage64-plan/`，source 为干净 40f3b76，二进制沿用 16.9 基线。
+
+
+### 16.12 第一性原理复核：容量、执行路径与长输入（2026-10-11）
+
+此前 D83→0dd 的五个 fresh-process AB/BA 配对没有证明稳定的整体提升。停止扩大
+large-GEMM 参数搜索，先用真实 CUDA trace、容量计价和同输入 vLLM 参考定位差距。
+以下新实验都是诊断，不构成五配对正式验收，也不宣称已经逼近 vLLM。
+
+**decode 的限制不只是 GEMM。** 0dd 的短请求 Nsight 窗口中，CUDA kernel/copy 活跃
+覆盖约 82.4%，三类矩阵 kernel 总时长约占窗口 58.4%。按每轮权重只读取一次估算，
+主干 FP8/NVFP4 约达到 1.46/1.50 TB/s；这是流量模型，不是实测 DRAM bandwidth，
+不能推导所有 GEMM 或 prefill 都接近极限。96 个 `[48,5120]` BF16 小投影仅占主干
+线性权重约 0.25%，却占主干 kernel 时间约 8.3%，每次仅两个 CTA，值得单独优化。
+单活跃请求的验证仍复制全部四个物理槽位的两份 checkpoint：27 轮产生约
+33.9GB D2D payload、39.4ms copy 时间。`cuStreamSynchronize` 大部分时间与 GPU 活跃
+重叠，不能把整个同步 API 时间算作 CPU 开销。
+
+trace 的 batch 尾部报告 CUDA events 丢失，不能把未记录区间当作 GPU 空闲。
+证据：`first-principles/nsys-0dd5899/critical-path-analysis.json`、原始 nsys/sqlite。
+根目录均为 `/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/`。
+
+**容量候选验证了权重复用方向，也暴露延迟取舍。** 在 detached 0dd 工作树恢复
+安全 terminal-head 末行计算，保留全部 hidden 与原量化/MMA 顺序，并统一预算与
+实际 captured graph widths。候选不改变 1GiB 设备余量或 graph slack。
+44 个 CPU 测试通过；合成 tail 测试通过；真实 27B、511-token prompt 的全部 hidden、
+末行 logits、verification/rollback 和后续 decode 逐位一致。
+
+同二进制输入、冻结调参缓存、MTP2、64 输出 token 的两个独立 AB/BA 配对：
+
+| batch4 指标 | pair0 | pair1 |
+| --- | ---: | ---: |
+| 整组完成时间变化 | -35.94% | -31.11% |
+| 请求完成时间中位数变化 | -19.54% | -19.01% |
+| TTFT 中位数变化 | -64.80% | -65.62% |
+| TPOT 中位数变化 | +17.68% | +16.90% |
+
+全部 112 个请求输出 token/长度/结束原因及工作量控制相同；hot reuse 均为 3584。
+当前基线每批两早两迟，候选四条更早驻留；早首字请求的第1→2 token 间隔约
+75→161ms，符合其他 prefill 阻塞的假设，但报告不足以精确分摊 GPU/host 各阶段。
+固定 poolwidth 不等于固定活跃工作量，不能据此直接称 GEMM 回归。
+旧轮基线三早一迟与当前两早两迟的具体容量边界原因尚未观测；实际配置、程序、
+输入与缓存一致，启动阶段显存观测差约 162MiB，缺少 reserve 时 pool used/reserved
+与 driver-free 数据。不能把跨时段驻留数当作同一稳定基线。
+
+候选尚未合入；prompt-head 的 hardware tuning 覆盖也需要补齐。当前保留原 prompt
+native baseline，不能宣称 compact 实际 shape 的最优参数已自动选择。
+证据：`first-principles/compact-capacity-validation/identity.json`（source tree
+`7e946da9e5912767f554e5f7e0f7ac647448f5b1`）及
+`first-principles/compact-capacity-paired/{plan,diagnostic-summary}.json`。
+
+**vLLM 的真实差距已重新测量。** 0.31.0/MTP2 在 65536/.88 配置启动失败：需要
+2.75GiB KV、只有 2.56GiB。另以 32768 对齐 native 实际平台容量运行，保留 native CLI
+声明 65536 的差异。所有实际输入不变，最大 prompt 3647、输出 64。
+`--prefix-match-unit 32` 保留默认 MTP 尾部重算规则，三个 hot trial 的实际复用均为
+3584，未禁用安全 block-drop。以下是一次 fresh vLLM 服务与两个 native 配对的诊断
+中位数，不是跨引擎质量或正式性能验收：
+
+| 场景 | 0dd TTFT / TPOT(ms) | vLLM TTFT / TPOT(ms) |
+| --- | ---: | ---: |
+| short | 51.93 / 12.23 | 33.21 / 7.98 |
+| long(511 tokens) | 361.56 / 11.87 | 85.70 / 7.99 |
+| hot_long(复用3584) | 78.55 / 11.16 | 31.59 / 7.71 |
+
+batch4 整组耗时约 0dd 2.180s、compact 1.448s、vLLM 0.645s，仍有明显差距。
+vLLM short 每轮 accepted 1.462，native 已完成 trace 为 1.449；batch 为 1.260 对
+1.238。native 未记录 proposed，不能把 accepted/2 叫接受率；这些不同服务的数字
+只说明 MTP 已正常工作，不支持把首要方向改成新的推测算法。
+证据：`first-principles/vllm-mtp2-cap32768/`、`reference-diagnostic-summary.json`。
+
+**后续收敛在执行路径。** 容量/混合调度改善整体吞吐；长输入的 GDN 与低效预填充
+解释不了的部分需要真实分段测量；减少无效 checkpoint 与 GPU→CPU logits 搬运/扫描
+可改善 decode。默认 GDN 对每 token 读写完整 state，511 tokens 的逻辑访问约154GB、
+约2.46万次调用，但 node-major 同层工作集可能命中 L2，不能称全是 DRAM 流量。
+已有寄存器 chunk 方案约快2.5倍，却未通过 exact 门禁；O0–O3 扫描未解决差异，FMA
+原因未被证明。下一步定位首个不同计算阶段，不重复优化等级扫描。
+
+同 compact 程序、同 graph256 的短场景调度诊断，仅改 token budget256→64：
+batch4 TTFT 中位数 218.18→172.15ms，整组 1416.45→1412.47ms，最大 TTFT
+221.90→292.71ms，TPOT 17.38→17.86ms；全部输出一致。它只转移延迟，不适合
+直接设成全局默认，更不能推广到 long/hot。证据：`first-principles/selector-diagnostic/`。
+硬件相关选择继续归属现有 tuning 与能力检测，验证卡型号不能进入 dispatch 决策。
