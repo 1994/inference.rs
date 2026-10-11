@@ -75,6 +75,70 @@ class FrozenTest(unittest.TestCase):
         self.assertTrue(problems)
         self.assertIn("ratio", problems[0])
 
+    def tamper(self, edit):
+        directory = self.copied()
+        edit(directory)
+        return verify_baseline.verify(directory)[1]
+
+    def test_a_dropped_matrix_case_is_caught(self):
+        def edit(directory):
+            path = directory / "2b-mtp0.json"
+            profile = json.loads(path.read_text())
+            del profile["workload"]["matrix"]["hot_long"]
+            path.write_text(json.dumps(profile))
+
+        self.assertIn("matrix differs", " ".join(self.tamper(edit)))
+
+    def test_a_relaxed_threshold_is_caught(self):
+        def edit(directory):
+            path = directory / "2b-mtp0.json"
+            profile = json.loads(path.read_text())
+            profile["measurement"]["max_ratio"] = 5.0
+            path.write_text(json.dumps(profile))
+
+        self.assertIn("not the profile's", " ".join(self.tamper(edit)))
+
+    def test_a_changed_workload_is_caught(self):
+        def edit(directory):
+            path = directory / "qwen3vl-2b-mtp0-native-2b-mtp0-native-g1.json"
+            report = json.loads(path.read_text())
+            report["max_new_tokens"] = 8
+            path.write_text(json.dumps(report))
+
+        self.assertIn("max_new_tokens", " ".join(self.tamper(edit)))
+
+    def test_a_report_without_a_re_measurement_is_caught(self):
+        def edit(directory):
+            path = directory / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["statistical_basis"]["reproductions"] = []
+            manifest["statistical_basis"]["paired_units"] = 1
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("no independent re-measurement", " ".join(self.tamper(edit)))
+
+    def test_a_re_measurement_beyond_the_declared_drift_is_caught(self):
+        def edit(directory):
+            path = directory / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["statistical_basis"]["reproductions"][0]["within_declared_tolerance"] = False
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("beyond the declared drift", " ".join(self.tamper(edit)))
+
+    def test_a_paired_unit_count_that_disagrees_is_caught(self):
+        def edit(directory):
+            path = directory / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["statistical_basis"]["paired_units"] = 9
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("does not match", " ".join(self.tamper(edit)))
+
+    def test_the_shortfall_is_a_note_not_a_failure(self):
+        directory = self.copied()
+        self.assertEqual(verify_baseline.verify(directory)[1], [])
+
     def test_the_tree_recomputes(self):
         for directory in verify_baseline.baselines():
             name, problems = verify_baseline.verify(directory)

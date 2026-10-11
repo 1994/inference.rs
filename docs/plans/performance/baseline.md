@@ -117,7 +117,21 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 用**与签发时同一个 `compare()`** ✓ 重算每个 case 的 baseline/candidate 中位数与 ratio ✓，再与 manifest 里
 `gate.performance.metrics` 逐项比对（含 `available` 与总判定 ✓，容差 1e-9 ✓），多算或少算都算失败 ✓。
 
-**实测**：三条已签发基线**全部通过** ✓ —— 每个指标都能从其冻结报告重新算出，判定也与记录一致 ✓。这条证据
+同一条检查还核**契约来自 profile 而不是签发当天** ✓（这些都不需要设备 ✓）：
+
+- 冻结目录里的 profile 副本 `profile_id` 与 manifest 一致 ✓；
+- **矩阵完整** ✓：`validity.matrix` 与**每份报告**的 `matrix` 都必须等于 profile `workload.matrix` 声明的
+  case/并发/重复次数 ✓（漏掉一个 case、事后改并发都会失败 ✓）；
+- **阈值来自声明** ✓：`gate.max_latency_ratio` 必须等于 profile `measurement.max_ratio` ✓（事后放宽门槛
+  会被抓住 ✓）；
+- **工作量逐份对齐** ✓：每份报告的 `max_new_tokens`/`temperature`/`mtp_depth`/`eos_tokens`/输入哈希都要
+  与 profile 一致 ✓；
+- **独立复测** ✓：必须有 `reproductions` ✓、每个单元都 `within_declared_tolerance` ✓、
+  `paired_units` 与单元数自洽 ✓；**若少于方案要求的 5 ✓，打印提示而不是判失败** ✓（现状 2 ✓，manifest
+  自己也如实记着 ✓ —— 这是需要设备窗口的缺口 ✓，不是可以含糊过去的 ✓）。
+
+**实测**：三条已签发基线**全部通过** ✓ —— 每个指标都能从其冻结报告重新算出，判定与记录一致 ✓，矩阵、
+阈值、工作量与独立复测也都对得上 ✓；并对三条都打印了 `2 paired units, the plan asks for 5` 的提示 ✓。这条证据
 与上一节的"版本边界"互补 ✓：一个保证**旧基线现在仍可读** ✓，一个保证**记录的数字确实来自它的证据** ✓。
 
 **profile 规则有版本边界，旧基线仍可复核（实测）**

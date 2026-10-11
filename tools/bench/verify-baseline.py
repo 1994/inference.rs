@@ -19,6 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASELINES = Path("benchmarks/baselines")
 TOLERANCE = 1e-9
+# The plan asks for at least five independent paired units; the record states what it holds.
+REQUIRED_PAIRED_UNITS = 5
 
 
 def load_gate():
@@ -71,6 +73,11 @@ def compare_numbers(recorded, recomputed):
 def verify(directory, gate=None, root=ROOT):
     gate = load_gate() if gate is None else gate
     manifest = json.loads((directory / "manifest.json").read_text())
+    problems = check_contract(directory, manifest)
+    if problems:
+        # The comparison refuses a pair whose workload no longer aligns, so a broken contract is
+        # reported as itself rather than as that refusal.
+        return manifest["baseline_id"], problems
     baseline_file, candidate_file = primary_pair(manifest)
     result = gate.compare(
         json.loads((directory / baseline_file).read_text()),
@@ -78,11 +85,69 @@ def verify(directory, gate=None, root=ROOT):
         manifest["gate"]["max_latency_ratio"],
         allow_legacy_baseline=True,
     )
-    problems = compare_numbers(manifest["gate"]["performance"]["metrics"], result["metrics"])
+    problems.extend(compare_numbers(manifest["gate"]["performance"]["metrics"], result["metrics"]))
     recorded = manifest["gate"]["performance"].get("passed")
     if bool(recorded) != bool(result["passed"]):
         problems.append(f"verdict: recorded {recorded}, recomputed {result['passed']}")
     return manifest["baseline_id"], problems
+
+
+def profile_of(directory, manifest):
+    """The profile the freeze copied in, which is what the matrix and thresholds must come from."""
+    name = f"{manifest['profile_id']}.json"
+    path = directory / name
+    if not path.exists():
+        raise SystemExit(f"{manifest['baseline_id']}: no copied profile {name}")
+    return json.loads(path.read_text())
+
+
+def check_contract(directory, manifest):
+    """The plan's matrix, thresholds and workload have to come from the profile, not the report.
+
+    A baseline is signed for a profile, so the cases it covers, the ratio it is judged against
+    and the workload it ran all belong to that declaration. Anything invented at signing time -
+    a case dropped, a threshold relaxed, a workload quietly changed - is exactly what this
+    catches, and it needs no device to check.
+    """
+    profile = profile_of(directory, manifest)
+    problems = []
+    if profile.get("profile_id") != manifest["profile_id"]:
+        problems.append(
+            f"copied profile is {profile.get('profile_id')!r}, "
+            f"manifest says {manifest['profile_id']!r}"
+        )
+    declared = profile["workload"]["matrix"]
+    if manifest["validity"]["matrix"] != declared:
+        problems.append("validity matrix differs from the profile's declaration")
+    if manifest["gate"]["max_latency_ratio"] != profile["measurement"]["max_ratio"]:
+        problems.append("recorded ratio threshold is not the profile's")
+    workload = {key: value for key, value in profile["workload"].items() if key != "matrix"}
+    for entry in manifest["reports"]:
+        report = json.loads((directory / entry["file"]).read_text())
+        if report.get("matrix") != declared:
+            problems.append(f"{entry['file']}: matrix differs from the profile's declaration")
+        for key, value in workload.items():
+            if key in report and report[key] != value:
+                problems.append(
+                    f"{entry['file']}: {key} is {report[key]!r}, profile says {value!r}"
+                )
+    basis = manifest["statistical_basis"]
+    reproductions = basis.get("reproductions", [])
+    if not reproductions:
+        problems.append("no independent re-measurement is recorded")
+    problems.extend(
+        f"re-measurement {unit.get('unit')} moved beyond the declared drift"
+        for unit in reproductions
+        if not unit.get("within_declared_tolerance")
+    )
+    if basis.get("paired_units") != 1 + len(reproductions):
+        problems.append("paired_units does not match the recorded reproductions")
+    if basis.get("paired_units", 0) < REQUIRED_PAIRED_UNITS:
+        print(
+            f"{manifest['baseline_id']}: {basis['paired_units']} paired units, "
+            f"the plan asks for {REQUIRED_PAIRED_UNITS}; recorded, not yet met"
+        )
+    return problems
 
 
 def baselines(root=ROOT):
