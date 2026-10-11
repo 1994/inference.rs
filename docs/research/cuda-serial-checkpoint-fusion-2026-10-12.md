@@ -40,3 +40,5 @@ Flat capture 返回原 activation allocation，row capture 继续保留共享 ba
 45 上目录 `/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/first-principles/serial-checkpoint-fusion-v1` 保存原 capture 源码、冻结 shipping 编译源码、编译/13 项 GPU 验收结果、生产二进制和独立计时探针。生产二进制 SHA256 为 052e351a8b1a97d5896f21779404e9ea08b64505743ad899f36280e96f44b819，shipping CUDA 检查二进制为 90f1136159581443379bd19cd17e6f722a60493eb0774b71fb5859076ee0c3ab。
 
 tuning cache SHA256 d212f19361deeb8adf7cd321a268080d047920bcc5fa8973a251abeb404bcb7f，在 GPU 验收前后未改变。计时探针与 shipping 检查二进制分开保存；探针只新增测量测试，不进入生产源码。
+
+结束前官方 vLLM main 又前进到 3fe917abb13160d60bea5330399f5c09ca282348，45 已再次快进同步；新增 attention warmup，不改变本轮 GDN 源码对照和 native 固定工作量证据。见 [main 再次同步](vllm-main-execution-paths-2026-10-12.md#再次同步-main)。

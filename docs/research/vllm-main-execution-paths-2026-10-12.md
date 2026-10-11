@@ -129,3 +129,7 @@ prefill/verify/draft 宽度、slot 容量、workspace 和 graph 池策略应共�
 ## 后续受控证据
 
 上述候选表保留首次调查的身份与数据。当前已合入的 GPU readout、pooled 几何准入修复见对应独立报告。新增 [GDN 数值与 FP8 准备成本](cuda-gdn-numerics-and-fp8-preparation-2026-10-12.md)记录 0f2003f 基点的实验：重复 FP8 准备约 0.28 ms/48 层；修复检查假阳性并保持卷积相同后，Delta 分块仍未过数值门槛。同路径对照为零误差；尚无最新 main 的正式跨引擎实测。
+
+## 再次同步 main
+
+本轮结束前，45 再次 git pull --ff-only upstream main，工作区干净，快进到 3fe917abb13160d60bea5330399f5c09ca282348。相对本报告分析的 f26d9f432ced7b1087d02d29bffed2249df1a18e，5 个文件改动集中在 attention kernel warmup 及其调用/测试，GDN projection、FLA chunk 和推测解码路径未改变。源码参考继续按上述固定提交引用；最新 main 的运行性能对比仍未完成。
