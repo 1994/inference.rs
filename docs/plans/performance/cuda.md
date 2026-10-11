@@ -6,6 +6,8 @@
 
 CUDA 后续工作分为两条线：一条修正测量与资源管理，降低推测解码的状态和传输成本；另一条继续按真实形状优化投影与 prompt 图。先维持现有 MTP 的正确性和并发性能，再让 DFlash2 通过显存准入，最后比较组合算法与最佳单算法。
 
+KV cache 的分页重构（PagedAttention 的分层与落地）单独立项，见 [KV cache 分页重构方案](kv-cache-paged-attention.md)。
+
 共同接口见 [SPI 方案](../speculation/spi.md)，模型接入见 [DFlash2 方案](../speculation/dflash2.md)，叠加语义见 [组合方案](../speculation/composition.md)。已有性能实验继续由 [性能实验记录](../../research/cuda-performance-experiments.md) 维护，本方案定义后续工作和验收。
 
 [Infernix 调研](../../research/infernix-performance.md) 给出了已接线的 ReplaySSM、草稿量化、shortlist head 和 prefix cache 参考。采用其中的执行机制时保持本项目 target 权重与数值身份；target 重新量化另做制品和质量验收。
