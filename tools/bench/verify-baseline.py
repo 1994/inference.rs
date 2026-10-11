@@ -131,6 +131,7 @@ def check_contract(directory, manifest):
                 problems.append(
                     f"{entry['file']}: {key} is {report[key]!r}, profile says {value!r}"
                 )
+    problems.extend(check_measurement(profile, manifest, directory))
     basis = manifest["statistical_basis"]
     reproductions = basis.get("reproductions", [])
     if not reproductions:
@@ -147,6 +148,45 @@ def check_contract(directory, manifest):
             f"{manifest['baseline_id']}: {basis['paired_units']} paired units, "
             f"the plan asks for {REQUIRED_PAIRED_UNITS}; recorded, not yet met"
         )
+    return problems
+
+
+def check_measurement(profile, manifest, directory):
+    """What each report has to say about the run itself, not just about the numbers.
+
+    A signable measurement comes from a clean tree, its checklist has to have passed, a cache
+    the profile enables has to show reuse, and the effective configuration has to be readable
+    from somewhere. None of that needs a device.
+    """
+    problems = []
+    for entry in manifest["reports"]:
+        report = json.loads((directory / entry["file"]).read_text())
+        name = entry["file"]
+        source = report.get("identity", {}).get("source", {})
+        if source.get("dirty") is not False:
+            problems.append(f"{name}: not measured from a clean tree")
+        if not source.get("revision"):
+            problems.append(f"{name}: records no source revision")
+        checklist = report.get("checklist", {})
+        if checklist.get("compliant") is not True:
+            problems.append(f"{name}: checklist did not pass")
+        if checklist.get("mismatches"):
+            problems.append(f"{name}: checklist records mismatches")
+        if checklist.get("profile_id") != manifest["profile_id"]:
+            problems.append(f"{name}: checklist is for another profile")
+        readback = report.get("config_readback")
+        if not isinstance(readback, dict) or not readback.get("source"):
+            problems.append(f"{name}: config readback names no source")
+        elif readback.get("readback") is None:
+            # vLLM exposes its effective configuration through the command line rather than an
+            # inspection API, which the report says; the command itself is recorded, so the
+            # configuration is still checkable. Saying so beats pretending the field is filled.
+            print(f"{name}: configuration readable from {readback['source']!r}, not read back")
+        if (
+            profile.get("cache", {}).get("prefix_cache")
+            and report.get("hot_prefix_tokens_reused", 0) <= 0
+        ):
+            problems.append(f"{name}: prefix cache is enabled but the hot case reused no tokens")
     return problems
 
 

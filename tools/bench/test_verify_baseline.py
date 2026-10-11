@@ -14,6 +14,7 @@ _SPEC = importlib.util.spec_from_file_location(
 verify_baseline = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(verify_baseline)
 FROZEN = ROOT / "benchmarks/baselines/serving/2b-mtp0-serving-v1"
+NATIVE = "qwen3vl-2b-mtp0-native-2b-mtp0-native-g1.json"
 
 
 def entry(case="short", metric="wall_seconds", ratio=1.5, available=True):
@@ -134,6 +135,71 @@ class FrozenTest(unittest.TestCase):
             path.write_text(json.dumps(manifest))
 
         self.assertIn("does not match", " ".join(self.tamper(edit)))
+
+    def report(self, directory):
+        path = directory / NATIVE
+        return path, json.loads(path.read_text())
+
+    def test_a_dirty_tree_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["identity"]["source"]["dirty"] = True
+            path.write_text(json.dumps(report))
+
+        self.assertIn("clean tree", " ".join(self.tamper(edit)))
+
+    def test_a_missing_source_revision_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["identity"]["source"]["revision"] = ""
+            path.write_text(json.dumps(report))
+
+        self.assertIn("no source revision", " ".join(self.tamper(edit)))
+
+    def test_a_failed_checklist_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["checklist"]["compliant"] = False
+            path.write_text(json.dumps(report))
+
+        self.assertIn("checklist did not pass", " ".join(self.tamper(edit)))
+
+    def test_a_checklist_mismatch_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["checklist"]["mismatches"] = [{"field": "numeric"}]
+            path.write_text(json.dumps(report))
+
+        self.assertIn("records mismatches", " ".join(self.tamper(edit)))
+
+    def test_a_checklist_for_another_profile_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["checklist"]["profile_id"] = "something-else"
+            path.write_text(json.dumps(report))
+
+        self.assertIn("another profile", " ".join(self.tamper(edit)))
+
+    def test_a_readback_without_a_source_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["config_readback"] = {"readback": {}}
+            path.write_text(json.dumps(report))
+
+        self.assertIn("names no source", " ".join(self.tamper(edit)))
+
+    def test_an_enabled_cache_without_reuse_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["hot_prefix_tokens_reused"] = 0.0
+            path.write_text(json.dumps(report))
+
+        self.assertIn("reused no tokens", " ".join(self.tamper(edit)))
+
+    def test_a_null_readback_is_a_note_not_a_failure(self):
+        # The frozen vLLM reports record the command line as the configuration source.
+        directory = self.copied()
+        self.assertEqual(verify_baseline.verify(directory)[1], [])
 
     def test_the_shortfall_is_a_note_not_a_failure(self):
         directory = self.copied()

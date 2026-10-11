@@ -128,7 +128,13 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
   与 profile 一致 ✓；
 - **独立复测** ✓：必须有 `reproductions` ✓、每个单元都 `within_declared_tolerance` ✓、
   `paired_units` 与单元数自洽 ✓；**若少于方案要求的 5 ✓，打印提示而不是判失败** ✓（现状 2 ✓，manifest
-  自己也如实记着 ✓ —— 这是需要设备窗口的缺口 ✓，不是可以含糊过去的 ✓）。
+  自己也如实记着 ✓ —— 这是需要设备窗口的缺口 ✓，不是可以含糊过去的 ✓）；
+- **测量本身可信** ✓：每份报告必须来自**干净的树** ✓（`source.dirty` 为 false 且有 revision ✓）、
+  checklist **通过且无 mismatch** ✓ 且 profile 对得上 ✓、profile 启用 prefix cache 时 `hot_*` case 必须
+  **真的复用了 token** ✓（否则"热"这个 case 名不副实 ✓）；
+- **配置可核验** ✓：每份报告要说明配置从哪读 ✓（`config_readback.source` ✓）。**这里有一处如实的不对称** ✓：
+  native 侧是真回读 ✓，而 **vLLM 侧只记录命令行**（`readback: null` ✓）—— 命令本身在报告的 `command` 里 ✓，
+  所以配置仍可核验 ✓；工具**打印这条提示** ✓ 而不是假装字段是满的 ✓，也不因此判失败 ✓。
 
 **实测**：三条已签发基线**全部通过** ✓ —— 每个指标都能从其冻结报告重新算出，判定与记录一致 ✓，矩阵、
 阈值、工作量与独立复测也都对得上 ✓；并对三条都打印了 `2 paired units, the plan asks for 5` 的提示 ✓。这条证据
