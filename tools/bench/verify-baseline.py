@@ -11,6 +11,7 @@ A one-unit baseline predates the effective-profile rule, so the recomputation pa
 """
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import sys
@@ -132,6 +133,7 @@ def check_contract(directory, manifest):
                     f"{entry['file']}: {key} is {report[key]!r}, profile says {value!r}"
                 )
     problems.extend(check_measurement(profile, manifest, directory))
+    problems.extend(check_telemetry(manifest, directory))
     basis = manifest["statistical_basis"]
     reproductions = basis.get("reproductions", [])
     if not reproductions:
@@ -187,6 +189,51 @@ def check_measurement(profile, manifest, directory):
             and report.get("hot_prefix_tokens_reused", 0) <= 0
         ):
             problems.append(f"{name}: prefix cache is enabled but the hot case reused no tokens")
+    return problems
+
+
+def check_telemetry(manifest, directory):
+    """The hardware evidence has to still be there, and still be the evidence that was signed.
+
+    Signing refuses a report without telemetry. After freezing, nothing checked that the
+    report's fingerprint still matches the log beside it, that the log still parses, or that it
+    still holds the number of samples the report claims. Those are cheap to check and they are
+    what makes the hardware evidence evidence rather than a filename.
+    """
+    problems = []
+    for entry in manifest["reports"]:
+        report = json.loads((directory / entry["file"]).read_text())
+        name = entry["file"]
+        telemetry = report.get("telemetry")
+        if not isinstance(telemetry, dict) or not telemetry.get("samples"):
+            problems.append(f"{name}: no hardware telemetry")
+            continue
+        if not telemetry.get("sha256"):
+            problems.append(f"{name}: telemetry is not fingerprinted")
+        if not isinstance(telemetry.get("active_window"), dict):
+            problems.append(f"{name}: no active-window telemetry")
+        if not any(trial.get("gpu") for trial in report.get("trials", [])):
+            problems.append(f"{name}: no trial attributes device telemetry")
+        log = directory / str(telemetry.get("log", ""))
+        if not log.exists():
+            problems.append(f"{name}: telemetry log {log.name} is missing")
+            continue
+        raw = log.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != telemetry["sha256"]:
+            problems.append(f"{name}: telemetry log does not match its recorded fingerprint")
+        try:
+            records = [json.loads(line) for line in raw.decode().splitlines() if line.strip()]
+        except json.JSONDecodeError as error:
+            problems.append(f"{name}: telemetry log is not JSON lines: {error}")
+            continue
+        if not records or records[0].get("type") != "metadata":
+            problems.append(f"{name}: telemetry log does not open with its metadata")
+        samples = sum(1 for record in records if record.get("type") == "sample")
+        if samples != telemetry["samples"]:
+            problems.append(
+                f"{name}: telemetry log holds {samples} samples, report records "
+                f"{telemetry['samples']}"
+            )
     return problems
 
 

@@ -132,6 +132,11 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 - **测量本身可信** ✓：每份报告必须来自**干净的树** ✓（`source.dirty` 为 false 且有 revision ✓）、
   checklist **通过且无 mismatch** ✓ 且 profile 对得上 ✓、profile 启用 prefix cache 时 `hot_*` case 必须
   **真的复用了 token** ✓（否则"热"这个 case 名不副实 ✓）；
+- **硬件证据仍然成立** ✓：签发时 `require_telemetry` 会拒绝没有遥测的报告 ✓；冻结之后没人再核 ✓，现在补上
+  —— 报告里的 `telemetry.sha256` 必须与**旁边那份 `.telemetry.jsonl`** 的实际内容一致 ✓（这是 manifest 的
+  文件哈希**表达不了**的一层 ✓：报告与其遥测日志之间的绑定 ✓）、日志必须能按 JSON Lines 解析 ✓ 且以
+  metadata 开头 ✓、其中 `sample` 行数必须等于报告记录的 `samples` ✓（实测 251 = 251 ✓），并且仍有
+  `active_window` ✓ 与带 `gpu` 的 trial ✓；
 - **配置可核验** ✓：每份报告要说明配置从哪读 ✓（`config_readback.source` ✓）。**这里有一处如实的不对称** ✓：
   native 侧是真回读 ✓，而 **vLLM 侧只记录命令行**（`readback: null` ✓）—— 命令本身在报告的 `command` 里 ✓，
   所以配置仍可核验 ✓；工具**打印这条提示** ✓ 而不是假装字段是满的 ✓，也不因此判失败 ✓。

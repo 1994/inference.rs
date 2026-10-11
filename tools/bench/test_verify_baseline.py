@@ -201,6 +201,64 @@ class FrozenTest(unittest.TestCase):
         directory = self.copied()
         self.assertEqual(verify_baseline.verify(directory)[1], [])
 
+    def log(self, directory):
+        return directory / (NATIVE.replace(".json", ".telemetry.jsonl"))
+
+    def test_a_telemetry_log_that_changed_is_caught(self):
+        def edit(directory):
+            with self.log(directory).open("a") as handle:
+                handle.write('{"type": "sample", "timestamp": 0}\n')
+
+        self.assertIn("does not match its recorded fingerprint", " ".join(self.tamper(edit)))
+
+    def test_a_telemetry_log_with_the_wrong_sample_count_is_caught(self):
+        def edit(directory):
+            path = self.log(directory)
+            lines = [line for line in path.read_text().splitlines() if line.strip()]
+            removed = next(index for index, line in enumerate(lines) if '"type": "sample"' in line)
+            path.write_text("\n".join(lines[:removed] + lines[removed + 1 :]) + "\n")
+
+        problems = " ".join(self.tamper(edit))
+        self.assertIn("does not match its recorded fingerprint", problems)
+        self.assertIn("samples", problems)
+
+    def test_a_missing_telemetry_log_is_caught(self):
+        def edit(directory):
+            self.log(directory).unlink()
+
+        self.assertIn("is missing", " ".join(self.tamper(edit)))
+
+    def test_a_report_without_telemetry_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            del report["telemetry"]
+            path.write_text(json.dumps(report))
+
+        self.assertIn("no hardware telemetry", " ".join(self.tamper(edit)))
+
+    def test_a_telemetry_log_that_does_not_parse_is_caught(self):
+        def edit(directory):
+            self.log(directory).write_text("not json\n")
+
+        self.assertIn("not JSON lines", " ".join(self.tamper(edit)))
+
+    def test_a_report_without_a_fingerprint_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["telemetry"]["sha256"] = ""
+            path.write_text(json.dumps(report))
+
+        self.assertIn("not fingerprinted", " ".join(self.tamper(edit)))
+
+    def test_a_report_whose_trials_attribute_no_device_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            for trial in report["trials"]:
+                trial.pop("gpu", None)
+            path.write_text(json.dumps(report))
+
+        self.assertIn("attributes device telemetry", " ".join(self.tamper(edit)))
+
     def test_the_shortfall_is_a_note_not_a_failure(self):
         directory = self.copied()
         self.assertEqual(verify_baseline.verify(directory)[1], [])
