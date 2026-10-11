@@ -1,10 +1,12 @@
 # KV cache 分页重构方案（PagedAttention 的分层与落地）
 
-状态：**待实施**；第①步（块表间接寻址）已落地。源码基点为 `d5afa9b`（2026-10-10）。
+状态：**P0a / P1 / P2 已落地并实测（2026-10-11，`220699c` + `87ca6d0`）**；P3 的 `CB_DECODE_SLOTS=16`
+验收在物理上不可达（见 §五 P3 行）；P4–P6 未做。第①步（块表间接寻址）早已落地。
+源码基点为 `d1f313e`（2026-10-11）；更早的基线是 `d5afa9b`（2026-10-10）。
 
 本文是**交接文档**：新会话只读这一篇即可接手。目标、分层判断、实测差距、已落地地基、硬边界账目、
 分阶段计划、复现命令、代码地图、已否证路线、未决问题、以及"第一步做什么"都在这里；
-逐条实验数据与推理过程见[性能实验记录](../../research/cuda-performance-experiments.md) §13–§14。
+逐条实验数据与推理过程见[性能实验记录](../../research/cuda-performance-experiments.md) §13–§15。
 
 排期归属见[路线图](../README.md) C1；CUDA 侧其它优化见 [CUDA 方案](cuda.md)。
 
@@ -79,13 +81,21 @@ vLLM **215.7 ms，复用 1600 token** ⇒ 我们唯一赢的那格，赢在**前
 - `statistical_basis.paired_units = 2`，而基线方案要求 **≥5** ⇒ 上表**指示性**，不是签发结论。
   要变成可签发的差距，需按 §六 的命令做**同窗口 ≥5 单元成对测量**。
 
-### 2.1 顺手发现的 artifacts 缺陷（建议修）
+### 2.1 顺手发现的 artifacts 缺陷（**已修，2026-10-11，`220699c`**）
 
 冻结 manifest 的 `reports[].role` 写 `baseline=native / candidate=vllm`，但
 `gate.performance.metrics[].baseline` 里放的却是 **vLLM 的数**、`.candidate` 是 **native 的数**
 （batch4 wall：`baseline 0.679` = vLLM、`candidate 2.376` = native；已对原始文件核两遍）⇒
 **gate 的 `passed` 标记是反的**：它恰好"通过"了唯一那格我们更快的指标
-（`hot_long` TTFT `ratio 0.390, passed true`）。这会让读者把差距方向读反，修它属于 C1 的顺手项。
+（`hot_long` TTFT `ratio 0.390, passed true`）。这会让读者把差距方向读反。
+
+**修法与验证（已落地）**：根因在 `tools/bench/freeze-baseline.py`——`freeze()` 原按命令行顺序写
+role，现改为用 `gate.orientation(baseline, candidate)` 判定真实方向后按 [baseline, candidate]
+角色序写 `reports[]`/`engines`，`source`/`hardware` 跟随被测侧，gate 块新增 `ratio_orientation`
+字段。三个冻结 manifest（`2b-mtp0`/`27b-mtp0`/`27b-mtp2-serving-v1`）的 role 已交换为
+`baseline=vllm / candidate=native` 并与 gate 数值对齐；`verify-baseline.py` 对三个基线全部
+重算通过（`compare()` 内部按 engine identity 重定向，与文件顺序无关），
+`test_freeze_baseline`/`test_verify_baseline`/`test_compare_results` 79 个测试全绿。
 
 ## 三、已落地的地基（不要重做）
 
@@ -94,6 +104,7 @@ vLLM **215.7 ms，复用 1600 token** ⇒ 我们唯一赢的那格，赢在**前
 | ① 块表间接寻址：预填充写 + 预填充读（SIMT/张量核）+ decode 读（SIMT/split-KV）五处核 + bind + 预算 | ✅ 默认路径 | 恒等映射下官方 matrix **12/12 trial token 逐位相同**、越界 0 | `953c0ea`、`9fb692e` |
 | `CB_SLOT_TOKENS` 2048 → 8192 | ✅ 默认 | 4×2560 并发 wall 10.59 → **9.21 s（−13%）**、TTFT 中位 −22%、`gpu_budget` 递延 −32% | `921abe3` |
 | 池内计价（占槽请求不再二次预留） | ✅ 默认（对交付 profile 尚不生效） | matrix 16/16、27 单测、4 GPU 测试 | `9421a8c` 等 |
+| **P1+P2：CUDA 实现 `kv_cache()` 与 `state_page_growth()`**（本方案的 SPI 闭环） | ✅ 默认路径（池存在时上报；池缺席回退 None，行为与之前一致） | 官方 matrix 16/16、**28/28 请求流 token 逐位一致**（`artifacts/kv-paging-p1p2-20261011/`，run-id `kv-before`/`kv-after`）；runtime readback `kv_cache` 由 `null` → 真实块报（32 token/块 × 1024 块 × 1 MiB）；clippy/单测/GPU 测试全绿（含 release `attention_decode` 2/2）。明细见实验记录 §15 | `87ca6d0`（2026-10-11） |
 | `--chunked-recurrent`（开关，默认关） | ✅ 可用 | TTFT −15.7%/−20.1%/−14.6%/−16.0% | §12.20 |
 | `INFER_CUDA_TILED_ATTENTION`（开关，默认关） | ✅ 可用 | 位置 ≥3072：**256.0 µs vs SIMT 1587.2 µs = 6.2×** | §13.9 |
 
@@ -115,13 +126,13 @@ vLLM **215.7 ms，复用 1600 token** ⇒ 我们唯一赢的那格，赢在**前
 
 | 阶段 | 内容 | 启动条件 | 完成标准（验收） |
 |---|---|---|---|
-| **P0** | **同窗口 ≥5 单元成对基线**：当前默认 + `--chunked-recurrent` 对 vLLM，按 §六 命令跑 | 无（可与任何线并行） | 产出可签发差距（替换 §二 的指示性表），并修 §2.1 的 manifest 方向缺陷 |
-| **P1** | CUDA 实现 `kv_cache()`：把已有块池与表如实上报（`block_size`/`total`/`free`/`active`/`cached`/`shared`/`pool_bytes`/`bytes_per_block`） | 无 | `/native/v1/observability` 与 `engine/inspection.rs` 出现真实块数；`admission.rs:51`、`resources.rs` 走按块分支；matrix **16/16 不变**且 token 逐位一致。风险低（只读上报） |
-| **P2** | CUDA 实现 `state_page_growth()`：按当前 token 数报"下一步用/增长多少块" | P1 | `cost_query.page_growth` 不再恒 `None`；`deferred_reasons` 中 `state_capacity`/`gpu_budget` 在 4×2560 与 2×8000 两组并发下显著下降 |
-| **P3** | 计价改为块数（原④）：`state_reservation_bytes*` 与准入按块；池已覆盖的部分从请求报价扣除 | P1、P2 | `CB_SLOT_TOKENS` 不再是墙：`CB_DECODE_SLOTS=16` prewarm 成功、matrix 16/16；长上下文请求不再因"池占内存"被拒。**注意 §13.30**：报价大头是固定激活 arena 与块两件事，减免必须针对正确的项 |
-| **P4** | 块级前缀共享 + COW（原③）：`reusable_prefix*()` 按页暴露 + 内容哈希 + 引用计数 | P3 | `hot_long` 类场景 TTFT 与块复用计数同时改善；重复前缀不再产生整状态拷贝 |
-| **P5** | 共享 arena / 按需分配（原②，**可选实现细节**） | 仅当 P1–P4 后 per-slot arena 仍是浪费 | 若做：先按 §13.23 办法在**回放时**打印 `(lane, position, block, 表项)`，并核对 draft 私有 program 的 `identity_table` 与它 arena 的归属。**注意：这条路上 `attention.rs:113` 越界不在关键路径** |
-| **P6** | token-major 块内布局 + 张量核 SDPA（原⑤） | P3 后按块寻址稳定 | ≥3072 走张量核；与 SIMT 路径在 1e-4 相对误差内一致（沿用已验证的 6.2×） |
+| **P0** | **同窗口 ≥5 单元成对基线**：当前默认 + `--chunked-recurrent` 对 vLLM，按 §六 命令跑 | 无（可与任何线并行） | 产出可签发差距（替换 §二 的指示性表），并修 §2.1 的 manifest 方向缺陷。**进展（2026-10-11）**：§2.1 已修并验证（见该节）；≥5 单元成对测量**阻塞**——本机无 vLLM 环境 |
+| **P1** ✅ | CUDA 实现 `kv_cache()`：把已有块池与表如实上报（`block_size`/`total`/`free`/`active`/`cached`/`shared`/`pool_bytes`/`bytes_per_block`） | 无 | **已验收（2026-10-11）**：`/native/v1/runtime` 的 `config_readback.kv_cache` 由 `null` 变为真实块报（`block_size=32, total_blocks=1024, bytes_per_block=1 MiB, pool_bytes=1 GiB`）；观测端口出现 `available_kv_blocks`/`active_kv_blocks`/`cached_kv_blocks`/`kv_pool_bytes`；engine 逻辑页池与后端调和（`serving.rs` 把 `block_size` 同调成 32，`num_gpu_blocks=total_blocks=1024`，逻辑容量 4096×16 → 1024×32 = 32768 token，恰好等于物理池与 `max_model_len`）；官方 matrix **16/16 trial、28/28 请求流 token 逐位一致**（run-id `kv-before`/`kv-after`，`artifacts/kv-paging-p1p2-20261011/`），两侧 checklist 均 compliant。实测数据见实验记录 §15 |
+| **P2** ✅ | CUDA 实现 `state_page_growth()`：按当前 token 数报"下一步用/增长多少块" | P1 | **已落地（2026-10-11）**，验收口径修正见下：在租序列报 `ceil(history/32)`、私有序列报满容量预付（`required_pages` 恒 0，物理诚实）；`cost_query.page_growth` 不再恒 `None`。但**"deferred_reasons 显著下降"在计划点名的两组负载（4×2560 / 2×8000）上不成立——实测前后逐位相同**（4×2560：TokenBudget +24/+23、GpuBudget +72/+72、Preparation +8/+8；2×8000：各 +4 Preparation；`state_capacity` 两侧恒 0）：那两组负载的递延来自 token 预算与执行预算，KV/状态计价从来不是它们的瓶颈。P2 的价值是把真实增长数交给调度器（可证、可查），而不是改变这两组负载的递延结构 |
+| **P3** | 计价改为块数（原④）：`state_reservation_bytes*` 与准入按块；池已覆盖的部分从请求报价扣除 | P1、P2 | `CB_SLOT_TOKENS` 不再是墙：`CB_DECODE_SLOTS=16` prewarm 成功、matrix 16/16；长上下文请求不再因"池占内存"被拒。**注意 §13.30**：报价大头是固定激活 arena 与块两件事，减免必须针对正确的项。**边界（2026-10-11 复核）**：`CB_DECODE_SLOTS=16` 的 prewarm 验收在本机物理不可达——16 槽 × 405 MiB/槽（262 KV + 149 递推）≈ 6.3 GiB > 4.8 GiB 状态预算，只有 P5 的共享 arena 才可能解开；本阶段剩余价值是"池覆盖部分从报价扣除"，其中池内计价部分已随 `9421a8c` 落地 |
+| **P4** | 块级前缀共享 + COW（原③）：`reusable_prefix*()` 按页暴露 + 内容哈希 + 引用计数 | P3 | `hot_long` 类场景 TTFT 与块复用计数同时改善；重复前缀不再产生整状态拷贝。**未做（2026-10-11）**；§八 已否证"共享 arena + 偏移表"路线，参照实现应看 `infer_state::kv::KvCacheManager`（`crates/engine/state/src/kv.rs`，Metal 侧完整 BlockPool/前缀/COW） |
+| **P5** | 共享 arena / 按需分配（原②，**可选实现细节**） | 仅当 P1–P4 后 per-slot arena 仍是浪费 | 若做：先按 §13.23 办法在**回放时**打印 `(lane, position, block, 表项)`，并核对 draft 私有 program 的 `identity_table` 与它 arena 的归属。**注意：这条路上 `attention.rs:113` 越界不在关键路径**。**未做（2026-10-11）**：§13.21–13.26 三轮实测失败已否证，数周级高风险 |
+| **P6** | token-major 块内布局 + 张量核 SDPA（原⑤） | P3 后按块寻址稳定 | ≥3072 走张量核；与 SIMT 路径在 1e-4 相对误差内一致（沿用已验证的 6.2×）。**未做（2026-10-11）** |
 
 ### 5.1 P1 参考实现要点（最划算的第一步，改动小）
 
@@ -241,20 +252,30 @@ for case in ['short', 'long', 'batch4', 'hot_long']:
 1. **MTP 池几何挂起**：`(CB_SLOT_TOKENS=2048, 槽 16)` 与 `(16384, 4)` 在准备阶段挂起 30 s、0 token
    （`reason=Failed("resource preparation acknowledgement timed out")`），而 `(8192, 4)` 正常。
    怀疑与池化推测图捕获在特定 (capacity, width, verify) 组合下的行为有关；与 P1–P4 独立，可单独立项。
+   **2026-10-11 补充（P1/P2 前后 A/B 实测）**：同一失败签名在**默认几何**上也能用负载打出——
+   5×8000 并发（越 4 槽池）时，两个构建（有/无 `kv_cache()` 上报）都表现为 4 成功 + 第 5 条
+   准备 30 s 超时失败，deferred 增量两侧同为 +9 Preparation。即这不是池几何特例，而是
+   **"同时准入、准备期才发现物理装不下"的准入竞态**：5 条请求在彼此成为 active 之前全部通过
+   准入，第 5 条的私有预留撞上已租满的池。P1 的真实块上报没有改变它（准入时刻余量仍然够），
+   要修需要准入计入"准备中"的在途预留。
 2. **状态侧并发上限**：149 MiB/槽的 f32 递推状态若改 bf16 可近乎翻倍并发，有数值风险；
    官方 matrix 的 token 对比可判定，需单独立项。
 3. **跨层契约的测试面**：P1–P3 的验收涉及 engine 调度/准入分支，需要设备窗口与观测口径确认
    （观测入口：`/native/v1/observability` 的 `deferred_reasons` 与 `kv_cache` 字段）。
 
-## 十、新会话的第一步（建议顺序）
+## 十、新会话的第一步（建议顺序，2026-10-11 更新）
 
-1. **P0 测量收口**（可与任何事并行，先把"差距"变成可签发数字）：按 §六 的 matrix 命令做
-   **同窗口 ≥5 单元**成对测量（native 默认 + `--chunked-recurrent` 对 vLLM），顺手修 §2.1 的
-   manifest 方向缺陷。产出：§二 表格的替换版 + 基线 ID。
-2. **P1**：给 CUDA 实现 `kv_cache()`（§5.1 要点）。验收：观测里出现真实块数、engine 走按块分支、
-   matrix 16/16 且 token 逐位一致。**这是判定"新路线是否成立"的关键一步，成本低。**
-3. **P2**：`state_page_growth()`；随后按 §五 表内验收逐阶段推进。
+P1/P2 已落地并验收（§五 表），§2.1 已修。剩余工作按序：
+
+1. **P0 收口（阻塞中）**：≥5 单元成对基线需要 vLLM 环境；本机 `import vllm` 不可用，
+   先恢复 vLLM 环境（或换机）再按 §六 跑。§2.1 的 manifest 方向缺陷已修，不阻塞签发。
+2. **P3 剩余部分**（启动条件已满足）：计价按块化——把"池已覆盖的部分从请求报价扣除"做完整
+   （池内计价已随 `9421a8c` 落地，剩私有路径报价与准入的块化）。**不要**把
+   `CB_DECODE_SLOTS=16` prewarm 当验收：物理账目（§四）决定了它在 4.8 GiB 状态预算下不可达。
+3. **P4**（块级前缀共享 + COW）：参照 `crates/engine/state/src/kv.rs` 的
+   `KvCacheManager`（Metal 侧完整范本）；§八 的"共享 arena + 偏移表"路线已否证，不走。
+4. P5/P6 按 §五 的启动条件排队；§九.1 的准入竞态（5×8000 实测复现）可单独立项。
 
 若用户更看重"比分"而非"容量/规模"，§二 读法第 3、4 条指出应优先 batch4/long 的 TTFT：
 即池宽（受 §四 账目限制）与 prefill 计算（`--chunked-recurrent` 可直接开、张量核 attention 在 ≥3072 有 6.2×），
-这与本方案的 P1–P4 是**两条不同但相容的线**。
+这与本方案的 P3–P4 是**两条不同但相容的线**。

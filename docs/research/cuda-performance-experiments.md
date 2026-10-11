@@ -2736,3 +2736,103 @@ acknowledgement timed out")`（§13.30/§13.31）。
 
 **因此本目标未完成**；已完成的是：间接层（①）、两项可测的默认改动（2/3 行）、
 以及把"为什么长上下文/高并发上不去"从猜测变成了**实测账目**（§13.18–13.33）。
+
+## 十五、P0a/P1/P2：CUDA 闭环 SPI 分页契约（2026-10-11）
+
+按 [KV 分页方案](../plans/performance/kv-cache-paged-attention.md) §五 的 P0a/P1/P2 落地，
+本节记录实现口径与全部实测。改动已提交：`220699c`（P0a 工具与 manifest 修复）、
+`87ca6d0`（P1/P2 实现）；
+二进制指纹：before `b5058da5…`、after `e4d7f398…`（`target/release/infer`）。
+
+### 15.1 P0a：冻结 manifest 的 role 方向缺陷【已修】
+
+`freeze-baseline.py` 的 `freeze()` 原来按命令行顺序写 `reports[].role`，与 gate 数值的
+实际方向无关 ⇒ 三个冻结基线（`2b-mtp0`/`27b-mtp0`/`27b-mtp2-serving-v1`）的
+`baseline`/`candidate` 角色全反（kv-cache-paged-attention.md §2.1）。修法：`freeze()`
+改用 `gate.orientation()` 判定方向后按角色序写 `reports[]`/`engines`，`source`/`hardware`
+跟随被测侧，gate 块新增 `ratio_orientation`；三个 manifest 的 role 交换为
+`baseline=vllm / candidate=native`（manifest 本身不入文件哈希校验，报告文件未动）。
+验证：`test_freeze_baseline`/`test_verify_baseline`/`test_compare_results` 79 测试全绿；
+`verify-baseline.py` 对三个基线全部 "numbers recomputed"（`compare()` 按 engine identity
+重定向，与文件内顺序无关）；`./tools/check/gate.sh tools` 全绿。
+
+### 15.2 P1：CUDA `kv_cache()`【已落地并验收】
+
+实现口径（`crates/backend/cuda/src/executor/provider.rs`，细节以代码注释为准）：
+
+- 块 = `KV_BLOCK_TOKENS = 32` token；`bytes_per_block` 从目标图的 `AttentionKv` 状态实算
+  （27B fp8 = **1 MiB/块**，16 层 × 32 × 1024 列 × 2 × 1 B）。
+- `total_blocks = max(池块数, MAX_CAPACITY_TOKENS/32 = 1024)`——下限保护私有路径
+  （池降宽/缺席时长请求仍能被私有预留服务）。`active_blocks` = 在租槽的 Σceil(历史/32)；
+  `available_blocks` = 池块数 − active（在租槽尾块是增长的来源，必须算入，否则 4 槽全租时
+  所有请求被误 defer）；`cached_blocks` = 前缀缓存内容块当量（仅观测）；`pool_bytes` 仅 KV。
+- 新增 `SlotLedger`（allocations/releases）与 `PrefixCache.evictions`/`cached_tokens()`；
+  池不存在（prewarm 失败）→ 返回 `None`，行为与改动前完全一致。
+- **陷阱（已修）**：`crates/service/cli/src/support/serving.rs` 在有 kv_cache 时把
+  `num_gpu_blocks = total_blocks` 灌进 engine 逻辑页池；若不同调 `block_size`
+  （Metal 16→16 无操作，CUDA 16→32），逻辑池容量会从 4096×16=65536 token 悄悄缩到
+  1024×16=16384，长上下文被拒。调和后为 1024×32=32768 = `max_model_len` = 物理池容量。
+
+验收证据：`/native/v1/runtime` 的 `config_readback.kv_cache` 由 **`null`**（冻结基线记录的
+缺口的原样）变为 `{block_size:32, total_blocks:1024, free_blocks:1024, bytes_per_block:1048576,
+pool_bytes:1073741824, …}`；`/native/v1/observability` 新增真实
+`available_kv_blocks`/`active_kv_blocks`/`cached_kv_blocks`/`kv_pool_bytes`。数值自洽性抽查：
+4×2560 并发（4 条相同 prompt）跑完后 `cached_kv_blocks=320` = 4×⌈2560/32⌉，
+allocations/releases 配对、active 归零。
+
+### 15.3 P2：`state_page_growth()`【已落地；验收口径按实测修正】
+
+口径：在租序列 `allocated_pages = ceil(history/32)`（跨块边界 growth=1）；私有序列
+`allocated_pages = ceil(capacity/32)`、`required_pages` 恒 0（满容量预付，物理上从不新分配，
+如实上报）；未知 state → `Error::invalid`（与 Metal 一致）。`cost_query.page_growth`
+不再恒 `None`。
+
+**计划写的验收"`deferred_reasons` 中 `state_capacity`/`gpu_budget` 在 4×2560 与 2×8000
+下显著下降"在实测中不成立，且原因已查清**（同机同刻 A/B，`--chunked-recurrent`、
+mtp2、0.88、32768/16）：
+
+| 负载 | before deferred 增量 | after deferred 增量 | wall before → after |
+|---|---|---|---|
+| 4×2560（冷） | TokenBudget +24、GpuBudget +72、Preparation +8 | **逐项相同**（+23/+72/+8） | 11.96 s → 13.17 s（噪声内） |
+| 4×2560（热） | Preparation +8 | TokenBudget +23、GpuBudget +72、Preparation +8 | 11.01 s → 10.76 s（噪声内） |
+| 2×8000 | Preparation +4 | Preparation +4 | 19.12 s → 19.03 s |
+| 5×8000（越池） | Preparation +9，ok=4 **fail=1** | Preparation +9，ok=4 **fail=1** | 40.4 s → 38.7 s |
+
+`state_capacity` 在全部负载、两侧构建上恒为 0；`gpu_budget` +72 两侧一致。原因：这两组
+负载的递延来自**每步 token 预算**（`max_num_batched_tokens` 切片）与**执行预算**，
+KV/状态计价从来不是它们的瓶颈；池装得下时按块计价无从体现。P2 的交付物因此是
+"调度器每步拿到真实增长数"这一机制本身（可证、可查），而不是这两组负载的递延变化；
+该验收条款对这两组负载不适用，已在方案 §五 如实改写。
+
+**越池边界（5×8000 = 40000 token > 4 槽池）**：第 5 条请求在两侧构建上**同样**以
+`Failed("resource preparation acknowledgement timed out")`（30 s、0 token）失败——
+与 §14.3 末尾/方案 §九.1 记录的准备挂起同一签名。即这是**既有准入竞态**（5 条请求在彼此
+成为 active 之前全部通过准入，第 5 条的私有预留撞上已租满的池），**不是 P1/P2 回归**；
+matrix 4 并发以内的负载覆盖不到它。修法方向：准入计入"准备中"的在途预留（单独立项）。
+
+### 15.4 官方矩阵 A/B（行为保持的核心证据）
+
+`artifacts/kv-paging-p1p2-20261011/`，run-id `kv-before` / `kv-after`，
+`--checklist benchmarks/profiles/27b-mtp2.json`、`--extra --chunked-recurrent`：
+
+- **16/16 trial 完成、28/28 请求流 token 逐位一致**（含 warmup 流），0 处 mismatch；
+  两侧 checklist 均 compliant、`completed=true`。
+- `hot_long` 前缀复用两侧均 3584 token/repeat；组 wall（before → after，3 repeat）：
+  short 1.034/0.849/0.958 → 1.048/0.864/0.958；long 1.067/1.093/1.166 → 1.075/1.113/1.163；
+  batch4 2.468/2.384/2.178 → 2.338/2.351/2.178；hot_long 0.914/0.904/0.900 → 0.913/0.914/0.912。
+  全部在 run 间噪声内，**无性能回退也没有虚报收益**（P1/P2 是只读上报，行为不变是预期）。
+- 环境备注：测量窗口内同机有另一工作线的 cargo 构建在跑（CPU 竞争），绝对值仅作参考；
+  token 一致性不受其影响。
+
+### 15.5 门禁与剩余项
+
+- `cargo clippy --locked -p infer-backend-cuda --features cuda -- -D warnings`、
+  `cargo check --all-targets`、`cargo test`（28 单测，含新增
+  `kv_block_bytes_counts_attention_states_in_storage_bytes`）、GPU 测试
+  `resident::slot_batch`/`slot_verify` 4/4、release `--lib attention_decode` 2/2，全绿。
+- **P3 的 `CB_DECODE_SLOTS=16` prewarm 验收物理不可达**：16×405 MiB ≈ 6.3 GiB > 4.8 GiB
+  状态预算（§14.3），只有 P5 的共享 arena 能解开；方案 §五 已注明。P3 剩余价值
+  （私有路径报价块化）未做。
+- **P4/P5/P6 未做**；P4 参照实现应看 `crates/engine/state/src/kv.rs` 的
+  `KvCacheManager`，§八 的"共享 arena + 偏移表"路线维持否证。
+- **P0 的 ≥5 单元成对基线阻塞**：本机无 vLLM（`import vllm` 不可用），需先恢复环境。
