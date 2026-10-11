@@ -61,7 +61,10 @@ impl Inputs {
             tile[0].to_string(),
             tile[1].to_string(),
         ];
-        if optimized && rows > crate::constants::QUANT_GEMM_TILE[0] {
+        if optimized
+            && rows > crate::constants::QUANT_GEMM_TILE[0]
+            && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
+        {
             scope.record(
                 kernels::packed_prefill(
                     output.partition(tile),

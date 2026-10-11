@@ -148,7 +148,10 @@ impl Workspace {
             tile[0].to_string(),
             tile[1].to_string(),
         ];
-        if rows > crate::constants::QUANT_GEMM_TILE[0] {
+        // Pipeline only the wider tile; unchanged grids keep the original main loop.
+        if rows > crate::constants::QUANT_GEMM_TILE[0]
+            && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
+        {
             scope.record(
                 kernels::packed_prefill(
                     output.partition(tile),
