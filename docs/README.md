@@ -57,6 +57,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [Infernix 性能调研](research/infernix-performance.md) | 参考机制、精度变化与收益估算 |
 | [CUDA Serving 历史记录](research/cuda-serving-baseline.md) | 既有服务矩阵与瓶颈调查；不作为当前已验收基线 |
 | [CUDA 性能实验记录](research/cuda-performance-experiments.md) | 历史 A/B、失败实验与测量条件 |
+| [vLLM main 执行路径调查](research/vllm-main-execution-paths-2026-10-12.md) | 最新源码与已安装版的边界；GDN、MTP、projection 和资源准入差距 |
 
 ## 维护约定
 
