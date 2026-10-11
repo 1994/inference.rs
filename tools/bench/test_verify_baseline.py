@@ -259,6 +259,80 @@ class FrozenTest(unittest.TestCase):
 
         self.assertIn("attributes device telemetry", " ".join(self.tamper(edit)))
 
+    def manifest(self, directory):
+        path = directory / "manifest.json"
+        return path, json.loads(path.read_text())
+
+    def test_a_recorded_drift_that_does_not_recompute_is_caught(self):
+        def edit(directory):
+            path, manifest = self.manifest(directory)
+            unit = manifest["statistical_basis"]["reproductions"][0]
+            key = sorted(unit["drift"])[0]
+            unit["drift"][key] += 0.5
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("recorded", " ".join(self.tamper(edit)))
+
+    def test_a_worst_drift_that_does_not_recompute_is_caught(self):
+        def edit(directory):
+            path, manifest = self.manifest(directory)
+            manifest["statistical_basis"]["reproductions"][0]["worst_drift"] = 0.0
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("worst drift", " ".join(self.tamper(edit)))
+
+    def test_a_tolerance_verdict_that_disagrees_is_caught(self):
+        # The contract check refuses a false verdict before the drift is recomputed, so the record
+        # is reported as failing either way; which message appears is not the point.
+        def edit(directory):
+            path, manifest = self.manifest(directory)
+            unit = manifest["statistical_basis"]["reproductions"][0]
+            unit["within_declared_tolerance"] = not unit["within_declared_tolerance"]
+            path.write_text(json.dumps(manifest))
+
+        self.assertTrue(self.tamper(edit))
+
+    def test_a_reproduction_verdict_that_disagrees_is_caught(self):
+        def edit(directory):
+            path, manifest = self.manifest(directory)
+            unit = manifest["statistical_basis"]["reproductions"][0]
+            unit["passed"] = not unit["passed"]
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("recorded verdict disagrees", " ".join(self.tamper(edit)))
+
+    def test_a_missing_reproduction_report_is_caught(self):
+        def edit(directory):
+            _, manifest = self.manifest(directory)
+            (directory / manifest["statistical_basis"]["reproductions"][0]["reports"][1]).unlink()
+
+        self.assertIn("are missing", " ".join(self.tamper(edit)))
+
+    def test_drift_keys_that_do_not_match_are_caught(self):
+        def edit(directory):
+            path, manifest = self.manifest(directory)
+            unit = manifest["statistical_basis"]["reproductions"][0]
+            unit["drift"] = {"short:wall_seconds": 0.1}
+            path.write_text(json.dumps(manifest))
+
+        self.assertIn("drift keys", " ".join(self.tamper(edit)))
+
+    def test_an_active_window_larger_than_the_run_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["telemetry"]["active_window"]["samples"] = report["telemetry"]["samples"] + 1
+            path.write_text(json.dumps(report))
+
+        self.assertIn("more samples than the run", " ".join(self.tamper(edit)))
+
+    def test_an_active_window_mean_above_its_peak_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["telemetry"]["active_window"]["utilization_gpu_max"] = 0.0
+            path.write_text(json.dumps(report))
+
+        self.assertIn("exceeds its peak", " ".join(self.tamper(edit)))
+
     def test_the_shortfall_is_a_note_not_a_failure(self):
         directory = self.copied()
         self.assertEqual(verify_baseline.verify(directory)[1], [])

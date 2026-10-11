@@ -75,6 +75,7 @@ def verify(directory, gate=None, root=ROOT):
     gate = load_gate() if gate is None else gate
     manifest = json.loads((directory / "manifest.json").read_text())
     problems = check_contract(directory, manifest)
+    problems.extend(check_window(manifest, directory))
     if problems:
         # The comparison refuses a pair whose workload no longer aligns, so a broken contract is
         # reported as itself rather than as that refusal.
@@ -90,6 +91,7 @@ def verify(directory, gate=None, root=ROOT):
     recorded = manifest["gate"]["performance"].get("passed")
     if bool(recorded) != bool(result["passed"]):
         problems.append(f"verdict: recorded {recorded}, recomputed {result['passed']}")
+    problems.extend(check_reproductions(manifest, directory, gate))
     return manifest["baseline_id"], problems
 
 
@@ -189,6 +191,99 @@ def check_measurement(profile, manifest, directory):
             and report.get("hot_prefix_tokens_reused", 0) <= 0
         ):
             problems.append(f"{name}: prefix cache is enabled but the hot case reused no tokens")
+    return problems
+
+
+def ratios(result):
+    """Paired ratios keyed by case and metric, the shape the freeze records drift in."""
+    return {
+        (entry["case"], entry["metric"]): entry["ratio"]
+        for entry in result["metrics"]
+        if entry.get("available")
+    }
+
+
+def check_reproductions(manifest, directory, gate):
+    """Re-derive how far the independent re-measurement moved the ratios.
+
+    The freeze records the drift per metric, the worst of them and whether it stayed inside the
+    declared tolerance. Recording it is not the same as it still following from the two reports,
+    so this recomputes each number rather than checking that a number is present.
+    """
+    basis = manifest["statistical_basis"]
+    problems = []
+    if not basis.get("reproductions"):
+        return problems
+    baseline_file, candidate_file = primary_pair(manifest)
+    primary = ratios(
+        gate.compare(
+            json.loads((directory / baseline_file).read_text()),
+            json.loads((directory / candidate_file).read_text()),
+            manifest["gate"]["max_latency_ratio"],
+            allow_legacy_baseline=True,
+        )
+    )
+    for unit in basis.get("reproductions", []):
+        files = unit.get("reports", [])
+        missing = [name for name in files if not (directory / name).exists()]
+        if missing:
+            problems.append(f"re-measurement {unit.get('unit')}: reports {missing} are missing")
+            continue
+        if len(files) != 2:
+            problems.append(f"re-measurement {unit.get('unit')}: needs two reports")
+            continue
+        unit_result = gate.compare(
+            json.loads((directory / files[0]).read_text()),
+            json.loads((directory / files[1]).read_text()),
+            manifest["gate"]["max_latency_ratio"],
+            allow_legacy_baseline=True,
+        )
+        observed = ratios(unit_result)
+        shared = sorted(set(primary) & set(observed))
+        drift = {
+            f"{case}:{metric}": abs(observed[(case, metric)] - primary[(case, metric)])
+            / primary[(case, metric)]
+            for case, metric in shared
+        }
+        recorded = unit.get("drift", {})
+        if set(recorded) != set(drift):
+            problems.append(
+                f"re-measurement {unit.get('unit')}: drift keys do not match the reports"
+            )
+            continue
+        problems.extend(
+            f"re-measurement {unit.get('unit')} {key}: recorded {recorded[key]!r}, "
+            f"recomputed {drift[key]!r}"
+            for key in drift
+            if abs(recorded[key] - drift[key]) > TOLERANCE * max(1.0, abs(recorded[key]))
+        )
+        worst = max(drift.values(), default=0.0)
+        if abs(unit.get("worst_drift", -1) - worst) > TOLERANCE * max(1.0, worst):
+            problems.append(
+                f"re-measurement {unit.get('unit')}: worst drift recorded "
+                f"{unit.get('worst_drift')!r}, recomputed {worst!r}"
+            )
+        within = all(value <= basis["declared_max_drift"] for value in drift.values())
+        if bool(unit.get("within_declared_tolerance")) != within:
+            problems.append(
+                f"re-measurement {unit.get('unit')}: the recorded tolerance verdict disagrees"
+            )
+        if bool(unit.get("passed")) != bool(unit_result["passed"]):
+            problems.append(f"re-measurement {unit.get('unit')}: the recorded verdict disagrees")
+    return problems
+
+
+def check_window(manifest, directory):
+    """An active window is a subset of the run, so its numbers have to be a subset's numbers."""
+    problems = []
+    for entry in manifest["reports"]:
+        report = json.loads((directory / entry["file"]).read_text())
+        window = report.get("telemetry", {}).get("active_window", {})
+        samples = report.get("telemetry", {}).get("samples", 0)
+        if window.get("samples", 0) > samples:
+            problems.append(f"{entry['file']}: active window holds more samples than the run")
+        if window.get("utilization_gpu_mean", 0) > window.get("utilization_gpu_max", 0):
+            problems.append(f"{entry['file']}: active window mean utilization exceeds its peak")
     return problems
 
 

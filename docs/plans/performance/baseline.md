@@ -127,7 +127,10 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 - **工作量逐份对齐** ✓：每份报告的 `max_new_tokens`/`temperature`/`mtp_depth`/`eos_tokens`/输入哈希都要
   与 profile 一致 ✓；
 - **独立复测** ✓：必须有 `reproductions` ✓、每个单元都 `within_declared_tolerance` ✓、
-  `paired_units` 与单元数自洽 ✓；**若少于方案要求的 5 ✓，打印提示而不是判失败** ✓（现状 2 ✓，manifest
+  `paired_units` 与单元数自洽 ✓；**记录的漂移值本身也要能重算** ✓ —— 用该单元的两份 g2 报告重跑同一个
+  `compare()` ✓，逐项复算 `drift` ✓ 与 `worst_drift` ✓ 并核对 `within_declared_tolerance`/`passed` ✓
+  （"记录了 12 个漂移值" ✗ 不等于"它们仍来自那两份报告" ✓）；**活动窗口的子集不变量**也一并核 ✓
+  （窗口样本数不得超过整轮 ✓、均值不得超过峰值 ✓）；**若少于方案要求的 5 ✓，打印提示而不是判失败** ✓（现状 2 ✓，manifest
   自己也如实记着 ✓ —— 这是需要设备窗口的缺口 ✓，不是可以含糊过去的 ✓）；
 - **测量本身可信** ✓：每份报告必须来自**干净的树** ✓（`source.dirty` 为 false 且有 revision ✓）、
   checklist **通过且无 mismatch** ✓ 且 profile 对得上 ✓、profile 启用 prefix cache 时 `hot_*` case 必须
