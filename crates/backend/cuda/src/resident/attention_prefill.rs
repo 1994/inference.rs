@@ -222,9 +222,10 @@ pub(crate) mod kernels {
         let mut row_sum: Tile<f32, { [QT] }> = constant(0.0f32, shape![QT]);
         for block in 0i32..blocks {
             let physical: i32 = tile_to_scalar(table_blocks.load([block]).reshape(shape![]));
-            let key: Tile<f32, { [KB, D] }> =
-                convert_tile(kp.load([pid.1 / GROUP, block, 0i32]).reshape(shape![KB, D]))
-                    * k_scale.broadcast(shape![KB, D]);
+            let key: Tile<f32, { [KB, D] }> = convert_tile(
+                kp.load([pid.1 / GROUP, physical, 0i32])
+                    .reshape(shape![KB, D]),
+            ) * k_scale.broadcast(shape![KB, D]);
             let kidx: Tile<i32, { [KB] }> = iota(shape![KB]) + (block * KB).broadcast(shape![KB]);
             let kpos: Tile<i32, { [QT, KB] }> =
                 kidx.reshape(shape![1, KB]).broadcast(shape![QT, KB]);

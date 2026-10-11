@@ -2836,3 +2836,104 @@ matrix 4 并发以内的负载覆盖不到它。修法方向：准入计入"准�
 - **P4/P5/P6 未做**；P4 参照实现应看 `crates/engine/state/src/kv.rs` 的
   `KvCacheManager`，§八 的"共享 arena + 偏移表"路线维持否证。
 - **P0 的 ≥5 单元成对基线阻塞**：本机无 vLLM（`import vllm` 不可用），需先恢复环境。
+
+
+## 十六、2026-10-11 当前 main 对比与下一阶段的优化边界
+
+本轮从合并后的 `c5aec9e6c1d663ff1e19b8f485293e13679a09f4` 出发，先阅读实验记录、核对实际
+调用路径，再重新运行同机 native/vLLM。此前的 GEMM 改动已合入 main，不能继续拿合并前的
+绝对时间作为当前缺口。45 上 `artifacts/vllm-compare/bin/python` 可以导入 **vLLM 0.31.0**；
+因此 KV 计划中“无法导入 vLLM”的历史阻塞不再成立。
+
+### 16.1 当前差距：诊断配对，不是正式签发
+
+RTX 5090 仅作为验证设备；驱动 `615.78.08`。27B NVFP4、MTP 0、同一份 token workload、
+每请求生成 64 token；GPU memory utilization 0.88、max model length 65536、max sequences 16。
+两个引擎依次新启动，每个 case 排除一次 warmup、测量三次。**只有一个独立配对单位**，
+不足基线计划要求的五个，以下数字用于确定优化顺序，不用于宣布性能达标。
+
+下表为请求样本中位数，时间单位 ms，比率为 native/vLLM；batch4 的请求时间不代表整组 makespan。
+
+| case | 输入 token | native TTFT | vLLM TTFT | TTFT 比率 | native TPOT | vLLM TPOT | TPOT 比率 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| short | 51 | 42.307 | 51.829 | 0.816 | 16.451 | 14.607 | 1.126 |
+| long | 511 | 237.159 | 63.706 | 3.723 | 16.451 | 14.652 | 1.123 |
+| batch4 | 52 × 4 | 172.224 | 94.005 | 1.832 | 21.505 | 16.537 | 1.300 |
+| hot_long | 3647 | 71.434 | 70.672 | 1.011 | 16.932 | 14.623 | 1.158 |
+
+short/long/batch4 的测量 trial 均报告 prefix reuse = 0。hot_long 每次 native 重用 3584 token、
+vLLM 重用 3136 token，剩余计算量不同，**该格不能作为同等预填充工作的速度对照**。
+三个进程内 repeat 也不能当成三个独立配对。当前尚未覆盖 2B、MTP 2、持续及混合负载的新五配对矩阵。
+
+原始报告、telemetry、workload 和制品身份保存在：
+`/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/current-pair/`。
+冻结的 native release 制品 SHA256 为
+`20330634ff509035e0851d87ee414a7cde7b572fc8c5853e5baeff5fb34d2e07`，workload SHA256 为
+`2d88b924fa4ae3e83a6763e0c2eca986791808cf21ed0e0fcbafbe26b05e6a15`。
+
+### 16.2 从代码确认的词表输出浪费
+
+`resident/batch.rs::capture32` 的 last 图仍把 logits 的 Linear 节点交给
+`prefill_projection::record`，后者按 `arena.lanes()` 对所有 prompt 行做投影；
+`BatchGraph::run32` 却只回读 `tokens.len() - 1` 那一行。`ActivationArena::plan` 又把每个 slot
+都按完整 prompt 宽度分配，包括这个终端词表输出。`program_capacity` 已明确禁止 logits
+被图内节点消费，因此这个输出的中间行没有后续图内消费者。
+
+这提供了一项不依赖 GPU 型号的独立优化：用设备端 metadata 选取最后一个有效 hidden 行，
+保留既有投影的权重格式、输入舍入和 K 累加顺序，只生成一行 logits；prompt 的 hidden 行仍
+完整保留给 MTP priming/Full readout。相应的 arena、admission 和 reclaimable bytes 必须一起
+改，不能只缩分配后继续沿用旧的宽度除法或旧的可回收字节数。
+
+以 248320 词表、F32 logits 为例，256 行约 242.5 MiB，单行约 0.95 MiB。这个存储浪费
+同时限制更宽 prompt 图和并发驻留；减少它后，再根据设备预算验证 512-token 图和池化请求的
+宽图。**这些是代码确认的浪费和待测方案，尚没有服务侧收益测量，不能提前写成加速结论。**
+
+### 16.3 GDN 的矩阵路线：更快的求解仍欠正确性验收
+
+新实验将 gated-delta 的逐 token rank-1 递推改写为 32-token 的因果线性系统，并用补偿 BF16
+tensor-core 乘积与 F32 累加计算状态和输出。先实现串行三角求解，再利用严格下三角矩阵
+`A^32 = 0`，通过有限乘积 `(I-A)(I+A^2)(I+A^4)(I+A^8)(I+A^16)` 求逆。
+这改变浮点计算顺序，不能视为与既有递推逐位等价。
+
+隔离 CUDA-event 测量如下，时间单位 µs。矩阵求逆版在同一 GPU 测量窗口前后各跑一次，
+中间重跑已有 chunked 核；串行三角版来自此前的诊断窗口，没有独立签发交错服务收益。
+每行的算子测量内部还与逐 lane 图交错，包含 L2 清理和预分配 graph replay。
+
+| 几何 (KH,VH,D,rows) | 逐 lane | 已有 chunked | 串行三角矩阵版 | 矩阵求逆版两次 |
+|---|---:|---:|---:|---:|
+| (16,48,128,32) | 172.8 | 72.736 | 61.056 | 58.176 / 58.240 |
+| (16,48,128,64) | 335.1 | 131.696 | 146.704 | 112.672 / 112.384 |
+| (16,48,128,128) | 662.8 | 252.576 | 276.992 | 206.112 / 205.824 |
+
+串行三角版在 64/128 行比已有 chunked 慢，应排除。矩阵求逆版在这些几何上有约 15–20%
+的进一步收益，但**没有进入生产 dispatch**：三乘积版在 D=32、29 个有效 token 的跨分块
+输出一致性检查中出现 `1.3411045e-7`，超过该夹具的 `1e-7` 阈值；四乘积、8 worker warps 的
+后续版本仍出现 `1.8719584e-7`。失败不能通过放宽既有测试或只报告对逐 lane 的倍数来隐藏。
+串行三角版完成了独立 F64 参考的全套几何、tail、offset 测试；矩阵求逆版的测试因上述检查
+提前停止，不能声称完成了同样的数值覆盖。
+
+原始日志、候选补丁和测试制品 SHA256 保存在上述持久目录的
+`wy-experiment/`、`wy-neumann/`、`wy-worker8/`、`wy-precise4/`。实验源码归档后，工作树已恢复
+既有递推实现及其测试。继续这一方向时，需先独立证明矩阵算术误差、跨 chunk 状态和真实
+checkpoint 的固定上下文 logits，再验收任务质量及 MTP 接受率；不能把内核倍数直接乘到 TTFT 上。
+
+### 16.4 张量核 attention 的块映射漏洞
+
+检查 `attention_prefill::decode_tiled` 发现：循环已查询 `physical` block，但 key 读取仍使用
+逻辑 `block`；value 使用 `physical`。identity table 会掩盖该错误，非连续布局则导致 K/V
+来自不同位置。本轮将 key 也按 `physical` 读取，并扩展现有 GPU fixture：将整个已有 KV
+历史和新 append 区间一起重排，再用非 identity table 对照独立参考，覆盖两种 query tile、
+tail、window 和 draft offset。该回归验证通过。默认 dispatch 的数值策略未因这个修复改变。
+
+### 16.5 后续优先顺序与验收
+
+1. 先减少终端词表投影的无用行，并修正存储计价；验证尾块最后行、Full readout 和 MTP priming。
+2. 用实测预算和 replay 数评估更宽 prompt 图及池化 prompt workspace，避免再次把短 prompt
+   强塞进宽图。保留 63/64/65、127/128/129、255/256/257 等边界与并发容量覆盖。
+3. GDN 矩阵算法单独通过数值和质量验收；张量核 attention 单独测真实模型、长短上下文及块表，
+   再评估组合收益。不能仅打开已有开关就宣称解决了浮点口径和 MTP 接受率问题。
+4. 针对 batch4/MTP 的逐 lane 状态算子 dispatch 和快照流量重新画像，优先减少每步固定工作。
+   CPU 忙、GPU 利用率或旧版 roofline 数字都不能替代当前路径的设备计时。
+5. 候选通过必要 correctness 检查后，CI 与性能测试并行开展；正式结论仍需要两模型及支持的
+   MTP profile、全部 case 的至少五个独立交错配对，以及吞吐、尾延迟和任务质量。每格相对
+   vLLM 的目标是 1.10x 以内；本轮未达到该目标。

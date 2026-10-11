@@ -216,54 +216,76 @@ fn check_case(
     // relative tolerance the attention gate uses for the same product.
     // Both query-tile widths the capture path can pick: 32 rows per CTA is register bound
     // (32x256 f32 accumulators) while 16 is the mma minimum and doubles the CTA count.
-    for qt in [16_usize, 32] {
-        let mut tiled = api::zeros::<f32>(&[lanes, HEADS * DIM]).sync_on(&device.stream)?;
-        let query_tiled = query_device.view(&[lanes, HEADS * DIM])?;
-        let scale = 1.0 / f32::from(u16::try_from(DIM).expect("dim fits in u16")).sqrt();
-        kernels::decode_tiled(
-            (&mut tiled).partition([qt, DIM]),
-            &query_tiled,
-            &keys,
-            &values,
-            &metadata,
-            &table,
-            window,
-            1.0,
-            1.0,
-            scale,
-        )
-        .generics(vec![
-            "f32".into(),
-            DIM.to_string(),
-            (HEADS / KV_HEADS).to_string(),
-            qt.to_string(),
-            LANES.to_string(),
-            crate::constants::KV_BLOCK_TOKENS.to_string(),
-        ])
-        .sync_on(&device.stream)?;
-        let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;
-        for lane in 0..lanes {
-            let position = start + i32::try_from(lane)? + offset;
-            for head in 0..HEADS {
-                let base = (lane * HEADS + head) * DIM;
-                let expected = if lane < usize::try_from(count)? && position >= 0 {
-                    reference(
-                        &query[base..base + DIM],
-                        &expected_keys,
-                        &expected_values,
-                        head,
-                        usize::try_from(position)?,
-                        usize::try_from(window)?,
-                    )
-                } else {
-                    vec![0.0; DIM]
-                };
-                for (dim, expected) in expected.into_iter().enumerate() {
-                    let error = (f64::from(tiled_actual[base + dim]) - expected).abs();
-                    assert!(
-                        error <= 1e-4 * expected.abs().max(1.0),
-                        "tiled qt={qt} start={start} count={count} offset={offset} window={window} lane={lane} head={head} dim={dim} error={error}"
-                    );
+    // Relocate the entire cache, including history before this chunk. A tensor-core query
+    // must resolve both K and V through the same non-identity table.
+    let mut permuted_keys = vec![0.0_f32; expected_keys.len()];
+    let mut permuted_values = vec![0.0_f32; expected_values.len()];
+    let block_elements = crate::constants::KV_BLOCK_TOKENS * DIM;
+    for head in 0..KV_HEADS {
+        for (logical, &physical) in swapped.iter().enumerate() {
+            let source = head * CAPACITY * DIM + logical * block_elements;
+            let target = head * CAPACITY * DIM + usize::try_from(physical)? * block_elements;
+            permuted_keys[target..target + block_elements]
+                .copy_from_slice(&expected_keys[source..source + block_elements]);
+            permuted_values[target..target + block_elements]
+                .copy_from_slice(&expected_values[source..source + block_elements]);
+        }
+    }
+    let permuted_keys = device.upload(permuted_keys, &[KV_HEADS, CAPACITY, DIM])?;
+    let permuted_values = device.upload(permuted_values, &[KV_HEADS, CAPACITY, DIM])?;
+    for (keys, values, table) in [
+        (&keys, &values, &table),
+        (&permuted_keys, &permuted_values, &swapped_table),
+    ] {
+        for qt in [16_usize, 32] {
+            let mut tiled = api::zeros::<f32>(&[lanes, HEADS * DIM]).sync_on(&device.stream)?;
+            let query_tiled = query_device.view(&[lanes, HEADS * DIM])?;
+            let scale = 1.0 / f32::from(u16::try_from(DIM).expect("dim fits in u16")).sqrt();
+            kernels::decode_tiled(
+                (&mut tiled).partition([qt, DIM]),
+                &query_tiled,
+                keys,
+                values,
+                &metadata,
+                table,
+                window,
+                1.0,
+                1.0,
+                scale,
+            )
+            .generics(vec![
+                "f32".into(),
+                DIM.to_string(),
+                (HEADS / KV_HEADS).to_string(),
+                qt.to_string(),
+                LANES.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
+            ])
+            .sync_on(&device.stream)?;
+            let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;
+            for lane in 0..lanes {
+                let position = start + i32::try_from(lane)? + offset;
+                for head in 0..HEADS {
+                    let base = (lane * HEADS + head) * DIM;
+                    let expected = if lane < usize::try_from(count)? && position >= 0 {
+                        reference(
+                            &query[base..base + DIM],
+                            &expected_keys,
+                            &expected_values,
+                            head,
+                            usize::try_from(position)?,
+                            usize::try_from(window)?,
+                        )
+                    } else {
+                        vec![0.0; DIM]
+                    };
+                    for (dim, expected) in expected.into_iter().enumerate() {
+                        let error = (f64::from(tiled_actual[base + dim]) - expected).abs();
+                        assert!(
+                            error <= 1e-4 * expected.abs().max(1.0),
+                            "tiled qt={qt} start={start} count={count} offset={offset} window={window} lane={lane} head={head} dim={dim} error={error}"
+                        );
+                    }
                 }
             }
         }
