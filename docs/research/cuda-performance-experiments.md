@@ -3276,3 +3276,14 @@ compact7e 的 `graph_policy` 未改，且 private shell 转 pooled 时可能仍�
 actual retained captures计价或安全丢弃未报价图。已有 `chunk_and_per_lane_delta_agree_exactly`
 实际仍使用1e-7容差，不能拿它作为默认exact准入；寄存器chunk需先定位首个不同计算
 阶段，再用完整 state/output 位模式验证。继续扩大低层 GEMM tile 搜索不足以解决长输入差距。
+
+
+显式256的单次节点诊断已执行，真实target为256+255，draft仍128+128+128+127。
+warmup与3次测量的全部256个输出token、长度、EOS及结束原因均与原自动宽度参考相同。
+原runner返回1，因为比较错误地包含了`finished.measurement`的计时字段；服务返回0，
+实际环境及缓存检查通过。未重写原success状态或重跑覆盖证据，独立稳定字段复核在
+`first-principles/prefill-node-explicit256-0dd5899/{cpu-qualification,width-validation}.json`。
+带事件记录的target节点中位数329.01→237.22ms，Linear160.07→83.79ms，Delta
+115.44→114.54ms，draft28.19→30.45ms。它证实少读取几轮权重的方向值得跟进，
+但仅两个不同时段的插桩服务，不能当作正式端到端速度验收。尚未改变默认图宽，仍需
+无插桩独立配对、完整数值门禁与短/热/混合负载，并将自动选择接入现有硬件tuning。
