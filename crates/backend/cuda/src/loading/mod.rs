@@ -511,3 +511,7 @@ fn select_prompt_width(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_prefill_width.rs"]
+mod prefill_width_tests;

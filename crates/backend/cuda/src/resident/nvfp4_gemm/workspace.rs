@@ -38,6 +38,37 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Test evidence for prepared strategies, grouped by shape/config; this is not a replay trace.
+    #[cfg(test)]
+    pub(crate) fn prepared_configs(&self) -> serde_json::Value {
+        let mut groups = BTreeMap::<(&str, usize, usize, usize, String), usize>::new();
+        for ((_, rows, outputs, columns), config) in &self.strategies {
+            *groups
+                .entry(("nvfp4", *rows, *outputs, *columns, format!("{config:?}")))
+                .or_default() += 1;
+        }
+        for ((_, rows, outputs, columns), config) in &self.fp8_strategies {
+            *groups
+                .entry((
+                    "fp8-channel",
+                    *rows,
+                    *outputs,
+                    *columns,
+                    format!("{config:?}"),
+                ))
+                .or_default() += 1;
+        }
+        serde_json::json!(
+            groups
+                .into_iter()
+                .map(|((mode, rows, outputs, columns, config), count)| {
+                    serde_json::json!({"mode":mode, "m":rows, "n":outputs, "k":columns,
+                "prepared_config":config, "weight_count":count})
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+
     pub(crate) fn program(
         device: &CudaDevice,
         graph: &DataflowGraph,

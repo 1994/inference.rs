@@ -780,6 +780,12 @@ impl DeviceProgram {
         }
     }
 
+    /// Test-only preparation evidence; configurations may include strategies a replay does not use.
+    #[cfg(test)]
+    pub(crate) fn prepared_gemm_configs(&self) -> serde_json::Value {
+        self.nvfp4.prepared_configs()
+    }
+
     /// Whether a chunk of `lanes` tokens replays on the narrow prompt graph.
     ///
     /// Both captured prompt graphs are fixed width, so the narrow one is preferred whenever the

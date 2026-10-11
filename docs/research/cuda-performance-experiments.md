@@ -3287,3 +3287,66 @@ warmup与3次测量的全部256个输出token、长度、EOS及结束原因均�
 115.44→114.54ms，draft28.19→30.45ms。它证实少读取几轮权重的方向值得跟进，
 但仅两个不同时段的插桩服务，不能当作正式端到端速度验收。尚未改变默认图宽，仍需
 无插桩独立配对、完整数值门禁与短/热/混合负载，并将自动选择接入现有硬件tuning。
+
+
+### 16.14 图宽的无插桩反例与真实模型数值门禁（2026-10-11）
+
+**全局扩大到256不是默认候选。** 使用16.13已合入的同一融合CLI、相同冻结缓存和
+输入，完成AB与BA两个fresh-process对照。baseline为`--no-autotune`；candidate再向
+原生CLI传`--max-num-batched-tokens 256`，关闭自动选择。两臂公开prefill_width仍为
+256；根据已验证源码路径，pooled实际应分别捕获64与256。这次无插桩服务没有新增
+live capture观测，不能把公开配置读回冒充实时图宽测量。
+
+每臂28请求（7次warmup、21次测量），共112请求的全部token、长度、EOS、结束原因
+及工作量控制一致，hot reuse为3584。每服务内3次重复不是3个独立配对单位。测试前
+冻结资格规则：采样时的外部GPU进程集合相同，加载device/model/state预算0.1GiB显示
+区间相同。pair0的state预算4.7/4.8不匹配，原数据保留作混杂诊断；pair1匹配，正式
+合格配对仅1/5，不足以签发收益。以下负值表示耗时降低：
+
+| 场景 | pair0 TTFT / 整组变化 | pair1 TTFT / 整组变化 |
+| --- | ---: | ---: |
+| short | +82.21% / +3.89% | +93.19% / +5.79% |
+| long(511) | -19.47% / -7.72% | -18.64% / -7.82% |
+| batch4 | +154.10% / +74.05% | +139.82% / +71.90% |
+| hot_long | +58.42% / +6.31% | +52.57% / +3.28% |
+
+两对batch4中baseline都为Scheduled353/Submitted188（每step约1.878请求），candidate
+为353/353（1.000）。共享slot pool宽度仍为4；这是实际合并工作减少的观察，不证明
+pool变成1，也不证明具体admission拒绝原因。资源准备合计包含等待与重试，不可当作
+后端capture的实际CPU时间。全局256的反例重复出现，因此停止为它补齐推广测试；
+不能用long改善掩盖short/hot及batch4回退。以后新默认候选的收益仍需至少五个合格
+独立配对和混合负载门禁。
+
+仅target完整prompt arena从64宽94,789,632 bytes增至256宽379,158,528 bytes，每个
+resident增加284,368,896 bytes。当前按配置宽度报价仍覆盖自动64，因此不是已经证实
+的低报；在compact按实际捕获降低报价后，复用旧private宽图却未重建将形成低报风险。
+后续应同时处理终端head的单行存储、窄/宽图选择、完整保留资源预算及缓存几何匹配。
+图宽与kernel参数均归属已有typed tuning，按设备能力、shape、数值合同和实际驻留需求
+选择。当前workspace跳过prompt head rows>=32的测量，不能宣称compact head已经复用
+M64/M256的measured Choice，更不能查询M1缓存替代其合同。
+
+原始报告、环境、计划与资格规则在`first-principles/prefill-width-fused-paired/`；新增
+`diagnostic-summary.json` SHA256为
+`824b5cb1042af4d27512f84f6a5e0baf259a93c0664e25a78e74c035433deeef`。
+CLI仍为16.13的a29b二进制，未改变默认或生产算术。
+
+**64/256在该真实输入上通过完整数值门禁。** 新增ignored CUDA回归，共享一次27B
+NVFP4权重上传，但分别分配状态、KV与arena，捕获真实64/256 prompt图，容量1024，
+verification宽3、target MTP0、autotune与chunked recurrent均关闭。511-token冻结输入
+在256与511共同边界比较每个有效hidden行、末行完整vocab logits，以及所有F32状态和
+完整FP8 K/V数组（包含未使用尾部）。随后比较3行verification的全部hidden/logits及
+状态，commit1后的全状态，以及8步固定同输入decode的hidden/logits/状态。
+
+累计879,233,536次元素比较、3,223字段；nonfinite、逐位差异与max absolute均为0。
+这里包含多次状态快照，不是8.79亿个互不重复元素。冻结缓存原样保留。prepared GEMM
+配置按两臂记录，但明确不是replay trace；新读取接口全部`cfg(test)`，生产行为不变。
+门禁只证明这一个冻结输入及target配置，未覆盖draft/pooled完整MTP、所有prompt长度、
+其他设备或跨引擎质量，也不替代compact head的独立数值对照。
+
+冻结测试源码树为`7c7180c0a74afaf5c43dda6e7fdc601424e2ea97`，测试二进制SHA256为
+`376e2694a73a011af9afe738e04febf684167f6354b3a1632011bc54c3e93195`。证据在
+`first-principles/prefill-width-numeric-validation-42f4ea2/`的source/build/binary与GPU日志。
+第一次复制制品缺执行权限，exit126且未启动模型，保留原失败；修正权限后第二次实际
+GPU运行exit0。43个默认CPU测试通过、52个GPU/环境测试ignored；格式、policy、layout、
+inventory及生产CUDA Clippy通过。CUDA test Clippy仍在相同旧位置报24个既有lint，
+新测试没有新增错误；这不等于完整check-cuda通过。
