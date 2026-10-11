@@ -482,7 +482,7 @@ fn select_prompt_width(
     .into_iter()
     .filter(|&width| width <= recurrent_limit)
     {
-        let needed = weights.prompt_activation_bytes(graph, width)?;
+        let needed = crate::resident::arena::ActivationArena::required_bytes(graph, width)?;
         if needed as u64 <= arena_budget {
             selected = width;
             break;
@@ -498,7 +498,7 @@ fn select_prompt_width(
             &[crate::constants::MAX_PREFILL_LANES]
         };
         for &wide in rungs {
-            let needed = weights.prompt_activation_bytes(graph, wide)?;
+            let needed = crate::resident::arena::ActivationArena::required_bytes(graph, wide)?;
             if needed as u64 <= arena_budget {
                 weights.narrow_prefill_width = selected;
                 selected = wide;

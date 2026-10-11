@@ -2939,9 +2939,9 @@ tail、window 和 draft offset。该回归验证通过。默认 dispatch 的数�
    vLLM 的目标是 1.10x 以内；本轮未达到该目标。
 
 
-### 16.6 终端 logits 单行化：实现与正确性
+### 16.6 终端 logits 单行化：候选实现与正确性（默认路径已撤回）
 
-`BatchGraph` 的宽 prompt 捕获现在为符合条件的终端 Dense/FP8 Linear 输出分配一行 logits。
+`BatchGraph`候选  的  宽 prompt 捕获为符合条件的终端 Dense/FP8 Linear 输出分配一行 logits。
 先按设备端 `count - 1` 收集最后一个有效输入行，再保留旧 prompt 投影的 tile 几何、输入舍入/
 动态量化与 K 累加顺序。27B 的输出头实际是动态 per-token FP8，已覆盖这条生产路径；没有
 改用 decode 的 split-K 算法。旧 FP4 head、非 Linear 输出、被消费的 logits、hidden/logits
@@ -2961,4 +2961,43 @@ hidden、最后行 logits、验证结果、回滚后的连续 decode **逐位相
 
 候选源码补丁、测试制品身份和原始日志保存于
 `/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/last-logits/`。
-服务侧 A/B 将另外记录，以上仅证明正确性与实际取消了中间行，尚不代表端到端加速签发。
+以上仅证明候选正确性与实际取消了中间行。下节服务测量发现回退后，main 已恢复原有 arena、计价与完整行投影。
+
+
+### 16.7 单行 logits 的服务对照：内存收益不足以签发默认加速
+
+测试使用 45 上冻结的 c5aec9e baseline 和独立候选二进制，两组新进程配对按 AB/BA 交错；
+每个进程包含一次 warmup 与三次测量，输出 64 token，模型内存比例 0.88、max-num-seqs 16。
+这只有两个独立单位，是诊断数据，不满足正式签发要求的五组，也不是新的 vLLM 对比。
+源码身份由各自工作树记录，冻结二进制 SHA256 独立记录。误标源码的早期试跑保留但排除。
+
+以下为各组 request TTFT 中位数变化，负值表示候选更快；batch4 使用各请求指标，
+不能当成整组 makespan。M32 候选沿用原 prompt tile；M16 只缩小 FP8 最后行 tile。
+
+| 模型 / MTP / case | M32 第一组 | M32 第二组 | M16 第一组 | M16 第二组 |
+|---|---:|---:|---:|---:|
+| 2B / 0 / batch4 | -17.2% | -12.4% | 未测 | 未测 |
+| 27B / 0 / long (511) | +1.5% | -0.4% | 未测 | 未测 |
+| 27B / 0 / short | +4.4% | +13.9% | 未测 | 未测 |
+| 27B / 2 / batch4 | +34.6% | +24.4% | +31.5% | +32.6% |
+| 27B / 2 / long (511) | -1.3% | +0.2% | +0.7% | +2.0% |
+
+M16 的 27B/MTP2 batch4 TPOT 同时增加 3.0% / 8.2%，request wall 增加 2.1% / 3.0%。
+缩小 tile 没消除回退，因此不能把内存减少当作推理加速结论：默认单行路径已从 main 撤回，
+保留之前 GEMM 的已验证优化和独立 KV block 寻址修复。所有候选源码、原始测量及测试日志
+仍在持久制品目录，不需要保留实验分支。
+
+2B/MTP0、27B/MTP2 的 M32 两组和 M16 的 27B/MTP2 两组，每组 21 个测量请求的输出 token
+均与 baseline 相同。27B/MTP0 的 M32 第一组全部相同，第二组有 6 个 batch4 请求不同；
+baseline 两次自对照也有 2 个 batch4 请求差异，非 batch 请求稳定。固定上下文的 hidden/logits、
+验证/回滚/续接逐位检查通过，但这不能替代并发调度下的质量验收，也不能把差异归因于新算术。
+M16 的 64/128 行真实 27B checkpoint 检查都逐位通过。
+
+已知存储收益仍成立：248320 词表的 256 行 F32 logits 从约 242.5 MiB 降至约 0.95 MiB；
+但服务回退原因尚未由设备分段计时定位。下一步必须拆分最后行投影本身和 arena/admission
+变化，检查 batch/MTP 的执行与排队时间，不能再用缩 tile 假设替代测量。
+
+原始数据：`last-logits/paired-qualified/`（M32）、`last-logits/m16/paired/`（M16）。
+冻结 baseline SHA256：`20330634ff509035e0851d87ee414a7cde7b572fc8c5853e5baeff5fb34d2e07`；
+M32：`9b8b8e05a504e4bcb363fb6669aafa91f92f0ca5f822a689c1f0909d2971a984`；
+M16：`0c86b8287dfb365f2dab03d1e8a85d9e8ba99d5f2a172a4c2331ef1a0674db6c`。

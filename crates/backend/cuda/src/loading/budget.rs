@@ -120,7 +120,7 @@ fn program(
         0
     };
     let prompt = weights.prompt_lane_total() as u64;
-    let lanes = 1 + if verify > 1 { verify } else { 0 };
+    let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
     let mut bytes = 0;
     bytes = add(bytes, attention_scratch(graph)?)?;
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
@@ -133,13 +133,6 @@ fn program(
         )?)
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
-    for width in weights.prompt_widths() {
-        bytes = add(
-            bytes,
-            u64::try_from(weights.prompt_activation_bytes(graph, width)?)
-                .map_err(|_| Error::invalid("prompt activation budget"))?,
-        )?;
-    }
     let mut recurrent_shapes = std::collections::BTreeSet::new();
     for node in &graph.nodes {
         if let TensorOp::Delta {
