@@ -135,6 +135,10 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 - **测量本身可信** ✓：每份报告必须来自**干净的树** ✓（`source.dirty` 为 false 且有 revision ✓）、
   checklist **通过且无 mismatch** ✓ 且 profile 对得上 ✓、profile 启用 prefix cache 时 `hot_*` case 必须
   **真的复用了 token** ✓（否则"热"这个 case 名不副实 ✓）；
+- **同一台机器才谈得上比值** ✓：manifest 声明了签发时的设备 ✓，每份报告也带自己的身份 ✓ —— 现在核两者
+  **逐设备一致** ✓（uuid/名称/驱动 ✓）：不同设备、不同驱动、或身份未经验证（`identity.verified` ✓）都会失败 ✓；
+  另外要求 `identity.build.sha256` 存在 ✓ 且与报告的 `binary_sha256` **一致** ✓（同一个制品被两处记录却互相
+  矛盾，正是"可复现制品"要防的 ✓）；
 - **硬件证据仍然成立** ✓：签发时 `require_telemetry` 会拒绝没有遥测的报告 ✓；冻结之后没人再核 ✓，现在补上
   —— 报告里的 `telemetry.sha256` 必须与**旁边那份 `.telemetry.jsonl`** 的实际内容一致 ✓（这是 manifest 的
   文件哈希**表达不了**的一层 ✓：报告与其遥测日志之间的绑定 ✓）、日志必须能按 JSON Lines 解析 ✓ 且以

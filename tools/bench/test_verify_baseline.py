@@ -333,6 +333,38 @@ class FrozenTest(unittest.TestCase):
 
         self.assertIn("exceeds its peak", " ".join(self.tamper(edit)))
 
+    def test_a_different_device_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["identity"]["hardware"]["devices"][0]["uuid"] = "GPU-other"
+            path.write_text(json.dumps(report))
+
+        self.assertIn("different devices", " ".join(self.tamper(edit)))
+
+    def test_an_unverified_identity_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["identity"]["verified"] = False
+            path.write_text(json.dumps(report))
+
+        self.assertIn("was not verified", " ".join(self.tamper(edit)))
+
+    def test_a_missing_build_fingerprint_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            del report["identity"]["build"]
+            path.write_text(json.dumps(report))
+
+        self.assertIn("no build artifact fingerprint", " ".join(self.tamper(edit)))
+
+    def test_a_binary_that_disagrees_with_the_build_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["binary_sha256"] = "0" * 64
+            path.write_text(json.dumps(report))
+
+        self.assertIn("disagrees with the build fingerprint", " ".join(self.tamper(edit)))
+
     def test_the_shortfall_is_a_note_not_a_failure(self):
         directory = self.copied()
         self.assertEqual(verify_baseline.verify(directory)[1], [])

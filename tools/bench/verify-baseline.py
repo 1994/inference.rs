@@ -136,6 +136,7 @@ def check_contract(directory, manifest):
                 )
     problems.extend(check_measurement(profile, manifest, directory))
     problems.extend(check_telemetry(manifest, directory))
+    problems.extend(check_identity(manifest, directory))
     basis = manifest["statistical_basis"]
     reproductions = basis.get("reproductions", [])
     if not reproductions:
@@ -191,6 +192,31 @@ def check_measurement(profile, manifest, directory):
             and report.get("hot_prefix_tokens_reused", 0) <= 0
         ):
             problems.append(f"{name}: prefix cache is enabled but the hot case reused no tokens")
+    return problems
+
+
+def check_identity(manifest, directory):
+    """A cross-engine ratio only means something if both engines ran on the recorded machine.
+
+    The manifest declares the devices it was signed on; each report carries its own identity.
+    If those disagree - a different device, a different driver, or a run whose identity was
+    never verified - the ratio compares two different experiments.
+    """
+    problems = []
+    declared = manifest.get("hardware", {}).get("devices")
+    for entry in manifest["reports"]:
+        report = json.loads((directory / entry["file"]).read_text())
+        name = entry["file"]
+        identity = report.get("identity", {})
+        if identity.get("hardware", {}).get("devices") != declared:
+            problems.append(f"{name}: ran on different devices than the manifest records")
+        if identity.get("verified") is not True:
+            problems.append(f"{name}: engine identity was not verified")
+        build = identity.get("build")
+        if not isinstance(build, dict) or not build.get("sha256"):
+            problems.append(f"{name}: records no build artifact fingerprint")
+        elif report.get("binary_sha256") and report["binary_sha256"] != build["sha256"]:
+            problems.append(f"{name}: binary_sha256 disagrees with the build fingerprint")
     return problems
 
 
