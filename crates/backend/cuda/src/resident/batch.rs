@@ -115,38 +115,35 @@ impl BatchBuilder<'_> {
     /// capture a second, narrower prompt graph and route short chunks to it.
     /// Capture the verification graph (unless the sequence will speculate through the
     /// shared slot pool) plus whichever prompt graphs the configured widths select.
-    /// `wide_prompt` skips the widest prompt graph: pool-bound sequences prefill short
-    /// prompts through the narrow graph, and a per-sequence wide prompt arena costs more
-    /// physical memory than four pooled residents have room for.
+    /// Pool-bound geometry omits the wide prompt arena when a narrow prompt graph is available.
     pub fn build_pair(
         &mut self,
-        verification: bool,
-        wide_prompt: bool,
+        geometry: super::program::ProgramGeometry,
     ) -> Result<(Option<BatchGraph>, Option<BatchGraph>, Option<BatchGraph>)> {
         if self.weights.batch_width > crate::constants::MAX_VERIFICATION_WIDTH {
             return Err(Error::invalid("verification width exceeds 9"));
         }
-        let batch = if verification && self.width > 1 {
+        let batch = if geometry.verification > 1 {
+            self.width = geometry.verification;
             Some(self.build()?)
         } else {
             None
         };
         let wide = self.weights.prefill_width;
-        let narrow = self.weights.narrow_prefill_width;
+        let narrow = geometry.prompts[1];
         if wide < crate::constants::PREFILL_LANES && wide > 1 && wide != self.weights.batch_width {
             return Err(Error::invalid(
                 "prefill width must match verification width or be 32",
             ));
         }
-        let prompt_narrow =
-            if narrow >= crate::constants::PREFILL_LANES && (narrow < wide || !wide_prompt) {
-                self.width = narrow;
-                Some(self.build()?)
-            } else {
-                None
-            };
-        let prompt = if wide_prompt && wide >= crate::constants::PREFILL_LANES {
-            self.width = wide;
+        let prompt_narrow = if geometry.prompts[1] > 0 {
+            self.width = narrow;
+            Some(self.build()?)
+        } else {
+            None
+        };
+        let prompt = if geometry.prompts[0] > 0 {
+            self.width = geometry.prompts[0];
             Some(self.build()?)
         } else {
             None

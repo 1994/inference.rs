@@ -78,9 +78,7 @@ impl CudaBackend {
             ));
         }
         let private_verification = self.private_verification_for(capacity, readout);
-        let budget = self
-            .loaded
-            .sequence_budget(capacity, readout, private_verification)?;
+        let budget = self.reservation_budget(capacity, readout, private_verification)?;
         if self.states.len() >= self.maximum_states
             || self
                 .active_budget()?

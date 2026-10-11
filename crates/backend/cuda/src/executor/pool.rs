@@ -35,12 +35,19 @@ impl Sequence {
 }
 
 impl StatePool {
-    pub fn take(&mut self, capacity: usize, readout: OutputReadout) -> Option<Sequence> {
-        let index = self.entries.iter().position(|s| {
+    fn matching(&self, capacity: usize, readout: OutputReadout) -> Option<usize> {
+        self.entries.iter().position(|s| {
             !s.poisoned
                 && s.capacity.next_power_of_two() == capacity.next_power_of_two()
                 && s.readout == readout
-        })?;
+        })
+    }
+    pub(super) fn cached_budget(&self, capacity: usize, readout: OutputReadout) -> Option<u64> {
+        self.matching(capacity, readout)
+            .map(|index| self.entries[index].budget)
+    }
+    pub fn take(&mut self, capacity: usize, readout: OutputReadout) -> Option<Sequence> {
+        let index = self.matching(capacity, readout)?;
         let sequence = self.entries.remove(index)?;
         self.bytes -= sequence.budget;
         self.reclaimable_bytes -= sequence.reclaimable_bytes();
@@ -64,6 +71,22 @@ impl StatePool {
 }
 
 impl CudaBackend {
+    /// Cached programs can retain wider prompt graphs than a newly captured pooled program.
+    /// Reuse keeps their original charge; a requested private recapture must also be covered.
+    pub(super) fn reservation_budget(
+        &self,
+        capacity: usize,
+        readout: OutputReadout,
+        private_verification: bool,
+    ) -> Result<u64> {
+        let fresh = self
+            .loaded
+            .sequence_budget(capacity, readout, private_verification)?;
+        Ok(self
+            .pool
+            .cached_budget(capacity, readout)
+            .map_or(fresh, |retained| retained.max(fresh)))
+    }
     #[must_use]
     pub fn pool_inspection(&self) -> PoolInspection {
         PoolInspection {

@@ -73,27 +73,10 @@ impl Workspace {
         device: &CudaDevice,
         graph: &DataflowGraph,
         weights: &ProgramWeights,
-        verification: bool,
-        wide_prompt: bool,
+        geometry: crate::resident::program::ProgramGeometry,
     ) -> Result<Self> {
-        let widths = Self::captured_widths(
-            weights.batch_width,
-            weights.prefill_width,
-            weights.narrow_prefill_width,
-            verification,
-            wide_prompt,
-        );
+        let widths = geometry.widths();
         Self::new(device, graph, weights, &widths)
-    }
-
-    pub(crate) fn captured_widths(
-        batch: usize,
-        wide: usize,
-        narrow: usize,
-        verification: bool,
-        wide_prompt: bool,
-    ) -> Vec<usize> {
-        captured_widths(batch, wide, narrow, verification, wide_prompt)
     }
 
     pub(crate) fn ensure_width(
@@ -463,25 +446,4 @@ impl Workspace {
         }
         Ok(())
     }
-}
-
-/// Mirrors `BatchBuilder`'s capture decisions; allocation and tuning share this exact list.
-pub fn captured_widths(
-    batch: usize,
-    wide: usize,
-    narrow: usize,
-    verification: bool,
-    wide_prompt: bool,
-) -> Vec<usize> {
-    let mut widths = vec![1];
-    if verification && batch > 1 {
-        widths.push(batch);
-    }
-    if narrow >= crate::constants::PREFILL_LANES && (narrow < wide || !wide_prompt) {
-        widths.push(narrow);
-    }
-    if wide_prompt && wide >= crate::constants::PREFILL_LANES && !widths.contains(&wide) {
-        widths.push(wide);
-    }
-    widths
 }

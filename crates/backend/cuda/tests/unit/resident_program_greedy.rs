@@ -292,3 +292,51 @@ fn pooled_device_readout_matches_host_for_inactive_slots_and_partial_commits() -
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Result<()> {
+    let device = CudaDevice::new(0)?;
+    let width = 48;
+    let graph = fixture_graph(width)?;
+    let mut weights = fixture_weights(&device, width)?;
+    weights.fusion = None;
+    weights.batch_width = 3;
+    weights.prefill_width = 64;
+    weights.narrow_prefill_width = 32;
+    let mut retained = DeviceProgram::new(&device, &graph, &weights, 256, width, width)?;
+    let mut pooled = DeviceProgram::new_pooled(&device, &graph, &weights, 256, width, width)?;
+    assert_eq!(retained.prefill_width(), 64);
+    assert_eq!(pooled.prefill_width(), 32);
+    assert!(pooled.batch.is_none() && pooled.prompt_batch.is_none());
+    retained.forfeit_verification();
+    assert!(retained.batch.is_none());
+    assert_eq!(retained.prefill_width(), 64);
+    assert!(retained.reclaimable_bytes > pooled.reclaimable_bytes);
+    let prompt: Vec<_> = (0..63).map(|i| (i * 7 % width) as u32).collect();
+    let expected = retained.prefill_batch(&prompt, 0, true)?;
+    let mut actual = pooled.prefill_batch(&prompt[..32], 0, false)?;
+    actual.extend(pooled.prefill_batch(&prompt[32..], 32, true)?);
+    let bits = |rows: &crate::resident::BatchOutput| {
+        rows.iter()
+            .map(|(h, l)| {
+                (
+                    h.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    l.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&expected), bits(&actual));
+    for position in 63..79 {
+        let token = (position % width) as u32;
+        let expected = retained.step(token, position, position, None, true)?;
+        let actual = pooled.step(token, position, position, None, true)?;
+        assert_eq!(
+            bits(&vec![expected]),
+            bits(&vec![actual]),
+            "position={position}"
+        );
+    }
+    Ok(())
+}

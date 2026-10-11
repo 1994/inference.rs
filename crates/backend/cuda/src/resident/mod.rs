@@ -29,6 +29,7 @@ mod slot_verify;
 mod small_gemm;
 mod validation;
 pub use arena::ActivationArena;
+pub(crate) use program::ProgramGeometry;
 pub use program::{DeviceProgram, FusionWeights, ProgramWeights};
 
 mod conv_prefill;

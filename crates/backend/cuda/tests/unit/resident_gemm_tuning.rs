@@ -1,5 +1,5 @@
 use super::*;
-use crate::resident::nvfp4_gemm::Workspace;
+use crate::resident::ProgramGeometry;
 
 fn profile() -> DeviceProfile {
     DeviceProfile {
@@ -150,22 +150,25 @@ fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices()
     assert!(!expired.permits_search());
     assert!(fresh.permits_search());
     assert_eq!(
-        Workspace::captured_widths(3, 256, 64, false, false),
+        ProgramGeometry::from_flags(3, 256, 64, false, false).widths(),
         vec![1, 64]
     );
     assert_eq!(
-        Workspace::captured_widths(3, 256, 64, true, true),
+        ProgramGeometry::from_flags(3, 256, 64, true, true).widths(),
         vec![1, 3, 64, 256]
     );
     assert_eq!(
-        Workspace::captured_widths(0, 128, 0, true, true),
+        ProgramGeometry::from_flags(0, 128, 0, true, true).widths(),
         vec![1, 128]
     );
     assert_eq!(
-        Workspace::captured_widths(3, 256, 0, false, true),
+        ProgramGeometry::from_flags(3, 256, 0, false, true).widths(),
         vec![1, 256]
     );
-    assert_eq!(Workspace::captured_widths(3, 3, 0, true, true), vec![1, 3]);
+    assert_eq!(
+        ProgramGeometry::from_flags(3, 3, 0, true, true).widths(),
+        vec![1, 3]
+    );
     Ok(())
 }
 

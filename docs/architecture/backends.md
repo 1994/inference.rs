@@ -23,6 +23,14 @@
 
 Runtime 通过静态 BackendProvider 协调资源与 ticket。具体设备 buffer / handle 留在 backend，公共 trace / probe / stats 留在 IR；Metal 不依赖 CPU executor。
 
+## CUDA resident 准入
+
+CUDA capture、projection workspace 与新建序列报价共用 ProgramGeometry：verification 和 wide/narrow prompt 各自记录实际捕获行数。省略宽 prompt 图的 pooled 程序只计入窄图的 activation arena；external/fusion 配置缓冲仍按实际分配上界计费。prefill 需要 verification fallback 时保留相应报价。
+
+cached shell 按 capacity/readout 与实际 take 路径匹配。转入 slot pool 会销毁私有 verification，但不会自动销毁原宽 prompt 图；复用报价保留旧 charge 的下界，并覆盖请求 private recapture 的新建报价。公共 state_reservation_bytes_for 与实际 reserve 使用同一算法，空闲 slot 不免除 prefill 私有程序的成本。
+
+图几何使用加载时由设备能力/tuning 得出的宽度，不按设备名称选择。报价是已知分配加 driver headroom 的保守上界，不能称作实测增量显存。实测收益与并发延迟取舍见[图几何准入实验](../research/cuda-pooled-admission-geometry-2026-10-12.md)。
+
 ## Metal 执行契约
 
 Metal 在加载期上传 F32 / BF16 / F16 权重、编译 MSL pipeline，预绑定节点并按 lifetime 分配 scratch。计算与状态使用 F32；每个 compute flight 独占共享 scratch，深度为 1。ticket 绑定 executor owner，完成后才能读取 shared output。

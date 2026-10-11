@@ -305,13 +305,6 @@ impl SlotPool {
         self.verify.as_ref().map(|graph| graph.verify)
     }
 
-    /// Token rows each slot's KV cache holds.
-    #[must_use]
-    /// Whether a sequence can still be leased a slot, so that its state is already reserved.
-    pub(crate) const fn has_free_slot(&self) -> bool {
-        !self.leases.free.is_empty()
-    }
-
     /// Slots no sequence currently leases.
     #[must_use]
     pub(crate) const fn free_slots(&self) -> usize {

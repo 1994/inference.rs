@@ -1,4 +1,5 @@
 use super::ActivationArena;
+mod geometry;
 mod greedy;
 use crate::{
     constants::{
@@ -10,6 +11,7 @@ use crate::{
     strategy::LinearTiling,
 };
 use cutile::{half::bf16, prelude::*};
+pub use geometry::ProgramGeometry;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorStorage};
 use std::collections::BTreeMap;
@@ -350,8 +352,8 @@ impl DeviceProgram {
         true
     }
 
-    /// Rebase onto the pooled admission price: no private verification graph may be held,
-    /// and no release credit may survive — the pooled price never charged for one.
+    /// Remove private verification before pooled reuse. Cached admission retains its old
+    /// charge, so no second release credit may survive this transition.
     pub(crate) fn forfeit_verification(&mut self) {
         self.discard_verification();
         self.released_verification_bytes = 0;
@@ -434,20 +436,6 @@ impl DeviceProgram {
         Self::new_impl(device, graph, weights, capacity, hidden, vocabulary, false)
     }
 
-    /// Verification/prompt graph policy: whether the program keeps a private verification
-    /// graph and whether it captures the wide prompt graph.
-    const fn graph_policy(weights: &ProgramWeights, requested: bool) -> (bool, bool) {
-        // Prefill falls back to the verification graph when no prompt graph was captured
-        // (prefill_batch_readout), so a narrow-prefill program must keep its private batch.
-        let private_verification = requested || weights.prefill_width < PREFILL_LANES;
-        // A pool-bound sequence prefills through the narrow prompt graph only: the wide
-        // prompt arena is the largest per-sequence allocation, and four pooled residents
-        // must physically fit next to the pool. Without a narrow graph the wide one is
-        // the only prompt path, so it stays.
-        let wide_prompt = private_verification || weights.narrow_prefill_width < PREFILL_LANES;
-        (private_verification, wide_prompt)
-    }
-
     /// Zeroed decode metadata tensor and external hidden row shared by every capture.
     fn constant_inputs(
         device: &CudaDevice,
@@ -488,19 +476,12 @@ impl DeviceProgram {
         device: &CudaDevice,
         graph: &DataflowGraph,
         weights: &ProgramWeights,
-        policy: (bool, bool),
+        geometry: ProgramGeometry,
     ) -> Result<(
         super::nvfp4_gemm::Workspace,
         crate::device::cublaslt::Support,
     )> {
-        let (verification, wide_prompt) = policy;
-        let nvfp4 = super::nvfp4_gemm::Workspace::program(
-            device,
-            graph,
-            weights,
-            verification,
-            wide_prompt,
-        )?;
+        let nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights, geometry)?;
         let mut delegated = crate::device::cublaslt::Support::new(device);
         warm_delegated(&mut delegated, weights);
         Ok((nvfp4, delegated))
@@ -515,15 +496,14 @@ impl DeviceProgram {
         vocabulary: usize,
         private_verification: bool,
     ) -> Result<Self> {
-        let policy = Self::graph_policy(weights, private_verification);
-        let (private_verification, wide_prompt) = policy;
+        let geometry = ProgramGeometry::new(weights, private_verification);
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
         let (mut nvfp4, mut delegated) =
-            Self::projection_workspaces(device, graph, weights, policy)?;
+            Self::projection_workspaces(device, graph, weights, geometry)?;
         let mut states = allocate_states(device, graph, capacity, weights)?;
         let mut fp8_states =
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
@@ -546,8 +526,7 @@ impl DeviceProgram {
             capacity,
             width: weights.batch_width,
         };
-        let (batch, prompt_batch, prompt_narrow) =
-            builder.build_pair(private_verification, wide_prompt)?;
+        let (batch, prompt_batch, prompt_narrow) = builder.build_pair(geometry)?;
         let graph_exec = builder.capture_single(&mut arena, &metadata, &mut fusion, false)?;
         let prefill = builder.capture_single(&mut arena, &metadata, &mut fusion, true)?;
         // Forward captures finalize the resident state bindings before reset records them.

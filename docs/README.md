@@ -60,6 +60,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [vLLM main 执行路径调查](research/vllm-main-execution-paths-2026-10-12.md) | 最新源码与已安装版的边界；GDN、MTP、projection 和资源准入差距 |
 | [GPU draft 采样实验](research/cuda-device-greedy-mtp-2026-10-12.md) | 硬件自适应 reducer、完整输出验证和六组配对；未默认合入的原因 |
 | [完整 GPU token readout](research/cuda-full-device-token-readout-2026-10-12.md) | 普通/推测/pooled 输出契约、硬件 tuning、九项 GPU 验证和五组有效服务配对 |
+| [Pooled 图几何与准入](research/cuda-pooled-admission-geometry-2026-10-12.md) | capture/workspace/预算一致性、五组批量吞吐收益及 TTFT/TPOT 取舍 |
 
 ## 维护约定
 

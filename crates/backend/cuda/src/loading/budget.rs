@@ -1,6 +1,6 @@
 //! Admission accounting for allocated tensor storage, plus driver graph headroom.
 use super::LoadedModel;
-use crate::resident::ProgramWeights;
+use crate::resident::{ProgramGeometry, ProgramWeights};
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, OutputReadout, StateKind, TensorOp, TensorStorage};
 
@@ -15,7 +15,7 @@ impl LoadedModel {
     ///
     /// `private_verification` prices the rollback snapshots and batch workspaces of a
     /// sequence-owned verification graph. A sequence that will speculate through the shared
-    /// slot pool never captures one, so charging it would price pool members out of admission.
+    /// slot pool omits it unless prefill needs the private batch as its fallback graph.
     /// # Errors
     /// Rejects invalid capacity or arithmetic overflow before any device allocation.
     pub fn sequence_budget(
@@ -42,7 +42,7 @@ impl LoadedModel {
                 hidden,
                 vocabulary,
                 readout,
-                private_verification,
+                ProgramGeometry::new(&self.weights, private_verification),
             )?,
         )?;
         if let Some(draft) = &self.draft {
@@ -56,7 +56,8 @@ impl LoadedModel {
                     hidden,
                     vocabulary,
                     readout,
-                    private_verification,
+                    // LoadedModel::draft always captures a private program.
+                    ProgramGeometry::new(&draft.weights, true),
                 )?,
             )?;
         }
@@ -112,15 +113,11 @@ fn program(
     hidden: usize,
     vocabulary: usize,
     readout: OutputReadout,
-    private_verification: bool,
+    geometry: ProgramGeometry,
 ) -> Result<u64> {
-    let verify = if private_verification {
-        weights.batch_width as u64
-    } else {
-        0
-    };
-    let prompt = weights.prompt_lane_total() as u64;
-    let lanes = 1 + if verify > 1 { verify } else { 0 } + prompt;
+    let verify = geometry.verification as u64;
+    let prompt = geometry.prompt_lanes() as u64;
+    let lanes = geometry.arena_lanes();
     let mut bytes = 0;
     bytes = add(bytes, attention_scratch(graph)?)?;
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
@@ -128,8 +125,7 @@ fn program(
     bytes = add(
         bytes,
         u64::try_from(crate::resident::arena::ActivationArena::required_bytes(
-            graph,
-            usize::try_from(lanes).map_err(|_| Error::invalid("activation lanes"))?,
+            graph, lanes,
         )?)
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
@@ -177,11 +173,9 @@ fn program(
         };
         bytes = add(bytes, amount)?;
     }
-    bytes = add(
-        bytes,
-        projection_workspace(graph, weights, private_verification)?,
-    )?;
-    // External hidden buffers exist for the scalar graph and every prompt lane.
+    bytes = add(bytes, projection_workspace(graph, weights, geometry)?)?;
+    // External hidden buffers keep the configured lane allocation even when capture omits
+    // the wide prompt arena.
     // Fused draft programs additionally retain embedding and two normalized rows per lane.
     let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
     let fusion_rows = if weights.fusion.is_some() {
@@ -239,7 +233,7 @@ fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
 fn projection_workspace(
     graph: &DataflowGraph,
     weights: &ProgramWeights,
-    private_verification: bool,
+    geometry: ProgramGeometry,
 ) -> Result<u64> {
     let sizes = graph
         .tensors
@@ -250,14 +244,9 @@ fn projection_workspace(
     let mut partials = std::collections::BTreeSet::new();
     let mut quantized = std::collections::BTreeSet::new();
     let mut fp8_quantized = std::collections::BTreeSet::new();
-    let verify_rows = if private_verification {
-        weights.batch_width
-    } else {
-        0
-    };
-    let quantized_rows = [1, verify_rows]
+    let quantized_rows = geometry
+        .widths()
         .into_iter()
-        .chain(weights.prompt_widths())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .sum::<usize>() as u64;
@@ -285,13 +274,13 @@ fn projection_workspace(
                 )?,
             )?;
         }
-        if private_verification && weights.batch_width > 1 && verification.insert((rows, columns)) {
+        if geometry.verification > 1 && verification.insert((rows, columns)) {
             bytes = add(
                 bytes,
-                mul(add(rows, columns)?, weights.batch_width as u64 * F32)?,
+                mul(add(rows, columns)?, geometry.verification as u64 * F32)?,
             )?;
         }
-        if weights.prefill_width == crate::constants::PREFILL_LANES
+        if geometry.prompts.contains(&crate::constants::PREFILL_LANES)
             && !weights.input_scales.contains_key(&node.inputs[1])
             && matches!(
                 weights.projections.get(&node.inputs[1]),
