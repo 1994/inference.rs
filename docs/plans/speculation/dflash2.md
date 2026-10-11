@@ -198,6 +198,21 @@ attends(q, k) = (q / block_size == k / block_size) || (k <= q && q - k < sliding
 单测 19 个（`tests/unit/providers_dflash2.rs`），覆盖每个接受条件、对应反例与 golden 交叉核对，其中
 7 个直接读登记的 fixture 与 golden。
 
+### 已实施：fixture 的来源**可离线核验**（并如实登记两处缺口）
+
+D1 要求参考制品能重新生成 ✓，而 fixture 目录里的 `source.json` 记录来源 ✓。此前只有**文字** ✓，
+`config_sha256` 也**没人核对** ✗ —— 把 `examples/qwen3.8-27b/source.json` 拿来一看，它连**输入哈希都没有** ✗。
+
+现在 `tools/check/golden-provenance.py` 也扫描 fixture 来源 ✓：必须有 `repository` 与 `source` ✓，必须有
+**输入身份**（`config_sha256` **或** `revision` ✓），且当哈希存在时**必须与目录里 `config.json` 的实际
+哈希一致** ✓（对不上会失败 ✓ —— 那份"说明"就不再指向 fixture 实际持有的文件 ✓）。实测补齐了
+`examples/qwen3.8-27b/source.json` 的 `config_sha256` ✓（`191e0af2…` ✓）。
+
+**两处缺口如实打印而不是编造** ✓：`qwen3.8-27b/source.json` **没有 license** ✓（其 HuggingFace 仓库离线
+不可达 ✓ —— 编一个比说"没有"更糟 ✓，所以它只是提示 ✓ 不是硬性要求 ✓）；`qwen3.8-27b-dflash2/source.json`
+**没有上游 revision** ✓（它是从本地下载复制而来 ✓，其身份由**已验证的 config 哈希**承担 ✓）。测试覆盖哈希不
+匹配 ✓、缺输入身份 ✓、仅凭 revision 即可 ✓、缺来源 ✓、以及"缺 license 只是提示" ✓。
+
 ### 已实施：报价是"草稿的边际成本"，且**明确声明**了它报不出的部分
 
 D1 的资源验收要求报价覆盖"**权重、target/draft 状态、feature 历史、arena、graph 和回滚开销**"✓。
