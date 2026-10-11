@@ -4,7 +4,7 @@
 
 响应格式参考官方 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) 与 [Completions](https://developers.openai.com/api/reference/resources/completions/methods/create)，但兼容范围是明确限定的。
 
-首批已交付长度预算、有效配置读回、文本流式、typed 工具历史与基础 parser。生成约束（`required`、指定 function、`strict` schema）仍待实施，见 [独立方案](../plans/serving/agent-api.md)。扩展按实际使用场景选择，以下只说明当前能力。
+首批已交付长度预算、有效配置读回、typed 工具历史、`none/auto` 工具闭环与参数增量输出。生成约束（`required`、指定 function、`strict` schema）仍待实施，见 [独立方案](../plans/serving/agent-api.md)。扩展按实际使用场景选择，以下只说明当前能力。
 
 ## 路由
 
@@ -60,7 +60,9 @@ assistant 消息可以带 `tool_calls`，每项为 `{"id":..., "type":"function"
 
 成功响应包含单个 choice、创建时间和 `usage`。prompt token 数包含实际聊天模板，completion token 数来自完成结果，`finish_reason` 为 `length`、`stop` 或 `tool_calls`。
 
-模型输出按包内模板绑定的方言解析：`Qwen3-VL` 使用 `<tool_call>{"name":...,"arguments":{...}}</tool_call>`，`Qwen3.8-27B` 使用 `<tool_call><function=F><parameter=K>v</parameter></function></tool_call>`。解析不修补模型输出：未闭合的块被扣留，未能解码或未声明的名称留在 `content` 中作为文本，不会伪造调用或改写名称。声明了工具且模型确实调用时，choice 形如：
+模型输出按包内模板绑定的方言解析：`Qwen3-VL` 使用 `<tool_call>{"name":...,"arguments":{...}}</tool_call>`，`Qwen3.8-27B` 使用 `<tool_call><function=F><parameter=K>v</parameter></function></tool_call>`。模板未声明受支持方言时，带工具的 `auto` 请求在准入前返回 501。JSON 参数保留原始字节；function 方言在每个参数闭合时转换为 JSON，完整的 function 闭合标签不可省略。
+
+解析不修补模型输出：未闭合的块被扣留，未能解码或未声明的名称在发布调用之前留在 `content` 中作为文本。参数已经流出后才发现格式错误，则终止流并发布错误，不撤回或改写前缀。正常停止时仍有未闭合的结构区域，完整返回报 503，SSE 发布错误；引擎报告长度上限时保留 `length`。声明了工具且模型确实调用时，choice 形如：
 
 ```json
 {
@@ -81,7 +83,7 @@ assistant 消息可以带 `tool_calls`，每项为 `{"id":..., "type":"function"
 }
 ```
 
-调用 id 由请求 ID 与序号组成，流式与完整返回一致。开启 thinking 时 reasoning 文本单独放在 `reasoning_content`，不计入 `content`。引擎因长度上限停止时 `finish_reason` 仍为 `length`，即使停止前已产生完整调用；调用方应按终末原因决定是否执行。
+调用 id 由请求 ID 与序号组成，流式与完整返回一致。开启 thinking 时 reasoning 文本单独放在 `reasoning_content`，不计入 `content`；模板已在生成前缀打开思考区时，parser 从该状态开始处理新 token。引擎因长度上限停止时 `finish_reason` 仍为 `length`，即使停止前已产生完整调用；调用方应按终末原因决定是否执行。
 
 ```json
 {
@@ -100,10 +102,14 @@ schema 或输入错误返回 400，模型不存在 404，body 超限 413，容�
 
 `stream=true` 返回 `text/event-stream`，每行 `data:` 一个 JSON chunk，末尾为 `data: [DONE]`。首个 chunk 发布 `delta.role`，随后是 `delta.content`（completions 为 `delta.text`），工具调用以 `delta.tool_calls` 发布，最后是一个带 `finish_reason` 的 chunk；`stream_options.include_usage` 会在终末原因与 `[DONE]` 之间追加一个 `choices` 为空、带 `usage` 的 chunk。
 
-已发布的 `id`、`index` 与 arguments 前缀不会被回写。`function-parameter` 方言需要完整块才能确定参数，因此一个调用在块闭合时整段发布；JSON 方言同样按块发布，不承诺逐 token 的 arguments。把全部 `delta.content` 与 `delta.reasoning_content` 依次拼接，与非流式返回的 `content` 与 `reasoning_content` 相同。
+已发布的 `id`、`index` 与 arguments 前缀不会被回写。JSON 方言在名称确定后直接追加已扫描的对象参数字节；字符串包装的 JSON 对象需要等块闭合再解码。`function-parameter` 方言在名称确定时发布调用，在每个参数闭合时追加对应 JSON 字段，function 闭合时追加右括号。无需等整个工具块到齐才收到首段参数。
+
+有效输出的 content、reasoning 与每个调用的 arguments 分别按顺序拼接后，与完整返回相同。usage 按引擎提交的 token 计数，UTF-8 跨 token 缓冲和 SSE 分段不改变计数。客户端只在收到成功的终末 `tool_calls` 后执行调用；部分参数、`length` 或错误不表示可执行成功。
 
 文本流式要求包内 tokenizer 使用 byte-level decoder，才能保证增量解码的前缀稳定；其他 decoder（例如按空格连接 token）会让分段解码与整体解码不一致，这类包请求 `stream=true` 返回 501，而不是发布随后需要更正的字符。
 
 ## 实现说明
 
 请求 ID 来自 `RuntimeHandle` 的单调分配器：显式原生请求会推进计数器，路由重建不会重置；混用两套接口时可用 `RuntimeHandle::allocate_request_id` 分配 ID，避免手动 ID 冲突。文本编码与结果解码分别运行在有界 preparation / delivery 池中：流式路径同样把每个已提交 token 送进 delivery 池做增量 detokenize 与解析，兼容层继承原生准入、背压和断连取消机制。
+
+[SDK 验收工具](../../tools/validation/openai-tools.py) 在已启动的服务上验证 `none/auto`、参数前缀、usage、流式一致性及工具结果回传。使用安装了 OpenAI Python SDK 的验证环境运行 `python tools/validation/openai-tools.py --base-url http://127.0.0.1:8080/v1 --output artifacts/openai-tools.json`；SDK 不属于服务生产依赖。

@@ -1,10 +1,10 @@
 # Agent 工具调用与服务配置方案
 
-状态：设计方案，待实施。源码基点为 `7c79d99`，调研日期为 2026 年 10 月 9 日。本文只定义方案，不表示下列接口已经实现。
+状态：基础工具协议与增量 parser 已实施，生成约束保留设计。初始调研源码基点为 `7c79d99`，日期为 2026 年 10 月 9 日；本次实现基于 `3a188f4`。当前公开能力以 [OpenAI 接口指南](../../guides/openai-api.md) 为准，下面的约束设计不表示已经交付。
 
 整体排期与任务状态见 [路线图](../README.md) 的 S1、S2；生成约束按实际需求另行启动。本文维护本项设计与验收。性能对比的 release、配置、统计和证据规则沿用 [统一基线方案](../performance/baseline.md)，不另设一套门槛。
 
-当前没有模型输出的 tool parser，也没有完整的 OpenAI 工具调用闭环。已有 `infer-agent` 属于引擎诊断控制面；原生文本接口只能把工具定义放进聊天模板。长度限制已经存在，包括输入与请求输出合计的检查，缺少的是统一的部署参数 `--max-model-len` 及其生效配置。优先补齐这些契约，再评估生成约束和推测解码的组合。
+当前已实现 typed 工具历史、结果关联、`none/auto`、文本 SSE，以及 JSON 与 function/parameter 两种方言的增量输出。`--max-model-len`、输出与序列 cap 及有效配置读回已有共同解析路径。`infer-agent` 继续负责引擎诊断；外部工具由调用方执行。`required`、指定工具、`strict` schema 与禁止并行调用尚无采样约束，保持显式拒绝。
 
 外部源码以 vLLM `v0.31.0`（`db9527a46873454610df6dbedf79a36d6bf1a7f6`）、SGLang `59eb71a831f6b87babc2400737c7faabed5ee01c` 为调研参照。`latest` 文档用于理解能力范围；实施和验收固定实际参考版本。这些实现提供机制与反例，不决定本项目的参数集合和默认值。
 
@@ -21,14 +21,14 @@
 | 范围 | 已有实现 | 需要补齐 |
 |---|---|---|
 | Agent 控制面 | [infer-agent](../../architecture/agent.md) 提供 JSON-RPC 诊断、控制和实验 | 不承担模型生成内容的解析；不能把模型输出直接分发到 `AgentService::register` |
-| 工具提示词 | [TextAssets / ChatOptions](../../../crates/model/package/src/input/text.rs) 的 `tools` 可以进入模板上下文；原生文本消息允许 tool role | typed 工具定义、assistant 调用历史、`tool_call_id`、结果回传和输出 parser |
-| OpenAI 请求 | [GenerationRequest](../../../crates/service/frontdoor/src/http/openai/request.rs) 支持文本消息和部分采样参数；未知字段拒绝 | `tools`、`tool_choice`、`parallel_tool_calls`、tool role、nullable assistant content、`stream=true` |
-| OpenAI 输出 | [execution](../../../crates/service/frontdoor/src/http/openai/execution.rs) 等待完成事件，返回普通 content | `message.tool_calls`、SSE `delta.tool_calls`、`finish_reason=tool_calls`、reasoning 分段 |
+| 工具提示词 | [TextAssets / ChatOptions](../../../crates/model/package/src/input/text.rs) 编码工具定义、typed assistant 调用历史及关联结果；模板绑定输出方言 | 后续方言需补真实模板、tokenizer 与输出样本 |
+| OpenAI 请求 | [GenerationRequest](../../../crates/service/frontdoor/src/http/openai/request.rs) 支持文本、nullable assistant content、工具历史、none/auto 与 SSE；未知字段拒绝 | required/named/strict、parallel=false 的生成约束 |
+| OpenAI 输出 | [execution](../../../crates/service/frontdoor/src/http/openai/execution.rs) 与 [stream](../../../crates/service/frontdoor/src/http/openai/stream.rs) 共用 parser；支持 reasoning、tool_calls 与参数 deltas | 新方言或约束接入时复用当前事件契约 |
 | 结构化生成 | [IR FeaturePlan](../../../crates/foundation/ir/src/workload.rs) 有 grammar 元数据；Decision workload 用于评分/分类 | 尚无消费 grammar 的生成约束路径；不能把 Decision 当作 JSON Schema 生成能力 |
-| 模型上下文 | [Qwen provider](../../../crates/model/package/src/providers/qwen.rs) 从配置导入 `max_sequence`；[workload](../../../crates/engine/workloads/src/native.rs) 已检查 `input + max_new_tokens <= model.max_sequence` | 服务级总上下文上限及所有入口共享的解析结果 |
-| 输入上限 | [RuntimeConfig](../../../crates/engine/runtime/src/config.rs) 有 `max_input_tokens`；[derive_config](../../../crates/service/cli/src/support/serving.rs) 将其限制在模型上下文以内 | 输入上限与总上下文上限分别表达，不能用输入上限冒充 `--max-model-len` |
-| 输出上限 | OpenAI 支持 `max_tokens` / chat 的 `max_completion_tokens`，当前互斥，省略默认 16；原生 API 有 `max_new_tokens` | 统一内部输出预算、默认来源和剩余上下文检查；保留清楚的字段冲突规则 |
-| 服务配置 | [CLI](../../../crates/service/cli/src/arguments.rs) 已有 block size、step token budget、显存比例、MTP 深度等 | 总上下文、运行序列 cap、模型名称与有效配置读回；parser/profile 按模型绑定，按需提供覆盖 |
+| 模型上下文 | [Qwen provider](../../../crates/model/package/src/providers/qwen.rs) 导入 `max_sequence`；服务、workload 与 runtime 共用 `P+G<=L` 预算 | 后续扩展上下文能力另行验收 |
+| 输入上限 | [RuntimeConfig](../../../crates/engine/runtime/src/config.rs) 将输入 cap 与总上下文分别表达 | 保持各入口共同规则 |
+| 输出上限 | OpenAI 两种输出预算字段互斥，统一为 `max_new_tokens`，受服务输出 cap 与剩余上下文限制 | 后续能力保持来源与冲突规则 |
+| 服务配置 | [CLI](../../../crates/service/cli/src/arguments.rs) 支持总上下文、输出/序列 cap、部署名；有效值和来源可读回 | 需要新覆盖时先确定真实调用场景 |
 
 当前采样并非始终 greedy：[GenerationDefaults](../../../crates/model/package/src/generation/mod.rs) 已加载包内 generation config / EOS，应用识别到的模型模式预设，再覆盖请求参数。基线需要保存最终参数和来源，不能只比较客户端是否传了同名字段。
 
@@ -58,7 +58,7 @@ parser 名称不能替代方言验证。同属 Qwen 的模型、模板可能使�
 
 tool parser 与 reasoning parser 都在 CPU，不绑定 CUDA。生成约束的规则与状态也独立于设备，mask 的实际应用可以在 GPU。已有诊断 Agent 保持其控制面职责；不为解析几个辅助类型新增一个独立 crate。
 
-拟议输出契约为有序的 `TextDelta`、`ReasoningDelta`、`ToolStart(index, id, name)`、`ToolArgumentsDelta(index, bytes)`、`ToolEnd(index)`。parser 的 `feed` 只接收新提交片段，`finish(reason)` 明确 EOF、length、取消和失败；不可修改已发布的前缀。特殊标记必须先供语义解析使用，再按响应策略隐藏，不能提前统一 `skip_special_tokens`。
+当前 [StreamEvent](../../../crates/model/package/src/input/tool/types.rs) 契约为有序的 `Text`、`Reasoning`、`CallStart(index, name)`、`CallArguments(index, arguments)`、`CallEnd(index)`；`Call` 保留完整对象的兼容发布。parser 只接收新提交文本，HTTP 层分配 ID 并解释结束原因；不能修改已发布的前缀。实际提示词只渲染与编码一次，并将生成前缀是否已打开思考区传给两种响应路径，避免正文泄漏推理。方言、扫描与参数转换留在 package，parser 不引用 HTTP 或 backend。目标 tokenizer 的工具/思考标记均为非 special token，当前 skip-special 解码保留它们；新增 tokenizer 需重新核对标记身份。
 
 共享不可变工具 schema、模板和已编译约束；detokenizer、parser、grammar matcher、调用 index 与发送游标均归单个请求所有。串行处理同一请求的片段，不同请求可由有界 CPU 池并行；保留现有取消、内存预算和背压。reasoning 与 tool 区域通过统一 span 所有权区分，避免两个 parser 重复消费同一标记。
 
@@ -79,7 +79,7 @@ tool parser 与 reasoning parser 都在 CPU，不绑定 CUDA。生成约束的�
 
 vLLM 将调用义务、grammar 激活和 schema 严格程度分别处理，且受具体 parser 能力限制；`auto` 在支持的严格配置中也可以启用约束，不能固定理解为完全无约束。[工具调用说明](https://docs.vllm.ai/en/latest/features/tool_calling/) 的行为须结合固定版本源码验收。
 
-SSE 的 tool index 与 ID 一旦发出就稳定，function name 只在确定后发布；arguments 必须是可追加的字符串，保留已发布前缀。JSON 方言可以递增发送已确定字节；XML 参数转 JSON 时可能需要等待一个参数甚至完整 block，按方言公开实际粒度，不能承诺所有方言都逐 token 返回。
+SSE 的 tool index 与 ID 一旦发出就稳定，function name 只在确定后发布；arguments 是可追加的字符串。JSON 对象按新扫描字节发送，字符串包装对象在块闭合时解码；function 方言按参数边界转换并追加 JSON。正常停止时结构未闭合是 backend 错误，长度截断保留 `length`；已发布调用的后续校验失败不能降级成文本。
 
 流式实现先发送 role，随后发送 content/reasoning/tool deltas，再发送结束原因；支持 `stream_options.include_usage` 时发送终末 usage 和 `[DONE]`。正常生成完成且含完整调用时使用 `tool_calls`；引擎因长度上限停止仍保留 `length`，不因 parser 恰好收到闭合括号而改写原因。流式中已发出的部分调用不可撤回，SDK 集成必须按终末原因判断是否执行；非流式保留错误/不完整状态，不自行补括号、修参数或伪造成功。取消和 backend 失败按终末错误契约处理。
 
@@ -175,6 +175,10 @@ tool/reasoning parser 只消费共同提交点之后的新 token。草稿、被�
 ## 验收与测量
 
 测试目录和正式入口沿用 [测试组织方案](../engineering/tests.md)。下面补充本项场景，不另建一个只放单个 test 的目录或新的测试 backend。
+
+2026 年 10 月 11 日的基础闭环验收使用 OpenAI Python SDK 3.24.0，在 45 上分别运行 Qwen3-VL 2B 与 Qwen3.8 27B NVFP4。两种方言均通过工具定义、参数 deltas 拼接、关联结果回传、最终回答及 none 模式；greedy 下完整/SSE 的 content、调用参数与 usage 相同。27B 还通过 `--enable-thinking` 复跑，验证提示词预开思考区时 reasoning 与正文分离。[验收工具](../../../tools/validation/openai-tools.py) 可复跑，原始响应与服务日志保存在 `artifacts/openai-parser-review/`。
+
+parser 的 release 微基准使用同一 8 KiB ASCII 轨迹、新建 parser 和 feed/finish，7 组各 30 次取中位数，分别测 1/32/256 字节片段。32 字节片段的完整事件模式中，JSON 从 9.22µs 降至 5.10µs，function 从 8.76µs 降至 6.87µs，长空白从 426.58µs 降至 19.23µs。当前参数增量模式单独测得 JSON 9.79µs、function 7.84µs；旧版没有此事件模式，不能将其与完整事件模式混作同一 A/B。`before.csv`、`after.csv`、`after-deltas.csv` 与两个 probe 源码保留在同一证据目录。这些数字只描述解析成本，未作为 CUDA 推理或完整服务吞吐收益。
 
 | 类别 | 必须验证 |
 |---|---|
