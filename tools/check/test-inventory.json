@@ -28,7 +28,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 91
+      "tests": 94
     },
     "frontdoor": {
       "benches": 0,
@@ -149,10 +149,10 @@
     "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run": 1,
     "requires CUDA hardware and a real FP8 channel checkpoint; root runs release serially": 1,
     "requires CUDA hardware; root runs release serially": 3,
-    "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 1,
+    "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 3,
     "requires CUDA hardware; run inside safe-run": 18,
     "requires CUDA hardware; run release inside safe-run": 1,
-    "requires CUDA hardware; run under safe-run": 7,
+    "requires CUDA hardware; run under safe-run": 8,
     "requires CUDA hardware; run under safe-run in release": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
     "requires CUDA; run inside safe-run with --test-threads 1": 2,
@@ -291,6 +291,11 @@
       "crate": "cuda",
       "file": "src/resident/profile.rs",
       "mount": "../../tests/unit/resident_profile.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/recurrent_checkpoint.rs",
+      "mount": "../../tests/unit/resident_recurrent_checkpoint.rs"
     },
     {
       "crate": "cuda",
@@ -699,11 +704,11 @@
     }
   ],
   "totals": {
-    "all": 522,
+    "all": 525,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 522
+    "tests": 525
   }
 }

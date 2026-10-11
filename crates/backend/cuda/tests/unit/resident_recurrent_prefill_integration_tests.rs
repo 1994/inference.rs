@@ -230,3 +230,120 @@ fn chunked_recurrence_matches_per_lane_at_model_geometry() -> Result<()> {
     }
     Ok(())
 }
+
+fn assert_checkpoint_hidden_bits(actual: &[f32], expected: &[f32], label: &str) {
+    assert_eq!(actual.len(), expected.len(), "{label}");
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            actual.is_finite() && expected.is_finite(),
+            "{label} element={index}"
+        );
+        assert_eq!(
+            actual.to_bits(),
+            expected.to_bits(),
+            "{label} element={index}"
+        );
+    }
+}
+
+/// Pooled rollback must preserve the exact scalar recurrence, including slots and
+/// candidate suffixes that were inactive in the preceding replay.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
+    use crate::resident::slot_batch::SlotPool;
+
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for geometry in [SMALL, (16, 48, 128)] {
+        for verify in [2, 3, 5] {
+            let (graph, mut weights) = fixture_at(&device, geometry)?;
+            weights.batch_width = verify;
+            let hidden = geometry.1 * geometry.2;
+            let mut pool = SlotPool::new(&device, &graph, &weights, 4, 128, hidden, (16, verify))?;
+            let mut references = (0..4)
+                .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, hidden, 16))
+                .collect::<Result<Vec<_>>>()?;
+            for mut plans in [
+                vec![
+                    (0, vec![1, 2, 3], 0),
+                    (2, vec![4, 5, 6], 1),
+                    (3, vec![7, 8, 9], 2),
+                ],
+                vec![
+                    (1, vec![10, 11, 12], 2),
+                    (3, vec![10], 0),
+                    (0, vec![4, 5], 1),
+                ],
+                vec![
+                    (3, vec![11, 12, 13], 0),
+                    (2, vec![7, 8, 9], 2),
+                    (1, vec![13, 14, 15], 1),
+                    (0, vec![6, 7, 8], 2),
+                ],
+                vec![(2, vec![10, 11, 12, 13, 14], 4), (1, vec![3, 4], 0)],
+            ] {
+                let mut lanes = Vec::new();
+                let mut expected = Vec::new();
+                for (slot, tokens, accepted) in &mut plans {
+                    tokens.truncate(verify);
+                    *accepted = (*accepted).min(tokens.len() - 1);
+                    let position = references[*slot].position();
+                    for (offset, &token) in tokens.iter().enumerate() {
+                        lanes.push((*slot, offset, token, position + offset, position + offset));
+                    }
+                    expected.push(references[*slot].step_batch(tokens, position)?);
+                }
+                let actual = pool.run_verify(&device, &lanes)?;
+                for ((slot, tokens, accepted), reference) in plans.into_iter().zip(expected) {
+                    for (row, expected) in reference.iter().enumerate() {
+                        assert_checkpoint_hidden_bits(
+                            &actual[slot * verify + row].0,
+                            &expected.0,
+                            &format!("geometry={geometry:?} verify={verify} slot={slot} row={row}"),
+                        );
+                    }
+                    assert_eq!(reference.len(), tokens.len());
+                    pool.commit_verify(&device, slot, accepted)?;
+                    references[slot].commit_batch(accepted + 1)?;
+                    assert_eq!(pool.cursors()[slot], references[slot].position());
+                }
+            }
+            references[0].reset()?;
+            references[0].step(5, 0, 0, None, false)?;
+            pool.bind(
+                0,
+                references[0].states(),
+                references[0].fp8_states(),
+                1,
+                &device,
+            )?;
+            let expected = references[0].step_batch(&[6, 7], 1)?;
+            let actual = pool.run_verify(&device, &[(0, 0, 6, 1, 1), (0, 1, 7, 2, 2)])?;
+            for (row, expected) in expected.iter().enumerate() {
+                assert_eq!(
+                    actual[row]
+                        .0
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected.0.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+                );
+            }
+            pool.commit_verify(&device, 0, 0)?;
+            references[0].commit_batch(1)?;
+            let expected = references[0].step_batch(&[8], 2)?;
+            let actual = pool.run_verify(&device, &[(0, 0, 8, 2, 2)])?;
+            assert_eq!(
+                actual[0].0.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                expected[0]
+                    .0
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            pool.commit_verify(&device, 0, 0)?;
+        }
+    }
+    Ok(())
+}

@@ -159,7 +159,7 @@ impl BatchBuilder<'_> {
                         for (lane, lane_metadata) in metadata.iter().enumerate() {
                             let slot = lane / verify;
                             let position = lane % verify;
-                            Capture {
+                            let mut capture = Capture {
                                 scope,
                                 arena,
                                 weights: self.weights,
@@ -174,11 +174,10 @@ impl BatchBuilder<'_> {
                                 capacity: self.capacity,
                                 fusion: &mut self.lane_fusion[lane],
                                 mode: CaptureMode::Row(lane),
-                            }
-                            .record_row(node, lane)?;
-                            // Snapshot after this lane's write: the restore target for an
-                            // acceptance ending here. The last lane of a slot is never one —
-                            // full acceptance keeps the live state.
+                            };
+                            // The state's writer saves its computed value before the next
+                            // candidate can modify it. Inactive lanes skip both stores.
+                            // The last candidate has no rollback snapshot.
                             if position + 1 < verify
                                 && let Some(id) = node.states.first()
                                 && let Some(snapshot) = checkpoints
@@ -186,13 +185,9 @@ impl BatchBuilder<'_> {
                                     .and_then(|per_slot| per_slot.get_mut(position))
                                     .and_then(|snapshot| snapshot.get_mut(id))
                             {
-                                let states = lane_states
-                                    .get(slot)
-                                    .and_then(|states| states.get(id))
-                                    .ok_or_else(|| error("slot verify checkpoint state"))?;
-                                for (output, input) in snapshot.iter_mut().zip(states) {
-                                    scope.record(api::memcpy(output, input))?;
-                                }
+                                capture.record_row_checkpoint(node, lane, snapshot)?;
+                            } else {
+                                capture.record_row(node, lane)?;
                             }
                         }
                     }
