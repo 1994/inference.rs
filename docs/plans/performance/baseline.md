@@ -135,6 +135,11 @@ debug assertions、Rust flags 与 CUDA 编译选项的覆盖均要记录"。
 - **测量本身可信** ✓：每份报告必须来自**干净的树** ✓（`source.dirty` 为 false 且有 revision ✓）、
   checklist **通过且无 mismatch** ✓ 且 profile 对得上 ✓、profile 启用 prefix cache 时 `hot_*` case 必须
   **真的复用了 token** ✓（否则"热"这个 case 名不副实 ✓）；
+- **checklist 就是那份 profile，而且是现在的它** ✓：每份报告（含复测报告 ✓）记录的 `checklist.sha256`
+  必须等于冻结目录里 profile 副本的实际哈希 ✓；并且该哈希必须仍等于 `benchmarks/profiles/` 里**现行**
+  profile 的哈希 ✓ —— 方案要求"共同约束变化时**新建 profile 并重测**"✓，所以**事后编辑现行 profile** ✗
+  会立刻失败 ✓（"沿用旧结果"允许 ✓，"悄悄改掉旧基线所依据的约束"不允许 ✗）。若该 profile 已从
+  `benchmarks/profiles/` 退场 ✓，只打印提示不判失败 ✓（旧结果仍要能读 ✓）；
 - **同一台机器才谈得上比值** ✓：manifest 声明了签发时的设备 ✓，每份报告也带自己的身份 ✓ —— 现在核两者
   **逐设备一致** ✓（uuid/名称/驱动 ✓）：不同设备、不同驱动、或身份未经验证（`identity.verified` ✓）都会失败 ✓；
   另外要求 `identity.build.sha256` 存在 ✓ 且与报告的 `binary_sha256` **一致** ✓（同一个制品被两处记录却互相

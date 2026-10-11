@@ -365,6 +365,35 @@ class FrozenTest(unittest.TestCase):
 
         self.assertIn("disagrees with the build fingerprint", " ".join(self.tamper(edit)))
 
+    def test_a_checklist_that_is_not_the_frozen_profile_is_caught(self):
+        def edit(directory):
+            path, report = self.report(directory)
+            report["checklist"]["sha256"] = "0" * 64
+            path.write_text(json.dumps(report))
+
+        self.assertIn("not the profile that was frozen", " ".join(self.tamper(edit)))
+
+    def test_an_edited_live_profile_is_caught(self):
+        # The tree's profiles are shared between baselines, so tamper through a copied root.
+        root = Path(tempfile.mkdtemp())
+        (root / "benchmarks/profiles").mkdir(parents=True)
+        (root / "benchmarks/baselines/serving").mkdir(parents=True)
+        shutil.copytree(FROZEN, root / "benchmarks/baselines/serving/2b-mtp0-serving-v1")
+        live = root / "benchmarks/profiles/2b-mtp0.json"
+        shutil.copyfile(FROZEN / "2b-mtp0.json", live)
+        live.write_text(live.read_text().replace('"mtp_depth": 0', '"mtp_depth": 1'))
+        directory = root / "benchmarks/baselines/serving/2b-mtp0-serving-v1"
+        problems = verify_baseline.verify(directory, root=root)[1]
+        self.assertIn("live profile has changed", " ".join(problems))
+
+    def test_a_retired_profile_is_a_note_not_a_failure(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "benchmarks/baselines/serving").mkdir(parents=True)
+        shutil.copytree(FROZEN, root / "benchmarks/baselines/serving/2b-mtp0-serving-v1")
+        directory = root / "benchmarks/baselines/serving/2b-mtp0-serving-v1"
+        # No live profile at all: the baseline still has to recompute from what it froze.
+        self.assertEqual(verify_baseline.verify(directory, root=root)[1], [])
+
     def test_the_shortfall_is_a_note_not_a_failure(self):
         directory = self.copied()
         self.assertEqual(verify_baseline.verify(directory)[1], [])

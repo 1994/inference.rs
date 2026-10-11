@@ -76,6 +76,7 @@ def verify(directory, gate=None, root=ROOT):
     manifest = json.loads((directory / "manifest.json").read_text())
     problems = check_contract(directory, manifest)
     problems.extend(check_window(manifest, directory))
+    problems.extend(check_checklist(manifest, directory, root))
     if problems:
         # The comparison refuses a pair whose workload no longer aligns, so a broken contract is
         # reported as itself rather than as that refusal.
@@ -192,6 +193,43 @@ def check_measurement(profile, manifest, directory):
             and report.get("hot_prefix_tokens_reused", 0) <= 0
         ):
             problems.append(f"{name}: prefix cache is enabled but the hot case reused no tokens")
+    return problems
+
+
+def check_checklist(manifest, directory, root):
+    """The checklist a report ran against has to be the profile, then and now.
+
+    A report records the checklist's path and hash. The freeze copies that checklist in, so the
+    hash can be checked against it - and against the live profile, because the plan says a
+    changed profile is a new profile that gets re-measured, not an edit that quietly changes
+    what an existing baseline was signed against.
+    """
+    problems = []
+    copied = directory / f"{manifest['profile_id']}.json"
+    if not copied.exists():
+        return problems
+    copied_hash = hashlib.sha256(copied.read_bytes()).hexdigest()
+    live = root / f"benchmarks/profiles/{manifest['profile_id']}.json"
+    names = [entry["file"] for entry in manifest["reports"]]
+    names.extend(
+        name
+        for unit in manifest["statistical_basis"].get("reproductions", [])
+        for name in unit.get("reports", [])
+    )
+    for name in names:
+        path = directory / name
+        if not path.exists():
+            continue
+        checklist = json.loads(path.read_text()).get("checklist", {})
+        if checklist.get("sha256") != copied_hash:
+            problems.append(f"{name}: checklist is not the profile that was frozen")
+    if not live.exists():
+        print(f"{manifest['baseline_id']}: its profile is no longer in benchmarks/profiles")
+    elif hashlib.sha256(live.read_bytes()).hexdigest() != copied_hash:
+        problems.append(
+            "the live profile has changed since this baseline was signed; the plan asks for a "
+            "new profile and a re-measurement rather than an edit"
+        )
     return problems
 
 
