@@ -46,6 +46,9 @@ pub fn derive_config(
     config.resource_timeout_us = config.submission_timeout_us;
     if let Some(cache) = backend.kv_cache() {
         config.num_gpu_blocks = cache.total_blocks.max(1);
+        // The engine's logical pages mirror the backend's physical blocks one for one; keeping
+        // a different page size would silently re-denominate every page-based limit.
+        config.block_size = cache.block_size.max(1);
     }
     config.validate()
 }

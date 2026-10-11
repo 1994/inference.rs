@@ -64,3 +64,64 @@ fn admission_charges_shared_projection_geometry_once() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn kv_block_bytes_counts_attention_states_in_storage_bytes() -> Result<()> {
+    let mut weights = ProgramWeights {
+        chunked_recurrent: false,
+        batch_width: 3,
+        prefill_width: 32,
+        narrow_prefill_width: 0,
+        fusion: None,
+        projections: BTreeMap::new(),
+        fp8_inputs: std::collections::BTreeSet::new(),
+        input_scales: BTreeMap::new(),
+        kv_scales: BTreeMap::new(),
+        tiling: BTreeMap::new(),
+        constants: BTreeMap::new(),
+        embeddings: BTreeMap::new(),
+        rope_axes: BTreeMap::new(),
+        rope_frequencies: BTreeMap::new(),
+    };
+    let mut graph = DataflowGraph::default();
+    let kv = |id| {
+        Ok(TensorSpec {
+            id: TensorId::new(id)?,
+            // [capacity, kv_heads * head_dim], one spec covering keys and values.
+            shape: vec![64, 512],
+            dtype: DType::F32,
+            storage: TensorStorage::State {
+                layer: id as usize,
+                kind: StateKind::AttentionKv,
+            },
+        })
+    };
+    graph.tensors.push(kv(1)?);
+    graph.tensors.push(kv(2)?);
+    // A conv state and an activation are not KV and must not be priced per block.
+    graph.tensors.push(TensorSpec {
+        id: TensorId::new(3)?,
+        shape: vec![128, 4],
+        dtype: DType::F32,
+        storage: TensorStorage::State {
+            layer: 3,
+            kind: StateKind::Conv,
+        },
+    });
+    graph.tensors.push(TensorSpec {
+        id: TensorId::new(4)?,
+        shape: vec![512],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    });
+    let block = crate::constants::KV_BLOCK_TOKENS as u64;
+    // Unscaled: 2 layers * 32 tokens * 512 columns * (K+V) * f32.
+    assert_eq!(kv_block_bytes(&graph, &weights)?, 2 * block * 512 * 2 * F32);
+    // An fp8-packed cache stores one byte per element.
+    weights.kv_scales.insert(TensorId::new(1)?, [1.0, 1.0]);
+    assert_eq!(
+        kv_block_bytes(&graph, &weights)?,
+        block * 512 * 2 * (F32 + 1)
+    );
+    Ok(())
+}

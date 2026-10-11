@@ -26,6 +26,8 @@ pub struct PrefixCache {
     pub hits: u64,
     /// Match attempts, for observation.
     pub lookups: u64,
+    /// Capacity-driven removals, for observation.
+    pub evictions: u64,
 }
 
 impl PrefixCache {
@@ -37,6 +39,7 @@ impl PrefixCache {
             capacity_bytes,
             hits: 0,
             lookups: 0,
+            evictions: 0,
         }
     }
 
@@ -89,6 +92,7 @@ impl PrefixCache {
                 break;
             };
             self.bytes -= evicted.bytes;
+            self.evictions = self.evictions.saturating_add(1);
         }
     }
 
@@ -98,7 +102,14 @@ impl PrefixCache {
             return false;
         };
         self.bytes -= entry.bytes;
+        self.evictions = self.evictions.saturating_add(1);
         true
+    }
+
+    /// Tokens covered by all cached snapshots together, for block-equivalent reporting.
+    #[must_use]
+    pub fn cached_tokens(&self) -> usize {
+        self.entries.iter().map(|entry| entry.tokens.len()).sum()
     }
 
     #[must_use]

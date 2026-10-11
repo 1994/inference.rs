@@ -62,6 +62,46 @@ impl LoadedModel {
         }
         add(bytes, mul(capacity, F32)?)
     }
+
+    /// KV bytes one block of `KV_BLOCK_TOKENS` positions occupies across every attention
+    /// state of the target graph, fp8-packed where the checkpoint carries scales. This is
+    /// the physical page price the slot pool's block accounting reports to the engine; the
+    /// recurrent state does not grow with tokens and is priced by admission, not per block.
+    /// # Errors
+    /// Rejects a malformed KV shape or arithmetic overflow.
+    pub fn kv_block_bytes(&self) -> Result<u64> {
+        kv_block_bytes(&self.graph, &self.weights)
+    }
+}
+
+/// One KV block's bytes over the graph's attention states: `columns` per position, keys and
+/// values, packed to one byte where the checkpoint carries fp8 scales.
+fn kv_block_bytes(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64> {
+    let block = u64::try_from(crate::constants::KV_BLOCK_TOKENS)
+        .map_err(|_| Error::invalid("KV block size"))?;
+    let mut bytes = 0;
+    for spec in &graph.tensors {
+        if !matches!(
+            spec.storage,
+            TensorStorage::State {
+                kind: StateKind::AttentionKv,
+                ..
+            }
+        ) {
+            continue;
+        }
+        let columns = *spec
+            .shape
+            .get(1)
+            .ok_or_else(|| Error::invalid("KV shape"))? as u64;
+        let size = if weights.kv_scales.contains_key(&spec.id) {
+            1
+        } else {
+            F32
+        };
+        bytes = add(bytes, mul(mul(block, columns)?, 2 * size)?)?;
+    }
+    Ok(bytes)
 }
 
 /// Per-program admission: activation arenas, KV pages, projection workspaces and readout staging.

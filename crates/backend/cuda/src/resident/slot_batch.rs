@@ -67,6 +67,38 @@ fn state_bytes(states: &States, fp8: &Fp8Caches) -> u64 {
     float_elements.saturating_mul(crate::constants::F32_BYTES as u64) + packed_elements
 }
 
+/// Free-slot stack and the pool's lifetime lease counters.
+struct SlotLedger {
+    free: Vec<usize>,
+    allocations: u64,
+    releases: u64,
+}
+impl SlotLedger {
+    fn new(width: usize) -> Self {
+        Self {
+            free: (0..width).rev().collect(),
+            allocations: 0,
+            releases: 0,
+        }
+    }
+    /// Take a free slot, if any remain.
+    fn take(&mut self) -> Option<usize> {
+        let slot = self.free.pop()?;
+        self.allocations = self.allocations.saturating_add(1);
+        Some(slot)
+    }
+    /// Return a slot to the free set; the next bind overwrites its state prefix.
+    /// Returns false when the slot was already free.
+    fn release(&mut self, slot: usize) -> bool {
+        if self.free.contains(&slot) {
+            return false;
+        }
+        self.free.push(slot);
+        self.releases = self.releases.saturating_add(1);
+        true
+    }
+}
+
 pub struct SlotPool {
     // Exactly one of the two graphs exists: plain decode without a draft, pooled
     // speculation with one. Declared first so the graphs drop before the state sets and
@@ -78,7 +110,7 @@ pub struct SlotPool {
     /// Per-slot identity block tables; declared with the states so they outlive the captures.
     tables: Vec<Tensor<i32>>,
     plan: Vec<(TensorId, SlotCopy)>,
-    free: Vec<usize>,
+    leases: SlotLedger,
     slots: usize,
     capacity: usize,
     vocabulary: usize,
@@ -202,7 +234,7 @@ impl SlotPool {
             fp8,
             tables,
             plan,
-            free: (0..width).rev().collect(),
+            leases: SlotLedger::new(width),
             slots: width,
             capacity,
             vocabulary,
@@ -277,7 +309,19 @@ impl SlotPool {
     #[must_use]
     /// Whether a sequence can still be leased a slot, so that its state is already reserved.
     pub(crate) const fn has_free_slot(&self) -> bool {
-        !self.free.is_empty()
+        !self.leases.free.is_empty()
+    }
+
+    /// Slots no sequence currently leases.
+    #[must_use]
+    pub(crate) const fn free_slots(&self) -> usize {
+        self.leases.free.len()
+    }
+
+    /// Lifetime slot leases granted and returned, in slots.
+    #[must_use]
+    pub(crate) const fn lease_counters(&self) -> (u64, u64) {
+        (self.leases.allocations, self.leases.releases)
     }
 
     pub const fn capacity(&self) -> usize {
@@ -296,16 +340,16 @@ impl SlotPool {
 
     /// Take a free slot, if any remain.
     pub fn take_free(&mut self) -> Option<usize> {
-        self.free.pop()
+        self.leases.take()
     }
 
     /// Return a slot to the free set; the next bind overwrites its state prefix.
     pub fn release(&mut self, slot: usize) {
-        if slot < self.width() && !self.free.contains(&slot) {
-            self.free.push(slot);
-            if let Some(graph) = self.verify.as_mut() {
-                graph.discard(slot);
-            }
+        if slot < self.width()
+            && self.leases.release(slot)
+            && let Some(graph) = self.verify.as_mut()
+        {
+            graph.discard(slot);
         }
     }
 

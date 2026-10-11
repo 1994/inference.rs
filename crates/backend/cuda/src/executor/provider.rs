@@ -1,8 +1,8 @@
 use super::{CudaBackend, CudaTicket};
 use infer_core::{Result, StateId};
 use infer_ir::{
-    DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, OutputReadout, StepPlan,
-    TaskOutput,
+    DeviceCapabilities, ExecutionProgram, ExecutionTask, KvCacheInspection, ModelIr, OutputReadout,
+    PageGrowth, StepPlan, TaskOutput,
 };
 use infer_spi::BackendProvider;
 impl BackendProvider for CudaBackend {
@@ -68,6 +68,69 @@ impl BackendProvider for CudaBackend {
     }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         self.available().map(Some)
+    }
+    /// Report the slot pool in the engine's block vocabulary. The pool is slot-granular and
+    /// pre-paid: a leased slot's untouched tail is where its sequence's growth comes from, so
+    /// it counts as available; a free slot's blocks are entirely available. The prefix cache
+    /// holds whole-state snapshots outside the pool, so its coverage is reported in block
+    /// units for observability without ever feeding the available count. `total_blocks` is
+    /// floored at the private path's single-sequence ceiling: a sequence too long for the
+    /// pool still gets a private reservation up to `MAX_CAPACITY_TOKENS`, and the admission
+    /// isolation check compares against this field.
+    fn kv_cache(&self) -> Option<KvCacheInspection> {
+        let pool = self.slots.as_ref()?;
+        let block = crate::constants::KV_BLOCK_TOKENS;
+        let per_slot = pool.capacity().div_ceil(block);
+        let pool_blocks = pool.width().saturating_mul(per_slot);
+        let active_blocks = self
+            .states
+            .values()
+            .filter(|state| state.slot.is_some())
+            .map(|state| state.history.len().div_ceil(block))
+            .sum();
+        let (allocations, releases) = pool.lease_counters();
+        Some(KvCacheInspection {
+            pinned_blocks: 0,
+            block_size: block,
+            total_blocks: pool_blocks.max(crate::constants::MAX_CAPACITY_TOKENS.div_ceil(block)),
+            free_blocks: pool.free_slots().saturating_mul(per_slot),
+            active_blocks,
+            cached_blocks: self.prefix.cached_tokens().div_ceil(block),
+            shared_blocks: 0,
+            available_blocks: pool_blocks.saturating_sub(active_blocks),
+            pool_bytes: u64::try_from(pool_blocks)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(self.kv_block_bytes),
+            bytes_per_block: self.kv_block_bytes,
+            allocations,
+            releases,
+            cow_copies: 0,
+            cache_evictions: self.prefix.evictions,
+            reused_tokens: self.reused_tokens,
+        })
+    }
+    /// Physical page demand of a sequence's next step. A slot-leased sequence grows into its
+    /// slot's pre-paid tail, so the scheduler sees the content blocks it commits; a private
+    /// sequence reserved its whole capacity at admission and never grows at all. The draft
+    /// pool lags the target by one token and crosses the same 32-token boundaries, so it is
+    /// not separately reported.
+    fn state_page_growth(&self, state: StateId) -> Result<Option<PageGrowth>> {
+        let sequence = self
+            .states
+            .get(&state)
+            .ok_or_else(|| infer_core::Error::invalid("unknown CUDA state"))?;
+        let block = crate::constants::KV_BLOCK_TOKENS;
+        let allocated_pages = if sequence.slot.is_some() {
+            sequence.history.len().div_ceil(block)
+        } else {
+            sequence.capacity.div_ceil(block)
+        };
+        Ok(Some(PageGrowth {
+            block_size: block,
+            allocated_pages,
+            bytes_per_page: self.kv_block_bytes,
+            cow_tail: false,
+        }))
     }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.reserve(state, capacity, OutputReadout::Full)
@@ -137,6 +200,7 @@ impl BackendProvider for CudaBackend {
         }
         sequence.history.clear();
         sequence.history.extend_from_slice(&tokens[..matched]);
+        self.reused_tokens = self.reused_tokens.saturating_add(matched as u64);
         Ok(matched)
     }
 

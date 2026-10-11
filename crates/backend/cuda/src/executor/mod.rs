@@ -28,6 +28,11 @@ pub struct CudaBackend {
     maximum_states: usize,
     pool: pool::StatePool,
     prefix: prefix::PrefixCache,
+    /// KV bytes one 32-token block of the target graph occupies; the physical page price the
+    /// engine's block accounting is reported in. Load-time constant of the graph and scales.
+    kv_block_bytes: u64,
+    /// Prompt tokens restored from the prefix cache instead of recomputed, for observability.
+    reused_tokens: u64,
     /// Continuous-batching decode slots, captured lazily on the first batchable step;
     /// `None` with `slots_disabled` means initialization failed and decode stays serial.
     slots: Option<SlotPool>,
@@ -151,6 +156,7 @@ impl CudaBackend {
             state_budget,
         )?;
         let identity = format!("cuda-resident/{}", loaded.device().name()?);
+        let kv_block_bytes = loaded.kv_block_bytes()?;
         let mut backend = Self {
             loaded,
             capabilities,
@@ -163,6 +169,8 @@ impl CudaBackend {
             maximum_states,
             pool: pool::StatePool::default(),
             prefix: prefix::PrefixCache::new(prefix_cache_bytes(state_budget)),
+            kv_block_bytes,
+            reused_tokens: 0,
             slots: None,
             draft_slots: None,
             slots_disabled: false,
