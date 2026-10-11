@@ -3350,3 +3350,38 @@ verification宽3、target MTP0、autotune与chunked recurrent均关闭。511-tok
 GPU运行exit0。43个默认CPU测试通过、52个GPU/环境测试ignored；格式、policy、layout、
 inventory及生产CUDA Clippy通过。CUDA test Clippy仍在相同旧位置报24个既有lint，
 新测试没有新增错误；这不等于完整check-cuda通过。
+
+
+### 16.15 GDN算法路径复核：逐token递推与代数分块（2026-10-11）
+
+从45上冻结成功服务日志及安装源码复核：vLLM 0.31.0的日志第34行明确选择FlashInfer
+GDN prefill（FlashInfer 0.7.0.post1）。调用链为Qwen GDN attention的真实prefill入口，
+最终`chunk_gated_delta_rule(..., backend="flashinfer")`，未显式传use_cp。
+这证实高级backend选择，没有kernel trace证明每次最终CP或非CP分派。
+
+原生量化checkpoint默认在recurrent_prefill workspace构建时返回empty，capture随后
+对每lane执行原`recurrent::delta`，每token读写F32状态。可选carry-chunk把状态留在一个
+kernel内再逐token递推，减少launch/state访存，但没有消除块内token时间轴上的递推。
+FlashInfer非CP SM120 kernel在64-token块内计算KKT、三角inverse、QKT与MMA，块间
+仍carry。CP另做各块T/M/N预计算、较粗的串行边界fixup及各块输出；并非完整并行scan。
+这是算法层面的区别，不能用继续扫描GEMM tile或cuTile编译优化等级来替代。
+
+API的use_cp默认auto。按已记录验证设备170SM及模型48状态heads，单序列满足源码中
+GDDR SM12的`parallel_work * 3 < SM_count`示例条件，两序列起不满足。这只是条件推断，
+并非运行分派证据；HTTP batch4也不等于单次kernel有4条序列。原生后续选择仍应走
+设备能力与现有tuning，不复制设备名称分类或绑定验证卡型号。
+
+从实数代数看，Delta递推可写成对上一状态的仿射变换，块内组合后允许矩阵运算并行。
+浮点结合顺序改变则不保证逐位相同。vLLM的QKV/输出为BF16，FlashInfer inverse使用F16，
+累积/状态默认F32；原生默认为F32 QKV/输出/状态。因此FlashInfer不是当前exact合同下
+可直接启用的候选。下一项算法实验须事先选定数值profile与真实任务质量门禁，同时保留
+完整状态/输出误差和长前缀继续decode证据；同token只能证明所测greedy输出，不能单独
+证明任务质量。未通过exact或任务质量门禁前，不更改默认算术。
+现有compare工具的quality.available固定为false，27B profile的quality只是占位；旧pilot
+仅4条GSM8K有答案标签且没有评分/阈值，不能作为新算术的任务质量准入证据。
+
+本次只有CPU源码阅读，没有新GPU trace、耗时或算法加速结论。完整证据（18份日志、
+版本与源码的SHA256及原文行）在
+`first-principles/gdn-vllm-source-review.json`，SHA256为
+`59140ad1f32afe58db4d8e5b3b66a7c9048dc9fe3aea532d757de3a5aa3e318a`。
+所引7份native源码逐字节核对已提交42f4ea2，不引用主工作区的其他未提交修改。
