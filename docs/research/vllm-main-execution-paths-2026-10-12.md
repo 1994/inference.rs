@@ -12,9 +12,12 @@
 | native 候选 | 源码树 `43f86a125b095a40e5a5c144750c436db79f6bb0`；包含 compact head、图宽度和 prefix/resident 资源修复，未合并 |
 | 旧逐节点 profile | `0dd5899` 源码身份，诊断计时；不替代当前候选的服务计时 |
 | 原 vLLM clone | `5550ff9c25b8d6d2ba35572883602423f74fb9bf`，2025-10-16；过旧，不能代表当前模型实现 |
-| 更新后的 vLLM main | `c059bee812842fb76c2b045e240c02f37c0d498d`，2026-10-12 00:57:07 +08:00；已在 45 上通过 `git pull --ff-only upstream main` 更新，工作区干净 |
+| 首次更新的 vLLM main | `c059bee812842fb76c2b045e240c02f37c0d498d`，2026-10-12 00:57:07 +08:00；已在 45 上通过 `git pull --ff-only upstream main` 更新，工作区干净 |
+| 本轮再次更新的 vLLM main | `f26d9f432ced7b1087d02d29bffed2249df1a18e`，2026-10-12 01:55:00 +08:00；再次从官方 upstream 快进拉取，main 已跟踪 upstream/main，工作区干净 |
 | 实测 vLLM | 0.31.0；FlashInfer 0.7.0.post1、Torch 2.13.0、Triton 3.7.1、Python 3.12.11 |
 | 验证硬件 | 45 上 RTX 5090，driver 615.78.08；实现与参数选择应依赖设备能力、shape、精度和资源预算 |
+
+本轮新增提交只修改 GLM KDA recurrent-state dtype 的三个文件，未修改下文引用的 Qwen/GDN/MTP 路径。源码链接保留首次调查的 c059 提交作为可复核基点；已安装和实测的 vLLM 仍为 0.31.0。另见[GPU draft 采样六组配对](cuda-device-greedy-mtp-2026-10-12.md)：单请求收益约 1.6%–2.0%，未达到默认启用条件。
 
 模型目录名含 Qwen3.8，配置实际是 `Qwen3_5ForConditionalGeneration`：64 层，48 层 GDN，16 层 full attention，hidden 5120、vocab 248320、GDN K/V head dim 128，K heads 16、V heads 48。checkpoint 混用 NVFP4、FP8、BF16，不能把整个计算路径概括为一种精度。native 当前 activation 为 F32，vLLM 为 BF16，两边 recurrent state 为 F32；这是计算契约差异。
 
