@@ -76,7 +76,7 @@ finite/bitwise 验收。验收记录关联仍存活的权重 owner，不靠形�
 NVFP4 列 tile 的策略已删除。设备能力、合法布局、对齐、workspace 和容量/显存上限仍是硬约束，
 不能通过测量绕过。Attention、图宽度和 GEMV/GEMM crossover 尚未全部纳入这个 chooser。
 
-性能搜索用固定顺序的 AB 配对；赢家以新的 capture 做反序 BA 独立确认。搜索与确认分别覆盖
+搜索按固定 AB 顺序成对测量，独立确认按 BA 反序成对测量，并使用新的 capture。两轮分别覆盖
 冷 L2 和暖 L2，非 baseline 配置在四组比较中都至少优于保守配置 2%。原始 samples、两臂名称、
 中位数、比值和顺序随策略保存，读缓存时校验完整性。计时范围是预分配的“激活量化 + GEMM”
 graph replay，不含模型加载、分配或首次 JIT。单候选的 capture、数值或测量失败不终止其余合法
@@ -92,7 +92,7 @@ graph replay，不含模型加载、分配或首次 JIT。单候选的 capture�
 
 默认只允许原生 FP8 tile 候选。设 `INFER_CUDA_FP8_LT_AUTOTUNE=1` 或 `true`，才会搜索
 合法 cuBLASLt 算法，并继续接受真实权重的四种激活 pattern、完整输出 finite/bitwise 门禁，
-以及冷/暖 AB 搜索和 BA 独立确认。其描述符、算法可用性和零 workspace 在 capture 前准备。
+以及冷/暖固定 AB 搜索和反序 BA 独立确认。其描述符、算法可用性和零 workspace 在 capture 前准备。
 
 cuBLASLt SDK 不保证与原生 kernel 使用相同 K 累积顺序，四种输入 pattern 的逐位一致也不是
 所有输入的数学等价证明。该开关明确启用一个数值 profile，不能据此改成默认 Lt 路径。
