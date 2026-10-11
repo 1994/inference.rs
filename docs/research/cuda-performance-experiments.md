@@ -3146,8 +3146,8 @@ trace 的 batch 尾部报告 CUDA events 丢失，不能把未记录区间当作
 根目录均为 `/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/`。
 
 **容量候选验证了权重复用方向，也暴露延迟取舍。** 在 detached 0dd 工作树恢复
-安全 terminal-head 末行计算，保留全部 hidden 与原量化/MMA 顺序，并统一预算与
-实际 captured graph widths。候选不改变 1GiB 设备余量或 graph slack。
+安全 terminal-head 末行计算，保留全部 hidden 与原量化/MMA 顺序，并按构建策略统一预算报价与
+graph widths；尚未覆盖重用 private 宽图时的实际保留计价。候选不改变 1GiB 设备余量或 graph slack。
 44 个 CPU 测试通过；合成 tail 测试通过；真实 27B、511-token prompt 的全部 hidden、
 末行 logits、verification/rollback 和后续 decode 逐位一致。
 
@@ -3200,8 +3200,79 @@ vLLM short 每轮 accepted 1.462，native 已完成 trace 为 1.449；batch 为 
 已有寄存器 chunk 方案约快2.5倍，却未通过 exact 门禁；O0–O3 扫描未解决差异，FMA
 原因未被证明。下一步定位首个不同计算阶段，不重复优化等级扫描。
 
-同 compact 程序、同 graph256 的短场景调度诊断，仅改 token budget256→64：
+同 compact 程序、相同公开声明的prefill_width256的短场景调度诊断（当时未采样live capture宽度），仅改 token budget256→64：
 batch4 TTFT 中位数 218.18→172.15ms，整组 1416.45→1412.47ms，最大 TTFT
 221.90→292.71ms，TPOT 17.38→17.86ms；全部输出一致。它只转移延迟，不适合
 直接设成全局默认，更不能推广到 long/hot。证据：`first-principles/selector-diagnostic/`。
 硬件相关选择继续归属现有 tuning 与能力检测，验证卡型号不能进入 dispatch 决策。
+
+
+### 16.13 融合 pooled checkpoint 与真实 prompt 图宽（2026-10-11）
+
+**checkpoint 已形成可落地收益。** 在原 Conv/Delta 的 state writer 内，把已经计算的
+新状态同时写入回滚快照，消除另一遍 state read 与独立 D2D copy。仅 pooled verify
+需要快照的候选使用融合核；最后一个物理候选仍用原核，inactive lane 跳过两种 state
+store。checkpoint shape、restore memcpy、接受/回滚与 graph/resource 销毁顺序保持。
+原 `recurrent.rs` 保留为独立数值参考。没有增加设备型号判断或硬件参数：Conv 与 Delta
+沿用原 tile 与 `value_block`，已有 GEMM tuning 继续生效。
+
+生产提交 `3a149e3019a42e75a42850c36b4b26e3905702f3` 与测试冻结源码树
+`686b805f87f78d8c5d11f21741626296b1c66144` 完全对应。冻结 CLI SHA256 为
+`a29b423fa1ea7557d5c3e47220978c664358263e1c41c1dec831ac53c371d5e6`；基线沿用
+0dd 二进制，其与4e基底仅文档不同。43 CPU 测试与4个显式 GPU 回归通过；新测试
+比较全部 output/state/checkpoint 的 finite 与 `to_bits`，覆盖真实16/48/128几何、
+split1/4、非零状态、tail、inactive、部分接受及 slot rebind 后继续验证。
+格式、policy/layout/inventory 和生产 CUDA Clippy 通过。额外启用 CUDA test Clippy
+仍有24个旧测试 lint 错误，本次新增代码的错误已修复；不能称完整 `check-cuda` 通过。
+
+27B NVFP4、MTP2、64输出 token，共6个独立 AB/BA 配对、12个新服务进程，336个
+含 warmup 的请求输出、输入、长度和结束原因均一致。实际 hot reuse 都为3584；
+程序、缓存、输入及运行环境身份完整校验。每个服务内3次测量只是一组独立单位。
+
+pair2 必须保留为混杂组：候选启动前新增约295MiB的 lockscreen 图形进程，加载日志
+device/state budget 从27.7/4.8GiB变成27.4/4.5GiB。batch4 整组中位数
+2159.89→3346.04ms（+54.92%），max TTFT +105.29%，不能用 TPOT 改善掩盖。
+遥测 Scheduled/Submitted 从约1.9 work/step变成1.0；后续 lockscreen 保持时，两边
+都为1 work/step且更慢。缺少具体 Capacity 拒绝的 needed/free 记录，不能声称已证明
+唯一根因。未停止任何用户/桌面进程。
+
+在额外 pair5 之前声明并一致应用资格规则：对照两边的加载 device/state budget 显示
+与外部桌面 GPU 进程集合。0/1/3/4/5 共五个匹配配对，以下是独立 pair 变化的中位数，
+负值为耗时降低。每场景的 TPOT 和整组耗时五对均改善；不能称统计显著性证明：
+
+| 场景 | TPOT 变化 | 整组耗时变化 | TTFT 变化 |
+| --- | ---: | ---: | ---: |
+| short | -8.43% | -7.63% | +1.43% |
+| long | -8.19% | -5.74% | -0.16% |
+| batch4 | -6.94% | -7.46% | -6.65% |
+| hot_long | -7.59% | -6.98% | -3.72% |
+
+batch4 max TTFT 的 pair 变化中位数为-7.24%，五对均改善；TPOT 改善范围5.89–10.90%，
+整组4.50–7.85%。short TTFT变化范围-6.31%到+4.21%，所以没有稳定的 prefill 提升。
+预算日志只保留0.1GiB显示精度，进程集合只在采样时观测，匹配不证明精确byte或全过程
+背景相同。`aggregate-all6.json` 保留全部六对，包括异常组；条件匹配摘要与规则在
+`background-qualification.json`/`background-qualification-plan.json`。完整身份、GPU
+回归与原报告位于同根目录 `first-principles/checkpoint-fused-{validation,paired}/`。
+这只覆盖该设备/模型/四个有限场景，没有补齐27B MTP0、2B、持续/混合负载或跨引擎
+质量矩阵，不构成 vLLM 接近目标完成证明。
+
+**长 prompt 的实际执行路径已经观测。** 冻结0dd、511-token long 请求的节点事件
+诊断中，target 实际为7×64+63，draft为3×128+127，二者分阶段交错但每段 draft
+只消费已完成的 target 前缀。三次测量 target graph 时间中位数329.01ms，其中
+Linear160.07ms、Delta115.44ms、Attention20.11ms、Conv4.67ms；draft另28.19ms。
+事件插桩会改变 wall_time，以上只作节点归因，不能替换正式约362ms的TTFT。
+证据在 `first-principles/prefill-node-0dd5899/` 的 `nodes.jsonl`、`node-analysis.json`
+和 `width-cause.json`。
+
+生成请求是 Prefill role，scheduler上限256，`forward_chunk_tokens=64` 并非此处根因。
+pooled `graph_policy` 为减少每序列 arena 成本，只捕获narrow64；`Sequence::run` 按
+实际 resident `prefill_width()` 再分块。LoadedModel的公开256不是 live capture 宽度。
+同一原二进制可用显式 `--max-num-batched-tokens 256` 诊断：关闭自动宽度选择后
+narrow=0，pooled会保留wide256。这只用于long因果测试，未改变默认；后续自动选择
+需要进入已有 tuning，并同时按实际保留图计预算、验证短/混合请求尾延迟。
+
+compact7e 的 `graph_policy` 未改，且 private shell 转 pooled 时可能仍保留旧wide图；
+其报价按desired policy计算，存在未观测的 underquote 路径。候选未合入，后续必须按
+actual retained captures计价或安全丢弃未报价图。已有 `chunk_and_per_lane_delta_agree_exactly`
+实际仍使用1e-7容差，不能拿它作为默认exact准入；寄存器chunk需先定位首个不同计算
+阶段，再用完整 state/output 位模式验证。继续扩大低层 GEMM tile 搜索不足以解决长输入差距。
