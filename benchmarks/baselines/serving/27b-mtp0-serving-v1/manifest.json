@@ -4,8 +4,8 @@
   "profile_id": "27b-mtp0",
   "created_utc": "2026-10-09T18:07:28Z",
   "engines": [
-    "native",
-    "vllm"
+    "vllm",
+    "native"
   ],
   "source": {
     "revision": "2bda8833982ff8987af8c9e16a02e4ff567433d2",
@@ -23,13 +23,13 @@
   "reports": [
     {
       "role": "baseline",
-      "file": "Qwen3.8-27B-NVFP4-mtp0-native-27b-mtp0-native-g1.json",
-      "sha256": "d41828afbaaab2ccfb5fc11ce9f6faf83699ddef1a32ef1113db67f10642ade6"
+      "file": "Qwen3.8-27B-NVFP4-mtp0-vllm-27b-mtp0-vllm-g1.json",
+      "sha256": "e6de2a311ad1568b3e908953599aa0417322944e21d92a53ce20f05425b4d51e"
     },
     {
       "role": "candidate",
-      "file": "Qwen3.8-27B-NVFP4-mtp0-vllm-27b-mtp0-vllm-g1.json",
-      "sha256": "e6de2a311ad1568b3e908953599aa0417322944e21d92a53ce20f05425b4d51e"
+      "file": "Qwen3.8-27B-NVFP4-mtp0-native-27b-mtp0-native-g1.json",
+      "sha256": "d41828afbaaab2ccfb5fc11ce9f6faf83699ddef1a32ef1113db67f10642ade6"
     }
   ],
   "evidence": [
@@ -252,7 +252,8 @@
     "quality": {
       "available": false,
       "note": "task quality is verified by its own gate, not here"
-    }
+    },
+    "ratio_orientation": "native/vllm"
   },
   "statistical_basis": {
     "paired_units": 2,

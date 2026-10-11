@@ -4,8 +4,8 @@
   "profile_id": "2b-mtp0",
   "created_utc": "2026-10-09T18:07:28Z",
   "engines": [
-    "native",
-    "vllm"
+    "vllm",
+    "native"
   ],
   "source": {
     "revision": "2bda8833982ff8987af8c9e16a02e4ff567433d2",
@@ -23,13 +23,13 @@
   "reports": [
     {
       "role": "baseline",
-      "file": "qwen3vl-2b-mtp0-native-2b-mtp0-native-g1.json",
-      "sha256": "8ac9b79bfb62bac3375f08197ebb92510c12d855f14c4264e145e138e4d62134"
+      "file": "qwen3vl-2b-mtp0-vllm-2b-mtp0-vllm-g1.json",
+      "sha256": "719fb7ab45f933e7243ec16ce4978e778ef1da9d3fc50f7199d2e51b62b6c200"
     },
     {
       "role": "candidate",
-      "file": "qwen3vl-2b-mtp0-vllm-2b-mtp0-vllm-g1.json",
-      "sha256": "719fb7ab45f933e7243ec16ce4978e778ef1da9d3fc50f7199d2e51b62b6c200"
+      "file": "qwen3vl-2b-mtp0-native-2b-mtp0-native-g1.json",
+      "sha256": "8ac9b79bfb62bac3375f08197ebb92510c12d855f14c4264e145e138e4d62134"
     }
   ],
   "evidence": [
@@ -252,7 +252,8 @@
     "quality": {
       "available": false,
       "note": "task quality is verified by its own gate, not here"
-    }
+    },
+    "ratio_orientation": "native/vllm"
   },
   "statistical_basis": {
     "paired_units": 2,

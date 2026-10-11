@@ -152,6 +152,15 @@ def freeze(args):
     for index, (left, right) in enumerate(args.reproduction, start=1):
         require_clean_source(json.loads(left.read_text()), f"reproduction {index} baseline")
         require_clean_source(json.loads(right.read_text()), f"reproduction {index} candidate")
+    # The gate's metrics name the fixed reference side "baseline" and the tested engine
+    # "candidate" (see compare-results.py orientation); the manifest's report roles must use
+    # the same vocabulary, or a reader maps every ratio's direction onto the wrong engine.
+    tested, fixed, _ = gate.orientation(baseline, candidate)
+    roles = {id(fixed): "baseline", id(tested): "candidate"}
+    engines = [
+        fixed.get("identity", {}).get("engine"),
+        tested.get("identity", {}).get("engine"),
+    ]
     destination = args.out / args.baseline_id
     if destination.exists():
         raise SystemExit(f"baseline already exists and is never overwritten: {destination}")
@@ -160,29 +169,32 @@ def freeze(args):
     reports = copy_evidence([args.baseline, args.candidate], destination)
     reproduction_files = [path for pair in args.reproduction for path in pair]
     evidence = copy_evidence([*args.evidence, *reproduction_files], destination)
+    # Role order: the fixed reference side first, then the tested engine. The roles come from
+    # the gate's orientation, not the argument order, so `reports[].role` and every
+    # `gate.performance.metrics[]` baseline/candidate field name the same side.
+    report_roles = [roles[id(baseline)], roles[id(candidate)]]
+    pairs = zip(report_roles, reports, strict=True)
+    ordered = sorted(pairs, key=lambda pair: pair[0] != "baseline")
     manifest = {
         "schema": 1,
         "baseline_id": args.baseline_id,
         "profile_id": args.profile,
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "engines": [
-            baseline.get("identity", {}).get("engine"),
-            candidate.get("identity", {}).get("engine"),
-        ],
-        "source": baseline.get("identity", {}).get("source"),
-        "hardware": baseline.get("identity", {}).get("hardware"),
-        "reports": [
-            {"role": role, **record}
-            for role, record in zip(("baseline", "candidate"), reports, strict=True)
-        ],
+        "engines": engines,
+        # The engine under test is the revision a reproduction rebuilds, so the source and
+        # hardware identities follow the tested side regardless of the argument order.
+        "source": tested.get("identity", {}).get("source"),
+        "hardware": tested.get("identity", {}).get("hardware"),
+        "reports": [{"role": role, **record} for role, record in ordered],
         "evidence": evidence,
         "validity": {
             "identity_verified": True,
-            "matrix": baseline.get("matrix"),
-            "cache_effective": (baseline.get("identity", {}).get("cache") or {}).get("effective"),
+            "matrix": fixed.get("matrix"),
+            "cache_effective": (fixed.get("identity", {}).get("cache") or {}).get("effective"),
         },
         "gate": {
             "max_latency_ratio": result["max_latency_ratio"],
+            "ratio_orientation": result["ratio_orientation"],
             "passed": result["passed"],
             "performance": result["performance"],
             "numeric": result["numeric"],
