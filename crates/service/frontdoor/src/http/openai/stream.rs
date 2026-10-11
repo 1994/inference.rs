@@ -4,7 +4,7 @@
 //! requests and resolve the same limits. Text is decoded and parsed incrementally on the CPU
 //! pool: each committed token is detokenized once and fed to the parser once, and no published
 //! delta is ever rewritten.
-use super::execution::{finish_reason, prepare};
+use super::execution::{completion_reason, finish_reason, prepare};
 use super::{ApiResult, GenerationRequest, TextState};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -17,7 +17,7 @@ use std::{
     collections::VecDeque,
     convert::Infallible,
     sync::Arc,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::sync::mpsc;
 
@@ -42,6 +42,8 @@ struct Stream {
     /// The decoder and parser leave this owner for the duration of a CPU job and come back.
     decoder: Option<TextStreamDecoder>,
     parser: Option<OutputStreamParser>,
+    /// Set by prompt encoding before the first engine event; consumed once.
+    prompt_reasoning: Option<Arc<AtomicBool>>,
     /// Serialized event payloads waiting to be written.
     queue: VecDeque<String>,
     id: String,
@@ -87,10 +89,28 @@ impl Stream {
             StreamEvent::Reasoning(text) => {
                 self.queue_chunk(&json!({"reasoning_content": text}), None);
             }
+            StreamEvent::CallStart { index, name } => {
+                self.queue_chunk(
+                    &json!({"tool_calls":[{
+                        "index":index, "id":format!("call_{}_{}",self.request.get(),index),
+                        "type":"function", "function":{"name":name,"arguments":""}
+                    }]}),
+                    None,
+                );
+            }
+            StreamEvent::CallArguments { index, arguments } => {
+                self.queue_chunk(
+                    &json!({"tool_calls":[{
+                        "index":index, "function":{"arguments":arguments}
+                    }]}),
+                    None,
+                );
+            }
+            StreamEvent::CallEnd { index } => {
+                self.call_index = index + 1;
+            }
             StreamEvent::Call(call) => {
-                // The function-parameter dialect needs the whole block before its arguments are
-                // known, so a call is published once and complete. The index and the identifier
-                // are the ones the complete reply would use, so the two forms agree.
+                // Completed-only fallback, for string-wrapped JSON argument objects.
                 let delta = json!({"tool_calls":[{
                     "index": self.call_index,
                     "id": format!("call_{}_{}", self.request.get(), self.call_index),
@@ -136,8 +156,16 @@ impl Stream {
     /// # Errors
     /// Returns a decoding or parsing error for a response that cannot be published incrementally.
     async fn advance(&mut self, event: EngineOutput) -> infer_core::Result<()> {
+        if let Some(open) = self.prompt_reasoning.take() {
+            let parser = self
+                .parser
+                .take()
+                .ok_or_else(|| Error::invariant("stream parser missing"))?;
+            self.parser = Some(parser.with_open_reasoning(open.load(Ordering::Acquire)));
+        }
         match event {
             EngineOutput::Token { token, .. } => {
+                self.completion_tokens += 1;
                 let parse = self.parse;
                 let delivery = self.delivery.clone();
                 let decoder = self
@@ -148,7 +176,7 @@ impl Stream {
                     .parser
                     .take()
                     .ok_or_else(|| Error::invariant("stream parser missing"))?;
-                let (decoder, parser, text, events) = delivery
+                let (decoder, parser, events) = delivery
                     .run(0, move |_| {
                         let mut decoder = decoder;
                         let mut parser = parser;
@@ -160,14 +188,12 @@ impl Stream {
                         } else {
                             vec![StreamEvent::Text(text.clone())]
                         };
-                        Ok((decoder, parser, text, events))
+                        Ok((decoder, parser, events))
                     })
                     .await?;
                 self.decoder = Some(decoder);
                 self.parser = Some(parser);
-                if !text.is_empty() {
-                    self.completion_tokens += 1;
-                }
+
                 for event in events {
                     self.publish(event);
                 }
@@ -184,7 +210,7 @@ impl Stream {
                     .parser
                     .take()
                     .ok_or_else(|| Error::invariant("stream parser missing"))?;
-                let (decoder, parser, tail, events) = delivery
+                let (decoder, parser, events) = delivery
                     .run(0, move |_| {
                         let mut decoder = decoder;
                         let mut parser = parser;
@@ -201,24 +227,22 @@ impl Stream {
                         if parse {
                             events.extend(parser.finish()?);
                         }
-                        Ok((decoder, parser, tail, events))
+                        Ok((decoder, parser, events))
                     })
                     .await?;
                 self.decoder = Some(decoder);
                 self.parser = Some(parser);
-                if !tail.is_empty() {
-                    self.completion_tokens += 1;
-                }
+
                 for event in events {
                     self.publish(event);
                 }
-                // A length stop stays `length` even when a complete call preceded the cap.
-                let has_calls = self.call_index > 0;
-                let reason = if has_calls && reason != "length" {
-                    "tool_calls"
-                } else {
-                    reason
-                };
+                let reason = completion_reason(
+                    reason,
+                    self.parser
+                        .as_ref()
+                        .is_some_and(OutputStreamParser::truncated),
+                    self.call_index > 0,
+                )?;
                 self.finish(reason);
             }
         }
@@ -254,10 +278,12 @@ pub(super) async fn stream(
             receiver: prepared.receiver,
             delivery: state.delivery.clone(),
             decoder: Some(state.assets.stream_decoder()),
-            parser: Some(OutputStreamParser::new(
-                prepared.dialect,
-                prepared.policy.declared().cloned(),
-            )),
+            parser: Some(
+                OutputStreamParser::new(prepared.dialect, prepared.policy.declared().cloned())
+                    .with_tools(prepared.policy.parses())
+                    .with_argument_deltas(),
+            ),
+            prompt_reasoning: Some(prepared.reasoning_open),
             queue: VecDeque::new(),
             id: format!("{prefix}-{}", prepared.request),
             object,

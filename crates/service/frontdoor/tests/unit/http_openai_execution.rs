@@ -20,6 +20,7 @@ fn choice(text: &str, policy: &ToolPolicy, reason: &'static str) -> Value {
         policy,
         false,
         reason,
+        false,
     )
     .unwrap()
 }
@@ -125,9 +126,76 @@ fn thinking_is_split_out_and_reasoning_is_published_separately() {
         &ToolPolicy::Disabled,
         true,
         "stop",
+        false,
     )
     .unwrap();
     assert_eq!(parsed.reasoning.as_deref(), Some("weigh the options"));
     assert_eq!(choice["message"]["content"], "The answer is 17.");
     assert_eq!(choice["message"]["reasoning_content"], "weigh the options");
+}
+
+#[test]
+fn an_unterminated_generated_call_is_an_error_unless_length_capped() {
+    let text = "<tool_call><function=ping>";
+    assert!(
+        chat_choice(
+            RequestId::ONE,
+            text,
+            ToolDialect::FunctionParameters,
+            &policy(&["ping"]),
+            false,
+            "stop",
+            false,
+        )
+        .is_err()
+    );
+    let choice = chat_choice(
+        RequestId::ONE,
+        text,
+        ToolDialect::FunctionParameters,
+        &policy(&["ping"]),
+        false,
+        "length",
+        false,
+    )
+    .unwrap();
+    assert_eq!(choice["finish_reason"], "length");
+}
+
+#[test]
+fn thinking_with_tool_choice_none_preserves_tool_like_text() {
+    let text = "<think>why</think><tool_call><function=ping></function></tool_call>";
+    let choice = chat_choice(
+        RequestId::ONE,
+        text,
+        ToolDialect::FunctionParameters,
+        &ToolPolicy::Disabled,
+        true,
+        "stop",
+        false,
+    )
+    .unwrap();
+    assert!(
+        choice["message"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("<tool_call>")
+    );
+    assert!(choice["message"]["tool_calls"].is_null());
+}
+
+#[test]
+fn a_prompt_opened_reasoning_region_is_not_assistant_content() {
+    let choice = chat_choice(
+        RequestId::ONE,
+        "weigh the options</think>\n\nThe answer is 17.",
+        ToolDialect::FunctionParameters,
+        &ToolPolicy::Disabled,
+        true,
+        "stop",
+        true,
+    )
+    .unwrap();
+    assert_eq!(choice["message"]["reasoning_content"], "weigh the options");
+    assert_eq!(choice["message"]["content"], "The answer is 17.");
 }

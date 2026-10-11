@@ -57,15 +57,18 @@ fn byte_assets() -> Arc<TextAssets> {
 fn parsing_stream(assets: &TextAssets, declared: &[&str]) -> Stream {
     let mut stream = stream();
     stream.decoder = Some(assets.stream_decoder());
-    stream.parser = Some(OutputStreamParser::new(
-        assets.tool_dialect(),
-        Some(
-            declared
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect::<std::collections::BTreeSet<_>>(),
-        ),
-    ));
+    stream.parser = Some(
+        OutputStreamParser::new(
+            assets.tool_dialect(),
+            Some(
+                declared
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect::<std::collections::BTreeSet<_>>(),
+            ),
+        )
+        .with_argument_deltas(),
+    );
     stream.parse = true;
     stream
 }
@@ -79,6 +82,7 @@ fn stream() -> Stream {
         delivery: crate::cpu::CpuPool::new(crate::cpu::CpuConfig::default()).unwrap(),
         decoder: None,
         parser: None,
+        prompt_reasoning: None,
         queue: VecDeque::new(),
         id: "chatcmpl-7".into(),
         object: "chat.completion.chunk",
@@ -206,7 +210,20 @@ async fn streamed_tool_calls_are_decoded_parsed_and_published() {
     assert_eq!(call["id"], "call_7_0");
     assert_eq!(call["function"]["name"], "get_weather");
     // The arguments are the model's own bytes, not a re-serialized object.
-    assert_eq!(call["function"]["arguments"], "{\"city\":\"Paris\"}");
+    let arguments: String = chunks
+        .iter()
+        .filter_map(|chunk| {
+            chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"].as_str()
+        })
+        .collect();
+    assert_eq!(arguments, "{\"city\":\"Paris\"}");
+    assert!(
+        chunks
+            .iter()
+            .filter(|chunk| chunk["choices"][0]["delta"]["tool_calls"].is_array())
+            .count()
+            > 1
+    );
     assert_eq!(
         chunks.last().unwrap()["choices"][0]["finish_reason"],
         "tool_calls"
@@ -242,4 +259,67 @@ async fn a_streamed_call_that_is_not_declared_stays_in_the_content() {
         .filter_map(|chunk| chunk["choices"][0]["delta"]["content"].as_str())
         .collect();
     assert!(content.contains("invented"), "{content:?}");
+}
+
+#[tokio::test]
+async fn utf8_and_nonpublishing_tokens_still_count_as_completion_tokens() {
+    let assets = byte_assets();
+    let tokens = assets.encode("北京", false).unwrap();
+    let mut stream = parsing_stream(&assets, &[]);
+    for (index, token) in tokens.iter().enumerate() {
+        stream
+            .advance(EngineOutput::Token {
+                request: stream.request,
+                token: *token,
+                index,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(stream.completion_tokens, tokens.len());
+}
+
+#[test]
+fn incomplete_calls_cannot_end_with_a_successful_tool_finish() {
+    assert!(completion_reason("stop", true, true).is_err());
+    assert_eq!(completion_reason("length", true, true).unwrap(), "length");
+    assert_eq!(
+        completion_reason("stop", false, true).unwrap(),
+        "tool_calls"
+    );
+}
+
+#[tokio::test]
+async fn prompt_opened_reasoning_is_initialized_once_before_streaming_tokens() {
+    let assets = byte_assets();
+    let tokens = assets.encode("why</think>answer", false).unwrap();
+    let mut stream = parsing_stream(&assets, &[]);
+    stream.prompt_reasoning = Some(Arc::new(AtomicBool::new(true)));
+    for (index, token) in tokens.iter().enumerate() {
+        stream
+            .advance(EngineOutput::Token {
+                request: stream.request,
+                token: *token,
+                index,
+            })
+            .await
+            .unwrap();
+    }
+    let events = stream.parser.as_mut().unwrap().finish().unwrap();
+    for event in events {
+        stream.publish(event);
+    }
+    let chunks = chunks(&stream);
+    let reasoning: String = chunks
+        .iter()
+        .filter_map(|chunk| chunk["choices"][0]["delta"]["reasoning_content"].as_str())
+        .collect();
+    let content: String = chunks
+        .iter()
+        .filter_map(|chunk| chunk["choices"][0]["delta"]["content"].as_str())
+        .collect();
+    assert_eq!(reasoning, "why");
+    assert_eq!(content, "answer");
+    assert!(stream.prompt_reasoning.is_none());
+    assert_eq!(stream.completion_tokens, tokens.len());
 }

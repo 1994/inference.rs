@@ -4,7 +4,11 @@ use infer_core::{Error, ErrorCode, FinishReason, RequestId};
 use infer_ir::{CanonicalRequest, RequestInput, Workload, WorkloadOutput};
 use infer_runtime::{CompletedRequest, EngineOutput};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Arc, sync::atomic::AtomicUsize, sync::atomic::Ordering};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use tokio::sync::mpsc;
 
 /// One admitted generation, shared by the complete and the streamed reply so both are produced
@@ -18,6 +22,7 @@ pub(super) struct Prepared {
     pub(super) chat: bool,
     pub(super) policy: ToolPolicy,
     pub(super) enable_thinking: bool,
+    pub(super) reasoning_open: Arc<AtomicBool>,
     pub(super) dialect: infer_models::ToolDialect,
 }
 
@@ -28,6 +33,7 @@ struct Encoding {
     prompt: Option<String>,
     tools: Option<Value>,
     enable_thinking: bool,
+    reasoning_open: Arc<AtomicBool>,
     count: Arc<AtomicUsize>,
     id: RequestId,
     model: infer_core::ModelId,
@@ -40,14 +46,20 @@ impl Encoding {
     fn encode(self, context: &crate::cpu::CpuContext) -> infer_core::Result<CanonicalRequest> {
         context.check()?;
         let tokens = if let Some(messages) = self.messages {
-            self.assets.encode_chat(
+            let rendered = self.assets.render_chat(
                 &messages,
                 &infer_models::ChatOptions {
                     enable_thinking: self.enable_thinking,
                     tools: self.tools.clone(),
                     ..Default::default()
                 },
-            )?
+            )?;
+            self.reasoning_open.store(
+                self.enable_thinking
+                    && infer_models::OutputStreamParser::prompt_opens_reasoning(&rendered),
+                Ordering::Release,
+            );
+            self.assets.encode(&rendered, false)?
         } else {
             self.assets
                 .encode(self.prompt.as_deref().unwrap_or_default(), true)?
@@ -83,6 +95,11 @@ pub(super) async fn prepare(
 ) -> ApiResult<Prepared> {
     let requested = request.validate(chat)?;
     let policy = request.tool_policy(chat)?;
+    if policy.parses() && !state.assets.supports_tool_calls() {
+        return Err(
+            Error::unsupported("the model template has no supported tool-call dialect").into(),
+        );
+    }
     // Streaming publishes text incrementally, so it needs a decoder that never rewrites a
     // published prefix. Packages without one are refused rather than degraded silently.
     if request.stream == Some(true) && !state.assets.supports_streaming_decode() {
@@ -123,6 +140,7 @@ pub(super) async fn prepare(
         .as_secs();
     let prompt_tokens = Arc::new(AtomicUsize::new(0));
     let count = prompt_tokens.clone();
+    let reasoning_open = Arc::new(AtomicBool::new(false));
     let assets = state.assets.clone();
     let resolved = assets
         .generation
@@ -153,6 +171,7 @@ pub(super) async fn prepare(
         prompt,
         tools,
         enable_thinking,
+        reasoning_open: reasoning_open.clone(),
         count,
         id,
         model,
@@ -177,6 +196,7 @@ pub(super) async fn prepare(
         chat,
         policy,
         enable_thinking,
+        reasoning_open,
         dialect: state.assets.tool_dialect(),
     })
 }
@@ -201,6 +221,7 @@ pub(super) async fn generate(
                 prepared.chat,
                 &prepared.policy,
                 prepared.enable_thinking,
+                prepared.reasoning_open.load(Ordering::Acquire),
             )
             .await;
         }
@@ -224,6 +245,7 @@ async fn response(
     chat: bool,
     policy: &ToolPolicy,
     enable_thinking: bool,
+    reasoning_open: bool,
 ) -> ApiResult<Value> {
     let reason = finish_reason(&result.reason)?;
     let Some(WorkloadOutput::Tokens(tokens)) = result.output else {
@@ -251,6 +273,7 @@ async fn response(
             policy,
             enable_thinking,
             reason,
+            reasoning_open,
         )?
     } else {
         json!({"index":0, "text":text, "finish_reason":reason, "logprobs":null})
@@ -277,15 +300,22 @@ fn chat_choice(
     policy: &ToolPolicy,
     enable_thinking: bool,
     reason: &'static str,
+    reasoning_open: bool,
 ) -> infer_core::Result<Value> {
     let parsed = if policy.parses() || enable_thinking {
-        infer_models::parse_model_output_with(text, dialect, policy.declared())?
+        let mut parser = infer_models::OutputStreamParser::new(dialect, policy.declared().cloned())
+            .with_tools(policy.parses())
+            .with_open_reasoning(reasoning_open);
+        let mut events = parser.feed(text)?;
+        events.extend(parser.finish()?);
+        infer_models::assemble(events, parser.truncated())
     } else {
         infer_models::ParsedOutput {
             content: text.to_string(),
             ..Default::default()
         }
     };
+    let reason = completion_reason(reason, parsed.truncated, parsed.has_calls())?;
     let infer_models::ParsedOutput {
         content,
         reasoning,
@@ -320,14 +350,26 @@ fn chat_choice(
     if let Some(reasoning) = reasoning {
         message["reasoning_content"] = json!(reasoning);
     }
-    // A length stop stays `length` even when a complete call preceded the cap; the client
-    // decides from the terminal reason whether to execute it.
-    let finish = if tool_calls.is_empty() || reason == "length" {
-        reason
-    } else {
+    Ok(json!({"index":0, "message":message, "finish_reason":reason, "logprobs":null}))
+}
+
+/// A partial structural region is successful only when the engine reported its length cap.
+pub(super) fn completion_reason(
+    reason: &'static str,
+    truncated: bool,
+    has_calls: bool,
+) -> infer_core::Result<&'static str> {
+    if truncated && reason != "length" {
+        return Err(Error::new(
+            ErrorCode::Backend,
+            "model output ended inside a structured region",
+        ));
+    }
+    Ok(if has_calls && reason != "length" {
         "tool_calls"
-    };
-    Ok(json!({"index":0, "message":message, "finish_reason":finish, "logprobs":null}))
+    } else {
+        reason
+    })
 }
 
 pub(super) fn finish_reason(reason: &FinishReason) -> infer_core::Result<&'static str> {
