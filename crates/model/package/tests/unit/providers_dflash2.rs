@@ -573,7 +573,7 @@ fn a_budget_that_covers_the_request_admits_it() {
     for budget in [required, required + 1, required * 2] {
         let admission = quote.admit(budget, 1, 2048);
         assert!(admission.admitted(), "{admission:?}");
-        assert!(admission.shortfall.is_empty());
+        assert_eq!(admission.shortfall, Vec::<DraftCost>::new());
         assert_eq!(admission.required_bytes, required);
         assert_eq!(admission.budget_bytes, budget);
     }

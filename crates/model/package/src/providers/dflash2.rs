@@ -399,7 +399,7 @@ pub struct DraftAdmission {
 impl DraftAdmission {
     /// Whether the whole request fits; `shortfall` says what does not when it is false.
     #[must_use]
-    pub fn admitted(&self) -> bool {
+    pub const fn admitted(&self) -> bool {
         self.shortfall.is_empty()
     }
 }
@@ -409,7 +409,7 @@ impl DraftQuote {
     /// rejected round discards. The rollback buffer is charged even though it is released after the
     /// round, because the round cannot run without room for it.
     #[must_use]
-    pub fn required_bytes(&self, sequences: usize, tokens: usize) -> usize {
+    pub const fn required_bytes(&self, sequences: usize, tokens: usize) -> usize {
         self.weights_bytes
             + sequences * (self.window_kv_bytes + self.conv_history_bytes_per_sequence)
             + tokens * (self.kv_bytes_per_token + self.feature_bytes_per_token)
