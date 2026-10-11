@@ -18,6 +18,12 @@
       "src_near": 0,
       "tests": 11
     },
+    "compiler": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 8
+    },
     "core": {
       "benches": 0,
       "src_inline": 0,
@@ -76,7 +82,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 64
+      "tests": 66
     },
     "scheduler": {
       "benches": 0,
@@ -445,6 +451,11 @@
     },
     {
       "crate": "runtime",
+      "file": "tests/runner.rs",
+      "mount": "unit/runner_maintenance.rs"
+    },
+    {
+      "crate": "runtime",
       "file": "tests/unit/observation.rs",
       "mount": "../support/mod.rs"
     },
@@ -562,6 +573,11 @@
       "crate": "spi",
       "file": "src/resource.rs",
       "mount": "../tests/unit/resource.rs"
+    },
+    {
+      "crate": "compiler",
+      "file": "src/compilation.rs",
+      "mount": "../tests/unit/compilation.rs"
     },
     {
       "crate": "package",
@@ -710,11 +726,11 @@
     }
   ],
   "totals": {
-    "all": 526,
+    "all": 536,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 526
+    "tests": 536
   }
 }

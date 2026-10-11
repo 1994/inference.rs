@@ -246,6 +246,9 @@ impl<B: BackendProvider> Worker<B> {
         let mut controls = 0usize;
         loop {
             self.recycle();
+            if let Err(error) = self.backend.maintenance() {
+                self.fail(error);
+            }
             if self.poll() {
                 poll_us = self.config.poll_min_us;
             } else {

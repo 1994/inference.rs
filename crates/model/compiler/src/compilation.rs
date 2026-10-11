@@ -1,8 +1,8 @@
 //! Compile provider-owned dataflow at load time; topology belongs to the model.
 use infer_core::{Error, ProgramId, Result};
 use infer_ir::{
-    CapabilityRequirements, CompiledOp, DeviceCapabilities, ExecutionIr, ExecutionProgram, ModelIr,
-    OperationIr, PrecisionPlan,
+    CapabilityRequirements, CompiledOp, DataflowGraph, DeviceCapabilities, ExecutionIr,
+    ExecutionProgram, ModelIr, OperationIr, PrecisionPlan, TensorNode,
 };
 use infer_kernel_api::KernelRegistry;
 
@@ -14,7 +14,7 @@ const F32_BYTES: u64 = 4;
 /// Returns an invalid-input or unsupported error for an invalid model graph or unsupported model operations.
 pub fn lower(
     model: &ModelIr,
-    graph: infer_ir::DataflowGraph,
+    graph: DataflowGraph,
     precision: PrecisionPlan,
 ) -> Result<ExecutionIr> {
     if precision != PrecisionPlan::f32() {
@@ -27,26 +27,7 @@ pub fn lower(
     let operations = graph
         .nodes
         .iter()
-        .map(|node| {
-            let operation = node
-                .op
-                .operation(graph.logits.is_some_and(|id| node.outputs.contains(&id)));
-            let tensor = graph
-                .tensors
-                .iter()
-                .find(|t| t.id == node.outputs[0])
-                .ok_or_else(|| Error::invariant("lowered output"))?;
-            Ok(OperationIr {
-                id: node.id,
-                operation,
-                layer: node.layer,
-                shape: tensor.shape.clone(),
-                requirements: CapabilityRequirements {
-                    compute_dtypes: vec![precision.compute],
-                    ..Default::default()
-                },
-            })
-        })
+        .map(|node| operation_ir(&graph, node, &precision))
         .collect::<Result<Vec<_>>>()?;
     Ok(ExecutionIr {
         model: model.id,
@@ -55,6 +36,32 @@ pub fn lower(
         dataflow: graph,
     })
 }
+
+/// The dataflow owns operation geometry and identity; a caller can only add capability limits.
+fn operation_ir(
+    graph: &DataflowGraph,
+    node: &TensorNode,
+    precision: &PrecisionPlan,
+) -> Result<OperationIr> {
+    let tensor = graph
+        .tensors
+        .iter()
+        .find(|t| t.id == node.outputs[0])
+        .ok_or_else(|| Error::invariant("lowered output"))?;
+    Ok(OperationIr {
+        id: node.id,
+        operation: node
+            .op
+            .operation(graph.logits.is_some_and(|id| node.outputs.contains(&id))),
+        layer: node.layer,
+        shape: tensor.shape.clone(),
+        requirements: CapabilityRequirements {
+            compute_dtypes: vec![precision.compute],
+            ..Default::default()
+        },
+    })
+}
+
 ///
 /// # Errors
 /// Returns an invalid-input, unsupported, or capacity error if the graph cannot be lowered to compatible kernels within the workspace budget.
@@ -68,25 +75,26 @@ pub fn compile(
     ir.dataflow.validate()?;
     let mut planned = ir.dataflow.clone();
     planned.plan_lifetimes()?;
-    if planned != ir.dataflow
-        || ir.operations.len() != ir.dataflow.nodes.len()
-        || ir
-            .operations
-            .iter()
-            .zip(&ir.dataflow.nodes)
-            .any(|(op, node)| {
-                op.id != node.id
-                    || op.operation
-                        != node.op.operation(
-                            ir.dataflow
-                                .logits
-                                .is_some_and(|id| node.outputs.contains(&id)),
-                        )
-            })
-    {
+    if planned != ir.dataflow || ir.operations.len() != ir.dataflow.nodes.len() {
         return Err(Error::invalid(
             "execution IR dependency/lifetime/kernel mapping mismatch",
         ));
+    }
+    for (op, node) in ir.operations.iter().zip(&ir.dataflow.nodes) {
+        let canonical = operation_ir(&ir.dataflow, node, &ir.precision)?;
+        if op.id != canonical.id
+            || op.operation != canonical.operation
+            || op.shape != canonical.shape
+            || op.layer != canonical.layer
+            || !op
+                .requirements
+                .compute_dtypes
+                .contains(&ir.precision.compute)
+        {
+            return Err(Error::invalid(
+                "execution IR operation metadata/compute requirements mismatch",
+            ));
+        }
     }
     let mut operations = Vec::with_capacity(ir.operations.len());
     let mut workspace_bytes = 0;
@@ -119,3 +127,7 @@ pub fn compile(
         dataflow: ir.dataflow,
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/compilation.rs"]
+mod tests;

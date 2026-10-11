@@ -1,3 +1,5 @@
+#[path = "unit/runner_maintenance.rs"]
+mod maintenance;
 mod support;
 use infer_core::{Error, FinishReason, ModelId, Result, StateId};
 use infer_ir::{
