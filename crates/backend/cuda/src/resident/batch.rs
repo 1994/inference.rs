@@ -528,7 +528,7 @@ impl BatchBuilder<'_> {
                     if logits && prefill.is_some() && index + 1 != width {
                         continue;
                     }
-                    Capture {
+                    let mut capture = Capture {
                         scope,
                         arena: &mut lane.arena,
                         weights: self.weights,
@@ -543,15 +543,25 @@ impl BatchBuilder<'_> {
                         capacity: self.capacity,
                         fusion: &mut self.lane_fusion[index],
                         mode: CaptureMode::Flat,
-                    }
-                    .record(node)?;
-                    if prefill.is_none()
-                        && let Some(id) = node.states.first()
-                        && let Some(checkpoint) = lane.checkpoints.get_mut(id)
-                    {
-                        for (output, input) in checkpoint.iter_mut().zip(&self.states[id]) {
-                            scope.record(api::memcpy(output, input))?;
+                    };
+                    let snapshot = prefill
+                        .is_none()
+                        .then(|| node.states.first())
+                        .flatten()
+                        .and_then(|id| lane.checkpoints.get_mut(id));
+                    if let Some(snapshot) = snapshot {
+                        if super::capture_checkpoint::flat_checkpoint_enabled() {
+                            capture.record_flat_checkpoint(node, snapshot)?;
+                        } else {
+                            capture.record(node)?;
+                            for (output, input) in
+                                snapshot.iter_mut().zip(&capture.states[&node.states[0]])
+                            {
+                                scope.record(api::memcpy(output, input))?;
+                            }
                         }
+                    } else {
+                        capture.record(node)?;
                     }
                 }
             }

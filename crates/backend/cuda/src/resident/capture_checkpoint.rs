@@ -26,16 +26,55 @@ impl Capture<'_> {
             .ok_or_else(|| error("missing checkpoint output buffer"))?;
         let (row, shared) =
             super::arena::row_tensor(slot, self.arena.lanes(), lane).map_err(error)?;
+        let _ = self.checkpoint_state(node, row, snapshot)?;
+        self.arena.buffers[index] = Some(
+            Arc::try_unwrap(shared)
+                .map_err(|_| error("checkpoint activation row tensor still aliased"))?,
+        );
+        Ok(())
+    }
+
+    /// Flat verification lanes own their activation slots; return that allocation
+    /// after recording the same state writer used by pooled checkpoint rows.
+    pub(super) fn record_flat_checkpoint(
+        &mut self,
+        node: &TensorNode,
+        snapshot: &mut [Tensor<f32>],
+    ) -> Result<(), DeviceError> {
+        if self.mode != CaptureMode::Flat || node.outputs.len() != 1 || node.states.len() != 1 {
+            return Err(error("checkpoint flat capture bindings"));
+        }
+        let index = self.arena.slot(node.outputs[0]).map_err(error)?;
+        let output = self.arena.buffers[index]
+            .take()
+            .ok_or_else(|| error("missing checkpoint output buffer"))?;
+        let shape = output
+            .shape()
+            .iter()
+            .map(|&dimension| usize::try_from(dimension).map_err(error))
+            .collect::<Result<Vec<_>, _>>()?;
+        let size = output.size();
+        let output = self.checkpoint_state(node, output.reshape(&[size])?, snapshot)?;
+        self.arena.buffers[index] = Some(output.reshape(&shape)?);
+        Ok(())
+    }
+
+    fn checkpoint_state(
+        &mut self,
+        node: &TensorNode,
+        output: Tensor<f32>,
+        snapshot: &mut [Tensor<f32>],
+    ) -> Result<Tensor<f32>, DeviceError> {
         let id = node.states[0];
         let mut state = self
             .states
             .remove(&id)
             .ok_or_else(|| error("missing checkpoint state allocation"))?;
-        match node.op {
+        let output = match node.op {
             TensorOp::Conv {
                 channels,
                 kernel: crate::constants::CONV_KERNEL_SIZE,
-            } => self.checkpoint_conv(node, row, &mut state, snapshot, channels)?,
+            } => self.checkpoint_conv(node, output, &mut state, snapshot, channels)?,
             TensorOp::Delta {
                 key_heads,
                 value_heads,
@@ -43,19 +82,15 @@ impl Capture<'_> {
                 value_dim,
             } => self.checkpoint_delta(
                 node,
-                row,
+                output,
                 &mut state,
                 snapshot,
                 (key_heads, value_heads, key_dim, value_dim),
             )?,
             _ => return Err(error("unsupported checkpoint state operation")),
-        }
+        };
         self.states.insert(id, state);
-        self.arena.buffers[index] = Some(
-            Arc::try_unwrap(shared)
-                .map_err(|_| error("checkpoint activation row tensor still aliased"))?,
-        );
-        Ok(())
+        Ok(output)
     }
 
     fn checkpoint_conv(
@@ -65,7 +100,7 @@ impl Capture<'_> {
         state: &mut [Tensor<f32>],
         snapshot: &mut [Tensor<f32>],
         channels: usize,
-    ) -> Result<(), DeviceError> {
+    ) -> Result<Tensor<f32>, DeviceError> {
         let [h0, h1, h2] = state else {
             return Err(error("checkpoint convolution state layout"));
         };
@@ -86,7 +121,7 @@ impl Capture<'_> {
                 .view(&[channels, crate::constants::CONV_KERNEL_SIZE])?,
             self.metadata,
         ))?;
-        Ok(())
+        Ok(output)
     }
 
     fn checkpoint_delta(
@@ -96,7 +131,7 @@ impl Capture<'_> {
         state: &mut [Tensor<f32>],
         snapshot: &mut [Tensor<f32>],
         (key_heads, value_heads, key_dim, value_dim): (usize, usize, usize, usize),
-    ) -> Result<(), DeviceError> {
+    ) -> Result<Tensor<f32>, DeviceError> {
         if key_dim != value_dim
             || !key_dim.is_power_of_two()
             || key_heads == 0
@@ -131,6 +166,26 @@ impl Capture<'_> {
                 block.to_string(),
             ]),
         )?;
-        Ok(())
+        Ok(output)
     }
 }
+
+#[cfg(not(test))]
+pub(super) const fn flat_checkpoint_enabled() -> bool {
+    true
+}
+
+#[cfg(test)]
+pub(super) fn flat_checkpoint_enabled() -> bool {
+    !LEGACY_FLAT_CAPTURE.get()
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static LEGACY_FLAT_CAPTURE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_capture_checkpoint.rs"]
+mod tests;

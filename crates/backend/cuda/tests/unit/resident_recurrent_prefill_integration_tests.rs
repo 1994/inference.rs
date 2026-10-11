@@ -356,3 +356,130 @@ fn graph_at((key_heads, value_heads, dim): DeltaGeometry) -> Result<DataflowGrap
     graph.logits = Some(TensorId::new(12)?);
     Ok(graph)
 }
+
+/// Exercise both recurrent writers with nonzero history and every supported serial width.
+fn checkpoint_fixture(
+    device: &CudaDevice,
+    geometry: DeltaGeometry,
+) -> Result<(DataflowGraph, ProgramWeights)> {
+    let (mut graph, mut weights) = fixture_at(device, geometry)?;
+    let channels = (2 * geometry.0 + geometry.1) * geometry.2;
+    let state = TensorId::new(13)?;
+    let kernel = TensorId::new(14)?;
+    let output = TensorId::new(15)?;
+    for (id, shape, storage) in [
+        (
+            state,
+            vec![channels, 4],
+            TensorStorage::State {
+                layer: 0,
+                kind: StateKind::Conv,
+            },
+        ),
+        (
+            kernel,
+            vec![channels, 4],
+            TensorStorage::Weight {
+                slot: "conv".into(),
+            },
+        ),
+        (output, vec![channels], TensorStorage::Activation),
+    ] {
+        graph.tensors.push(TensorSpec {
+            id,
+            shape,
+            dtype: DType::F32,
+            storage,
+        });
+    }
+    graph.nodes[3].inputs[0] = output;
+    graph.nodes.insert(
+        3,
+        TensorNode {
+            id: OpId::new(6)?,
+            layer: None,
+            op: TensorOp::Conv {
+                channels,
+                kernel: 4,
+            },
+            inputs: vec![TensorId::new(2)?, kernel],
+            outputs: vec![output],
+            states: vec![state],
+        },
+    );
+    weights.constants.insert(
+        kernel,
+        device.upload(super::tests::values(channels * 4, 19), &[channels, 4])?,
+    );
+    Ok((graph, weights))
+}
+
+fn assert_serial_states(
+    device: &CudaDevice,
+    candidate: &DeviceProgram,
+    reference: &DeviceProgram,
+) -> Result<()> {
+    assert_eq!(candidate.states().len(), reference.states().len());
+    for (id, actual) in candidate.states() {
+        let expected = &reference.states()[id];
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_checkpoint_hidden_bits(
+                &device.read_borrowed(actual)?,
+                &device.read_borrowed(expected)?,
+                "serial recurrent state",
+            );
+        }
+    }
+    assert_eq!(candidate.position(), reference.position());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn serial_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
+    use crate::resident::capture_checkpoint::LEGACY_FLAT_CAPTURE;
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for geometry in [SMALL, (16, 48, 128)] {
+        for width in [2, 3, 5, 9] {
+            let (graph, mut weights) = checkpoint_fixture(&device, geometry)?;
+            weights.batch_width = width;
+            let hidden = geometry.1 * geometry.2;
+            let mut candidate = DeviceProgram::new(&device, &graph, &weights, 128, hidden, 16)?;
+            LEGACY_FLAT_CAPTURE.set(true);
+            let reference = DeviceProgram::new(&device, &graph, &weights, 128, hidden, 16);
+            LEGACY_FLAT_CAPTURE.set(false);
+            let mut reference = reference?;
+            for (count, commit) in [
+                (width, 1),
+                (1, 1),
+                (width - 1, width - 1),
+                (width, width / 2 + 1),
+            ] {
+                let position = candidate.position();
+                let tokens: Vec<_> = (0..count)
+                    .map(|offset| u32::try_from((position + offset + 3) % 16).unwrap())
+                    .collect();
+                let actual = candidate.step_batch(&tokens, position)?;
+                let expected = reference.step_batch(&tokens, position)?;
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(expected) {
+                    assert_checkpoint_hidden_bits(&actual.0, &expected.0, "serial hidden");
+                    assert_checkpoint_hidden_bits(&actual.1, &expected.1, "serial logits");
+                }
+                assert_serial_states(&device, &candidate, &reference)?;
+                candidate.commit_batch(commit)?;
+                reference.commit_batch(commit)?;
+                assert_serial_states(&device, &candidate, &reference)?;
+                let position = candidate.position();
+                let actual = candidate.step(7, position, position, None, true)?;
+                let expected = reference.step(7, position, position, None, true)?;
+                assert_checkpoint_hidden_bits(&actual.0, &expected.0, "continued hidden");
+                assert_checkpoint_hidden_bits(&actual.1, &expected.1, "continued logits");
+                assert_serial_states(&device, &candidate, &reference)?;
+            }
+        }
+    }
+    Ok(())
+}
