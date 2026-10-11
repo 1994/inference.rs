@@ -58,11 +58,37 @@ pub fn run(device: &CudaDevice) -> Result<()> {
         logits: Some(logits),
         ..Default::default()
     };
+    let weights = weights(device, d, id)?;
+    let mut program = DeviceProgram::new(device, &graph, &weights, 16, d, 2)?;
+    for position in 0..16 {
+        let token = u32::from(position % 2 != 0);
+        let embedded: f32 = if token == 0 { 0.25 } else { -0.5 };
+        let previous: f32 = if position % 3 == 0 { -0.1 } else { 0.3 };
+        let expected = (embedded / embedded.mul_add(embedded, 1e-6).sqrt()
+            + previous / previous.mul_add(previous, 1e-6).sqrt())
+            * 1.5;
+        let (actual, _) =
+            program.step(token, position, position, Some(&vec![previous; d]), true)?;
+        if actual
+            .iter()
+            .any(|v| !v.is_finite() || (v - expected).abs() > 1e-4)
+        {
+            return Err(Error::invariant(format!(
+                "MTP fusion mismatch: actual={}, expected={expected}",
+                actual[0]
+            )));
+        }
+    }
+    println!("PASS MTP embedding + dual norm + FC: 16 varied token/hidden replays");
+    Ok(())
+}
+
+fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights> {
     let embedding: Vec<_> = [0.25, -0.5]
         .into_iter()
         .flat_map(|v| vec![bf16::from_f32(v); d])
         .collect();
-    let weights = ProgramWeights {
+    Ok(ProgramWeights {
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -91,27 +117,5 @@ pub fn run(device: &CudaDevice) -> Result<()> {
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
         embeddings: BTreeMap::from([(id, device.upload(embedding, &[2, d])?)]),
-    };
-    let mut program = DeviceProgram::new(device, &graph, &weights, 16, d, 2)?;
-    for position in 0..16 {
-        let token = u32::from(position % 2 != 0);
-        let embedded: f32 = if token == 0 { 0.25 } else { -0.5 };
-        let previous: f32 = if position % 3 == 0 { -0.1 } else { 0.3 };
-        let expected = (embedded / embedded.mul_add(embedded, 1e-6).sqrt()
-            + previous / previous.mul_add(previous, 1e-6).sqrt())
-            * 1.5;
-        let (actual, _) =
-            program.step(token, position, position, Some(&vec![previous; d]), true)?;
-        if actual
-            .iter()
-            .any(|v| !v.is_finite() || (v - expected).abs() > 1e-4)
-        {
-            return Err(Error::invariant(format!(
-                "MTP fusion mismatch: actual={}, expected={expected}",
-                actual[0]
-            )));
-        }
-    }
-    println!("PASS MTP embedding + dual norm + FC: 16 varied token/hidden replays");
-    Ok(())
+    })
 }

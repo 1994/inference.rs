@@ -313,7 +313,9 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
     assert!(retained.batch.is_none());
     assert_eq!(retained.prefill_width(), 64);
     assert!(retained.reclaimable_bytes > pooled.reclaimable_bytes);
-    let prompt: Vec<_> = (0..63).map(|i| (i * 7 % width) as u32).collect();
+    let prompt: Vec<_> = (0..63)
+        .map(|i| u32::try_from(i * 7 % width).expect("fixture token fits"))
+        .collect();
     let expected = retained.prefill_batch(&prompt, 0, true)?;
     let mut actual = pooled.prefill_batch(&prompt[..32], 0, false)?;
     actual.extend(pooled.prefill_batch(&prompt[32..], 32, true)?);
@@ -329,7 +331,7 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
     };
     assert_eq!(bits(&expected), bits(&actual));
     for position in 63..79 {
-        let token = (position % width) as u32;
+        let token = u32::try_from(position % width).expect("fixture token fits");
         let expected = retained.step(token, position, position, None, true)?;
         let actual = pooled.step(token, position, position, None, true)?;
         assert_eq!(

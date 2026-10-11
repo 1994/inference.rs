@@ -1,4 +1,4 @@
-//! Same-weight, same-width comparison isolates recurrent capture from GEMM policy.
+//! Same weights, width, convolution and GEMM policy; only Delta capture differs.
 use crate::{
     device::CudaDevice,
     loading::{LoadOptions, LoadedModel},
@@ -9,15 +9,7 @@ use infer_core::{Error, ModelId, Result};
 #[ignore = "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)"]
 fn checkpoint_chunk_recurrence_matches_legacy_logits() -> Result<()> {
     let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
-    if tokens.is_empty() {
-        return Err(Error::invalid("empty checkpoint test prompt"));
-    }
+    let tokens = checkpoint_tokens()?;
     let width = std::env::var("INFER_TEST_PREFILL_WIDTH")
         .ok()
         .map(|value| {
@@ -39,14 +31,16 @@ fn checkpoint_chunk_recurrence_matches_legacy_logits() -> Result<()> {
             prefill_width: width,
             verification_width: 3,
             autotune: false,
+            // Quantized models otherwise default to scalar Delta, making this check vacuous.
+            chunked_recurrent: true,
             ..LoadOptions::default()
         },
     )?;
     let capacity = (tokens.len() + 32).next_power_of_two();
     let mut candidate = loaded.sequence(capacity)?;
-    super::LEGACY_CAPTURE.set(true);
+    super::LEGACY_DELTA_CAPTURE.set(true);
     let legacy = loaded.sequence(capacity);
-    super::LEGACY_CAPTURE.set(false);
+    super::LEGACY_DELTA_CAPTURE.set(false);
     let mut legacy = legacy?;
     for (chunk, tokens) in tokens.chunks(width).enumerate() {
         let actual = candidate.prefill_batch(tokens, chunk * width, true)?;
@@ -116,6 +110,19 @@ fn checkpoint_chunk_recurrence_matches_legacy_logits() -> Result<()> {
         compare(&a.1, &b.1, "decode logits");
     }
     Ok(())
+}
+
+fn checkpoint_tokens() -> Result<Vec<u32>> {
+    let tokens_path =
+        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> = serde_json::from_slice(
+        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
+    )
+    .map_err(|e| Error::invalid(e.to_string()))?;
+    if tokens.is_empty() {
+        return Err(Error::invalid("empty checkpoint test prompt"));
+    }
+    Ok(tokens)
 }
 
 fn compare(a: &[f32], b: &[f32], label: &str) {

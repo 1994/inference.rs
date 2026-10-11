@@ -268,7 +268,7 @@ fn oracle(
     native: &[f32],
     vendor: &[f32],
     full: bool,
-) -> TestResult<serde_json::Value> {
+) -> serde_json::Value {
     let weight = inputs.weight;
     let count = native.len();
     let samples = if full {
@@ -310,12 +310,12 @@ fn oracle(
             }
         }
     }
-    Ok(serde_json::json!({
+    serde_json::json!({
         "arithmetic": "F64 sum of decoded original input/weight codes, then xs and ws",
         "samples": samples, "full_outputs": full,
         "native_max_absolute_error": native_error, "vendor_max_absolute_error": vendor_error,
         "failed_samples": failed, "failures": failures, "within_numerical_contract": failed == 0,
-    }))
+    })
 }
 
 fn compare_case(
@@ -382,7 +382,7 @@ fn compare_case(
         &native_values,
         &vendor_values,
         independent,
-    )?;
+    );
     native_total.launch().sync_on(&device.stream)?;
     vendor_total.launch().sync_on(&device.stream)?;
     let native_full = (&native).to_host_vec().sync_on(&device.stream)?;
@@ -396,89 +396,34 @@ fn compare_case(
         .iter()
         .zip(&vendor_full)
         .all(|(a, b)| a.to_bits() == b.to_bits());
-    println!(
-        "{}",
-        serde_json::json!({
-            "kind": "correctness", "weight": weight.name, "shape": [rows, weight.n, weight.k],
-            "same_quantized": same_quantized, "full_quantization": full_quantization, "cpu_oracle": cpu,
-            "vendor_workspace_bytes": 0, "fast_accum": false,
-            "native_quantizer_stable": native_quantizer_stable, "vendor_quantizer_stable": vendor_quantizer_stable,
-            "profile_note": "non-bitwise results are not eligible to silently replace the original exact arithmetic profile",
-        })
-    );
-    if same_quantized["within_numerical_contract"] != true
-        || full_quantization["within_numerical_contract"] != true
-        || cpu["within_numerical_contract"] != true
-        || !native_quantizer_stable
-        || !vendor_quantizer_stable
-    {
-        return Err(format!(
-            "{} {rows}x{}x{} failed the recorded numerical contract",
-            weight.name, weight.n, weight.k
-        )
-        .into());
-    }
+    check_case_contract(
+        weight,
+        rows,
+        (&same_quantized, &full_quantization, &cpu),
+        (native_quantizer_stable, vendor_quantizer_stable),
+    )?;
     if !performance {
         return Ok(());
     }
-    let rounds = std::env::var("INFER_TEST_FP8_ROUNDS")
-        .ok()
-        .map(|s| s.parse())
-        .transpose()?
-        .unwrap_or(3_usize);
-    for round in 0..rounds {
-        for clear_l2 in [true, false] {
-            let options = cutile::bench::BenchOptions {
-                warmup: Duration::from_millis(50),
-                rep: Duration::from_millis(100),
-                min_reps: 30,
-                max_reps: 100,
-                clear_l2,
-            };
-            for (scope, left, right) in [
-                (
-                    "prequantized GEMM plus scale epilogue",
-                    &native_raw,
-                    &vendor_raw,
-                ),
-                (
-                    "unchanged quantizer plus GEMM plus scale epilogue",
-                    &native_total,
-                    &vendor_total,
-                ),
-            ] {
-                let (base, candidate) = cutile::bench::do_bench_paired(
-                    &device.stream,
-                    &options,
-                    |_| {
-                        left.launch()
-                            .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
-                    },
-                    |_| {
-                        right
-                            .launch()
-                            .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
-                    },
-                )?;
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "kind": "performance", "weight": weight.name, "shape": [rows, weight.n, weight.k],
-                        "round": round, "clear_l2": clear_l2, "scope": scope,
-                        "native_tile": crate::constants::quant_gemm_tile(rows), "vendor_workspace_bytes": 0,
-                        "native_ms": base.median_ms(), "vendor_ms": candidate.median_ms(),
-                        "speedup": base.median_ms() / candidate.median_ms(),
-                        "native_p95_ms": base.quantile_ms(0.95), "vendor_p95_ms": candidate.quantile_ms(0.95),
-                        "native_samples_ms": base.times_ms(), "vendor_samples_ms": candidate.times_ms(),
-                    })
-                );
-            }
-        }
-    }
-    Ok(())
+    measure_graphs(
+        device,
+        weight,
+        rows,
+        [
+            (
+                "prequantized GEMM plus scale epilogue",
+                &native_raw,
+                &vendor_raw,
+            ),
+            (
+                "unchanged quantizer plus GEMM plus scale epilogue",
+                &native_total,
+                &vendor_total,
+            ),
+        ],
+    )
 }
+
 fn device(performance: bool) -> TestResult<CudaDevice> {
     if performance {
         if cfg!(debug_assertions) {
@@ -649,35 +594,7 @@ fn vendor_fp8_verified_chooser_checkpoint_comparison() -> TestResult {
                     .zip(&actual)
                     .all(|(a, b)| a.is_finite() && b.is_finite() && a.to_bits() == b.to_bits())
             );
-            for clear_l2 in [true, false] {
-                let options = cutile::bench::BenchOptions {
-                    warmup: Duration::from_millis(50),
-                    rep: Duration::from_millis(100),
-                    min_reps: 10,
-                    max_reps: 30,
-                    clear_l2,
-                };
-                let (a, b) = cutile::bench::do_bench_paired(
-                    &device.stream,
-                    &options,
-                    |_| {
-                        base.launch()
-                            .sync_on(&device.stream)
-                            .map_err(|error| cutile::error::tensor_error(&error.to_string()))
-                    },
-                    |_| {
-                        candidate
-                            .launch()
-                            .sync_on(&device.stream)
-                            .map_err(|error| cutile::error::tensor_error(&error.to_string()))
-                    },
-                )?;
-                println!(
-                    "{}",
-                    serde_json::json!({"kind":"verified_chooser","weight":name,"shape":[rows,weight.n,weight.k],"choice":choice,
-                    "finite_bitwise":true,"quantizer_inclusive":true,"clear_l2":clear_l2,"baseline_ms":a.times_ms(),"candidate_ms":b.times_ms(),"speedup":a.median_ms()/b.median_ms()})
-                );
-            }
+            measure_choice(&device, name, &weight, rows, &choice, &base, &candidate)?;
         }
     }
     Ok(())
@@ -768,7 +685,7 @@ fn vendor_fp8_typed_algorithm_restore_roundtrip() -> TestResult {
         &native_values,
         &restored_values,
         true,
-    )?;
+    );
     assert_eq!(cpu["within_numerical_contract"], true);
     println!(
         "{}",
@@ -778,5 +695,135 @@ fn vendor_fp8_typed_algorithm_restore_roundtrip() -> TestResult {
         "finite_bitwise":comparison,"cpu_oracle":cpu,"fast_accum":false,"workspace_bytes":0,
         "profile_note":"this fixture validates typed restoration and numerical acceptance; SDK does not guarantee all-input same-K arithmetic"})
     );
+    Ok(())
+}
+
+type GraphPair<'a> = (&'a str, &'a CudaGraph<()>, &'a CudaGraph<()>);
+
+fn measure_graphs(
+    device: &CudaDevice,
+    weight: &Weight,
+    rows: usize,
+    graphs: [GraphPair<'_>; 2],
+) -> TestResult {
+    let rounds = std::env::var("INFER_TEST_FP8_ROUNDS")
+        .ok()
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(3_usize);
+    for round in 0..rounds {
+        for clear_l2 in [true, false] {
+            let options = cutile::bench::BenchOptions {
+                warmup: Duration::from_millis(50),
+                rep: Duration::from_millis(100),
+                min_reps: 30,
+                max_reps: 100,
+                clear_l2,
+            };
+            for (scope, left, right) in graphs {
+                let (base, candidate) = cutile::bench::do_bench_paired(
+                    &device.stream,
+                    &options,
+                    |_| {
+                        left.launch()
+                            .sync_on(&device.stream)
+                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    },
+                    |_| {
+                        right
+                            .launch()
+                            .sync_on(&device.stream)
+                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    },
+                )?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "kind": "performance", "weight": weight.name, "shape": [rows, weight.n, weight.k],
+                        "round": round, "clear_l2": clear_l2, "scope": scope,
+                        "native_tile": crate::constants::quant_gemm_tile(rows), "vendor_workspace_bytes": 0,
+                        "native_ms": base.median_ms(), "vendor_ms": candidate.median_ms(),
+                        "speedup": base.median_ms() / candidate.median_ms(),
+                        "native_p95_ms": base.quantile_ms(0.95), "vendor_p95_ms": candidate.quantile_ms(0.95),
+                        "native_samples_ms": base.times_ms(), "vendor_samples_ms": candidate.times_ms(),
+                    })
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn measure_choice(
+    device: &CudaDevice,
+    name: &str,
+    weight: &Weight,
+    rows: usize,
+    choice: &crate::tuning::fp8_gemm::Choice,
+    base: &CudaGraph<()>,
+    candidate: &CudaGraph<()>,
+) -> TestResult {
+    for clear_l2 in [true, false] {
+        let options = cutile::bench::BenchOptions {
+            warmup: Duration::from_millis(50),
+            rep: Duration::from_millis(100),
+            min_reps: 10,
+            max_reps: 30,
+            clear_l2,
+        };
+        let (a, b) = cutile::bench::do_bench_paired(
+            &device.stream,
+            &options,
+            |_| {
+                base.launch()
+                    .sync_on(&device.stream)
+                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+            },
+            |_| {
+                candidate
+                    .launch()
+                    .sync_on(&device.stream)
+                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+            },
+        )?;
+        println!(
+            "{}",
+            serde_json::json!({"kind":"verified_chooser","weight":name,"shape":[rows,weight.n,weight.k],"choice":choice,
+                    "finite_bitwise":true,"quantizer_inclusive":true,"clear_l2":clear_l2,"baseline_ms":a.times_ms(),"candidate_ms":b.times_ms(),"speedup":a.median_ms()/b.median_ms()})
+        );
+    }
+    Ok(())
+}
+
+fn check_case_contract(
+    weight: &Weight,
+    rows: usize,
+    reports: (&serde_json::Value, &serde_json::Value, &serde_json::Value),
+    stable: (bool, bool),
+) -> TestResult {
+    let (same_quantized, full_quantization, cpu) = reports;
+    let (native_quantizer_stable, vendor_quantizer_stable) = stable;
+    println!(
+        "{}",
+        serde_json::json!({
+            "kind": "correctness", "weight": weight.name, "shape": [rows, weight.n, weight.k],
+            "same_quantized": same_quantized, "full_quantization": full_quantization, "cpu_oracle": cpu,
+            "vendor_workspace_bytes": 0, "fast_accum": false,
+            "native_quantizer_stable": native_quantizer_stable, "vendor_quantizer_stable": vendor_quantizer_stable,
+            "profile_note": "non-bitwise results are not eligible to silently replace the original exact arithmetic profile",
+        })
+    );
+    if same_quantized["within_numerical_contract"] != true
+        || full_quantization["within_numerical_contract"] != true
+        || cpu["within_numerical_contract"] != true
+        || !native_quantizer_stable
+        || !vendor_quantizer_stable
+    {
+        return Err(format!(
+            "{} {rows}x{}x{} failed the recorded numerical contract",
+            weight.name, weight.n, weight.k
+        )
+        .into());
+    }
     Ok(())
 }

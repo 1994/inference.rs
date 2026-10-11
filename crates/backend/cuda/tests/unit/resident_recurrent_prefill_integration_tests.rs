@@ -28,73 +28,7 @@ fn fixture_at(
     let qkv_columns = (2 * key_heads + value_heads) * dim;
     let gate_columns = value_heads;
     let out_columns = value_heads * dim;
-    let mut graph = DataflowGraph::default();
-    for (id, shape, kind) in [
-        (1, vec![16, qkv_columns], 0),
-        (2, vec![qkv_columns], 1),
-        (3, vec![16, gate_columns], 0),
-        (4, vec![gate_columns], 1),
-        (5, vec![16, gate_columns], 0),
-        (6, vec![gate_columns], 1),
-        (7, vec![value_heads], 0),
-        (8, vec![value_heads], 0),
-        (9, vec![value_heads, dim, dim], 2),
-        (10, vec![out_columns], 1),
-        (11, vec![16, out_columns], 0),
-        (12, vec![16], 1),
-    ] {
-        let storage = match kind {
-            0 => TensorStorage::Weight {
-                slot: format!("w{id}"),
-            },
-            1 => TensorStorage::Activation,
-            _ => TensorStorage::State {
-                layer: 0,
-                kind: StateKind::LinearAttention,
-            },
-        };
-        graph.tensors.push(TensorSpec {
-            id: TensorId::new(id)?,
-            shape,
-            dtype: DType::F32,
-            storage,
-        });
-    }
-    for (id, op, inputs, output, state) in [
-        (1, TensorOp::Embedding, vec![1], 2, None),
-        (2, TensorOp::Embedding, vec![3], 4, None),
-        (3, TensorOp::Embedding, vec![5], 6, None),
-        (
-            4,
-            TensorOp::Delta {
-                key_heads,
-                value_heads,
-                key_dim: dim,
-                value_dim: dim,
-            },
-            vec![2, 4, 6, 7, 8],
-            10,
-            Some(9),
-        ),
-        (5, TensorOp::Linear, vec![10, 11], 12, None),
-    ] {
-        graph.nodes.push(TensorNode {
-            id: OpId::new(id)?,
-            layer: None,
-            op,
-            inputs: inputs
-                .into_iter()
-                .map(TensorId::new)
-                .collect::<Result<_>>()?,
-            outputs: vec![TensorId::new(output)?],
-            states: state
-                .into_iter()
-                .map(TensorId::new)
-                .collect::<Result<_>>()?,
-        });
-    }
-    graph.hidden = Some(TensorId::new(10)?);
-    graph.logits = Some(TensorId::new(12)?);
+    let graph = graph_at((key_heads, value_heads, dim))?;
     let mut embeddings = BTreeMap::new();
     for (id, columns) in [(1, qkv_columns), (3, gate_columns), (5, gate_columns)] {
         let data = super::tests::values(16 * columns, usize::try_from(id).unwrap() + 2)
@@ -347,4 +281,78 @@ fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn graph_at((key_heads, value_heads, dim): DeltaGeometry) -> Result<DataflowGraph> {
+    let qkv_columns = (2 * key_heads + value_heads) * dim;
+    let gate_columns = value_heads;
+    let out_columns = value_heads * dim;
+    let mut graph = DataflowGraph::default();
+    for (id, shape, kind) in [
+        (1, vec![16, qkv_columns], 0),
+        (2, vec![qkv_columns], 1),
+        (3, vec![16, gate_columns], 0),
+        (4, vec![gate_columns], 1),
+        (5, vec![16, gate_columns], 0),
+        (6, vec![gate_columns], 1),
+        (7, vec![value_heads], 0),
+        (8, vec![value_heads], 0),
+        (9, vec![value_heads, dim, dim], 2),
+        (10, vec![out_columns], 1),
+        (11, vec![16, out_columns], 0),
+        (12, vec![16], 1),
+    ] {
+        let storage = match kind {
+            0 => TensorStorage::Weight {
+                slot: format!("w{id}"),
+            },
+            1 => TensorStorage::Activation,
+            _ => TensorStorage::State {
+                layer: 0,
+                kind: StateKind::LinearAttention,
+            },
+        };
+        graph.tensors.push(TensorSpec {
+            id: TensorId::new(id)?,
+            shape,
+            dtype: DType::F32,
+            storage,
+        });
+    }
+    for (id, op, inputs, output, state) in [
+        (1, TensorOp::Embedding, vec![1], 2, None),
+        (2, TensorOp::Embedding, vec![3], 4, None),
+        (3, TensorOp::Embedding, vec![5], 6, None),
+        (
+            4,
+            TensorOp::Delta {
+                key_heads,
+                value_heads,
+                key_dim: dim,
+                value_dim: dim,
+            },
+            vec![2, 4, 6, 7, 8],
+            10,
+            Some(9),
+        ),
+        (5, TensorOp::Linear, vec![10, 11], 12, None),
+    ] {
+        graph.nodes.push(TensorNode {
+            id: OpId::new(id)?,
+            layer: None,
+            op,
+            inputs: inputs
+                .into_iter()
+                .map(TensorId::new)
+                .collect::<Result<_>>()?,
+            outputs: vec![TensorId::new(output)?],
+            states: state
+                .into_iter()
+                .map(TensorId::new)
+                .collect::<Result<_>>()?,
+        });
+    }
+    graph.hidden = Some(TensorId::new(10)?);
+    graph.logits = Some(TensorId::new(12)?);
+    Ok(graph)
 }

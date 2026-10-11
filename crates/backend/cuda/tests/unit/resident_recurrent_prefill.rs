@@ -26,13 +26,22 @@ fn chunk_delta_matches_independent_recurrence() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn check_case(
-    device: &CudaDevice,
-    geometry: (usize, usize, usize, usize),
+struct ReferenceFixture {
+    qkv: Vec<f32>,
+    beta: Vec<f32>,
+    alpha: Vec<f32>,
+    a_log: Vec<f32>,
+    bias: Vec<f32>,
+    initial: Vec<f32>,
+    expected: Vec<f64>,
+    outputs: Vec<f64>,
+}
+
+fn reference_fixture(
+    (kh, vh, dim, lanes): (usize, usize, usize, usize),
     count: usize,
     offset: i32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (kh, vh, dim, lanes) = geometry;
+) -> Result<ReferenceFixture, Box<dyn std::error::Error>> {
     let qkv = values(lanes * (2 * kh + vh) * dim, 17);
     let beta = values(lanes * vh, 13);
     let alpha = values(lanes * vh, 7);
@@ -87,6 +96,35 @@ fn check_case(
             }
         }
     }
+    Ok(ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    })
+}
+
+fn check_case(
+    device: &CudaDevice,
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (kh, vh, dim, lanes) = geometry;
+    let ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    } = reference_fixture(geometry, count, offset)?;
     let qkv = device.upload(qkv, &[lanes, 2 * kh + vh, dim])?;
     let beta = device.upload(beta, &[lanes, vh])?;
     let alpha = device.upload(alpha, &[lanes, vh])?;
@@ -166,53 +204,16 @@ fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (kh, vh, dim) = (16_usize, 48_usize, 128_usize);
-    let qkv = values((2 * kh + vh) * dim, 17);
-    let beta = values(vh, 13);
-    let alpha = values(vh, 7);
-    let a_log = values(vh, 3);
-    let bias = values(vh, 5);
-    let initial = values(vh * dim * dim, 23);
-    let mut expected: Vec<f64> = initial.iter().copied().map(f64::from).collect();
-    let mut outputs = vec![0.0_f64; vh * dim];
-    for head in 0..vh {
-        let key = head / (vh / kh);
-        let mut q: Vec<f64> = qkv[key * dim..][..dim]
-            .iter()
-            .copied()
-            .map(f64::from)
-            .collect();
-        let mut k: Vec<f64> = qkv[(kh + key) * dim..][..dim]
-            .iter()
-            .copied()
-            .map(f64::from)
-            .collect();
-        let qnorm = (q.iter().map(|x| x * x).sum::<f64>() + 1e-6).sqrt()
-            * f64::from(u32::try_from(dim)?).sqrt();
-        let knorm = (k.iter().map(|x| x * x).sum::<f64>() + 1e-6).sqrt();
-        for x in &mut q {
-            *x /= qnorm;
-        }
-        for x in &mut k {
-            *x /= knorm;
-        }
-        let b = 1.0 / (1.0 + (-f64::from(beta[head])).exp());
-        let a = f64::from(alpha[head]) + f64::from(bias[head]);
-        let decay = (-f64::from(a_log[head]).exp() * a.exp().ln_1p()).exp();
-        let state = &mut expected[head * dim * dim..][..dim * dim];
-        for x in state.iter_mut() {
-            *x *= decay;
-        }
-        for col in 0..dim {
-            let prediction = (0..dim)
-                .map(|row| state[row * dim + col] * k[row])
-                .sum::<f64>();
-            let delta = (f64::from(qkv[(2 * kh + head) * dim + col]) - prediction) * b;
-            for row in 0..dim {
-                state[row * dim + col] = k[row].mul_add(delta, state[row * dim + col]);
-            }
-            outputs[head * dim + col] = (0..dim).map(|row| state[row * dim + col] * q[row]).sum();
-        }
-    }
+    let ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    } = reference_fixture((kh, vh, dim, 1), 1, 0)?;
     let mut single_block: Option<(Vec<f32>, Vec<f32>)> = None;
     let qkv = device.upload(qkv, &[(2 * kh + vh) * dim])?;
     let beta = device.upload(beta, &[vh])?;
@@ -304,7 +305,9 @@ fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::err
     for head in 0..value_heads {
         for lane in 0..lanes {
             for d in 0..dim {
-                scratch[(head * lanes + lane) * dim + d] = (head * 1000 + lane * 100 + d) as f32;
+                scratch[(head * lanes + lane) * dim + d] = f32::from(
+                    u16::try_from(head * 1000 + lane * 100 + d).expect("fixture value fits"),
+                );
             }
         }
     }
@@ -317,7 +320,9 @@ fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::err
     for lane in 0..lanes {
         for head in 0..value_heads {
             for d in 0..dim {
-                let expected = (head * 1000 + lane * 100 + d) as f32;
+                let expected = f32::from(
+                    u16::try_from(head * 1000 + lane * 100 + d).expect("fixture value fits"),
+                );
                 assert_eq!(
                     actual[(lane * value_heads + head) * dim + d],
                     expected,
@@ -352,8 +357,8 @@ fn recurrence_gap(
     let qkv_c = device.upload(qkv.clone(), &[lanes, heads, dim])?;
     let beta_c = device.upload(beta.clone(), &[lanes, vh])?;
     let alpha_c = device.upload(alpha.clone(), &[lanes, vh])?;
-    let a_log_c = device.upload(a_log.clone(), &[vh])?;
-    let bias_c = device.upload(bias.clone(), &[vh])?;
+    let a_log_c = device.upload(a_log, &[vh])?;
+    let bias_c = device.upload(bias, &[vh])?;
     let metadata = device.upload(vec![0, i32::try_from(count)?, 0, 0], &[4])?;
     kernels::delta(
         (&mut state_c).partition([1, dim, dim]),
@@ -422,34 +427,14 @@ fn recurrence_gap(
         .zip(&lane_state)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0_f32, f32::max);
-    if std::env::var_os("INFER_GAP_INDEX").is_some() {
-        let differing: Vec<usize> = chunk_out
-            .iter()
-            .zip(&expected_out)
-            .enumerate()
-            .filter(|(_, (a, b))| a != b)
-            .map(|(i, _)| i)
-            .collect();
-        eprintln!(
-            "lanes={lanes} count={count} differing_outputs={}/{} first={:?}",
-            differing.len(),
-            chunk_out.len(),
-            differing.iter().take(6).collect::<Vec<_>>()
-        );
-        let state_differing: Vec<usize> = chunk_state
-            .iter()
-            .zip(&lane_state)
-            .enumerate()
-            .filter(|(_, (a, b))| a != b)
-            .map(|(i, _)| i)
-            .collect();
-        eprintln!(
-            "  differing_states={}/{} first={:?}",
-            state_differing.len(),
-            chunk_state.len(),
-            state_differing.iter().take(6).collect::<Vec<_>>()
-        );
-    }
+    print_gap_indices(
+        &chunk_out,
+        &expected_out,
+        &chunk_state,
+        &lane_state,
+        lanes,
+        count,
+    );
     Ok((state_gap, out_gap))
 }
 
@@ -491,4 +476,42 @@ fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Er
         "chunked and per-lane recurrences differ"
     );
     Ok(())
+}
+
+fn print_gap_indices(
+    chunk_out: &[f32],
+    expected_out: &[f32],
+    chunk_state: &[f32],
+    lane_state: &[f32],
+    lanes: usize,
+    count: usize,
+) {
+    if std::env::var_os("INFER_GAP_INDEX").is_some() {
+        let differing: Vec<usize> = chunk_out
+            .iter()
+            .zip(expected_out)
+            .enumerate()
+            .filter(|(_, (a, b))| a.to_bits() != b.to_bits())
+            .map(|(i, _)| i)
+            .collect();
+        eprintln!(
+            "lanes={lanes} count={count} differing_outputs={}/{} first={:?}",
+            differing.len(),
+            chunk_out.len(),
+            differing.iter().take(6).collect::<Vec<_>>()
+        );
+        let state_differing: Vec<usize> = chunk_state
+            .iter()
+            .zip(lane_state)
+            .enumerate()
+            .filter(|(_, (a, b))| a.to_bits() != b.to_bits())
+            .map(|(i, _)| i)
+            .collect();
+        eprintln!(
+            "  differing_states={}/{} first={:?}",
+            state_differing.len(),
+            chunk_state.len(),
+            state_differing.iter().take(6).collect::<Vec<_>>()
+        );
+    }
 }

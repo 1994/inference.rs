@@ -85,7 +85,7 @@ fn kv_block_bytes_counts_attention_states_in_storage_bytes() -> Result<()> {
             shape: vec![64, 512],
             dtype: DType::F32,
             storage: TensorStorage::State {
-                layer: id as usize,
+                layer: usize::try_from(id).expect("fixture layer index fits usize"),
                 kind: StateKind::AttentionKv,
             },
         })

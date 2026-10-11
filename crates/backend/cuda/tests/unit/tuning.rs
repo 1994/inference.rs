@@ -36,7 +36,7 @@ fn trial(rows: usize, columns: usize, selected: LinearTiling) -> ProjectionTrial
     }
 }
 
-fn filesystem(error: std::io::Error) -> Error {
+fn filesystem(error: &std::io::Error) -> Error {
     Error::invalid(format!("test filesystem: {error}"))
 }
 
@@ -50,7 +50,7 @@ impl TemporaryDirectory {
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir(&path).map_err(filesystem)?;
+        std::fs::create_dir(&path).map_err(|error| filesystem(&error))?;
         Ok(Self(path))
     }
 }
@@ -175,7 +175,7 @@ fn measured_cache_keys_include_device_identity() -> Result<()> {
 fn persist_atomically_migrates_and_retains_multiple_devices() -> Result<()> {
     let directory = TemporaryDirectory::new()?;
     let path = directory.0.join("tuning.json");
-    std::fs::write(&path, TABLE).map_err(filesystem)?;
+    std::fs::write(&path, TABLE).map_err(|error| filesystem(&error))?;
     let a_tile = LinearTiling::new(4, 128)?;
     let b_tile = LinearTiling::new(8, 256)?;
     assert!(persist(Some(&path), DEVICE_B, &trial(48, 5120, b_tile)));
@@ -186,7 +186,9 @@ fn persist_atomically_migrates_and_retains_multiple_devices() -> Result<()> {
     assert_eq!(table.tiling_for(DEVICE_B, "bf16", 48, 5120)?, Some(b_tile));
     assert_eq!(table.devices[DEVICE_A].len(), 2);
     assert_eq!(
-        std::fs::read_dir(&directory.0).map_err(filesystem)?.count(),
+        std::fs::read_dir(&directory.0)
+            .map_err(|error| filesystem(&error))?
+            .count(),
         1
     );
     let fresh = directory.0.join("nested/tuning.json");
@@ -206,21 +208,23 @@ fn persist_reports_failures_and_preserves_existing_data() -> Result<()> {
     let path = directory.0.join("tuning.json");
     assert!(!persist(Some(&path), "", &trial));
     assert!(!path.exists());
-    std::fs::write(&path, "malformed table").map_err(filesystem)?;
+    std::fs::write(&path, "malformed table").map_err(|error| filesystem(&error))?;
     assert!(!persist(Some(&path), DEVICE_A, &trial));
     assert_eq!(
-        std::fs::read_to_string(&path).map_err(filesystem)?,
+        std::fs::read_to_string(&path).map_err(|error| filesystem(&error))?,
         "malformed table"
     );
     // An existing file cannot serve as a parent directory, independent of test user permissions.
     assert!(!persist(Some(&path.join("child.json")), DEVICE_A, &trial));
     // A rename onto a directory fails after creating a temporary file; that file must be removed.
     let target = directory.0.join("directory.json");
-    std::fs::create_dir(&target).map_err(filesystem)?;
+    std::fs::create_dir(&target).map_err(|error| filesystem(&error))?;
     assert!(!persist(Some(&target), DEVICE_A, &trial));
     assert!(target.is_dir());
     assert_eq!(
-        std::fs::read_dir(&directory.0).map_err(filesystem)?.count(),
+        std::fs::read_dir(&directory.0)
+            .map_err(|error| filesystem(&error))?
+            .count(),
         2
     );
     Ok(())
@@ -234,8 +238,8 @@ fn shipped_baseline_answers_only_the_device_it_was_measured_on() -> Result<()> {
         "shipped entries must identify their hardware"
     );
     for (device, entries) in &table.devices {
-        assert!(!device.is_empty());
-        assert!(!entries.is_empty());
+        assert_ne!(device, "");
+        assert_ne!(entries.len(), 0);
         for entry in entries {
             let expected = LinearTiling::new(entry.tile_rows, entry.tile_columns)?;
             assert_eq!(

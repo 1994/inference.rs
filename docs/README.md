@@ -61,6 +61,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [GPU draft 采样实验](research/cuda-device-greedy-mtp-2026-10-12.md) | 硬件自适应 reducer、完整输出验证和六组配对；未默认合入的原因 |
 | [完整 GPU token readout](research/cuda-full-device-token-readout-2026-10-12.md) | 普通/推测/pooled 输出契约、硬件 tuning、九项 GPU 验证和五组有效服务配对 |
 | [Pooled 图几何与准入](research/cuda-pooled-admission-geometry-2026-10-12.md) | capture/workspace/预算一致性、五组批量吞吐收益及 TTFT/TPOT 取舍 |
+| [GDN 数值与 FP8 准备成本](research/cuda-gdn-numerics-and-fp8-preparation-2026-10-12.md) | 修复分块检查假阳性、同路径 sanity control 和重复量化成本；分块仍未验收 |
 
 ## 维护约定
 

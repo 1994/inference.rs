@@ -125,3 +125,7 @@ prefill/verify/draft 宽度、slot 容量、workspace 和 graph 池策略应共�
 | `vllm-main-pull.json` | `eb83f6a24fd4b3a36eddbe8238f1600f2330da76896b56be265dcd2457ca294c` |
 
 当前微基准没有任务质量验收，服务对照没有达到新基线统计条件，最新 main 也尚未实测。本文的数字用于决定下一次实验的对象，不登记新的性能基线。
+
+## 后续受控证据
+
+上述候选表保留首次调查的身份与数据。当前已合入的 GPU readout、pooled 几何准入修复见对应独立报告。新增 [GDN 数值与 FP8 准备成本](cuda-gdn-numerics-and-fp8-preparation-2026-10-12.md)记录 0f2003f 基点的实验：重复 FP8 准备约 0.28 ms/48 层；修复检查假阳性并保持卷积相同后，Delta 分块仍未过数值门槛。同路径对照为零误差；尚无最新 main 的正式跨引擎实测。

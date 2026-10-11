@@ -102,7 +102,7 @@ fn check_case(
     let identity: Vec<i32> = (0..blocks)
         .map(|b| i32::try_from(b).expect("blocks fit"))
         .collect();
-    let table = device.upload(identity.clone(), &[blocks])?;
+    let table = device.upload(identity, &[blocks])?;
     kernels::append(
         (&mut keys).partition([1, CAPACITY, DIM]),
         (&mut values).partition([1, CAPACITY, DIM]),
@@ -126,56 +126,15 @@ fn check_case(
     let swapped: Vec<i32> = (0..blocks)
         .map(|b| i32::try_from(b ^ 1).expect("blocks fit"))
         .collect();
-    let swapped_table = device.upload(swapped.clone(), &[blocks])?;
-    let mut moved_keys =
-        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 13)))
-            .sync_on(&device.stream)?
-            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
-    let mut moved_values =
-        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 17)))
-            .sync_on(&device.stream)?
-            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
-    kernels::append(
-        (&mut moved_keys).partition([1, CAPACITY, DIM]),
-        (&mut moved_values).partition([1, CAPACITY, DIM]),
+    let swapped_table = check_permuted_append(
+        device,
         &key_device,
         &value_device,
         &metadata,
-        &swapped_table,
-        1.0,
-        1.0,
-    )
-    .generics(vec![
-        "f32".into(),
-        DIM.to_string(),
-        CAPACITY.to_string(),
-        "0".into(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
-    ])
-    .sync_on(&device.stream)?;
-    let mut expected_moved = data(KV_HEADS * CAPACITY * DIM, 13);
-    for lane in 0..usize::try_from(count)? {
-        let position = start + i32::try_from(lane)? + offset;
-        if position < 0 {
-            continue;
-        }
-        let position = usize::try_from(position)?;
-        let logical = position / crate::constants::KV_BLOCK_TOKENS;
-        let row = usize::try_from(swapped[logical]).expect("blocks fit")
-            * crate::constants::KV_BLOCK_TOKENS
-            + position % crate::constants::KV_BLOCK_TOKENS;
-        for head in 0..KV_HEADS {
-            let src = (lane * KV_HEADS + head) * DIM;
-            let dst = (head * CAPACITY + row) * DIM;
-            expected_moved[dst..dst + DIM].copy_from_slice(&key[src..src + DIM]);
-        }
-    }
-    assert_eq!(
-        moved_keys.to_host_vec().sync_on(&device.stream)?,
-        expected_moved,
-        "append ignored the block table"
-    );
-    let _ = moved_values;
+        &key,
+        &swapped,
+        case,
+    )?;
     let mut output = api::zeros::<f32>(&[lanes * HEADS, DIM]).sync_on(&device.stream)?;
     kernels::decode(
         (&mut output).partition([1, DIM]),
@@ -218,78 +177,15 @@ fn check_case(
     // (32x256 f32 accumulators) while 16 is the mma minimum and doubles the CTA count.
     // Relocate the entire cache, including history before this chunk. A tensor-core query
     // must resolve both K and V through the same non-identity table.
-    let mut permuted_keys = vec![0.0_f32; expected_keys.len()];
-    let mut permuted_values = vec![0.0_f32; expected_values.len()];
-    let block_elements = crate::constants::KV_BLOCK_TOKENS * DIM;
-    for head in 0..KV_HEADS {
-        for (logical, &physical) in swapped.iter().enumerate() {
-            let source = head * CAPACITY * DIM + logical * block_elements;
-            let target = head * CAPACITY * DIM + usize::try_from(physical)? * block_elements;
-            permuted_keys[target..target + block_elements]
-                .copy_from_slice(&expected_keys[source..source + block_elements]);
-            permuted_values[target..target + block_elements]
-                .copy_from_slice(&expected_values[source..source + block_elements]);
-        }
-    }
-    let permuted_keys = device.upload(permuted_keys, &[KV_HEADS, CAPACITY, DIM])?;
-    let permuted_values = device.upload(permuted_values, &[KV_HEADS, CAPACITY, DIM])?;
-    for (keys, values, table) in [
-        (&keys, &values, &table),
-        (&permuted_keys, &permuted_values, &swapped_table),
-    ] {
-        for qt in [16_usize, 32] {
-            let mut tiled = api::zeros::<f32>(&[lanes, HEADS * DIM]).sync_on(&device.stream)?;
-            let query_tiled = query_device.view(&[lanes, HEADS * DIM])?;
-            let scale = 1.0 / f32::from(u16::try_from(DIM).expect("dim fits in u16")).sqrt();
-            kernels::decode_tiled(
-                (&mut tiled).partition([qt, DIM]),
-                &query_tiled,
-                keys,
-                values,
-                &metadata,
-                table,
-                window,
-                1.0,
-                1.0,
-                scale,
-            )
-            .generics(vec![
-                "f32".into(),
-                DIM.to_string(),
-                (HEADS / KV_HEADS).to_string(),
-                qt.to_string(),
-                LANES.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
-            ])
-            .sync_on(&device.stream)?;
-            let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;
-            for lane in 0..lanes {
-                let position = start + i32::try_from(lane)? + offset;
-                for head in 0..HEADS {
-                    let base = (lane * HEADS + head) * DIM;
-                    let expected = if lane < usize::try_from(count)? && position >= 0 {
-                        reference(
-                            &query[base..base + DIM],
-                            &expected_keys,
-                            &expected_values,
-                            head,
-                            usize::try_from(position)?,
-                            usize::try_from(window)?,
-                        )
-                    } else {
-                        vec![0.0; DIM]
-                    };
-                    for (dim, expected) in expected.into_iter().enumerate() {
-                        let error = (f64::from(tiled_actual[base + dim]) - expected).abs();
-                        assert!(
-                            error <= 1e-4 * expected.abs().max(1.0),
-                            "tiled qt={qt} start={start} count={count} offset={offset} window={window} lane={lane} head={head} dim={dim} error={error}"
-                        );
-                    }
-                }
-            }
-        }
-    }
+    check_tiled_decode(
+        device,
+        &query_device,
+        (&keys, &values, &table, &swapped_table),
+        &metadata,
+        (&query, &expected_keys, &expected_values),
+        &swapped,
+        (lanes, case),
+    )?;
     Ok(())
 }
 
@@ -337,6 +233,164 @@ fn chunk_rotary_uses_each_token_position_and_preserves_unrotated_tail()
                 (actual[base + d] - expected).abs() < 2e-5,
                 "rotary row={row} dimension={d}"
             );
+        }
+    }
+    Ok(())
+}
+
+fn check_permuted_append(
+    device: &CudaDevice,
+    key_device: &Tensor<f32>,
+    value_device: &Tensor<f32>,
+    metadata: &Tensor<i32>,
+    key: &[f32],
+    swapped: &[i32],
+    (start, count, offset, _): (i32, i32, i32, i32),
+) -> Result<Arc<Tensor<i32>>, Box<dyn std::error::Error>> {
+    let blocks = swapped.len();
+    let swapped_table = device.upload(swapped.to_vec(), &[blocks])?;
+    let mut moved_keys =
+        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 13)))
+            .sync_on(&device.stream)?
+            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
+    let mut moved_values =
+        api::copy_host_vec_to_device(&Arc::new(data(KV_HEADS * CAPACITY * DIM, 17)))
+            .sync_on(&device.stream)?
+            .reshape(&[KV_HEADS, CAPACITY, DIM])?;
+    kernels::append(
+        (&mut moved_keys).partition([1, CAPACITY, DIM]),
+        (&mut moved_values).partition([1, CAPACITY, DIM]),
+        key_device,
+        value_device,
+        metadata,
+        &swapped_table,
+        1.0,
+        1.0,
+    )
+    .generics(vec![
+        "f32".into(),
+        DIM.to_string(),
+        CAPACITY.to_string(),
+        "0".into(),
+        crate::constants::KV_BLOCK_TOKENS.to_string(),
+    ])
+    .sync_on(&device.stream)?;
+    let mut expected_moved = data(KV_HEADS * CAPACITY * DIM, 13);
+    for lane in 0..usize::try_from(count)? {
+        let position = start + i32::try_from(lane)? + offset;
+        if position < 0 {
+            continue;
+        }
+        let position = usize::try_from(position)?;
+        let logical = position / crate::constants::KV_BLOCK_TOKENS;
+        let row = usize::try_from(swapped[logical]).expect("blocks fit")
+            * crate::constants::KV_BLOCK_TOKENS
+            + position % crate::constants::KV_BLOCK_TOKENS;
+        for head in 0..KV_HEADS {
+            let src = (lane * KV_HEADS + head) * DIM;
+            let dst = (head * CAPACITY + row) * DIM;
+            expected_moved[dst..dst + DIM].copy_from_slice(&key[src..src + DIM]);
+        }
+    }
+    assert_eq!(
+        moved_keys.to_host_vec().sync_on(&device.stream)?,
+        expected_moved,
+        "append ignored the block table"
+    );
+    let _ = moved_values;
+    Ok(swapped_table)
+}
+
+type CacheViews<'a> = (
+    &'a Tensor<f32>,
+    &'a Tensor<f32>,
+    &'a Tensor<i32>,
+    &'a Tensor<i32>,
+);
+type HostCache<'a> = (&'a [f32], &'a [f32], &'a [f32]);
+
+fn check_tiled_decode(
+    device: &CudaDevice,
+    query_device: &Tensor<f32>,
+    cache: CacheViews<'_>,
+    metadata: &Tensor<i32>,
+    reference_data: HostCache<'_>,
+    swapped: &[i32],
+    geometry: (usize, (i32, i32, i32, i32)),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (keys, values, table, swapped_table) = cache;
+    let (query, expected_keys, expected_values) = reference_data;
+    let (lanes, (start, count, offset, window)) = geometry;
+    let mut permuted_keys = vec![0.0_f32; expected_keys.len()];
+    let mut permuted_values = vec![0.0_f32; expected_values.len()];
+    let block_elements = crate::constants::KV_BLOCK_TOKENS * DIM;
+    for head in 0..KV_HEADS {
+        for (logical, &physical) in swapped.iter().enumerate() {
+            let source = head * CAPACITY * DIM + logical * block_elements;
+            let target = head * CAPACITY * DIM + usize::try_from(physical)? * block_elements;
+            permuted_keys[target..target + block_elements]
+                .copy_from_slice(&expected_keys[source..source + block_elements]);
+            permuted_values[target..target + block_elements]
+                .copy_from_slice(&expected_values[source..source + block_elements]);
+        }
+    }
+    let permuted_keys = device.upload(permuted_keys, &[KV_HEADS, CAPACITY, DIM])?;
+    let permuted_values = device.upload(permuted_values, &[KV_HEADS, CAPACITY, DIM])?;
+    for (keys, values, table) in [
+        (keys, values, table),
+        (&permuted_keys, &permuted_values, swapped_table),
+    ] {
+        for qt in [16_usize, 32] {
+            let mut tiled = api::zeros::<f32>(&[lanes, HEADS * DIM]).sync_on(&device.stream)?;
+            let query_tiled = query_device.view(&[lanes, HEADS * DIM])?;
+            let scale = 1.0 / f32::from(u16::try_from(DIM).expect("dim fits in u16")).sqrt();
+            kernels::decode_tiled(
+                (&mut tiled).partition([qt, DIM]),
+                &query_tiled,
+                keys,
+                values,
+                metadata,
+                table,
+                window,
+                1.0,
+                1.0,
+                scale,
+            )
+            .generics(vec![
+                "f32".into(),
+                DIM.to_string(),
+                (HEADS / KV_HEADS).to_string(),
+                qt.to_string(),
+                LANES.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
+            ])
+            .sync_on(&device.stream)?;
+            let tiled_actual = tiled.to_host_vec().sync_on(&device.stream)?;
+            for lane in 0..lanes {
+                let position = start + i32::try_from(lane)? + offset;
+                for head in 0..HEADS {
+                    let base = (lane * HEADS + head) * DIM;
+                    let expected = if lane < usize::try_from(count)? && position >= 0 {
+                        reference(
+                            &query[base..base + DIM],
+                            expected_keys,
+                            expected_values,
+                            head,
+                            usize::try_from(position)?,
+                            usize::try_from(window)?,
+                        )
+                    } else {
+                        vec![0.0; DIM]
+                    };
+                    for (dim, expected) in expected.into_iter().enumerate() {
+                        let error = (f64::from(tiled_actual[base + dim]) - expected).abs();
+                        assert!(
+                            error <= 1e-4 * expected.abs().max(1.0),
+                            "tiled qt={qt} start={start} count={count} offset={offset} window={window} lane={lane} head={head} dim={dim} error={error}"
+                        );
+                    }
+                }
+            }
         }
     }
     Ok(())

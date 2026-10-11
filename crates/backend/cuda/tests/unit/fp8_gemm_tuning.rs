@@ -7,7 +7,7 @@ fn key() -> Key {
         driver_build: Some("test-driver-build".into()),
         kernel_fingerprint: "all-six-frontend-identities".into(),
         library: Some(LibraryIdentity {
-            lt_version: 130001,
+            lt_version: 130_001,
             cudart_version: 13000,
         }),
         contract: CONTRACT.into(),
@@ -87,7 +87,7 @@ fn fp8_typed_keys_isolate_library_driver_compiler_contract_and_geometry() -> Res
             0 => other.m += 1,
             1 => other.n += 1,
             _ => other.k += 1,
-        };
+        }
         variants.push(other);
     }
     assert!(variants.into_iter().all(|changed| changed != original));
