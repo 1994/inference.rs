@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -109,7 +110,40 @@ def classify(relative):
     return "src_inline"
 
 
-def scan_crate(root):
+def uncommitted():
+    """Repo-relative paths whose working-tree content is not what the index holds.
+
+    Recording the corpus from a tree that still holds someone else's uncommitted tests was how a
+    record came to describe 475 cases when the committed tree held 467. The record has to describe
+    what is committed, so files that differ from the index are left out and reported.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    return dirty_paths(result.stdout)
+
+
+def dirty_paths(porcelain):
+    """The paths in `git status --porcelain` output, renames resolved to the new name."""
+    paths = set()
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        name = line[3:].strip()
+        if " -> " in name:
+            name = name.split(" -> ", 1)[1]
+        paths.add(name.strip('"'))
+    return paths
+
+
+def scan_crate(root, dirty=frozenset()):
     entries = {"src_inline": 0, "src_near": 0, "tests": 0, "benches": 0}
     ignored = {}
     gated = {}
@@ -119,6 +153,14 @@ def scan_crate(root):
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.rs")):
+            # Tests may scan a temporary crate outside the repository, which has no status.
+            try:
+                relative_repo = str(path.relative_to(REPO_ROOT))
+            except ValueError:
+                relative_repo = None
+            if relative_repo is not None and relative_repo in dirty:
+                scan_crate.skipped.add(relative_repo)
+                continue
             text = path.read_text(errors="ignore")
             found = len(TEST_ENTRY.findall(text))
             relative = str(path.relative_to(root))
@@ -137,13 +179,18 @@ def scan_crate(root):
     return entries, ignored, gated, mounts
 
 
+scan_crate.skipped = set()
+
+
 def collect():
+    dirty = uncommitted()
+    scan_crate.skipped = set()
     inventory = {}
     mounts = []
     ignored = {}
     gated = {}
     for root in crates():
-        entries, crate_ignored, crate_gated, crate_mounts = scan_crate(root)
+        entries, crate_ignored, crate_gated, crate_mounts = scan_crate(root, dirty)
         if sum(entries.values()):
             inventory[root.name] = entries
         for reason, count in crate_ignored.items():
@@ -384,6 +431,12 @@ def main():
         print(render(inventory))
     if args.record:
         SNAPSHOT.write_text(json.dumps(inventory, indent=2, sort_keys=True) + "\n")
+        if scan_crate.skipped:
+            print(
+                f"skipped {len(scan_crate.skipped)} uncommitted test file(s); stage them to "
+                f"include their cases: {sorted(scan_crate.skipped)}",
+                file=sys.stderr,
+            )
         print(
             f"recorded {inventory['totals']['all']} test entries "
             f"({inventory['totals']['src']} in src) and "
@@ -393,6 +446,13 @@ def main():
         return 0
     recorded = json.loads(SNAPSHOT.read_text())
     problems = regressions(inventory, recorded)
+    if scan_crate.skipped:
+        # A dirty tree legitimately holds fewer cases than the snapshot; say which files were left
+        # out rather than reporting a lost corpus, because the loss is the tree's, not the branch's.
+        problems = [
+            f"{len(scan_crate.skipped)} uncommitted test file(s) are excluded from this count; "
+            f"stage or commit them before judging the corpus: {sorted(scan_crate.skipped)}"
+        ] + [problem for problem in problems if "fell to" not in problem]
     for problem in problems:
         print(problem, file=sys.stderr)
     if not args.json and not args.table and not problems:
