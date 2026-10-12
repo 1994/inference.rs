@@ -223,16 +223,16 @@ old 自身和 reuse 自身跨轮也有 batch4 token 变化，因此不能仅据�
 也不能宣称并发数值已验收。独立数值通过不替代完整质量及并发正确性检查。
 
 冻结 CLI SHA256 为
-§49fb1a6b22ec0a30455b74d0d4bb25654ee97f9da2bb33923b53cdcce294c1e2§；
-源码基于 9f36949a0709，manifest 明确 §source_dirty=true§。
-原 cache 保持 §3a1a22bb5ca4ea7d8499a92d50ed52637b1ab7092f91a03b80d7ef7bc551ef74§。
+`49fb1a6b22ec0a30455b74d0d4bb25654ee97f9da2bb33923b53cdcce294c1e2`；
+源码基于 9f36949a0709，manifest 明确 `source_dirty=true`。
+原 cache 保持 `3a1a22bb5ca4ea7d8499a92d50ed52637b1ab7092f91a03b80d7ef7bc551ef74`。
 GPU runner 的旧 Lt 范围标签来自脚本复制，保留原记录；
-§gdn-quantization-reuse-v1/summary-measured.json§ 明确纠正实际执行范围为原 NVFP4 独立参考与量化复用重放。
+`gdn-quantization-reuse-v1/summary-measured.json` 明确纠正实际执行范围为原 NVFP4 独立参考与量化复用重放。
 
 ## M64/M256 提示批块的完整 Lt 成本
 
 小批量解码的淘汰结果不能推断大 M 提示块。追加三种 prefill 几何、每种最多请求八个
-SDK 候选，使用 §GemmConfig::baseline(rows)§ 的 M64/N64 Plain 原生图，
+SDK 候选，使用 `GemmConfig::baseline(rows)` 的 M64/N64 Plain 原生图，
 不是先前解码测试的 M16/N64。候选仍包含原量化、动态尺度布局转换、Lt 与 F32 输出，
 权重尺度转换在 capture 前准备；完整 CPU F64 量化乘积参考只按相同合成 fixture 计算一次，
 随后逐个核对每张图的全部输出，数值和布局门槛未改变。
@@ -240,8 +240,11 @@ SDK 候选，使用 §GemmConfig::baseline(rows)§ 的 M64/N64 Plain 原生图�
 首次尝试将“SDK 无第八个候选”当作测试失败；现明确记录 typed unavailable，
 实际数值、capture 或运行错误仍直接失败。三类几何的全部 24 个查询槽位都有记录，
 其中 M256 gate/up 只返回 7 个可用候选，另外两个各 8 个。
-23 个可用完整图全部通过独立参考，最大归一化误差为 5.873e-8，
-本组合成输入也都与 native bitwise 相同；一个不可用候选没有性能或数值结果。
+23 个可用完整图全部通过独立参考，全部候选的最大归一化误差为 2.954e-5，
+低于原 1e-4 门槛；部分算法与 native 非 bitwise 相同。
+下表选出的三个候选最大误差为 5.873e-8，均与 native bitwise 相同。
+上一版误把这三个最优候选的数值范围扩展为全部候选，现按完整原始记录纠正；
+一个不可用候选没有性能或数值结果。
 每个可用图均保留冷热 AB 与新鲜 BA 各 30–100 样本，后台 GPU 状态一致。
 
 以下每行选择四种测量中最弱加速比最大的候选，展示反序数据，单位微秒。
@@ -269,6 +272,53 @@ binary SHA256 为 `2714b7c239af79f2fa44511b8ab0998fd3966603e73bf19f530a7768afcdd
 源代码、可应用 patch 及完整样本已可恢复归档，未将未验收 runtime 代码合入 main。
 下一步优先实际权重和整模型验证大 M 库路径；重复量化的小收益不足以解释剩余差距。
 
+## 实际 checkpoint 权重：独立量化与完整乘积
+
+后续直接提取 Qwen3.8-27B-NVFP4 的 layer 0/55 gate/down packed 权重、全部 block scale，
+以及各自真实的 input/weight global scale，冻结原始视图偏移、dtype、shape 和 SHA256。
+输入仍是两种确定性 signed/zero fixture，未把算子测试标作模型推理。
+原生基线按设备完整 profile、M/N/K 读取与 serving 相同的原 cache，
+M64 gate 实际使用 N128/Prefetch8；M256 无原条目，使用 M64/N64 Plain fallback。
+
+参考不再使用 GPU 量化结果作为输入。CPU 按公开 FP4/E4M3 码表独立编码，
+保持原 F32 乘除顺序和 ties-to-even，逐字节核对全部 GPU input code/scale；
+再用原 checkpoint 字节独立解码，计算全部输出的 CPU F64 乘积，最后乘相同 F32 alpha。
+每个固定输入/权重/shape 只生成一次独立参考，所有候选分别核对完整输出和量化字节。
+
+四种真实权重、M64/M256、两种 fixture、每组最多八个 SDK 候选，共 128 个查询槽位。
+124 个可用完整图全部通过，另外 4 个 M256 gate 的第八个候选明确 unavailable。
+全部候选最大归一化误差为 4.897092e-06，低于原 1e-4 门槛；
+44 个候选与 native 非 bitwise 相同，不能宣称模型 token 不变。
+每个可用候选保留四组冷热 AB/BA 原始样本，asset/source/binary 前后不变，
+两次完整 GPU 测试的后台状态一致。严格 CUDA release all-target clippy、构建与 53 个普通测试通过。
+
+同一算法要在两种 fixture 的全部八项测量中均至少加速 2%，才算通过算子性能门槛。
+下表按八项最弱加速比最大选择候选；算法身份用完整 typed config 保存，SDK 序号不作为缓存身份。
+
+| 实际权重 | M | 最佳候选在八项测量中的最小加速比 | workspace 字节 |
+|---|---:|---:|---:|
+| 0.mlp.down_proj | 64 | 0.941 | 5242880 |
+| 0.mlp.down_proj | 256 | 1.290 | 20971520 |
+| 0.mlp.gate_proj | 64 | 0.946 | 0 |
+| 0.mlp.gate_proj | 256 | 1.595 | 0 |
+| 55.mlp.down_proj | 64 | 0.952 | 5242880 |
+| 55.mlp.down_proj | 256 | 1.285 | 20971520 |
+| 55.mlp.gate_proj | 64 | 0.945 | 0 |
+| 55.mlp.gate_proj | 256 | 1.617 | 0 |
+
+M256 的两个 gate 权重约加速 1.6 倍，两个 down 约 1.29 倍或更高；
+M64 全部未通过完整门槛。只适合通过实际硬件/shape 测量选择，不能统一切换到库实现。
+最优 down 需要 20 MiB workspace，全部大投影另有 5570560 字节的 scale 布局副本，
+仍需共享 scratch 与准入预算，不能按层重复永久分配。
+
+这些结果支持继续运行时接入，尚未做新 CLI 的完整模型质量或 serving 对比。
+现有所有显著收益仍限定在 GEMM 算子，本文未增加已合入的模型性能声明。
+验证 binary SHA256 为 `9b04846ba8181a8d9a966c455f9307c7cd4f9ccd60ed3adc1c429ec7fe897de7`；
+四视图资产 manifest SHA256 为 `6bed9c5bff64696b5b1d8d5b07ac0db677fed063d992f52ab7f8619c2ddc5f7a`。
+全部源代码与可应用 patch 已冻结归档，本次发布只更新文档，开发树恢复 main。
+实验 FFI helper 放在 tests 目录，未满足仓库 unsafe 边界策略，不能据此宣称原型可直接合入；
+运行时接入须放入有所有权和上下文校验的 device 边界。
+
 ## 原始证据
 
 共同根目录：
@@ -288,6 +338,7 @@ binary SHA256 为 `2714b7c239af79f2fa44511b8ab0998fd3966603e73bf19f530a7768afcdd
 | `gdn-quantization-reuse-runtime-v1` | 冻结 dirty diagnostic CLI、源码/hash 与 release 构建身份 |
 | `gdn-quantization-reuse-perf-v1` | 五轮十五进程、全部测量报告、开关/后台资格及 token 变化 |
 | `gdn-nvfp4-lt-prefill-complete-graph-v1` | M64/M256、23 个可用候选和一个 unavailable、完整参考/成本、失败尝试与源码归档 |
+| `gdn-nvfp4-lt-checkpoint-graph-v1` | 四个真实权重视图、CPU 独立量化、124 个完整图和四个 unavailable、原 cache 基线与联合选择 |
 
 原 Lt 数值结果 SHA256（其裸图计时作废） `aa557647ec68a7e0c760c94fb3cd69cf3bc46577233100504d38f6e0f8b5c0d4`，
 执行 Python 源码 SHA256 `ab48157ceca924cfff48d01b3730b43b2837550730d758954d89a273ea248578`。
