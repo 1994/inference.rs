@@ -286,7 +286,7 @@ release 构建、严格 CUDA all-targets clippy、format、50 项常规单元检
 
 ## 完整／半列宽选择入口的历史固定工作量性能
 
-`d8e0a37` 对应 CLI `00c804f8…`、自动列宽 64，用同一 native 二进制的 scalar 模式作对照，
+`d8e0a37` 对应 CLI `00c804f8…`、64-row 图的缓存列宽 64，用同一 native 二进制的 scalar 模式作对照，
 并比较固定官方 `3fe917abb` vLLM runtime。两轮启动顺序为 scalar/WY/vLLM 与 vLLM/WY/scalar。
 三种实际输入为短提示 51 token、长提示 511 token、四并发各约 52 token。
 每进程包含三种工作量，各测三次；每种 arm 跨两轮共 36 个测量请求，每进程 18 个。
