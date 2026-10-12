@@ -107,3 +107,5 @@ native `Completed` 事件包括 prefill 和其他 engine step；vLLM speculative
 ```
 
 本报告更新了最新 main 的运行证据；性能目标、共同数值/任务质量、热复用等量对照与五组严格合格基线仍未完成。
+
+后续直接从官方 main 拉取到 cc9b0f097d49，Qwen/GDN 路径未变化。预热后的当前 GPU 路径与小投影分块反例见[执行路径诊断](cuda-current-gpu-paths-2026-10-12.md)；该采集保留本报告 3fe wheel 身份，不改变上述未插桩服务结果。
