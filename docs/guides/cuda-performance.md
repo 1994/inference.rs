@@ -110,3 +110,27 @@ bash tools/bench/safe-run.sh --memory-gib 8 cargo test --locked --release \
 ```
 
 投影自动 tile 选择与缓存规则见 [CUDA 后端](../../crates/backend/cuda/README.md#自动-tile-选择)。缓存匹配不能替代工具链或 kernel 变更后的回归验证。
+
+### 完整模型任务质量复算
+
+改变 GDN 运算顺序的候选保持 F32 状态，先通过独立数值参考，再用完整模型生成结果验收任务质量。
+共同实验条件沿用 [性能基线方案](../plans/performance/baseline.md)，本次单步定位和 WY 数值范围见
+[F32 GDN 验收记录](../research/cuda-gdn-f32-quality-contract-2026-10-12.md)。
+
+`tools/bench/score-task-quality.py` 接收预先固定、含标准答案与输入 token 的 suite，以及两份完整报告：
+
+```sh
+python3 tools/bench/score-task-quality.py \
+  --suite /path/to/tokenized-suite.json \
+  --baseline /path/to/scalar-results.json \
+  --candidate /path/to/wy-results.json \
+  --output /path/to/new-quality-comparison.json
+```
+
+工具从原始文本的最终 `#### number` 行重新提取 Decimal 答案，验证逐题 ID、输入、完成原因、零前缀复用、
+profile 与模型/设备身份；缺题、重排或手填分数与文本不符均失败。长度上限样本保留在分母，并单列截断及
+格式缺失数量。置信水平和允许的正确率下降来自 suite，采用单侧 Clopper–Pearson 回归率上界；
+新增答对不能掩盖原先答对而候选答错的题。报告为 `pass` 或 `not_demonstrated`，后者非零退出。
+
+这项判定适用于声明的算术任务子集与生成预算。它独立于 kernel 数值、构建身份和服务性能门禁；
+`quality_accepted` 不证明全面模型能力或性能目标已达到。`tools/check/gate.sh` 自动收集其反例与统计参考测试。
