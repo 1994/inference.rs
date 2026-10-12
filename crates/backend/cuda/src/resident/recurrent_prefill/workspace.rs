@@ -204,6 +204,8 @@ impl Workspace {
     }
 }
 
+const DELTA_GEOMETRY_RANK: usize = 5;
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Explicit graph state, IR inputs and capture geometry"
@@ -216,7 +218,7 @@ fn record_delta(
     state: &mut Tensor<f32>,
     scratch: &mut Tensor<f32>,
     metadata: &Tensor<i32>,
-    [key_heads, value_heads, key_dim, lanes, block]: [usize; 5],
+    [key_heads, value_heads, key_dim, lanes, block]: [usize; DELTA_GEOMETRY_RANK],
     wy: bool,
 ) -> std::result::Result<(), DeviceError> {
     let qkv = arena.get(node.inputs[0]).map_err(error)?.view(&[

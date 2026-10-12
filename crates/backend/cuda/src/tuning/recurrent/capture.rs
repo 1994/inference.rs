@@ -1,5 +1,11 @@
 //! Capture owns graph before its operand buffers; replay timing includes output transpose.
-use super::reference::{Fixture, maximum_error};
+use super::{
+    SHAPE_RANK,
+    reference::{Fixture, maximum_error},
+};
+
+const METADATA_LEN: usize = 4;
+const FINGERPRINT_SPLITS: [usize; 3] = [1, 2, 4];
 use crate::{
     device::{CudaDevice, device_error},
     resident::recurrent_prefill::kernels,
@@ -31,7 +37,7 @@ impl Captured {
         let initial = device.upload(fixture.initial.clone(), &[vh, dim, dim])?;
         let metadata = device.upload(
             vec![0, i32::try_from(lanes).map_err(device_error)?, 0, 0],
-            &[4],
+            &[METADATA_LEN],
         )?;
         let mut state = api::zeros::<f32>(&[vh, dim, dim])
             .sync_on(&device.stream)
@@ -96,7 +102,7 @@ impl Captured {
         Ok(state.max(out))
     }
 }
-fn kernel_identities(device: &CudaDevice, shape: [usize; 4]) -> Result<Vec<String>> {
+fn kernel_identities(device: &CudaDevice, shape: [usize; SHAPE_RANK]) -> Result<Vec<String>> {
     let [kh, vh, dim, lanes] = shape;
     let qkv = api::meta::<f32>(&[lanes, 2 * kh + vh, dim])
         .sync_on(&device.stream)
@@ -113,7 +119,7 @@ fn kernel_identities(device: &CudaDevice, shape: [usize; 4]) -> Result<Vec<Strin
     let bias = api::meta::<f32>(&[vh])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let metadata = api::meta::<i32>(&[4])
+    let metadata = api::meta::<i32>(&[METADATA_LEN])
         .sync_on(&device.stream)
         .map_err(device_error)?;
     let mut state = api::meta::<f32>(&[vh, dim, dim])
@@ -126,7 +132,7 @@ fn kernel_identities(device: &CudaDevice, shape: [usize; 4]) -> Result<Vec<Strin
         .sync_on(&device.stream)
         .map_err(device_error)?;
     let mut identities = Vec::new();
-    for split in [1, 2, 4] {
+    for split in FINGERPRINT_SPLITS {
         let block = dim / split;
         identities.push(
             kernels::delta_wy(
@@ -162,13 +168,13 @@ fn kernel_identities(device: &CudaDevice, shape: [usize; 4]) -> Result<Vec<Strin
     Ok(identities)
 }
 
-pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; 4]) -> Result<String> {
+pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; SHAPE_RANK]) -> Result<String> {
     use cutile::cutile_compiler::{cuda_tile_runtime_utils as compiler, hints::CompileOptions};
     use std::{
         collections::BTreeMap,
         sync::{Mutex, OnceLock},
     };
-    type IdentityCache = Mutex<BTreeMap<([usize; 4], String), String>>;
+    type IdentityCache = Mutex<BTreeMap<([usize; SHAPE_RANK], String), String>>;
     static CACHE: OnceLock<IdentityCache> = OnceLock::new();
     // Canonical IR is immutable within this binary. A model may contain dozens of
     // identical Delta nodes: lower each compiler/architecture/shape only once.

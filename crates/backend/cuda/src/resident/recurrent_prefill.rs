@@ -122,11 +122,66 @@ pub(crate) mod kernels {
         mmaf(lh, rh, low)
     }
 
+    fn triangular_inverse(
+        interactions: Tile<f32, { [32, 32] }>,
+        row_indices: Tile<i32, { [32, 32] }>,
+        col_indices: Tile<i32, { [32, 32] }>,
+        lower: Tile<bool, { [32, 32] }>,
+    ) -> Tile<f32, { [32, 32] }> {
+        let identity = select(
+            eq_tile(row_indices, col_indices),
+            1.0f32.broadcast(shape![32, 32]),
+            0.0f32.broadcast(shape![32, 32]),
+        );
+        // Invert 2x2 diagonal blocks first, then merge adjacent inverted blocks:
+        // [[L11,0],[L21,L22]]^-1 has cross block -inv(L22)*L21*inv(L11).
+        // Squaring the entire strictly-lower matrix creates huge binomial terms for
+        // correlated keys with weak decay and then subtracts them, losing precision.
+        let two = 2i32.broadcast(shape![32, 32]);
+        let pair = eq_tile(row_indices / two, col_indices / two) & lower;
+        let mut inverse = identity - select(pair, interactions, 0.0f32.broadcast(shape![32, 32]));
+        let mut half = 2i32;
+        for _level in 0i32..4i32 {
+            let width = (2i32 * half).broadcast(shape![32, 32]);
+            let row_block = row_indices / width;
+            let col_block = col_indices / width;
+            let middle = row_block * width + half.broadcast(shape![32, 32]);
+            let cross = eq_tile(row_block, col_block)
+                & ge_tile(row_indices, middle)
+                & lt_tile(col_indices, middle);
+            let coupling = select(cross, interactions, 0.0f32.broadcast(shape![32, 32]));
+            inverse = inverse - precise_mma(precise_mma(inverse, coupling), inverse);
+            half = half * 2i32;
+        }
+        inverse
+    }
+
+    fn cumulative_decay(
+        alpha: &Tensor<f32, { [-1, -1] }>,
+        a_log: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+        active: Tile<bool, { [32] }>,
+        chunk: i32,
+        head: i32,
+    ) -> Tile<f32, { [32] }> {
+        let a = alpha
+            .partition(shape![32, 1])
+            .load([chunk, head])
+            .reshape(shape![32])
+            + bias.partition(shape![1]).load([head]).broadcast(shape![32]);
+        let soft = log(1.0f32.broadcast(shape![32]) + exp(a));
+        let soft = select(gt_tile(a, 20.0f32.broadcast(shape![32])), a, soft);
+        let g = 0.0f32.broadcast(shape![32])
+            - exp(a_log.partition(shape![1]).load([head])).broadcast(shape![32]) * soft;
+        let g = select(active, g, 0.0f32.broadcast(shape![32]));
+        let g = scan_sum(g, 0i32, reverse::Forward, 0.0f32);
+        g
+    }
+
     #[expect(clippy::too_many_arguments, reason = "explicit CUDA tensor bindings")]
     #[expect(
-        clippy::too_many_lines,
         clippy::many_single_char_names,
-        reason = "Keep validated WY CUDA arithmetic in one entry; symbols match its matrix derivation"
+        reason = "WY symbols match the validated matrix derivation"
     )]
     #[cutile::entry()]
     fn delta_wy<const KH: i32, const VH: i32, const D: i32, const LANES: i32, const SW: i32>(
@@ -191,20 +246,7 @@ pub(crate) mod kernels {
             let b = 1.0f32.broadcast(shape![32])
                 / (1.0f32.broadcast(shape![32]) + exp(0.0f32.broadcast(shape![32]) - b));
             let b = select(active, b, 0.0f32.broadcast(shape![32]));
-            let a = alpha
-                .partition(shape![32, 1])
-                .load([chunk, pid.0])
-                .reshape(shape![32])
-                + bias
-                    .partition(shape![1])
-                    .load([pid.0])
-                    .broadcast(shape![32]);
-            let soft = log(1.0f32.broadcast(shape![32]) + exp(a));
-            let soft = select(gt_tile(a, 20.0f32.broadcast(shape![32])), a, soft);
-            let g = 0.0f32.broadcast(shape![32])
-                - exp(a_log.partition(shape![1]).load([pid.0])).broadcast(shape![32]) * soft;
-            let g = select(active, g, 0.0f32.broadcast(shape![32]));
-            let g = scan_sum(g, 0i32, reverse::Forward, 0.0f32);
+            let g = cumulative_decay(alpha, a_log, bias, active, chunk, pid.0);
             let decay = exp(g);
             let gap = g.reshape(shape![32, 1]).broadcast(shape![32, 32])
                 - g.reshape(shape![1, 32]).broadcast(shape![32, 32]);
@@ -221,32 +263,7 @@ pub(crate) mod kernels {
                 precise_mma(k, old) * decay.reshape(shape![32, 1]).broadcast(shape![32, SW]);
             let rhs = (v - projected) * b.reshape(shape![32, 1]).broadcast(shape![32, SW]);
             // Solve (I + A) * updates = rhs, preserving unit diagonal structure.
-            let identity = select(
-                eq_tile(row_indices, col_indices),
-                1.0f32.broadcast(shape![32, 32]),
-                0.0f32.broadcast(shape![32, 32]),
-            );
-            // Invert 2x2 diagonal blocks first, then merge adjacent inverted blocks:
-            // [[L11,0],[L21,L22]]^-1 has cross block -inv(L22)*L21*inv(L11).
-            // Squaring the entire strictly-lower matrix creates huge binomial terms for
-            // correlated keys with weak decay and then subtracts them, losing precision.
-            let two = 2i32.broadcast(shape![32, 32]);
-            let pair = eq_tile(row_indices / two, col_indices / two) & lower;
-            let mut inverse =
-                identity - select(pair, interactions, 0.0f32.broadcast(shape![32, 32]));
-            let mut half = 2i32;
-            for _level in 0i32..4i32 {
-                let width = (2i32 * half).broadcast(shape![32, 32]);
-                let row_block = row_indices / width;
-                let col_block = col_indices / width;
-                let middle = row_block * width + half.broadcast(shape![32, 32]);
-                let cross = eq_tile(row_block, col_block)
-                    & ge_tile(row_indices, middle)
-                    & lt_tile(col_indices, middle);
-                let coupling = select(cross, interactions, 0.0f32.broadcast(shape![32, 32]));
-                inverse = inverse - precise_mma(precise_mma(inverse, coupling), inverse);
-                half = half * 2i32;
-            }
+            let inverse = triangular_inverse(interactions, row_indices, col_indices, lower);
             let updates = precise_mma(inverse, rhs);
             let qk = precise_mma(q, k.transpose());
             let probabilities = select(causal, qk * relative, 0.0f32.broadcast(shape![32, 32]));

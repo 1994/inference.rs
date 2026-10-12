@@ -23,6 +23,12 @@ use std::{
 // Quarter columns pass synthetic F64 but fail the predeclared full-model quality gate.
 // Keep them diagnostic-only until their full-model quality is independently qualified.
 const SCHEMA: &str = "wy32:recursive-unit-triangle:bf16-components3-products6:f32-state:f64-abs2e-5:regular+weak-correlated-v1:columns-full-half-v2";
+const SHAPE_RANK: usize = 4;
+const SUPPORTED_DIMS: [usize; 2] = [32, 128];
+const CHUNK_ROWS: usize = 32;
+const MAX_LANES: usize = 256;
+const MAX_F64_ERROR: f64 = 2e-5;
+const CUDA_OPT_LEVEL: u8 = 3;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Key {
     pub hardware: String,
@@ -30,7 +36,7 @@ pub struct Key {
     pub driver_build: Option<String>,
     pub kernel_fingerprint: String,
     pub schema: String,
-    pub shape: [usize; 4],
+    pub shape: [usize; SHAPE_RANK],
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Times {
@@ -66,7 +72,7 @@ impl Trial {
             && self.cold.valid()
             && self.warm.valid()
             && self.max_f64_error.is_finite()
-            && (0.0..2e-5).contains(&self.max_f64_error)
+            && (0.0..MAX_F64_ERROR).contains(&self.max_f64_error)
     }
     fn confirmed(&self) -> bool {
         self.cold.speedup() >= MIN_CONFIRM_SPEEDUP && self.warm.speedup() >= MIN_CONFIRM_SPEEDUP
@@ -106,14 +112,14 @@ impl Entry {
                         .any(|x| x.value_block == self.selected && x.confirmed()))
     }
 }
-fn supported([kh, vh, dim, lanes]: [usize; 4]) -> bool {
+fn supported([kh, vh, dim, lanes]: [usize; SHAPE_RANK]) -> bool {
     kh > 0
         && vh > 0
         && vh.is_multiple_of(kh)
-        && [32, 128].contains(&dim)
+        && SUPPORTED_DIMS.contains(&dim)
         && lanes > 0
-        && lanes <= 256
-        && lanes.is_multiple_of(32)
+        && lanes <= MAX_LANES
+        && lanes.is_multiple_of(CHUNK_ROWS)
 }
 fn median(values: &[f32]) -> f32 {
     if values.is_empty() {
@@ -126,8 +132,8 @@ fn median(values: &[f32]) -> f32 {
     if lo == hi {
         sorted[lo]
     } else {
-        let lower = sorted[lo] * 0.5;
-        let upper = sorted[hi] * 0.5;
+        let lower = sorted[lo] / 2.0;
+        let upper = sorted[hi] / 2.0;
         lower + upper
     }
 }
@@ -138,7 +144,7 @@ fn memo() -> &'static Memo {
 }
 pub(crate) fn select(
     device: &CudaDevice,
-    shape: [usize; 4],
+    shape: [usize; SHAPE_RANK],
     autotune: bool,
     session: &ResidentTuningSession,
 ) -> Option<usize> {
@@ -155,7 +161,7 @@ pub(crate) fn select(
 }
 fn resolve(
     device: &CudaDevice,
-    shape: [usize; 4],
+    shape: [usize; SHAPE_RANK],
     autotune: bool,
     session: &ResidentTuningSession,
 ) -> Result<usize> {
@@ -292,7 +298,10 @@ fn trial(
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
     let compile = cutile::cutile_compiler::hints::CompileOptions::default();
-    if cfg!(debug_assertions) || compile.device_debug || compile.opt_level.is_some_and(|x| x != 3) {
+    if cfg!(debug_assertions)
+        || compile.device_debug
+        || compile.opt_level.is_some_and(|x| x != CUDA_OPT_LEVEL)
+    {
         return Err(Error::invalid("WY tuning requires release and CUDA O3"));
     }
     let fixture = Fixture::new(key.shape, false)?;

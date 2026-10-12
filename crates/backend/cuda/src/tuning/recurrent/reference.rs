@@ -1,8 +1,24 @@
 //! Independent host F64 scalar recurrence, from original F32 inputs.
+use super::{CHUNK_ROWS, MAX_F64_ERROR, MAX_LANES, SHAPE_RANK, SUPPORTED_DIMS};
 use infer_core::{Error, Result};
 
+const FIXTURE_OFFSET: usize = 3;
+const FIXTURE_PERIOD: usize = 101;
+const FIXTURE_CENTER: f32 = 50.0;
+const FIXTURE_SCALE: f32 = 100.0;
+const QKV_SALT: usize = 17;
+const BETA_SALT: usize = 13;
+const ALPHA_SALT: usize = 7;
+const DECAY_SALT: usize = 3;
+const BIAS_SALT: usize = 5;
+const INITIAL_SALT: usize = 23;
+const CORRELATED_BETA: f32 = 8.0;
+const CORRELATED_DECAY_LOG: f32 = -10.0;
+const NORMALIZATION_EPSILON: f64 = 1e-6;
+const SOFTPLUS_LINEAR_THRESHOLD: f64 = 20.0;
+
 pub(super) struct Fixture {
-    pub shape: [usize; 4],
+    pub shape: [usize; SHAPE_RANK],
     pub qkv: Vec<f32>,
     pub beta: Vec<f32>,
     pub alpha: Vec<f32>,
@@ -15,49 +31,52 @@ pub(super) struct Fixture {
 fn values(n: usize, salt: usize) -> Vec<f32> {
     (0..n)
         .map(|i| {
-            (f32::from(u16::try_from((i * salt + 3) % 101).unwrap_or_default()) - 50.0) / 100.0
+            (f32::from(
+                u16::try_from((i * salt + FIXTURE_OFFSET) % FIXTURE_PERIOD).unwrap_or_default(),
+            ) - FIXTURE_CENTER)
+                / FIXTURE_SCALE
         })
         .collect()
 }
 impl Fixture {
-    pub fn new(shape: [usize; 4], correlated: bool) -> Result<Self> {
+    pub fn new(shape: [usize; SHAPE_RANK], correlated: bool) -> Result<Self> {
         let [kh, vh, dim, lanes] = shape;
         if kh == 0
             || !vh.is_multiple_of(kh)
-            || ![32, 128].contains(&dim)
+            || !SUPPORTED_DIMS.contains(&dim)
             || lanes == 0
-            || lanes > 256
-            || !lanes.is_multiple_of(32)
+            || lanes > MAX_LANES
+            || !lanes.is_multiple_of(CHUNK_ROWS)
         {
             return Err(Error::invalid("unsupported WY reference geometry"));
         }
-        let mut qkv = values(lanes * (2 * kh + vh) * dim, 17);
+        let mut qkv = values(lanes * (2 * kh + vh) * dim, QKV_SALT);
         if correlated {
             for lane in 0..lanes {
                 qkv[lane * (2 * kh + vh) * dim..][..2 * kh * dim].fill(1.0);
             }
         }
         let beta = if correlated {
-            vec![8.0; lanes * vh]
+            vec![CORRELATED_BETA; lanes * vh]
         } else {
-            values(lanes * vh, 13)
+            values(lanes * vh, BETA_SALT)
         };
         let alpha = if correlated {
             vec![0.0; lanes * vh]
         } else {
-            values(lanes * vh, 7)
+            values(lanes * vh, ALPHA_SALT)
         };
         let a_log = if correlated {
-            vec![-10.0; vh]
+            vec![CORRELATED_DECAY_LOG; vh]
         } else {
-            values(vh, 3)
+            values(vh, DECAY_SALT)
         };
         let bias = if correlated {
             vec![0.0; vh]
         } else {
-            values(vh, 5)
+            values(vh, BIAS_SALT)
         };
-        let initial = values(vh * dim * dim, 23);
+        let initial = values(vh * dim * dim, INITIAL_SALT);
         let mut state: Vec<f64> = initial.iter().copied().map(f64::from).collect();
         let mut output = vec![0.0; lanes * vh * dim];
         let dim_f64 =
@@ -76,11 +95,16 @@ impl Fixture {
                     .copied()
                     .map(f64::from)
                     .collect();
-                let qnorm = (q.iter().map(|x| x * x).sum::<f64>() + 1e-6).sqrt() * dim_f64.sqrt();
-                let knorm = (k.iter().map(|x| x * x).sum::<f64>() + 1e-6).sqrt();
+                let qnorm = (q.iter().map(|x| x * x).sum::<f64>() + NORMALIZATION_EPSILON).sqrt()
+                    * dim_f64.sqrt();
+                let knorm = (k.iter().map(|x| x * x).sum::<f64>() + NORMALIZATION_EPSILON).sqrt();
                 let b = 1.0 / (1.0 + (-f64::from(beta[lane * vh + head])).exp());
                 let a = f64::from(alpha[lane * vh + head]) + f64::from(bias[head]);
-                let soft = if a > 20.0 { a } else { a.exp().ln_1p() };
+                let soft = if a > SOFTPLUS_LINEAR_THRESHOLD {
+                    a
+                } else {
+                    a.exp().ln_1p()
+                };
                 let decay = (-f64::from(a_log[head]).exp() * soft).exp();
                 let st = &mut state[head * dim * dim..][..dim * dim];
                 for x in st.iter_mut() {
@@ -131,7 +155,7 @@ pub(super) fn maximum_error(actual: &[f32], expected: &[f64]) -> Result<f64> {
         .zip(expected)
         .map(|(a, b)| (f64::from(*a) - b).abs())
         .fold(0.0_f64, f64::max);
-    if error >= 2e-5 {
+    if error >= MAX_F64_ERROR {
         return Err(Error::invalid(format!(
             "WY independent F64 error {error} exceeds original 2e-5 gate"
         )));
