@@ -58,6 +58,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [CUDA Serving 历史记录](research/cuda-serving-baseline.md) | 既有服务矩阵与瓶颈调查；不作为当前已验收基线 |
 | [CUDA 性能实验记录](research/cuda-performance-experiments.md) | 历史 A/B、失败实验与测量条件 |
 | [vLLM main 执行路径调查](research/vllm-main-execution-paths-2026-10-12.md) | 最新源码与已安装版的边界；GDN、MTP、projection 和资源准入差距 |
+| [最新 vLLM main 服务对照](research/vllm-main-serving-comparison-2026-10-12.md) | 官方 3fe917ab 构建与五组诊断、后台资格和热复用差异；未达到性能目标 |
 | [GPU draft 采样实验](research/cuda-device-greedy-mtp-2026-10-12.md) | 硬件自适应 reducer、完整输出验证和六组配对；未默认合入的原因 |
 | [完整 GPU token readout](research/cuda-full-device-token-readout-2026-10-12.md) | 普通/推测/pooled 输出契约、硬件 tuning、九项 GPU 验证和五组有效服务配对 |
 | [Pooled 图几何与准入](research/cuda-pooled-admission-geometry-2026-10-12.md) | capture/workspace/预算一致性、五组批量吞吐收益及 TTFT/TPOT 取舍 |

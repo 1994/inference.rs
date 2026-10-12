@@ -1,5 +1,7 @@
 # vLLM main 执行路径与当前性能差距（2026-10-12）
 
+后续状态：官方 `3fe917ab` main 已完成五组新进程服务对照，见[最新 main 服务对照诊断](vllm-main-serving-comparison-2026-10-12.md)。该报告使用对应官方 wheel，保留后台显存、热复用量与数值轨迹差异，未签发新基线。本文以下数字和“尚未实测”的描述保留首次调查时点，不代表后续状态。
+
 当前差距涉及 GDN 的计算方式、推测解码的数据流和资源准入；单独改 GEMM tile 无法覆盖这些成本。扩大 prefill 图宽度已降低长提示首 token 延迟，但最近一次有效反向配对没有复现 batch4 收益，热前缀也退化，当前候选不适合整体合并。
 
 本文是源码调查与诊断实验，正式对照和验收沿用[性能基线方案](../plans/performance/baseline.md)。下文区分最新 main 的源码、已安装发行版的实测和 native 候选，避免把源码更新当成性能更新。
@@ -133,3 +135,7 @@ prefill/verify/draft 宽度、slot 容量、workspace 和 graph 池策略应共�
 ## 再次同步 main
 
 本轮结束前，45 再次 git pull --ff-only upstream main，工作区干净，快进到 3fe917abb13160d60bea5330399f5c09ca282348。相对本报告分析的 f26d9f432ced7b1087d02d29bffed2249df1a18e，5 个文件改动集中在 attention kernel warmup 及其调用/测试，GDN projection、FLA chunk 和推测解码路径未改变。源码参考继续按上述固定提交引用；最新 main 的运行性能对比仍未完成。
+
+## 最新 main 运行证据
+
+官方 `3fe917ab` 构建已在 45 实际运行，详见[五组服务对照诊断](vllm-main-serving-comparison-2026-10-12.md)。在已合入 GPU readout 与 pooled 几何修复、显式开启 GPU greedy 的配置下，short TPOT 约 1.29×、long TPOT 约 1.43×、batch4 完成时间约 1.72×、511-token 冷 TTFT 约 5.72×。只有一对通过严格后台检查，热前缀复用量不同，任务质量未测；这些比值不登记为新的同条件基线。
