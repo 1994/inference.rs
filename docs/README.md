@@ -65,6 +65,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [Pooled 图几何与准入](research/cuda-pooled-admission-geometry-2026-10-12.md) | capture/workspace/预算一致性、五组批量吞吐收益及 TTFT/TPOT 取舍 |
 | [ReplaySSM F32 GDN 探索](research/cuda-replayssm-gdn-2026-10-12.md) | F32 小窗口缓存、完整周期成本、推测/前缀契约；尚未接入 serving |
 | [内存换推理效率](research/cuda-memory-for-latency-2026-10-12.md) | 主机前缀缓存、共享 prefill 工作区与传输成本验收 |
+| [长提示调参覆盖与独立准备](research/cuda-wide-prefill-tuning-2026-10-13.md) | 宽图缓存补齐、两轮实测、CUDA 成本与尚待验收的并行准备 |
 | [F32 GDN 与完整模型质量](research/cuda-gdn-f32-quality-contract-2026-10-12.md) | F32 WY、硬件 tuning、完整模型资格与两轮性能差距；默认量化策略仍为 scalar |
 | [GDN 数值与 FP8 准备成本](research/cuda-gdn-numerics-and-fp8-preparation-2026-10-12.md) | 修复分块检查假阳性、同路径 sanity control 和重复量化成本；分块仍未验收 |
 | [Serial 状态快照融合](research/cuda-serial-checkpoint-fusion-2026-10-12.md) | 复用 pooled writer、逐位回滚验收和独立进程验证成本；适用范围单列 |
