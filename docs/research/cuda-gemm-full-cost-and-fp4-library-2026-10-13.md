@@ -1,4 +1,4 @@
-# 纯 GEMM 完整质量、Split-K 成本与 FP4 库能力（2026-10-13）
+# 纯 GEMM 质量、Lt 完整图成本与裸图计时纠错（2026-10-13）
 
 两轮整模型测试确认，补齐实际权重的 M4/M256 调参表没有带来明显端到端收益。
 完整串行 256 题的所有生成 token 与原 WY 相同。细分 N 和当前 Split-K 原型也未在
@@ -6,7 +6,9 @@
 
 新增独立验证确认：45 的 cuBLASLt 可用 NVFP4 输入直接生成 F32 输出，
 四种几何全部通过完整量化乘积的 CPU F64 参考。
-这提供了下一项实现方向，但当前只完成库能力诊断，尚未证明完整量化图或 serving 加速。
+后续 Rust 完整图已测原量化、动态 scale 布局转换与 Lt matmul，八种 SDK 算法共 72 个 case
+全部通过独立参考，但三个主要尺寸没有候选同时通过冷热 AB/BA 至少 2% 的门槛。
+本轮没有新增 serving 收益。早期 Python 裸图存在 capture 流错误，其性能计时已作废。
 性能逼近 vLLM 的目标仍未达到。量化模型默认仍是 scalar，本文整模型数据显式开启原 WY。
 
 ## 纯实际权重 GEMM 表的整模型结果
@@ -110,15 +112,62 @@ GPU 完整数值与成本测试通过。初次编译所有权错误及首次 JIT
 | 4/5120/17408 | pass | 5.215e-8 | 737280 |
 | 4/17408/5120 | pass | 5.215e-8 | 0 |
 
-真实调用与 CUDA graph replay 均成功，后台启动/捕获/结束检查一致。
-warm bare graph 样本包含在原始结果，但排除了激活量化和 layout 转换，
-因此不与另一进程的完整 native graph 相除，不登记服务加速倍数。
-当前仍是合成、已经量化的 operands；真实权重、完整量化图和整模型尚未验收。
+### 裸图计时纠错
 
-下一步应把原量化、动态 scale 布局转换、Lt matmul 及必要 workspace 纳入同一张图，
-用同一实际权重测完整冷热 AB/BA。候选只有在数值与模型质量通过后，
-才能接入硬件 tuning 和资源预算；库版本、driver、shape、精度、layout、workspace
-都参与身份，缺库或不支持的设备保留原 fallback，不按 5090 名称选择。
+早期 Python 原型在 capture 前缓存了 Torch CUDA stream，capture 内的 Lt 调用仍提交到旧 stream。
+专项复现读取实际 CUDA graph 节点，并在重放前清空输出：四种几何的旧 capture 都是 **0 节点**，
+重放后的非零输出数也为 0。因此旧结果里的约 3–4 微秒不是 GEMM 计时，全部作废，
+也撤回旧文档对该原型 graph 计算重放成功的断言。capture 前真实 Lt 调用的独立数值结果仍有效。
+
+修正版在调用时获取当前 capture stream。四张新图分别包含 1/2/2/1 个节点；
+清空输出后重放，全部非零输出恢复，并再次通过完整 CPU F64 参考。
+修正后的裸 warm 中位数分别是 4.640/18.416/19.072/45.936 微秒。
+这些数字仍排除量化/layout，来自独立进程，不与 Rust 完整图相除，也不登记模型收益。
+专项执行的后台启动/捕获/结束检查全部一致。
+
+## Rust 完整量化/layout/Lt 图
+
+原型只在 cfg(test) 下复用已有 Lt ABI 和 CUDA stream/context 检查，F32 输入及输出保持不变。
+同进程 baseline 保留原量化与 M16/N64、K256 scaled MMA；候选保留同一个量化器，
+另记录 GPU scale swizzle 和 Lt matmul。权重 scale 布局在 capture 前准备，动态输入转换全部计时。
+固定量化全局尺度 1.25、权重尺度 0.75，使用原 alpha；尚未使用实际 checkpoint。
+描述符、workspace、输入输出及其 scale 的所有者保留到 graph 销毁后；必要初始化在 capture 前完成。
+
+首次 GPU 尝试发现不足 32 行时，swizzle 的无效输入 tile 被访问。
+修复后跳过无效 32 行块，保留初始化的零 padding，并逐字节验证所有活动尺度及全部 padding。
+失败日志保留，没有使用该尝试的性能数字。严格 release/CUDA all-target clippy、
+构建及 53 个普通测试通过，修复后的首个算法 9 个 GPU case 全部通过，
+binary SHA256 为 `e64dd6372a8994d62e6d7e493eaf2cdc7fc55c0d1e96c87e0ebe77f8b9355aa9`。
+
+随后把 SDK 返回的八种算法逐个纳入相同完整图，未按设备型号选算法。
+三类尾部形状、两种 signed/zero fixture 和三类主要尺寸，合计 **72 个 case**，
+所有输出通过独立 CPU F64 完整量化乘积参考，最大归一化误差 5.215e-8，低于原 1e-4 门槛。
+本组合成数据也全部与 native 输出 bitwise 相同，不能由此认定真实权重或完整模型质量。
+24 个大尺寸/算法组合均测冷/暖 AB 和新鲜 BA，各保留 30–100 个原始样本。
+
+以下只展示每个尺寸在两种顺序下冷缓存较好的候选及其反序数据，单位微秒。
+算法序号指当前 SDK 返回顺序，不是可以持久化的算法身份；完整记录保留 typed config 和 workspace。
+这张表展示淘汰依据，不把冷最优候选当作已采用配置。
+
+| M/N/K | 算法序号 | 冷 native | 冷 Lt 完整图 | 暖 native | 暖 Lt 完整图 | workspace 字节 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1/5120/17408 | 2 | 40.768 | 45.728 | 24.768 | 33.808 | 143360 |
+| 4/5120/17408 | 2 | 41.056 | 46.160 | 26.528 | 31.488 | 573440 |
+| 4/17408/5120 | 5 | 41.648 | 50.144 | 28.256 | 44.576 | 835584 |
+
+八种候选的冷缓存完整图都没有胜过 native；所有尺寸都无候选同时通过冷热 AB/BA 至少 2%。
+前两个尺寸的首个算法暖缓存加速比约为 1.03/1.14，同时冷缓存耗时增加约 14%/16%，仍未通过门槛。
+这否定当前三节点 Lt 原型的直接采用，不代表其他布局、融合实现或其他硬件上的 Lt 均无效。
+额外权重 scale 布局每个大投影为 5570560 字节，动态输入 scale 布局及 workspace 也逐项记录；
+本轮没有向正式资源预算或 tuning 注册一个未经验收的候选。
+若后续融合实现通过门槛，仍由硬件完整图测量选择；库版本、driver、shape、精度、layout、
+workspace 都进入缓存身份，并计入额外显存，缺库或设备不支持时使用原 fallback。
+
+全算法 binary SHA256 为 `5f8c9ff2fda5ad1698b91b35152271067756d8c1367f68b336baa61033ef07d6`。
+严格检查、普通测试及全部 GPU 测试通过，后台 GPU 进程始终保留且状态一致。
+源码、完整样本、可应用 patch 均归档，实验代码没有合入 main。
+后续更有必要检查可消除的重复量化和线性层图节点；目前仅确认 native 分别量化，
+checkpoint 的 56 对 NVFP4 gate/up 输入全局尺度逐字相同，还未证明可以安全跨节点复用或带来性能收益。
 
 ## 原始证据
 
@@ -131,9 +180,14 @@ warm bare graph 样本包含在原始结果，但排除了激活量化和 layout
 | `gdn-gemm-cache-only-quality-v1` | 原 256 题完整结果、独立三组评分、token 对照与执行身份 |
 | `gdn-gemm-column32-v1` | 两次普通验证、NVFP4/FP8 全输出门槛与六种合成尺寸完整图实验 |
 | `gdn-nvfp4-split-k-probe-v1` | 失败/成功构建与 JIT、36 个独立参考 case、完整图样本及源码归档 |
-| `gdn-nvfp4-lt-capability-v1` | 官方 header ABI、库身份、四种几何完整独立参考与图能力验证 |
+| `gdn-nvfp4-lt-capability-v1` | 原始真实调用数值能力；裸图计时因空 capture 作废 |
+| `gdn-nvfp4-lt-capability-stream-fix-v2` | 空图专项复现、节点计数、正确流 capture 和清空输出后重放验证 |
+| `gdn-nvfp4-lt-complete-graph-v1` | Rust 首个算法完整图、失败/成功尝试、独立参考与 AB/BA |
+| `gdn-nvfp4-lt-heuristics-complete-graph-v1` | 八种算法、72 个独立参考 case、24 组完整图成本及源码归档 |
 
-Lt 结果 SHA256 `aa557647ec68a7e0c760c94fb3cd69cf3bc46577233100504d38f6e0f8b5c0d4`，
+原 Lt 数值结果 SHA256（其裸图计时作废） `aa557647ec68a7e0c760c94fb3cd69cf3bc46577233100504d38f6e0f8b5c0d4`，
 执行 Python 源码 SHA256 `ab48157ceca924cfff48d01b3730b43b2837550730d758954d89a273ea248578`。
+纠错结果 SHA256 `aaac544fe9d3151914284c5136ac65fa9bf025a19372759a475200257328efa9`；
+全算法执行 SHA256 `32a725dce895ea4370cdbbb6d956ad9b031dcaad95b34e094250438da8999629`。
 后续工作沿用[性能基线与 vLLM 对齐方案](../plans/performance/baseline.md)，
 并保留[并行 WY 完整质量失败](cuda-parallel-wy-quality-and-decode-cost-2026-10-13.md)的限制。
