@@ -1,0 +1,52 @@
+//! Pre-capture upper bound for shared recurrent scratch, shared by admission and capture.
+use crate::resident::ProgramWeights;
+use infer_core::{Error, Result};
+use infer_ir::{DataflowGraph, TensorOp};
+use std::collections::BTreeSet;
+
+pub(super) fn opted_in(weights: &ProgramWeights) -> bool {
+    weights.chunked_recurrent || std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some()
+}
+pub(super) fn enabled(weights: &ProgramWeights, opted_in: bool) -> bool {
+    // MoE retains scalar execution after its chunk kernel failed sanitizer parity.
+    weights.expert_banks.is_empty()
+        && (opted_in || (weights.input_scales.is_empty() && weights.fp8_inputs.is_empty()))
+}
+/// Sequential layers share output scratch by (value heads, value dimension).
+/// Each captured prompt width owns a workspace, including explicitly opted-in
+/// quantized execution. Verification and slot decode do not retain this scratch.
+pub fn required_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    lanes: usize,
+) -> Result<u64> {
+    let opted_in = opted_in(weights);
+    if !enabled(weights, opted_in) {
+        return Ok(0);
+    }
+    let mut outputs = BTreeSet::new();
+    let mut bytes = 0u64;
+    for node in &graph.nodes {
+        let TensorOp::Delta {
+            value_heads,
+            value_dim,
+            ..
+        } = node.op
+        else {
+            continue;
+        };
+        let geometry = (value_heads, value_dim);
+        if outputs.insert(geometry) {
+            let storage = value_heads
+                .checked_mul(value_dim)
+                .and_then(|n| n.checked_mul(lanes))
+                .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+                .and_then(|n| u64::try_from(n).ok())
+                .ok_or_else(|| Error::invalid("CUDA recurrent scratch size overflow"))?;
+            bytes = bytes
+                .checked_add(storage)
+                .ok_or_else(|| Error::invalid("CUDA recurrent scratch size overflow"))?;
+        }
+    }
+    Ok(bytes)
+}

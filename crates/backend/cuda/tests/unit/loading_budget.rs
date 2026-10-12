@@ -224,3 +224,6 @@ fn pooled_admission_keeps_verification_required_by_prompt_fallback() -> Result<(
     assert_eq!(quote(true)?, expected);
     Ok(())
 }
+
+#[path = "loading_budget_recurrent.rs"]
+mod recurrent;

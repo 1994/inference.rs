@@ -129,25 +129,11 @@ fn program(
         )?)
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
-    let mut recurrent_shapes = std::collections::BTreeSet::new();
-    for node in &graph.nodes {
-        if let TensorOp::Delta {
-            value_heads,
-            value_dim,
-            ..
-        } = node.op
-            && weights.input_scales.is_empty()
-            && weights.fp8_inputs.is_empty()
-            && recurrent_shapes.insert((value_heads, value_dim))
-        {
-            bytes = add(
-                bytes,
-                mul(
-                    mul(value_heads as u64, value_dim as u64)?,
-                    mul(prompt, F32)?,
-                )?,
-            )?;
-        }
+    for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
+        bytes = add(
+            bytes,
+            crate::resident::recurrent_prefill::required_bytes(graph, weights, width)?,
+        )?;
     }
     for spec in &graph.tensors {
         let elements = spec.elements()? as u64;

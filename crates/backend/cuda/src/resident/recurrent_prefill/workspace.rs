@@ -1,6 +1,9 @@
 //! Shared head-major scratch for token-chunk recurrent prefill.
 use super::super::capture::error;
-use super::kernels;
+use super::{
+    budget::{enabled, opted_in},
+    kernels,
+};
 use crate::{
     device::{CudaDevice, device_error},
     resident::{ActivationArena, ProgramWeights},
@@ -33,17 +36,8 @@ impl Workspace {
         // Explicit chunked Delta uses stable WY at supported prompt widths. Independent
         // references and fixed full-model GSM8K quality pass. Scalar remains the quantized
         // default while broader task coverage and vLLM service performance remain incomplete.
-        let opted_in =
-            weights.chunked_recurrent || std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
-        if !opted_in && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()) {
-            return Ok(Self {
-                lanes,
-                ..Self::default()
-            });
-        }
-        // MoE parity at head width 128 found invalid generated scratch atomics in
-        // the chunk delta kernel under Compute Sanitizer. Keep its per-row twin.
-        if !weights.expert_banks.is_empty() {
+        let opted_in = opted_in(weights);
+        if !enabled(weights, opted_in) {
             return Ok(Self {
                 lanes,
                 ..Self::default()

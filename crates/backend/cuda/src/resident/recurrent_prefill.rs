@@ -301,7 +301,9 @@ pub(crate) mod kernels {
 #[path = "../../tests/unit/resident_recurrent_prefill.rs"]
 mod tests;
 
+mod budget;
 mod workspace;
+pub use budget::required_bytes;
 pub use workspace::Workspace;
 
 #[cfg(test)]
