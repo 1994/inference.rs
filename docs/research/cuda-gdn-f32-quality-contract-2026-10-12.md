@@ -255,8 +255,8 @@ CP 原型输出转置也计入成本；它额外物化 dense M/N/初态矩阵，
 组合。现有独立 scalar 对照没有显示稳定优于 serial WY 的证据，且不是直接的 WY/CP 配对，
 不能把两个实验的 cache 干扰差异当成同条件速度结论。
 
-剩余优化应围绕已测成本：pooled request 的窄 prompt graph 仍是 64 token，大矩阵投影为每个
-chunk 重复遍历权重；扩大实际图宽度可以增加 GEMM 并行度与权重复用，但之前私有宽图增加
+剩余优化应围绕已测成本：MTP=2 pooled request 的窄 prompt graph 仍是 64 token；本次 MTP=0
+长提示实际使用 256-row 图，不能给它套用窄图归因。扩大 pooled 图宽度可以增加 GEMM 并行度与权重复用，但之前私有宽图增加
 显存并使 pool 丢失槽位，所以需要共享 arena 或改变图/状态的资源所有权，而不是直接固定 256。
 图宽度最终须按硬件、资源预算和 workload 测量选择。另一个源码可见的成本是 value 列分区
 重复计算相同 head 的 QK interaction 与 inverse；准备结果与 state apply 分离可能减少重复工作，
@@ -269,7 +269,7 @@ chunk 重复遍历权重；扩大实际图宽度可以增加 GEMM 并行度与�
 候选状态/activation 仍为 F32，canonical 身份只在同一编译环境与形状下复用，缓存字段和
 独立 F64/冷暖 AB/BA 确认完整保留。`columns-full-half-v2` 不接受旧三候选 schema。
 
-最终二进制与实际自动选出的列宽 64 完成同一 256 题，答对 243/256：短提示 119/128，
+最终二进制使用完整／半列宽选择入口完成同一 256 题，答对 243/256：短提示 119/128，
 八例长提示 124/128。相对原 scalar 240/256 有一道回退、四道新增答对，保守单侧上界
 `0.01839577` 小于预声明 2%，通过 native-control 质量门槛。回退题为
 `gsm8k:1172:eight_shot`。相对固定 vLLM 243/256 有四道回退、四道新增答对，上界
@@ -284,7 +284,7 @@ release 构建、严格 CUDA all-targets clippy、format、50 项常规单元检
 `gdn-tuning-f32-half-perf-v1` 两轮三 arm 对照验证，不沿用旧 value block 128 的收益数值。
 
 
-## 半列宽生产入口的两轮固定工作量性能
+## 完整／半列宽选择入口的历史固定工作量性能
 
 `d8e0a37` 对应 CLI `00c804f8…`、自动列宽 64，用同一 native 二进制的 scalar 模式作对照，
 并比较固定官方 `3fe917abb` vLLM runtime。两轮启动顺序为 scalar/WY/vLLM 与 vLLM/WY/scalar。
@@ -296,7 +296,7 @@ release 构建、严格 CUDA all-targets clippy、format、50 项常规单元检
 
 下表取两轮各进程中位数的中位数，再计算比值；单位 ms。wall 在四并发时为整组耗时。
 
-| 工作量／指标 | scalar | WY64 | vLLM | WY/scalar | WY/vLLM |
+| 工作量／指标 | scalar | F32 WY | vLLM | WY/scalar | WY/vLLM |
 |---|---:|---:|---:|---:|---:|
 | 四并发 wall | 1414.045 | 1390.004 | 1128.246 | 0.9830 | 1.2320 |
 | 四并发 TTFT | 173.454 | 154.154 | 82.855 | 0.8887 | 1.8605 |
@@ -313,7 +313,7 @@ release 构建、严格 CUDA all-targets clippy、format、50 项常规单元检
 2.7405 倍，四并发 wall 为 1.2320 倍；目标尚未达到。短提示 TPOT 汇总为 1.0917 倍，
 但第二轮为 1.1033 倍，不能只用汇总数字宣称逐进程全部达标。
 这仅是两轮 MTP=0 的证据，不是五进程统计验收，也不外推为 MTP=2 或其他模型。
-旧固定列宽 128 与本次列宽 64 没有直接配对，不能从不同实验推断列宽本身额外贡献了多少服务收益。
+旧固定列宽与本次选择入口没有直接配对，不能从不同实验推断列宽本身额外贡献了多少服务收益；各图宽度的缓存与 replay 归因见最后的诊断。
 
 原始报告、缓存、执行身份与硬件监测位于 `gdn-tuning-f32-half-perf-v1/paired`，
 `summary.json` SHA256 为
@@ -335,3 +335,47 @@ policy、layout、测试清单、format、release CUDA all-targets clippy、50 �
 相对 vLLM 四道回退、四道新增答对，上界 0.03539722，仍未证明更强逐题统计资格。
 256 道生成 token 与修复前列宽 64 的合格版本逐题相同。该观察补充独立评分，不能替代其质量协议。
 首次模型 warmup 成功，未发生重试；binary/cache 前后 SHA 不变，实际 prefix reuse 为零。
+
+## CI 修复后二进制的最新性能与图宽度核验
+
+代码提交 [46d0144](https://github.com/1994/inference.rs/commit/46d0144c1a706459609dde5f4e4f017ad6d79731) 的
+[完整 quality CI](https://github.com/1994/inference.rs/actions/runs/38213339892)和
+[docs CI](https://github.com/1994/inference.rs/actions/runs/38213340006)均通过，包含 Linux/macOS、
+工具、安全、MSRV 与四种发布目标的打包。性能测试与 CI 并行运行。
+
+新 CLI SHA256 为 `4be5d78d71c995e773c9571b0bf23fadb57796d8d44439c96ec1d8f5602d8440`。
+第 0 轮顺序 scalar/WY/vLLM，通过严格背景资格；第 1 轮反向顺序因外部 GitHub Desktop
+显存由 123/114/108 MiB 变化而未通过原一致性规则，原始输出全部保留。补测第 3 轮反向
+vLLM/WY/scalar 三组对照均通过。汇总只使用第 0、3 轮，两轮各进程中位数的中位数，
+每种 arm 共 36 个测量请求；输入、64-token 固定输出、MTP=0、实际 prefix reuse=0、
+同一 native 二进制与冻结缓存均核验通过。未因性能结果排除样本。
+
+| 工作量／指标 | scalar ms | F32 WY ms | vLLM ms | WY/scalar | WY/vLLM |
+|---|---:|---:|---:|---:|---:|
+| 短提示 TTFT | 44.604 | 37.184 | 48.258 | 0.8336 | 0.7705 |
+| 短提示 TPOT | 16.166 | 16.162 | 14.956 | 0.9997 | 1.0806 |
+| 短提示 wall | 1064.471 | 1056.415 | 990.729 | 0.9924 | 1.0663 |
+| 长提示 TTFT | 245.623 | 180.212 | 60.309 | 0.7337 | 2.9882 |
+| 长提示 TPOT | 16.128 | 16.134 | 15.004 | 1.0004 | 1.0753 |
+| 长提示 wall | 1263.368 | 1197.139 | 1005.666 | 0.9476 | 1.1904 |
+| 四并发 TTFT | 172.318 | 150.891 | 84.463 | 0.8756 | 1.7865 |
+| 四并发 TPOT | 19.371 | 19.486 | 16.586 | 1.0059 | 1.1749 |
+| 四并发 wall | 1401.486 | 1379.957 | 1139.394 | 0.9846 | 1.2111 |
+
+长提示 TTFT 相对同一二进制 scalar 减少 26.6304%，decode TPOT 基本不变；相对 vLLM
+长提示 TTFT 仍约 2.99 倍，四并发 wall 约 1.21 倍。两轮各自的 native-control 延迟阈值均通过，
+vLLM 延迟阈值均未通过。只有两轮合格进程样本，不能宣称五进程统计验收或全部模型达标。
+原始目录 `gdn-tuning-f32-ci-fix-perf-v1/paired`，汇总 SHA256 为 `cfcf6eb88c98a7707c6b5ce80983aeabe5e4f0bf60f9d80c8bfef3e611ea92a7`。
+
+原来的 “WY64” 表头把策略入口和实际列宽混在了一起，现修正为 F32 WY。
+冻结 table 只有 `[KH=16,VH=48,D=128,LANES=64]` 的条目，选择 value block 64；
+在 `--no-autotune` 下 256-row 图 cache miss 回退完整 128 列。
+单独的执行诊断观察到 prefill task 输入宽度 51、52、256、255，长提示按 256+255 调用；
+结合 `prefill_batch_readout` 的实际 dispatch，51/52-token 提示选窄 64-row 图，
+256/255-token 提示选宽 256-row 图。因此当前长提示收益来自稳定 F32 WY 算法，
+不是已证明的半列宽调参收益；该工作量没有直接比较完整与半列宽。
+生产质量结果同样限定为这个选择入口与冻结 table 的组合，不能解读为所有层 replay 都是半列宽。
+
+诊断目录 `gdn-replay-width-diagnostic-v1/attempt1`，汇总 SHA256 为 `0b07ff71ace0594cfcddcb8dd4c61d2c7ce464679e184cebbd0f57fbf9ea2add`。
+初次诊断漏复制 checklist，启动后在测量前失败，原日志保留；修正后诊断完成。
+诊断开启 host phase probe，计时不计入上表。
