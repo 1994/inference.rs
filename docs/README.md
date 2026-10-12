@@ -65,6 +65,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [Pooled 图几何与准入](research/cuda-pooled-admission-geometry-2026-10-12.md) | capture/workspace/预算一致性、五组批量吞吐收益及 TTFT/TPOT 取舍 |
 | [ReplaySSM F32 GDN 探索](research/cuda-replayssm-gdn-2026-10-12.md) | F32 小窗口缓存、完整周期成本、推测/前缀契约；尚未接入 serving |
 | [内存换推理效率](research/cuda-memory-for-latency-2026-10-12.md) | 主机前缀缓存、共享 prefill 工作区与传输成本验收 |
+| [GEMM 完整成本与 FP4 库能力](research/cuda-gemm-full-cost-and-fp4-library-2026-10-13.md) | 纯 GEMM 256 题质量、N32/Split-K 完整成本与下一项库能力证据 |
 | [并行 WY 完整质量与解码成本](research/cuda-parallel-wy-quality-and-decode-cost-2026-10-13.md) | 两轮性能、256 题失败验收与后续 GEMM 方向 |
 | [长提示调参覆盖与独立准备](research/cuda-wide-prefill-tuning-2026-10-13.md) | 宽图缓存补齐、失败候选、CUDA 成本与因果定位 |
 | [F32 GDN 与完整模型质量](research/cuda-gdn-f32-quality-contract-2026-10-12.md) | F32 WY、硬件 tuning、完整模型资格与两轮性能差距；默认量化策略仍为 scalar |
