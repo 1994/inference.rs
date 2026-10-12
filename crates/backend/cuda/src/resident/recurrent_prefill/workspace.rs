@@ -6,7 +6,7 @@ use crate::{
     resident::{ActivationArena, ProgramWeights},
 };
 use cutile::prelude::*;
-use infer_core::Result;
+use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
 use std::collections::BTreeMap;
 
@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 pub struct Workspace {
     buffers: BTreeMap<(usize, usize), Tensor<f32>>,
     lanes: usize,
+    wy_blocks: BTreeMap<TensorId, usize>,
+    prefer_wy: bool,
 }
 impl Workspace {
     pub(crate) fn new(
@@ -28,10 +30,9 @@ impl Workspace {
         // in state/output last bits. Neither instruction contraction nor reduction ordering
         // has been isolated as the cause; a compiler knob is not a demonstrated requirement.
         //
-        // The checkpoint model check explicitly enables chunked Delta while keeping convolution
-        // and GEMM policy identical. On the mixed FP8/NVFP4 27B, small early state differences
-        // grow into substantial hidden/logit drift. Keep scalar Delta as the quantized default
-        // until the full-model numeric gate passes, rather than accepting a kernel-only tolerance.
+        // Explicit chunked Delta uses stable WY at supported prompt widths. Independent
+        // references and fixed full-model GSM8K quality pass. Scalar remains the quantized
+        // default while broader task coverage and vLLM service performance remain incomplete.
         let opted_in =
             weights.chunked_recurrent || std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some();
         if !opted_in && (!weights.input_scales.is_empty() || !weights.fp8_inputs.is_empty()) {
@@ -49,6 +50,41 @@ impl Workspace {
             });
         }
         let mut buffers = BTreeMap::new();
+        let mut wy_blocks = BTreeMap::new();
+        if opted_in {
+            for node in &graph.nodes {
+                if let TensorOp::Delta {
+                    key_heads,
+                    value_heads,
+                    key_dim,
+                    value_dim,
+                } = node.op
+                    && key_dim == value_dim
+                    && node.inputs[..crate::constants::GDN_PROJECTED_INPUTS]
+                        .iter()
+                        .all(|id| !weights.constants.contains_key(id))
+                {
+                    let shape = [key_heads, value_heads, key_dim, lanes];
+                    let selected = if std::env::var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some()
+                    {
+                        Some(
+                            super::super::capture_state::value_block(value_dim)
+                                .map_err(device_error)?,
+                        )
+                    } else {
+                        crate::tuning::recurrent::select(
+                            device,
+                            shape,
+                            weights.autotune,
+                            &weights.resident_tuning,
+                        )
+                    };
+                    if let Some(block) = selected {
+                        wy_blocks.insert(node.outputs[0], block);
+                    }
+                }
+            }
+        }
         for node in &graph.nodes {
             if let TensorOp::Delta {
                 value_heads,
@@ -65,7 +101,12 @@ impl Workspace {
                 );
             }
         }
-        Ok(Self { buffers, lanes })
+        Ok(Self {
+            buffers,
+            lanes,
+            wy_blocks,
+            prefer_wy: opted_in,
+        })
     }
     pub(crate) fn record(
         &mut self,
@@ -114,6 +155,9 @@ impl Workspace {
         {
             return Ok(false);
         }
+        if self.prefer_wy && !self.wy_blocks.contains_key(&node.outputs[0]) {
+            return Ok(false);
+        }
         let state = states
             .get_mut(&node.states[0])
             .and_then(|s| s.first_mut())
@@ -134,42 +178,22 @@ impl Workspace {
         let mut output = output.reshape(&[self.lanes, value_heads, value_dim])?;
         // The value dimension may be split so the grid fills the device and each block moves a
         // quarter of the state per lane. Off by default until the full matrix shows a gain.
-        let block = super::super::capture_state::value_block(value_dim)
+        let block = self
+            .wy_blocks
+            .get(&node.outputs[0])
+            .copied()
+            .map_or_else(|| super::super::capture_state::value_block(value_dim), Ok)
             .map_err(|_| error("chunk delta value split"))?;
-        scope.record(
-            kernels::delta(
-                state.partition([1, key_dim, block]),
-                (&mut *scratch).partition([1, self.lanes, block]),
-                &arena.get(node.inputs[0]).map_err(error)?.view(&[
-                    self.lanes,
-                    2 * key_heads + value_heads,
-                    key_dim,
-                ])?,
-                &arena
-                    .get(node.inputs[1])
-                    .map_err(error)?
-                    .view(&[self.lanes, value_heads])?,
-                &arena
-                    .get(node.inputs[2])
-                    .map_err(error)?
-                    .view(&[self.lanes, value_heads])?,
-                weights
-                    .constants
-                    .get(&node.inputs[3])
-                    .ok_or_else(|| error("chunk delta decay weight"))?,
-                weights
-                    .constants
-                    .get(&node.inputs[4])
-                    .ok_or_else(|| error("chunk delta bias"))?,
-                metadata,
-            )
-            .generics(vec![
-                key_heads.to_string(),
-                value_heads.to_string(),
-                key_dim.to_string(),
-                self.lanes.to_string(),
-                block.to_string(),
-            ]),
+        record_delta(
+            scope,
+            node,
+            arena,
+            weights,
+            state,
+            scratch,
+            metadata,
+            [key_heads, value_heads, key_dim, self.lanes, block],
+            self.wy_blocks.contains_key(&node.outputs[0]),
         )?;
         scope.record(
             kernels::transpose((&mut output).partition([1, 1, value_dim]), &*scratch)
@@ -178,4 +202,79 @@ impl Workspace {
         arena.buffers[slot] = Some(output.reshape(&original)?);
         Ok(true)
     }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit graph state, IR inputs and capture geometry"
+)]
+fn record_delta(
+    scope: &Scope,
+    node: &TensorNode,
+    arena: &ActivationArena,
+    weights: &ProgramWeights,
+    state: &mut Tensor<f32>,
+    scratch: &mut Tensor<f32>,
+    metadata: &Tensor<i32>,
+    [key_heads, value_heads, key_dim, lanes, block]: [usize; 5],
+    wy: bool,
+) -> std::result::Result<(), DeviceError> {
+    let qkv = arena.get(node.inputs[0]).map_err(error)?.view(&[
+        lanes,
+        2 * key_heads + value_heads,
+        key_dim,
+    ])?;
+    let beta = arena
+        .get(node.inputs[1])
+        .map_err(error)?
+        .view(&[lanes, value_heads])?;
+    let alpha = arena
+        .get(node.inputs[2])
+        .map_err(error)?
+        .view(&[lanes, value_heads])?;
+    let decay = weights
+        .constants
+        .get(&node.inputs[3])
+        .ok_or_else(|| error("chunk delta decay weight"))?;
+    let bias = weights
+        .constants
+        .get(&node.inputs[4])
+        .ok_or_else(|| error("chunk delta bias"))?;
+    let generics = vec![
+        key_heads.to_string(),
+        value_heads.to_string(),
+        key_dim.to_string(),
+        lanes.to_string(),
+        block.to_string(),
+    ];
+    if wy {
+        scope.record(
+            kernels::delta_wy(
+                state.partition([1, key_dim, block]),
+                scratch.partition([1, lanes, block]),
+                &qkv,
+                &beta,
+                &alpha,
+                decay,
+                bias,
+                metadata,
+            )
+            .generics(generics),
+        )?;
+    } else {
+        scope.record(
+            kernels::delta(
+                state.partition([1, key_dim, block]),
+                scratch.partition([1, lanes, block]),
+                &qkv,
+                &beta,
+                &alpha,
+                decay,
+                bias,
+                metadata,
+            )
+            .generics(generics),
+        )?;
+    }
+    Ok(())
 }

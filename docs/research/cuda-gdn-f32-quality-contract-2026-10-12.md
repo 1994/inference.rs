@@ -244,7 +244,7 @@ recurrent allowance；正在执行的 JIT/测量不可中断，因此它是停�
 旧三候选的缓存不能成为新决策。手动四分之一列宽保留为诊断参数。
 `gdn-tuning-f32-half-v1` release、严格 clippy、50 项常规单元检查与 4 项硬件 tuning 检查通过，
 实际选择列宽 64；CUDA 算术源码与已经通过 100 项独立参考的版本逐字节相同。
-对应 `gdn-tuning-f32-half-quality-v1` 的完整模型资格和新固定工作量性能仍待验收，代码尚未提交。
+对应 `gdn-tuning-f32-half-quality-v1` 已完成完整模型资格，详见下节；新固定工作量服务性能仍待验收。
 
 ## 上下文并行原型与下一步成本方向
 
@@ -261,3 +261,24 @@ chunk 重复遍历权重；扩大实际图宽度可以增加 GEMM 并行度与�
 图宽度最终须按硬件、资源预算和 workload 测量选择。另一个源码可见的成本是 value 列分区
 重复计算相同 head 的 QK interaction 与 inverse；准备结果与 state apply 分离可能减少重复工作，
 但需要新的直接配对成本和数值/模型质量验收。dense affine CP 的当前数据不支持先强制上线。
+
+## 完整／半列宽自动选择的生产入口验收
+
+本次提交把稳定 F32 WY 接入已有 `--chunked-recurrent`，并按硬件自动选择已具备质量资格的
+完整或一半列宽。量化模型默认仍使用 scalar；四分之一列宽保留为手动诊断，不参与自动选择。
+候选状态/activation 仍为 F32，canonical 身份只在同一编译环境与形状下复用，缓存字段和
+独立 F64/冷暖 AB/BA 确认完整保留。`columns-full-half-v2` 不接受旧三候选 schema。
+
+最终二进制与实际自动选出的列宽 64 完成同一 256 题，答对 243/256：短提示 119/128，
+八例长提示 124/128。相对原 scalar 240/256 有一道回退、四道新增答对，保守单侧上界
+`0.01839577` 小于预声明 2%，通过 native-control 质量门槛。回退题为
+`gsm8k:1172:eight_shot`。相对固定 vLLM 243/256 有四道回退、四道新增答对，上界
+`0.03539722` 未通过更强的逐题回退门槛；总正确率相同不能替代这个统计资格。
+两个 native 质量版本都有完整原始输出，失败的列宽 32 未被替换或删除。
+
+release 构建、严格 CUDA all-targets clippy、format、50 项常规单元检查和 4 项硬件 tuning
+检查通过；GPU 算术与通过 100 项 F64 检查的版本逐字节相同。新的 CLI SHA256 为
+`00c804f8b29376a8a0c9516f2e6cc4a479efb6194eb775b532742e9e819f58ca`。源码及硬件缓存位于
+`gdn-tuning-f32-half-v1`，完整质量及独立评分位于 `gdn-tuning-f32-half-quality-v1`。
+此次资格限于这个固定模型/算术题集和验证设备；服务性能用新的
+`gdn-tuning-f32-half-perf-v1` 两轮三 arm 对照验证，不沿用旧 value block 128 的收益数值。

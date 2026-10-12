@@ -515,3 +515,206 @@ fn print_gap_indices(
         );
     }
 }
+
+#[test]
+#[ignore = "requires CUDA hardware; new F32-state/F64-reference contract"]
+fn wy_delta_matches_independent_recurrence() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for (kh, vh, dim, lanes) in [
+        (2, 4, 32, 32),
+        (2, 6, 128, 32),
+        (2, 6, 128, 128),
+        (16, 48, 128, 128),
+    ] {
+        for (count, offset) in [(0, 0), (1, 0), (lanes - 3, 0), (lanes, -1)] {
+            check_wy_case(&device, (kh, vh, dim, lanes), count, offset)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_wy_case(
+    device: &CudaDevice,
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_wy_fixture(
+        device,
+        geometry,
+        count,
+        offset,
+        reference_fixture(geometry, count, offset)?,
+    )
+}
+
+fn check_wy_fixture(
+    device: &CudaDevice,
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+    fixture: ReferenceFixture,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (kh, vh, dim, lanes) = geometry;
+    let ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    } = fixture;
+    let qkv = device.upload(qkv, &[lanes, 2 * kh + vh, dim])?;
+    let beta = device.upload(beta, &[lanes, vh])?;
+    let alpha = device.upload(alpha, &[lanes, vh])?;
+    let a_log = device.upload(a_log, &[vh])?;
+    let bias = device.upload(bias, &[vh])?;
+    let metadata = device.upload(vec![0, i32::try_from(count)?, offset, 0], &[4])?;
+    // The chunk rotates the whole state once per lane, so a value-dimension block leaves each
+    // block a quarter of the traffic per lane. Both widths must match the reference, and the split
+    // must land on the single-block launch to rounding rather than merely inside it.
+    let mut single: Option<(Vec<f32>, Vec<f32>)> = None;
+    for split in [1_usize, 4] {
+        let block = dim / split;
+        let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+        let src = device.upload(initial.clone(), &[vh, dim, dim])?;
+        api::memcpy(&mut state, &src).sync_on(&device.stream)?;
+        let mut output = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
+        kernels::delta_wy(
+            (&mut state).partition([1, dim, block]),
+            (&mut output).partition([1, lanes, block]),
+            &qkv,
+            &beta,
+            &alpha,
+            &a_log,
+            &bias,
+            &metadata,
+        )
+        .generics(vec![
+            kh.to_string(),
+            vh.to_string(),
+            dim.to_string(),
+            lanes.to_string(),
+            block.to_string(),
+        ])
+        .sync_on(&device.stream)?;
+        let actual_state = state.to_host_vec().sync_on(&device.stream)?;
+        let actual_out = output.to_host_vec().sync_on(&device.stream)?;
+        for (label, actual, reference) in [
+            ("state", &actual_state, &expected),
+            ("output", &actual_out, &outputs),
+        ] {
+            let maximum = actual
+                .iter()
+                .zip(reference)
+                .map(|(a, b)| (f64::from(*a) - b).abs())
+                .fold(0.0_f64, f64::max);
+            eprintln!(
+                "WY_REFERENCE geometry={geometry:?} count={count} offset={offset} split={split} label={label} max_abs={maximum:e}"
+            );
+            for (a, b) in actual.iter().zip(reference) {
+                assert!(
+                    (f64::from(*a) - b).abs() < 0.00002,
+                    "{geometry:?} count={count} offset={offset} split={split}: {a} != {b}"
+                );
+            }
+        }
+        if split == 1 {
+            single = Some((actual_state, actual_out));
+        } else {
+            let (state_ref, out_ref) = single.as_ref().ok_or("single block must run first")?;
+            let state_gap = actual_state
+                .iter()
+                .zip(state_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            let out_gap = actual_out
+                .iter()
+                .zip(out_ref)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            eprintln!(
+                "{geometry:?} split {split}: state {state_gap:e}, out {out_gap:e} against one block"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; actual captured prompt graph widths"]
+fn wy_actual_graph_widths_match_independent_recurrence() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for lanes in [64, 256] {
+        for (count, offset) in [(0, 0), (1, 0), (lanes - 3, 0), (lanes, -1)] {
+            check_wy_case(&device, (16, 48, 128, lanes), count, offset)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; weak decay and correlated K expose unstable inverse construction"]
+fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (kh, vh, dim, lanes) = (2_usize, 4_usize, 32_usize, 32_usize);
+    let mut qkv = values(lanes * (2 * kh + vh) * dim, 17);
+    for lane in 0..lanes {
+        for head in 0..2 * kh {
+            for col in 0..dim {
+                qkv[(lane * (2 * kh + vh) + head) * dim + col] = 1.0;
+            }
+        }
+    }
+    let beta = vec![8.0_f32; lanes * vh];
+    let alpha = vec![0.0_f32; lanes * vh];
+    let a_log = vec![-10.0_f32; vh];
+    let bias = vec![0.0_f32; vh];
+    let initial = vec![0.0_f32; vh * dim * dim];
+    let mut expected = vec![0.0_f64; vh * dim * dim];
+    let mut outputs = vec![0.0_f64; vh * lanes * dim];
+    // Independent scalar recurrence in F64, from the original input floats.
+    let kinv = (f64::from(u32::try_from(dim)?) + 1e-6).sqrt().recip();
+    let qinv = kinv / f64::from(u32::try_from(dim)?).sqrt();
+    let b = 1.0 / (1.0 + (-8.0_f64).exp());
+    let decay = (-(-10.0_f64).exp() * 2.0_f64.ln()).exp();
+    for lane in 0..lanes {
+        for head in 0..vh {
+            let st = &mut expected[head * dim * dim..][..dim * dim];
+            for value in st.iter_mut() {
+                *value *= decay;
+            }
+            for col in 0..dim {
+                let predicted = (0..dim).map(|row| st[row * dim + col] * kinv).sum::<f64>();
+                let v = f64::from(qkv[(lane * (2 * kh + vh) + 2 * kh + head) * dim + col]);
+                let delta = (v - predicted) * b;
+                for row in 0..dim {
+                    st[row * dim + col] = kinv.mul_add(delta, st[row * dim + col]);
+                }
+                outputs[(head * lanes + lane) * dim + col] =
+                    (0..dim).map(|row| st[row * dim + col] * qinv).sum();
+            }
+        }
+    }
+    check_wy_fixture(
+        &device,
+        (kh, vh, dim, lanes),
+        lanes,
+        0,
+        ReferenceFixture {
+            qkv,
+            beta,
+            alpha,
+            a_log,
+            bias,
+            initial,
+            expected,
+            outputs,
+        },
+    )
+}

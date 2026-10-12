@@ -3,9 +3,10 @@
 pub(crate) mod kernels {
     use cutile::core::{
         BroadcastScalar, LoadTileLike, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2,
-        cmp_ordering, cmpf, convert_scalar, exp, ftz, get_tile_block_id, log, predicate,
-        reduce_sum, rsqrt, select, tile_to_scalar,
+        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, bf16,
+        cmp_ordering, cmpf, constant, convert_scalar, convert_tile, eq_tile, exp, extract, ftz,
+        ge_tile, get_tile_block_id, gt_tile, iota, log, lt_tile, mmaf, predicate, reduce_sum,
+        reverse, rsqrt, scan_sum, select, tile_to_scalar,
     };
 
     #[expect(
@@ -89,6 +90,183 @@ pub(crate) mod kernels {
                 out.partition_mut(shape![1, 1, SW])
                     .store(0.0f32.broadcast(shape![1, 1, SW]), [0i32, lane, 0i32]);
             }
+        }
+        state.store(old.reshape(shape![1, D, SW]));
+    }
+    // Experimental WY factorization. Each chunk solves the causal token interaction system
+    // before updating the recurrent state with matrix products. F32 operands use six BF16
+    // component products with F32 accumulation.
+    fn precise_mma<const M: i32, const K: i32, const N: i32>(
+        left: Tile<f32, { [M, K] }>,
+        right: Tile<f32, { [K, N] }>,
+    ) -> Tile<f32, { [M, N] }> {
+        let lh: Tile<bf16, { [M, K] }> = convert_tile(left);
+        let rh: Tile<bf16, { [K, N] }> = convert_tile(right);
+        let lr: Tile<f32, { [M, K] }> = convert_tile(lh);
+        let rr: Tile<f32, { [K, N] }> = convert_tile(rh);
+        let ll: Tile<bf16, { [M, K] }> = convert_tile(left - lr);
+        let rl: Tile<bf16, { [K, N] }> = convert_tile(right - rr);
+        // A third BF16 component retains the remaining F32 significand bits. Include
+        // all products through second residual order; three products omit ll*rl and
+        // both third components, giving roughly 16-bit operand accuracy.
+        let lf: Tile<f32, { [M, K] }> = convert_tile(ll);
+        let rf: Tile<f32, { [K, N] }> = convert_tile(rl);
+        let lll: Tile<bf16, { [M, K] }> = convert_tile((left - lr) - lf);
+        let rll: Tile<bf16, { [K, N] }> = convert_tile((right - rr) - rf);
+        let zero: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
+        let low = mmaf(lll, rh, zero);
+        let low = mmaf(lh, rll, low);
+        let low = mmaf(ll, rl, low);
+        let low = mmaf(ll, rh, low);
+        let low = mmaf(lh, rl, low);
+        mmaf(lh, rh, low)
+    }
+
+    #[expect(clippy::too_many_arguments, reason = "explicit CUDA tensor bindings")]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::many_single_char_names,
+        reason = "Keep validated WY CUDA arithmetic in one entry; symbols match its matrix derivation"
+    )]
+    #[cutile::entry()]
+    fn delta_wy<const KH: i32, const VH: i32, const D: i32, const LANES: i32, const SW: i32>(
+        state: &mut Tensor<f32, { [1, D, SW] }>,
+        out: &mut Tensor<f32, { [1, LANES, SW] }>,
+        qkv: &Tensor<f32, { [-1, -1, D] }>,
+        beta: &Tensor<f32, { [-1, -1] }>,
+        alpha: &Tensor<f32, { [-1, -1] }>,
+        a_log: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let meta = metadata.partition(shape![1]);
+        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+        let mut old = state.load_like(state).reshape(shape![D, SW]);
+        let indices: Tile<i32, { [32] }> = iota(shape![32]);
+        let row_indices = indices.reshape(shape![32, 1]).broadcast(shape![32, 32]);
+        let col_indices = indices.reshape(shape![1, 32]).broadcast(shape![32, 32]);
+        let lower = gt_tile(row_indices, col_indices);
+        let causal = ge_tile(row_indices, col_indices);
+        for chunk in 0i32..((LANES + 31i32) / 32i32) {
+            let rows = indices + (chunk * 32i32).broadcast(shape![32]);
+            let active = lt_tile(rows, count.broadcast(shape![32]))
+                & ge_tile(
+                    rows + (base + offset).broadcast(shape![32]),
+                    0i32.broadcast(shape![32]),
+                );
+            let valid = active.reshape(shape![32, 1]).broadcast(shape![32, D]);
+            let key = pid.0 / (VH / KH);
+            let qp = qkv.partition(shape![32, 1, D]);
+            let q = qp.load([chunk, key, 0i32]).reshape(shape![32, D]);
+            let k = qp.load([chunk, KH + key, 0i32]).reshape(shape![32, D]);
+            let qnorm: Tile<f32, { [32] }> = reduce_sum(q * q, 1i32);
+            let knorm: Tile<f32, { [32] }> = reduce_sum(k * k, 1i32);
+            let qinv = rsqrt(qnorm + 1e-6f32.broadcast(shape![32]), ftz::Disabled);
+            let kinv = rsqrt(knorm + 1e-6f32.broadcast(shape![32]), ftz::Disabled);
+            let d: f32 = convert_scalar(D);
+            let dinv = rsqrt(d.broadcast(shape![32]), ftz::Disabled);
+            let q = select(
+                valid,
+                q * (qinv * dinv)
+                    .reshape(shape![32, 1])
+                    .broadcast(shape![32, D]),
+                0.0f32.broadcast(shape![32, D]),
+            );
+            let k = select(
+                valid,
+                k * kinv.reshape(shape![32, 1]).broadcast(shape![32, D]),
+                0.0f32.broadcast(shape![32, D]),
+            );
+            let v = qkv
+                .partition(shape![32, 1, SW])
+                .load([chunk, 2i32 * KH + pid.0, pid.2])
+                .reshape(shape![32, SW]);
+            let b = beta
+                .partition(shape![32, 1])
+                .load([chunk, pid.0])
+                .reshape(shape![32]);
+            let b = 1.0f32.broadcast(shape![32])
+                / (1.0f32.broadcast(shape![32]) + exp(0.0f32.broadcast(shape![32]) - b));
+            let b = select(active, b, 0.0f32.broadcast(shape![32]));
+            let a = alpha
+                .partition(shape![32, 1])
+                .load([chunk, pid.0])
+                .reshape(shape![32])
+                + bias
+                    .partition(shape![1])
+                    .load([pid.0])
+                    .broadcast(shape![32]);
+            let soft = log(1.0f32.broadcast(shape![32]) + exp(a));
+            let soft = select(gt_tile(a, 20.0f32.broadcast(shape![32])), a, soft);
+            let g = 0.0f32.broadcast(shape![32])
+                - exp(a_log.partition(shape![1]).load([pid.0])).broadcast(shape![32]) * soft;
+            let g = select(active, g, 0.0f32.broadcast(shape![32]));
+            let g = scan_sum(g, 0i32, reverse::Forward, 0.0f32);
+            let decay = exp(g);
+            let gap = g.reshape(shape![32, 1]).broadcast(shape![32, 32])
+                - g.reshape(shape![1, 32]).broadcast(shape![32, 32]);
+            // Mask before exponentiation: upper-triangle gaps can overflow even though the
+            // causal coefficients themselves are bounded by one.
+            let relative = exp(select(causal, gap, 0.0f32.broadcast(shape![32, 32])));
+            let kk = precise_mma(k, k.transpose());
+            let interactions = select(
+                lower,
+                kk * relative * b.reshape(shape![32, 1]).broadcast(shape![32, 32]),
+                0.0f32.broadcast(shape![32, 32]),
+            );
+            let projected =
+                precise_mma(k, old) * decay.reshape(shape![32, 1]).broadcast(shape![32, SW]);
+            let rhs = (v - projected) * b.reshape(shape![32, 1]).broadcast(shape![32, SW]);
+            // Solve (I + A) * updates = rhs, preserving unit diagonal structure.
+            let identity = select(
+                eq_tile(row_indices, col_indices),
+                1.0f32.broadcast(shape![32, 32]),
+                0.0f32.broadcast(shape![32, 32]),
+            );
+            // Invert 2x2 diagonal blocks first, then merge adjacent inverted blocks:
+            // [[L11,0],[L21,L22]]^-1 has cross block -inv(L22)*L21*inv(L11).
+            // Squaring the entire strictly-lower matrix creates huge binomial terms for
+            // correlated keys with weak decay and then subtracts them, losing precision.
+            let two = 2i32.broadcast(shape![32, 32]);
+            let pair = eq_tile(row_indices / two, col_indices / two) & lower;
+            let mut inverse =
+                identity - select(pair, interactions, 0.0f32.broadcast(shape![32, 32]));
+            let mut half = 2i32;
+            for _level in 0i32..4i32 {
+                let width = (2i32 * half).broadcast(shape![32, 32]);
+                let row_block = row_indices / width;
+                let col_block = col_indices / width;
+                let middle = row_block * width + half.broadcast(shape![32, 32]);
+                let cross = eq_tile(row_block, col_block)
+                    & ge_tile(row_indices, middle)
+                    & lt_tile(col_indices, middle);
+                let coupling = select(cross, interactions, 0.0f32.broadcast(shape![32, 32]));
+                inverse = inverse - precise_mma(precise_mma(inverse, coupling), inverse);
+                half = half * 2i32;
+            }
+            let updates = precise_mma(inverse, rhs);
+            let qk = precise_mma(q, k.transpose());
+            let probabilities = select(causal, qk * relative, 0.0f32.broadcast(shape![32, 32]));
+            let output = precise_mma(q, old)
+                * decay.reshape(shape![32, 1]).broadcast(shape![32, SW])
+                + precise_mma(probabilities, updates);
+            let output = select(
+                active.reshape(shape![32, 1]).broadcast(shape![32, SW]),
+                output,
+                0.0f32.broadcast(shape![32, SW]),
+            );
+            out.partition_mut(shape![1, 32, SW])
+                .store(output.reshape(shape![1, 32, SW]), [0i32, chunk, 0i32]);
+            let last: Tile<f32, { [1] }> = extract(g, [31i32.broadcast(shape![])]);
+            let weights = exp(last.broadcast(shape![32]) - g);
+            old = old * exp(last).reshape(shape![1, 1]).broadcast(shape![D, SW])
+                + precise_mma(
+                    k.transpose(),
+                    updates * weights.reshape(shape![32, 1]).broadcast(shape![32, SW]),
+                );
         }
         state.store(old.reshape(shape![1, D, SW]));
     }

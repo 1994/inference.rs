@@ -23,7 +23,7 @@ mod profile;
 mod program;
 mod recurrent;
 mod recurrent_checkpoint;
-mod recurrent_prefill;
+pub(crate) mod recurrent_prefill;
 pub(crate) mod slot_batch;
 mod slot_verify;
 mod small_gemm;

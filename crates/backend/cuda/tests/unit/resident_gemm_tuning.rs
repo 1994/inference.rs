@@ -144,6 +144,7 @@ fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices()
     let expired = ResidentTuningSession {
         started: OnceLock::new(),
         greedy_started: OnceLock::new(),
+        recurrent_started: OnceLock::new(),
         budget: Duration::ZERO,
     };
     let fresh = ResidentTuningSession::default();
