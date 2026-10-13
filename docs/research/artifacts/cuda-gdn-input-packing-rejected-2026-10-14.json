@@ -1,0 +1,726 @@
+{
+  "classification": "Rejected F32 input-packing experiments; production unchanged",
+  "production_control_commit": "0e7a969e9a05b193d1a86faee458021f57cebaa2",
+  "numeric_gate_f64_abs": 2e-05,
+  "useful_gain_lower95_gate": 1.02,
+  "regression_stop": 0.05,
+  "experiments": {
+    "packed-inputs-v1": {
+      "decision": {
+        "decision": "rejected for production promotion",
+        "reason": "At least one original useful-gain gate fails and warm L2 regresses",
+        "numeric": {
+          "fixtures": 75,
+          "changed16_fixtures": 15,
+          "bit_comparisons": 150,
+          "changed16_bit_comparisons": 30,
+          "bit_differences": 0,
+          "max_f64_error": 1.155110407213833e-06,
+          "changed16_max_f64_error": 1.155110407213833e-06,
+          "binary_sha256": "851fe086398da6f3af06d3d35a78d57d798a92273cfe723bc4fe9fe8a5bdae13"
+        },
+        "groups": [
+          {
+            "clear_l2": 1,
+            "width": 64,
+            "units": 5,
+            "old_median_ms": 0.08795200288295746,
+            "new_median_ms": 0.08713600039482117,
+            "paired_speedup_median": 1.0090057236715644,
+            "ci95": [
+              1.0084372494518956,
+              1.0110375260810156
+            ],
+            "unit_median_range_fraction_old": 0.0014553503099354005,
+            "unit_median_range_fraction_new": 0.0029379584574726236,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          },
+          {
+            "clear_l2": 1,
+            "width": 256,
+            "units": 5,
+            "old_median_ms": 0.30884799361228943,
+            "new_median_ms": 0.30425599217414856,
+            "paired_speedup_median": 1.0145095775138318,
+            "ci95": [
+              1.0143968418807823,
+              1.0154606603868672
+            ],
+            "unit_median_range_fraction_old": 0.0016059681842099448,
+            "unit_median_range_fraction_new": 0.0014198065908998967,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          },
+          {
+            "clear_l2": 0,
+            "width": 64,
+            "units": 5,
+            "old_median_ms": 0.07561600208282471,
+            "new_median_ms": 0.07823999971151352,
+            "paired_speedup_median": 0.9668711989445011,
+            "ci95": [
+              0.965672275883855,
+              0.9679330003195715
+            ],
+            "unit_median_range_fraction_old": 0.0027507121878315595,
+            "unit_median_range_fraction_new": 0.0018405524323660306,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          },
+          {
+            "clear_l2": 0,
+            "width": 256,
+            "units": 5,
+            "old_median_ms": 0.27667200565338135,
+            "new_median_ms": 0.2877439856529236,
+            "paired_speedup_median": 0.9619667947567961,
+            "ci95": [
+              0.9612946450351786,
+              0.9622998697266912
+            ],
+            "unit_median_range_fraction_old": 0.0020240054151570105,
+            "unit_median_range_fraction_new": 0.0017793730682461038,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          }
+        ],
+        "independent_confirmation_executed": false,
+        "production_changed": false
+      },
+      "source_integrity": {
+        "files": 584,
+        "all_match": true,
+        "binary_sha256": "851fe086398da6f3af06d3d35a78d57d798a92273cfe723bc4fe9fe8a5bdae13"
+      },
+      "static_sass_summary": [
+        {
+          "kernel": "packed_inputs",
+          "payload_sha256": "94bb06daa26a21eb26a4024a591d635f7c293b4ef604e18a7218ec9d65b2b9df",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1102 CONSTANT[4]:64\n Function delta_precomputed_packed_entry:\n  REG:127 STACK:96 SHARED:32012 LOCAL:0 CONSTANT[0]:1120 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 880,
+          "main_loop_static_instruction_count": 426,
+          "main_loop_sync_instructions": 8,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "control",
+          "payload_sha256": "03dc768865fe3c671dc07f89b1e527604cd2b7569187e993c6d1da1b3c621b22",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1279 CONSTANT[4]:72\n Function delta_precomputed_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 904,
+          "main_loop_static_instruction_count": 457,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "packed_inputs",
+          "payload_sha256": "c8ff5703fd8361185900b790c78018be29ea561c520285708dfcc80ada8a1c00",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1104 CONSTANT[4]:64\n Function delta_precomputed_packed_entry:\n  REG:127 STACK:96 SHARED:32012 LOCAL:0 CONSTANT[0]:1120 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 880,
+          "main_loop_static_instruction_count": 426,
+          "main_loop_sync_instructions": 8,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "control",
+          "payload_sha256": "8962de6db31969c6fb59379f6bb0032537ee16a614380647c78f2d5dc4d2bca2",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1281 CONSTANT[4]:72\n Function delta_precomputed_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 904,
+          "main_loop_static_instruction_count": 457,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        }
+      ],
+      "raw_timing_runs": [
+        {
+          "run_id": "discovery-u0-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l21/result.json",
+              "sha256": "99691dc6ff482cf719b5c848544be698a32c8cab4c039dc0bd3a9b8ed1ea4ad9"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l21/stdout.log",
+              "sha256": "d9b18ceaeb5ce151ca6894ec5384c62ee948e44d38e1dacb31369fc8a393d72a"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l21/gpu-processes.jsonl",
+              "sha256": "ab99ba75e15a15d57bae8951c014c33b8601b29e992cf767dc42185a718d75d6"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u0-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l20/result.json",
+              "sha256": "6397df4740163ae1f195cee3a45edbd803515136cbfe3ca82f73d432960c8b71"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l20/stdout.log",
+              "sha256": "e6b48b857ffe40656f752ee9135489c72f58b1a4499f91eedabbc88e7d0bc6ff"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u0-l20/gpu-processes.jsonl",
+              "sha256": "b31d6bc3064f6cfbe9dbe45f4f306bf9932cec18805d7e5b677f25b5c5ce6082"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l20/result.json",
+              "sha256": "9f0d6b209de72bcd5637baadc15580a94087064a249a0937b1c2f0fda206788c"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l20/stdout.log",
+              "sha256": "16343ec6d4b1c4bd24bb512bbe02020b8f28277549d80c395971c485324449fc"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l20/gpu-processes.jsonl",
+              "sha256": "f40578c8f06974c39d7df4b78b704371791e91f410119495cdbb96b8c0c86433"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l21/result.json",
+              "sha256": "6fc3a804af689bd8245fcfb85826aea5423ec8f1a7a604e001650dbaaf5dd2bb"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l21/stdout.log",
+              "sha256": "411341678c748c22854474676f2bcc6e82013df2635594ae178c426a5fba84a8"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u1-l21/gpu-processes.jsonl",
+              "sha256": "259f7531009d0377fac69db62387dc9fd287cff82d7386610ab1096b2a9662dc"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l21/result.json",
+              "sha256": "66228d91540629aa471c6480806f67cecd1666630b8a9c764ab61ed6edc0e71c"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l21/stdout.log",
+              "sha256": "433d1f19b4e8f8ac4095194aebed113d8faa52b052c54ef83010f04af54254ea"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l21/gpu-processes.jsonl",
+              "sha256": "530230cf8a38ec28e2ef19fcd3168d1d90648f4c2cb7b5dca42d4cd744e58d4b"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l20/result.json",
+              "sha256": "8921a3cc35d95dcfb8842aa328b7a9a906429a30a75970f7a03a80360f189de6"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l20/stdout.log",
+              "sha256": "07f722d7531fa22d51fdcbbc38fa0d454194300d16a892d2ec4f10acd298f475"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u2-l20/gpu-processes.jsonl",
+              "sha256": "4ea34c9a4d01dc3e71d3379caf7f3acee726835f01fe1b50ab7bd0cd705cb8bd"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l20/result.json",
+              "sha256": "446fef7076df97b3483460dfa1ee90f090fbaa3f26898755381faa53e33f6192"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l20/stdout.log",
+              "sha256": "3e8a7b5443ea9f2a9d0feab932f5cd4ba1ffb1e94f4a9c64b171369e4293a3b9"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l20/gpu-processes.jsonl",
+              "sha256": "af610fd912ee3c5c72e1e0a28c64dbf8d7b42f2687bc006920884ec04c9e47cb"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l21/result.json",
+              "sha256": "9d65b3348383995c9fd0e9f03339e40cc62a08ccc3fffcb5be0e8628ff6da5b8"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l21/stdout.log",
+              "sha256": "6b2165474c2944d9a5260fec6a86efa29788908679f7b1322c9b9e878486b116"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u3-l21/gpu-processes.jsonl",
+              "sha256": "80347bbd32db4fccb1eb04c79487a843ad8baa9308b16737a8217f04ae5743d0"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l21/result.json",
+              "sha256": "50ef8c8a088a45940565d57d669cbd45ce4cf931ba4c406e14cf078b6f315a5d"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l21/stdout.log",
+              "sha256": "2204cb36425d556b45d175b6dfc4f6f94770809db19eef362ff6ad22f482dedc"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l21/gpu-processes.jsonl",
+              "sha256": "4e84ce9e1e348fc0d503371c42440aba2364a0d67c62fabd0a0fc94bd6b964a2"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l20/result.json",
+              "sha256": "2822d8c2b73a02794fe624153a8e8e7f8ae5afa601f0789c47a461bb809564a3"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l20/stdout.log",
+              "sha256": "4065a3953220be1342848f30c0e3321d7cdaefb555699873472b490fb1fe1151"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-w0-discovery-u4-l20/gpu-processes.jsonl",
+              "sha256": "a358de48e771c422b9983eae8a3d44c5d158e2be6a6c8d81edcbd458493de8c4"
+            }
+          }
+        }
+      ],
+      "files": {
+        "plan.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/plan.json",
+          "sha256": "d192a367316a07dfefa39e2cadaee126a6f3d0830903c23238c3c7be723fd566"
+        },
+        "numeric-summary.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/numeric-summary.json",
+          "sha256": "9196df675205f2ae8bbcf51a756f45844ec4e70da195bc8c6e69d76980b14c54"
+        },
+        "measure-summary.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/measure-summary.json",
+          "sha256": "e4e4ea12584c99ef41e6b968243372cc0e116512fd2341899f9c4dd37ff26b52"
+        },
+        "performance-sass/index.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/performance-sass/index.json",
+          "sha256": "a631ed75961739f38629b1c98d6e1cff44b76cbc295b98a97c1ce7a0e45ea158"
+        },
+        "discovery-decision.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/packed-inputs-v1/discovery-decision.json",
+          "sha256": "6f806d06f93d4276bd2021539819546fd1f2173afb65b370f9826665df9aeff3"
+        }
+      }
+    },
+    "gate-pair-v1": {
+      "decision": {
+        "decision": "rejected for production promotion",
+        "reason": "At least one original useful-gain gate fails and warm L2 regresses",
+        "numeric": {
+          "fixtures": 75,
+          "changed16_fixtures": 15,
+          "bit_comparisons": 150,
+          "changed16_bit_comparisons": 30,
+          "bit_differences": 0,
+          "max_f64_error": 1.155110407213833e-06,
+          "changed16_max_f64_error": 1.155110407213833e-06,
+          "binary_sha256": "fc35cc38413f4017be61bca21e4196eed980bb4eb1b8d6c9cae824bd90f86a77"
+        },
+        "groups": [
+          {
+            "clear_l2": 1,
+            "width": 64,
+            "units": 5,
+            "old_median_ms": 0.08787199854850769,
+            "new_median_ms": 0.08643200248479843,
+            "paired_speedup_median": 1.0159199779806525,
+            "ci95": [
+              1.0144071169974462,
+              1.0168486432798554
+            ],
+            "unit_median_range_fraction_old": 0.004005857225465873,
+            "unit_median_range_fraction_new": 0.003887349279660283,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          },
+          {
+            "clear_l2": 1,
+            "width": 256,
+            "units": 5,
+            "old_median_ms": 0.30873599648475647,
+            "new_median_ms": 0.30209600925445557,
+            "paired_speedup_median": 1.0216459178153061,
+            "ci95": [
+              1.0211864043086296,
+              1.0220856771362559
+            ],
+            "unit_median_range_fraction_old": 0.001243790579451962,
+            "unit_median_range_fraction_new": 0.0009533712287873915,
+            "lower95_exceeds_original_1p02_useful_gain": true
+          },
+          {
+            "clear_l2": 0,
+            "width": 64,
+            "units": 5,
+            "old_median_ms": 0.07561600208282471,
+            "new_median_ms": 0.07799999415874481,
+            "paired_speedup_median": 0.9690257371729171,
+            "ci95": [
+              0.9681242765670278,
+              0.9716283593863687
+            ],
+            "unit_median_range_fraction_old": 0.004231940698046548,
+            "unit_median_range_fraction_new": 0.006153893473118972,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          },
+          {
+            "clear_l2": 0,
+            "width": 256,
+            "units": 5,
+            "old_median_ms": 0.276095986366272,
+            "new_median_ms": 0.284960001707077,
+            "paired_speedup_median": 0.9686412941089068,
+            "ci95": [
+              0.9674847228992287,
+              0.9694720767116161
+            ],
+            "unit_median_range_fraction_old": 0.0022600872774939866,
+            "unit_median_range_fraction_new": 0.0023582698045142947,
+            "lower95_exceeds_original_1p02_useful_gain": false
+          }
+        ],
+        "independent_confirmation_executed": false,
+        "production_changed": false
+      },
+      "source_integrity": {
+        "files": 584,
+        "all_match": true,
+        "binary_sha256": "fc35cc38413f4017be61bca21e4196eed980bb4eb1b8d6c9cae824bd90f86a77"
+      },
+      "static_sass_summary": [
+        {
+          "kernel": "gate_pair",
+          "payload_sha256": "a522545583cd9f8446c82c874c76c2bbeea5c5f3e39c420c519c916949fb8747",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1281 CONSTANT[4]:72\n Function delta_precomputed_gate_pair_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1120 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 912,
+          "main_loop_static_instruction_count": 460,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "gate_pair",
+          "payload_sha256": "02ff7c541358c1630a61fb6937f3fec929e8668251b3ed785321ac164464ba21",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1279 CONSTANT[4]:72\n Function delta_precomputed_gate_pair_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1120 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 912,
+          "main_loop_static_instruction_count": 460,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "control",
+          "payload_sha256": "03dc768865fe3c671dc07f89b1e527604cd2b7569187e993c6d1da1b3c621b22",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1279 CONSTANT[4]:72\n Function delta_precomputed_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 904,
+          "main_loop_static_instruction_count": 457,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        },
+        {
+          "kernel": "control",
+          "payload_sha256": "8962de6db31969c6fb59379f6bb0032537ee16a614380647c78f2d5dc4d2bca2",
+          "resources": "\nResource usage:\n Common:\n  GLOBAL:1281 CONSTANT[4]:72\n Function delta_precomputed_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+          "static_instruction_count": 904,
+          "main_loop_static_instruction_count": 457,
+          "main_loop_sync_instructions": 7,
+          "note": "static interval includes alternate control-flow paths; not dynamic count"
+        }
+      ],
+      "raw_timing_runs": [
+        {
+          "run_id": "discovery-u0-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l21/result.json",
+              "sha256": "7804dcbd974ac717464fcf11fb072e9acab65bd1c0bf4a343bf492db5223cd13"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l21/stdout.log",
+              "sha256": "61cacf9fd2e1e70b378c72076e41329a4dd3ed8357c9800f385d90f6fc397c27"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l21/gpu-processes.jsonl",
+              "sha256": "e31c9d3a8813242be0e14bd7e8e8e7f487abcfc759a1b596e7e0a8a4e3a8dbaf"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u0-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l20/result.json",
+              "sha256": "cb8353f97ea5da3853deffa34384eda5a4b314d22533a0568854daecdf8eaa06"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l20/stdout.log",
+              "sha256": "e5849d651be5686395140c8f2463d12e640283fb2d515dfcb248573683554389"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u0-l20/gpu-processes.jsonl",
+              "sha256": "da6e70bfd34227d46e2ebd2b3b53a09c87a42a77d5a6c7bf09c78fdde7d16108"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l20/result.json",
+              "sha256": "2b7334af3a6b65b42a59ef72d547e15156e43107f15d4cdce6f4bba62a08c4ad"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l20/stdout.log",
+              "sha256": "06b8ab2f847bd72c5efec461a77d305b4454fc24b2f81b8b19d7cdc853aead26"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l20/gpu-processes.jsonl",
+              "sha256": "8fd25805b30e01c9d9e9be3e8bcf356b5b02ef59a05014e9c0c8c40ce6be986e"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l21/result.json",
+              "sha256": "e7929bb474862c569cfab6a0dca1ef31547845e5649a3d0cffa52d1f0d93c2d7"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l21/stdout.log",
+              "sha256": "ebd6983b59c6ca99a4a822dd69c7813356fd09b44ecf0108ac2c0ed5bdeba8e9"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u1-l21/gpu-processes.jsonl",
+              "sha256": "1020cf1ec3249af31523d784002fa9dde8606323a08ba665e54ae6aa262f4e16"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l21/result.json",
+              "sha256": "47c5986705bb55def39056e40573d12f1f576b166d5bf0e381acf6100b9d7242"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l21/stdout.log",
+              "sha256": "001cd96a0a1b972d4cc65d2875316bfbba03ce3e65452dc676439f65c864a573"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l21/gpu-processes.jsonl",
+              "sha256": "89dc0be5fd9fcd635ccbd6f9e6313f4265c5fd4bb91925b0f85f919df725b107"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l20/result.json",
+              "sha256": "6b93b1d5853974a71a01715db4fe01d1dbaba767e15c82ca79ff7e7967a62c50"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l20/stdout.log",
+              "sha256": "42d8673778148e3794c6906074adafc25fa8f2984af565fcdcad862353a8fb31"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u2-l20/gpu-processes.jsonl",
+              "sha256": "9a21c648d2e6bd0fdb3ee2517d76b905025411d96474d593b4e414ef27f3b90c"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l20/result.json",
+              "sha256": "7d5b59fdba8a9c9ee3f79fb787102542153679c5d44661a47d77ecb2da24a826"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l20/stdout.log",
+              "sha256": "fedba1817344d5b95468d07f5223f87d0e751cda8d25b2067fe3c7d0f1b3f0d8"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l20/gpu-processes.jsonl",
+              "sha256": "fd575abdfe31e010cd0d76ce2c7f9ab33db3504084e6f097873cf79b87b56234"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l21/result.json",
+              "sha256": "14b5cdf092710685129db07f199c6cd3f2e9d536ff97ab8a5040f353d39668d4"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l21/stdout.log",
+              "sha256": "0d7e34bce11391a92264be64d5904ff97af391d1e38f7633b33771ee77577dff"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u3-l21/gpu-processes.jsonl",
+              "sha256": "71cf56d71502cb97579a9260c78eb0a83c720d80da0b7eb3bade1832eb70700f"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l21/result.json",
+              "sha256": "e98a425d0cdcb71ffa25ddc631baccecaa62ec54f0d73551f67d30d59161abaa"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l21/stdout.log",
+              "sha256": "413d5a82ca2d669318e79202fea5b6cdf231f1ed30566226a7950a35922af12d"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l21/gpu-processes.jsonl",
+              "sha256": "339de14c17e1b6c817ba50261a3deec2f9f6eb43bc1023277f93dbaeadaa35d7"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l20/result.json",
+              "sha256": "9bbc14e676bbf52c0ebd32ba64e8ae2a1bad61f39e4a60ad99f1cf2334add8c0"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l20/stdout.log",
+              "sha256": "4db455c5441c3eff6d5d92fa16eadb1c11f131118acd4b65d3903a6005349ad4"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-w0-discovery-u4-l20/gpu-processes.jsonl",
+              "sha256": "fd6c4f58f27e2b239727eae1875ad04a62fca42216c0e082481605946d27d7b4"
+            }
+          }
+        }
+      ],
+      "files": {
+        "plan.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/plan.json",
+          "sha256": "eb0ef9fb729eca3ee1f577c6700cce35e98c0ba9aafa979f9958dd4f0daad197"
+        },
+        "numeric-summary.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/numeric-summary.json",
+          "sha256": "54f2ad95355b87cd9acbd3ccbd30413e3a3ce3389c4a7e30007d1c74622f3520"
+        },
+        "measure-summary.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/measure-summary.json",
+          "sha256": "0ebfec02a31374d12a01ecf5cfc40304589637c4e4928588ce17810c6792ac57"
+        },
+        "performance-sass/index.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/performance-sass/index.json",
+          "sha256": "16a60e702d4211910274dbaa37544ee69bbdd6436ae9235bb586e895a97f6313"
+        },
+        "discovery-decision.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/gate-pair-v1/discovery-decision.json",
+          "sha256": "bb606214120f2804abff969ddfc9c3be6959d5f15ac5948231d3907b010de906"
+        }
+      }
+    }
+  },
+  "interpretation": "Full packing adds1 static loop barrier and1024 shared bytes, but gate-only regresses with unchanged7 barriers. Static counts cannot establish the hardware cause. No confirmation/full-model promotion after failed discovery gates.",
+  "next_hypothesis": "Move remaining invariant head bounds checks out of conditional token loop by separating padded output initialization from the active token range. Preserve exact F32 tree and checked memory accesses. Test zero/full/partial/negative offset, short requests and cold/warm separately.",
+  "unqualified_other_hypothesis": "Gate-pair reader currently declares dynamic final dimension despite fixed2 allocation; explicit dimension2 may remove an extra bounds constraint. Not implemented, built or measured."
+}

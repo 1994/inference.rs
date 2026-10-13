@@ -377,3 +377,26 @@ OS runtime events，全部保留。这里是一次带 profiler 的诊断，和�
 
 [完整模型 trace 与 CI 证据](artifacts/cuda-gdn-axis-bounds-current-profile-2026-10-14.json)
 记录生产 kernel hash、诊断二进制及准入身份、原始 trace/hash 和全部警告。
+
+## 2026-10-14：输入打包的失败结果
+
+以已提交的行检查优化版本为 control，分别测试 Q/K 与 beta/decay 全部配对，
+以及仅配对 beta/decay。两者均通过原 75 组数值 fixture，state/output 逐位一致，
+F64 最大绝对误差保持 1.1551104e-6。
+
+每个候选按固定五组进程分别测冷、热 L2，全部原始向量保留。整包版本的
+64/256 宽度配对 speedup 冷 L2 为 1.0090/1.0145，热 L2 为 0.9669/0.9620；
+gate 单包版本冷 L2 为 1.0159/1.0216，热 L2 为 0.9690/0.9686。
+都未满足原有全部场景的 1.02 lower95 useful-gain 门槛，因此未独立确认、
+未做完整模型推广，也未改生产代码。
+
+整包版本循环区间静态指令从 457 降至 426，却从 7 条同步变为 8 条，
+shared 从 30,988 变为 32,012 bytes。gate 单包保持 7 条同步，循环区间
+为 460 条，热 L2 同样退化。因此不能把回退仅归因于额外同步，亦不能仅凭
+源码 load 数或静态指令减少判定加速；缺少硬件计数器时不推断具体资源原因。
+
+下一项假设是把 padding 输出初始化与有效 token 循环分离，使 JIT 有机会把
+剩余 head 检查放入循环 preheader。该假设尚未实现或测量，需特别防止短请求、
+全 padding 和部分计数路径回退。
+
+[失败实验与原始样本索引](artifacts/cuda-gdn-input-packing-rejected-2026-10-14.json)。
