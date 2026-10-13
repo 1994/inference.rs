@@ -535,6 +535,7 @@ def stream_request(args, base, model, eos, counter, row):
         "case": row["case"],
         "repeat": row["repeat"],
         "slot": row["slot"],
+        "request_id": payload["id"] if args.engine == "native" else None,
         "input_tokens": len(row["tokens"]),
         "token_ids": tokens,
         "output_tokens_excluding_eos": len(visible),

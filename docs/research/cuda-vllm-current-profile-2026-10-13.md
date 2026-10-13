@@ -469,3 +469,30 @@ events 三类警告。量化模型的默认准入仍未改动。
 state 两个 ID，现有 CUDA host profiler 只输出 state。记录已有 request ID
 即可建立关联；此项尚未实施或验证，不能把 private/pooled 路由当作 token 差异
 的已确认原因。
+
+## 2026-10-14：补齐请求与 state 的路由关联
+
+CUDA host profiler 现将已有 ExecutionTask.request 与 state 一起输出；
+serve-compare 客户端现记录实际提交的 payload.id。两处只是现有记录的字段，
+不改调度、数值或算法选择，不记录 token 内容到 host profile。
+
+在当前标量默认路径和最新有序 GDN 诊断路径之间，按固定三组独立进程配对、
+交替启动顺序，使用相同四场景、token 输入、64 输出上限、MTP0、固定 tuning，
+完成六个进程，逐条关联 126 条测量 stream。63 条配对 stream 中有 7 条
+token 不同，全部位于 batch4；两边在位置 52 是否经过一次 private decode
+均不同。首个差异出现在生成 token index 2、12、14、20 或 22，当时双方已
+在 pooled 路径，不能把当前 pooled replay 当作已确认原因。
+
+相同 case/repeat/slot/输入 token hash 的跨进程比较中，标量路径有 4 条、
+有序路径有 7 条差异。这与“只有新 GDN 错了”的判断不一致，但仍只是关联。
+不同 repeat 的冻结输入本来不同，不能作 self-repeat；一版分析曾这样比较，
+已明确作废其 self-repeat 字段，保留原文件和更正说明，配对字段不受影响。
+
+host profiler 会扰动调度，因此这些请求耗时不作 serving 性能验收。全部
+stream、request/state/slot/position 与原始 host 日志/hash 保留；默认量化准入
+和原质量/性能门槛未变。
+
+数值定位需按实际 52 token 场景，从相同 state/FP8 KV 和输入 token 比较
+直接 pooled 与 private 一步后迁入 pooled。已有小投影算术实验不得因路由关联
+重新启用：高精度 private MMA 和 pooled F32 实验均曾未通过原完整质量门槛。
+[请求与路由证据](artifacts/cuda-gdn-request-state-route-2026-10-14.json)。

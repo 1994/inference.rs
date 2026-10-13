@@ -87,6 +87,7 @@ impl StepProfile {
                     ExecutionInput::Full(_) => "full",
                 };
                 serde_json::json!({
+                    "request": task.request,
                     "state": task.state,
                     "kind": kind,
                     "position": position,
