@@ -1,6 +1,7 @@
 //! Shared head-major scratch for token-chunk recurrent prefill.
 use super::super::capture::error;
 use super::{
+    ORDERED_DIM, ORDERED_WIDTHS,
     budget::{enabled, opted_in},
     kernels,
 };
@@ -27,15 +28,10 @@ impl Workspace {
         weights: &ProgramWeights,
         lanes: usize,
     ) -> Result<Self> {
-        // Keeping state in one kernel reduces long-prompt TTFT in historical opt-in tests,
-        // but the scalar and chunk kernels do not evaluate floats bitwise identically.
-        // Even with one lane and identical inputs, the isolated gap map found differences
-        // in state/output last bits. Neither instruction contraction nor reduction ordering
-        // has been isolated as the cause; a compiler knob is not a demonstrated requirement.
-        //
-        // Explicit chunked Delta uses stable WY at supported prompt widths. Independent
-        // references and fixed full-model GSM8K quality pass. Scalar remains the quantized
-        // default while broader task coverage and vLLM service performance remain incomplete.
+        // The ordered 128-column path preserves the scalar prediction and readout trees.
+        // Captured 64/256-row fixtures and the complete checkpoint agree bit for bit.
+        // Quantized default adoption still requires full task quality and service timing.
+        // Diagnostic loading can compare this path; other shapes retain the existing WY policy.
         let opted_in = opted_in(weights);
         if !enabled(weights, opted_in) {
             return Ok(Self {
@@ -59,8 +55,9 @@ impl Workspace {
                         .all(|id| !weights.constants.contains_key(id))
                 {
                     let shape = [key_heads, value_heads, key_dim, lanes];
-                    let selected = if std::env::var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some()
-                    {
+                    let selected = if key_dim == ORDERED_DIM && ORDERED_WIDTHS.contains(&lanes) {
+                        Some(value_dim)
+                    } else if std::env::var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some() {
                         Some(
                             super::super::capture_state::value_block(value_dim)
                                 .map_err(device_error)?,
@@ -243,7 +240,21 @@ fn record_delta(
         lanes.to_string(),
         block.to_string(),
     ];
-    if wy {
+    if key_dim == ORDERED_DIM && block == ORDERED_DIM && ORDERED_WIDTHS.contains(&lanes) {
+        scope.record(
+            kernels::delta_grouped(
+                state.partition([1, key_dim, block]),
+                scratch.partition([1, lanes, block]),
+                &qkv,
+                &beta,
+                &alpha,
+                decay,
+                bias,
+                metadata,
+            )
+            .generics(generics),
+        )?;
+    } else if wy {
         scope.record(
             kernels::delta_wy(
                 state.partition([1, key_dim, block]),

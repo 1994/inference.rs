@@ -360,7 +360,7 @@ fn recurrence_gap(
     let a_log_c = device.upload(a_log, &[vh])?;
     let bias_c = device.upload(bias, &[vh])?;
     let metadata = device.upload(vec![0, i32::try_from(count)?, 0, 0], &[4])?;
-    kernels::delta(
+    kernels::delta_grouped(
         (&mut state_c).partition([1, dim, dim]),
         (&mut out_c).partition([1, lanes, dim]),
         &qkv_c,
@@ -465,16 +465,18 @@ fn chunk_and_per_lane_delta_gap_map() -> Result<(), Box<dyn std::error::Error>> 
 /// greedy decode. Track the figure here until it is zero.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn chunk_and_per_lane_delta_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
+fn ordered_delta_preserves_scalar_bits() -> Result<(), Box<dyn std::error::Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let (state, out) = recurrence_gap(&device, 128, 51, (16, 48, 128))?;
-    eprintln!("chunked vs per-lane state max_abs={state:e} (target: exactly 0)");
-    eprintln!("chunked vs per-lane output max_abs={out:e} (target: exactly 0)");
-    assert!(
-        state < 1.0e-7 && out < 1.0e-7,
-        "chunked and per-lane recurrences differ"
-    );
+    let geometry = (16, 48, 128, 128);
+    check_ordered_fixture(
+        &device,
+        geometry,
+        51,
+        0,
+        reference_fixture(geometry, 51, 0)?,
+    )?;
+
     Ok(())
 }
 
@@ -717,4 +719,245 @@ fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Er
             outputs,
         },
     )
+}
+
+#[test]
+#[ignore = "requires CUDA; exact ordered recurrence at captured prompt widths"]
+fn ordered_actual_graph_widths_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for lanes in [64_usize, 256] {
+        let geometry = (16, 48, 128, lanes);
+        for (count, offset) in [(0, 0), (1, 0), (lanes - 3, 0), (lanes, -1)] {
+            check_ordered_fixture(
+                &device,
+                geometry,
+                count,
+                offset,
+                reference_fixture(geometry, count, offset)?,
+            )?;
+        }
+        check_ordered_fixture(
+            &device,
+            geometry,
+            lanes,
+            0,
+            ordered_correlated_fixture(geometry)?,
+        )?;
+    }
+    let geometry = (2, 6, 128, 64);
+    check_ordered_fixture(
+        &device,
+        geometry,
+        61,
+        -1,
+        reference_fixture(geometry, 61, -1)?,
+    )?;
+    Ok(())
+}
+
+fn check_ordered_fixture(
+    device: &CudaDevice,
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+    fixture: ReferenceFixture,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (kh, vh, dim, lanes) = geometry;
+    let ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    } = fixture;
+    let qkv_c = device.upload(qkv.clone(), &[lanes, 2 * kh + vh, dim])?;
+    let beta_c = device.upload(beta.clone(), &[lanes, vh])?;
+    let alpha_c = device.upload(alpha.clone(), &[lanes, vh])?;
+    let a_log = device.upload(a_log, &[vh])?;
+    let bias = device.upload(bias, &[vh])?;
+    let src = device.upload(initial, &[vh, dim, dim])?;
+    let mut state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+    api::memcpy(&mut state, &src).sync_on(&device.stream)?;
+    let mut output = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
+    let metadata = device.upload(vec![0, i32::try_from(count)?, offset, 0], &[4])?;
+    let graph = CudaGraph::scope(&device.stream, |scope| {
+        scope.record(
+            kernels::delta_grouped(
+                (&mut state).partition([1, dim, dim]),
+                (&mut output).partition([1, lanes, dim]),
+                &qkv_c,
+                &beta_c,
+                &alpha_c,
+                &a_log,
+                &bias,
+                &metadata,
+            )
+            .generics(vec![
+                kh.to_string(),
+                vh.to_string(),
+                dim.to_string(),
+                lanes.to_string(),
+                dim.to_string(),
+            ]),
+        )?;
+        Ok(())
+    })?;
+    graph.launch().sync_on(&device.stream)?;
+    let actual_state = state.to_host_vec().sync_on(&device.stream)?;
+    let actual_output = output.to_host_vec().sync_on(&device.stream)?;
+    compare_ordered_f64("state", &actual_state, &expected, geometry, count, offset);
+    compare_ordered_f64("output", &actual_output, &outputs, geometry, count, offset);
+    let mut scalar_state = api::zeros::<f32>(&[vh, dim, dim]).sync_on(&device.stream)?;
+    api::memcpy(&mut scalar_state, &src).sync_on(&device.stream)?;
+    let mut scalar_output = vec![0.0_f32; vh * lanes * dim];
+    let cols = (2 * kh + vh) * dim;
+    for lane in 0..count {
+        let qkv_one = device.upload(qkv[lane * cols..(lane + 1) * cols].to_vec(), &[cols])?;
+        let beta_one = device.upload(beta[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
+        let alpha_one = device.upload(alpha[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
+        let metadata = device.upload(vec![0, 0, i32::try_from(lane)? + offset, 0], &[4])?;
+        let mut output = api::zeros::<f32>(&[vh, dim])
+            .sync_on(&device.stream)?
+            .reshape(&[vh, 1, dim])?;
+        crate::resident::recurrent::recurrent::delta(
+            (&mut output).partition([1, 1, dim]),
+            (&mut scalar_state).partition([1, dim, dim]),
+            &qkv_one,
+            &beta_one,
+            &alpha_one,
+            &a_log,
+            &bias,
+            &metadata,
+        )
+        .generics(vec![
+            kh.to_string(),
+            vh.to_string(),
+            dim.to_string(),
+            dim.to_string(),
+        ])
+        .sync_on(&device.stream)?;
+        let row = output.to_host_vec().sync_on(&device.stream)?;
+        for head in 0..vh {
+            scalar_output[(head * lanes + lane) * dim..][..dim]
+                .copy_from_slice(&row[head * dim..][..dim]);
+        }
+    }
+    let scalar_state = scalar_state.to_host_vec().sync_on(&device.stream)?;
+    for (label, actual, reference) in [
+        ("state", &actual_state, &scalar_state),
+        ("output", &actual_output, &scalar_output),
+    ] {
+        compare_ordered_bits(label, actual, reference, geometry, count, offset);
+    }
+
+    Ok(())
+}
+
+fn compare_ordered_f64(
+    label: &str,
+    actual: &[f32],
+    reference: &[f64],
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+) {
+    assert_eq!(actual.len(), reference.len());
+    let mut maximum = 0.0_f64;
+    for (i, (a, b)) in actual.iter().zip(reference).enumerate() {
+        assert!(a.is_finite() && b.is_finite(), "{label}[{i}] nonfinite");
+        maximum = maximum.max((f64::from(*a) - b).abs());
+        assert!(
+            (f64::from(*a) - b).abs() < 0.00002,
+            "{geometry:?} count={count} offset={offset} {label}[{i}]: {a} != {b}"
+        );
+    }
+    eprintln!(
+        "ORDERED_F64 geometry={geometry:?} count={count} offset={offset} label={label} max_abs={maximum:e}"
+    );
+}
+
+fn compare_ordered_bits(
+    label: &str,
+    actual: &[f32],
+    reference: &[f32],
+    geometry: (usize, usize, usize, usize),
+    count: usize,
+    offset: i32,
+) {
+    assert_eq!(actual.len(), reference.len());
+    assert!(
+        actual
+            .iter()
+            .chain(reference)
+            .all(|value| value.is_finite())
+    );
+    let differing = actual
+        .iter()
+        .zip(reference)
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    eprintln!(
+        "ORDERED_BITS geometry={geometry:?} count={count} offset={offset} label={label} differing={differing}/{}",
+        actual.len()
+    );
+    assert_eq!(
+        differing, 0,
+        "{geometry:?} count={count} offset={offset} {label} bit drift"
+    );
+}
+
+fn ordered_correlated_fixture(
+    (kh, vh, dim, lanes): (usize, usize, usize, usize),
+) -> Result<ReferenceFixture, Box<dyn std::error::Error>> {
+    let mut qkv = values(lanes * (2 * kh + vh) * dim, 17);
+    for lane in 0..lanes {
+        for head in 0..2 * kh {
+            qkv[(lane * (2 * kh + vh) + head) * dim..][..dim].fill(1.0);
+        }
+    }
+    let beta = vec![8.0_f32; lanes * vh];
+    let alpha = vec![0.0_f32; lanes * vh];
+    let a_log = vec![-10.0_f32; vh];
+    let bias = vec![0.0_f32; vh];
+    let initial = values(vh * dim * dim, 23);
+    let mut expected: Vec<f64> = initial.iter().copied().map(f64::from).collect();
+    let mut outputs = vec![0.0_f64; vh * lanes * dim];
+    let kinv = (f64::from(u32::try_from(dim)?) + 1e-6).sqrt().recip();
+    let qinv = kinv / f64::from(u32::try_from(dim)?).sqrt();
+    let b = 1.0 / (1.0 + (-8.0_f64).exp());
+    let decay = (-(-10.0_f64).exp() * 2.0_f64.ln()).exp();
+    for lane in 0..lanes {
+        for head in 0..vh {
+            let state = &mut expected[head * dim * dim..][..dim * dim];
+            for value in state.iter_mut() {
+                *value *= decay;
+            }
+            for col in 0..dim {
+                let predicted = (0..dim)
+                    .map(|row| state[row * dim + col] * kinv)
+                    .sum::<f64>();
+                let v = f64::from(qkv[(lane * (2 * kh + vh) + 2 * kh + head) * dim + col]);
+                let delta = (v - predicted) * b;
+                for row in 0..dim {
+                    state[row * dim + col] = kinv.mul_add(delta, state[row * dim + col]);
+                }
+                outputs[(head * lanes + lane) * dim + col] =
+                    (0..dim).map(|row| state[row * dim + col] * qinv).sum();
+            }
+        }
+    }
+    Ok(ReferenceFixture {
+        qkv,
+        beta,
+        alpha,
+        a_log,
+        bias,
+        initial,
+        expected,
+        outputs,
+    })
 }

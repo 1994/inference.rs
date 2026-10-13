@@ -3,9 +3,9 @@
 pub(crate) mod kernels {
     use cutile::core::{
         BroadcastScalar, LoadTileLike, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, bf16,
-        cmp_ordering, cmpf, constant, convert_scalar, convert_tile, eq_tile, exp, extract, ftz,
-        ge_tile, get_tile_block_id, gt_tile, iota, log, lt_tile, mmaf, predicate, reduce_sum,
+        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, Tile_3,
+        bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, eq_tile, exp, extract,
+        ftz, ge_tile, get_tile_block_id, gt_tile, iota, log, lt_tile, mmaf, predicate, reduce_sum,
         reverse, rsqrt, scan_sum, select, tile_to_scalar,
     };
 
@@ -83,6 +83,163 @@ pub(crate) mod kernels {
                     decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
                 let qb = q.reshape(shape![D, 1]).broadcast(shape![D, SW]);
                 let result: Tile<f32, { [SW] }> = reduce_sum(updated * qb, 0i32);
+                old = updated;
+                out.partition_mut(shape![1, 1, SW])
+                    .store(result.reshape(shape![1, 1, SW]), [0i32, lane, 0i32]);
+            } else {
+                out.partition_mut(shape![1, 1, SW])
+                    .store(0.0f32.broadcast(shape![1, 1, SW]), [0i32, lane, 0i32]);
+            }
+        }
+        state.store(old.reshape(shape![1, D, SW]));
+    }
+    // Preserve the original scalar kernel's F32 addition tree: eight terms per stripe,
+    // stripes combined as d + (c + (a + b)), then the 2/1 butterfly across key rows.
+    // Prediction uses a different tree; sharing one helper changes the output last bits.
+    fn scalar128_readout_sum<const SW: i32>(
+        products: Tile<f32, { [128, SW] }>,
+    ) -> Tile<f32, { [SW] }> {
+        let groups = products.reshape(shape![8, 16, SW]);
+        let zero = 0i32.broadcast(shape![]);
+        let slab0: Tile<f32, { [1, 16, SW] }> = extract(groups, [zero, zero, zero]);
+        let slab1: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [1i32.broadcast(shape![]), zero, zero]);
+        let slab2: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [2i32.broadcast(shape![]), zero, zero]);
+        let slab3: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [3i32.broadcast(shape![]), zero, zero]);
+        let slab4: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [4i32.broadcast(shape![]), zero, zero]);
+        let slab5: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [5i32.broadcast(shape![]), zero, zero]);
+        let slab6: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [6i32.broadcast(shape![]), zero, zero]);
+        let slab7: Tile<f32, { [1, 16, SW] }> =
+            extract(groups, [7i32.broadcast(shape![]), zero, zero]);
+        let partial = ((((((((0.0f32.broadcast(shape![1, 16, SW]) + slab0) + slab1) + slab2)
+            + slab3)
+            + slab4)
+            + slab5)
+            + slab6)
+            + slab7)
+            .reshape(shape![4, 4, SW]);
+        let stripe0: Tile<f32, { [1, 4, SW] }> = extract(partial, [zero, zero, zero]);
+        let stripe1: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [1i32.broadcast(shape![]), zero, zero]);
+        let stripe2: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [2i32.broadcast(shape![]), zero, zero]);
+        let stripe3: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [3i32.broadcast(shape![]), zero, zero]);
+        let partial = (stripe3 + (stripe2 + (stripe0 + stripe1))).reshape(shape![4, SW]);
+        let worker0: Tile<f32, { [1, SW] }> = extract(partial, [zero, zero]);
+        let worker1: Tile<f32, { [1, SW] }> = extract(partial, [1i32.broadcast(shape![]), zero]);
+        let worker2: Tile<f32, { [1, SW] }> = extract(partial, [2i32.broadcast(shape![]), zero]);
+        let worker3: Tile<f32, { [1, SW] }> = extract(partial, [3i32.broadcast(shape![]), zero]);
+        ((worker0 + worker2) + (worker1 + worker3)).reshape(shape![SW])
+    }
+
+    // Fold four 32-row slabs before reducing. The scalar kernel does these additions
+    // before its eight-term worker sum; a flat 128-row reduction changes recurrent state.
+    fn scalar128_prediction_sum<const SW: i32>(
+        products: Tile<f32, { [128, SW] }>,
+    ) -> Tile<f32, { [SW] }> {
+        let groups = products.reshape(shape![4, 32, SW]);
+        let zero = 0i32.broadcast(shape![]);
+        let slab0: Tile<f32, { [1, 32, SW] }> = extract(groups, [zero, zero, zero]);
+        let slab1: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [1i32.broadcast(shape![]), zero, zero]);
+        let slab2: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [2i32.broadcast(shape![]), zero, zero]);
+        let slab3: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [3i32.broadcast(shape![]), zero, zero]);
+        let partial = (((0.0f32.broadcast(shape![1, 32, SW]) + slab0) + slab1) + slab2) + slab3;
+        reduce_sum(partial.reshape(shape![32, SW]), 0i32)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "CUDA state kernel binds explicit tensors and the padding metadata"
+    )]
+    #[cutile::entry()]
+    // Qualified only for D = SW = 128 at the captured 64/256-token prompt widths.
+    // Keep the state across tokens while preserving both scalar reduction trees.
+    fn delta_grouped<
+        const KH: i32,
+        const VH: i32,
+        const D: i32,
+        const LANES: i32,
+        const SW: i32,
+    >(
+        state: &mut Tensor<f32, { [1, D, SW] }>,
+        out: &mut Tensor<f32, { [1, LANES, SW] }>,
+        qkv: &Tensor<f32, { [-1, -1, D] }>,
+        beta: &Tensor<f32, { [-1, -1] }>,
+        alpha: &Tensor<f32, { [-1, -1] }>,
+        a_log: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let meta = metadata.partition(shape![1]);
+        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+        // One block of the value dimension. The state's columns are mutually independent - every
+        // reduction below is over the key dimension - so the grid gains SW times more blocks
+        // without changing any summation order.
+        let mut old = state.load_like(state).reshape(shape![D, SW]);
+        for lane in 0i32..LANES {
+            if lane < count && base + lane + offset >= 0 {
+                let key = pid.0 / (VH / KH);
+                let qp = qkv.partition(shape![1, 1, D]);
+                let mut q = qp.load([lane, key, 0i32]).reshape(shape![D]);
+                let mut k = qp.load([lane, KH + key, 0i32]).reshape(shape![D]);
+                let vp = qkv.partition(shape![1, 1, SW]);
+                let v = vp
+                    .load([lane, 2i32 * KH + pid.0, pid.2])
+                    .reshape(shape![SW]);
+                let qs: Tile<f32, { [] }> = reduce_sum(q * q, 0i32);
+                let ks: Tile<f32, { [] }> = reduce_sum(k * k, 0i32);
+                let qs = qs.reshape(shape![1]);
+                let ks = ks.reshape(shape![1]);
+                let qinv = rsqrt(qs + 1e-6f32.broadcast(shape![1]), ftz::Disabled);
+                let kinv = rsqrt(ks + 1e-6f32.broadcast(shape![1]), ftz::Disabled);
+                let d: f32 = convert_scalar(D);
+                let dinv = rsqrt(d.broadcast(shape![1]), ftz::Disabled);
+                q = q * (qinv * dinv).broadcast(shape![D]);
+                k = k * kinv.broadcast(shape![D]);
+                let one = 1.0f32.broadcast(shape![1]);
+                let zero = 0.0f32.broadcast(shape![1]);
+                let bt = beta
+                    .partition(shape![1, 1])
+                    .load([lane, pid.0])
+                    .reshape(shape![1]);
+                let bt = one / (one + exp(zero - bt));
+                let at = alpha
+                    .partition(shape![1, 1])
+                    .load([lane, pid.0])
+                    .reshape(shape![1])
+                    + bias.partition(shape![1]).load([pid.0]);
+                let soft = log(one + exp(at));
+                let large = cmpf(
+                    at,
+                    20.0f32.broadcast(shape![1]),
+                    predicate::GreaterThan,
+                    cmp_ordering::Ordered,
+                );
+                let soft = select(large, at, soft);
+                let decay = exp(zero - exp(a_log.partition(shape![1]).load([pid.0])) * soft);
+                let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+                let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let predicted: Tile<f32, { [SW] }> =
+                    scalar128_prediction_sum((decayed * kb).reshape(shape![128, SW]));
+                let predicted = predicted.reshape(shape![SW]);
+                let diff = (v - predicted) * bt.broadcast(shape![SW]);
+                let updated: Tile<f32, { [D, SW] }> =
+                    decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+                let qb = q.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let result: Tile<f32, { [SW] }> =
+                    scalar128_readout_sum((updated * qb).reshape(shape![128, SW]));
                 old = updated;
                 out.partition_mut(shape![1, 1, SW])
                     .store(result.reshape(shape![1, 1, SW]), [0i32, lane, 0i32]);
@@ -300,6 +457,11 @@ pub(crate) mod kernels {
 #[cfg(test)]
 #[path = "../../tests/unit/resident_recurrent_prefill.rs"]
 mod tests;
+
+/// Key/value dimension whose scalar F32 reduction trees are preserved.
+pub(super) const ORDERED_DIM: usize = 128;
+/// Prompt capture widths covered by exact fixture and checkpoint comparisons.
+pub(super) const ORDERED_WIDTHS: [usize; 2] = [64, 256];
 
 mod budget;
 mod workspace;

@@ -1,0 +1,1193 @@
+{
+  "schema": "gdn-ordered-reduction-v1",
+  "artifact_root": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13",
+  "source_base": "b8c2322c6160cf3893782b19c91f7f152a0d48eb",
+  "purpose": "Remove scalar-vs-register-chunk F32 numerical mismatch before performance qualification",
+  "f32_state": true,
+  "new_user_algorithm_switches": 0,
+  "quantized_default_changed": false,
+  "performance_measured": false,
+  "full_256_task_quality_measured": false,
+  "prediction_replay": [
+    {
+      "arm": "scalar",
+      "stage": "prediction",
+      "elements": 6144,
+      "bit_differing": 0,
+      "max_abs": 0.0
+    },
+    {
+      "arm": "chunk",
+      "stage": "prediction",
+      "elements": 6144,
+      "bit_differing": 0,
+      "max_abs": 0.0
+    }
+  ],
+  "readout_replay": {
+    "elements": 6144,
+    "bit_differing": 0,
+    "max_abs": 0.0,
+    "readout_tree": [
+      [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      "RZ",
+                      "s3c0"
+                    ],
+                    "s7c0"
+                  ],
+                  "s11c0"
+                ],
+                "s15c0"
+              ],
+              "s19c0"
+            ],
+            "s23c0"
+          ],
+          "s27c0"
+        ],
+        "s31c0"
+      ],
+      [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        "RZ",
+                        "s2c0"
+                      ],
+                      "s6c0"
+                    ],
+                    "s10c0"
+                  ],
+                  "s14c0"
+                ],
+                "s18c0"
+              ],
+              "s22c0"
+            ],
+            "s26c0"
+          ],
+          "s30c0"
+        ],
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          "RZ",
+                          "s0c0"
+                        ],
+                        "s4c0"
+                      ],
+                      "s8c0"
+                    ],
+                    "s12c0"
+                  ],
+                  "s16c0"
+                ],
+                "s20c0"
+              ],
+              "s24c0"
+            ],
+            "s28c0"
+          ],
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          "RZ",
+                          "s1c0"
+                        ],
+                        "s5c0"
+                      ],
+                      "s9c0"
+                    ],
+                    "s13c0"
+                  ],
+                  "s17c0"
+                ],
+                "s21c0"
+              ],
+              "s25c0"
+            ],
+            "s29c0"
+          ]
+        ]
+      ]
+    ]
+  },
+  "runs": [
+    {
+      "label": "baseline",
+      "result_sha256": "1987fc6149a549d04c33e33dfc1f18a126fed3684b4bb8802dca233ce3f9138c",
+      "binary_sha256": "3ba0356257ef275a3c5240cadec6654387cd42952907bd9f08a87afab7112ef1",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "output_bits": [
+        [
+          4634,
+          6144
+        ],
+        [
+          4634,
+          12288
+        ],
+        [
+          9228,
+          12288
+        ],
+        [
+          4634,
+          49152
+        ],
+        [
+          13494,
+          49152
+        ],
+        [
+          4634,
+          786432
+        ],
+        [
+          31345,
+          786432
+        ],
+        [
+          176945,
+          786432
+        ]
+      ],
+      "state_bits": [
+        [
+          59412,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          93588,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          112407,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          126334,
+          786432
+        ],
+        [
+          114693,
+          786432
+        ]
+      ]
+    },
+    {
+      "label": "map",
+      "result_sha256": "add0572172e6b148f8c214811acd3eb267781cb300de111350f7eafdbb050d75",
+      "binary_sha256": "8b3e799322b8d1e9c92cc502d878aae9784bebae1af34cd99d59f775e402178e",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "output_bits": [
+        [
+          4634,
+          6144
+        ],
+        [
+          4634,
+          12288
+        ],
+        [
+          9228,
+          12288
+        ],
+        [
+          4634,
+          49152
+        ],
+        [
+          13494,
+          49152
+        ],
+        [
+          4634,
+          786432
+        ],
+        [
+          31345,
+          786432
+        ],
+        [
+          176945,
+          786432
+        ]
+      ],
+      "state_bits": [
+        [
+          59412,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          93588,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          112407,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          126334,
+          786432
+        ],
+        [
+          114693,
+          786432
+        ]
+      ]
+    },
+    {
+      "label": "flat",
+      "result_sha256": "afe8fb3d6f1c6e083100022245d20d4d9d6054de5aba10c62fe7634d599bd9a6",
+      "binary_sha256": "ea64cd20932501f002fba3b85b96b3b615209026ac5cabed4d66dedb998b991a",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "output_bits": [
+        [
+          4634,
+          6144
+        ],
+        [
+          4634,
+          12288
+        ],
+        [
+          9228,
+          12288
+        ],
+        [
+          4634,
+          49152
+        ],
+        [
+          13494,
+          49152
+        ],
+        [
+          4634,
+          786432
+        ],
+        [
+          31345,
+          786432
+        ],
+        [
+          176945,
+          786432
+        ]
+      ],
+      "state_bits": [
+        [
+          59412,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          93588,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          112407,
+          786432
+        ],
+        [
+          59412,
+          786432
+        ],
+        [
+          126334,
+          786432
+        ],
+        [
+          114693,
+          786432
+        ]
+      ]
+    },
+    {
+      "label": "grouped",
+      "result_sha256": "0eca22c798a974a6b73c30a617e1db4bbcc351772b7ec99a49c20a1a65629fc0",
+      "binary_sha256": "d58a835db84d8304e185183900e6fee50504c48025341f6f8bfc1ded39e1ea9b",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "output_bits": [
+        [
+          4600,
+          6144
+        ],
+        [
+          4600,
+          12288
+        ],
+        [
+          9131,
+          12288
+        ],
+        [
+          4600,
+          49152
+        ],
+        [
+          13268,
+          49152
+        ],
+        [
+          4600,
+          786432
+        ],
+        [
+          30512,
+          786432
+        ],
+        [
+          172309,
+          786432
+        ]
+      ],
+      "state_bits": [
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ]
+      ]
+    },
+    {
+      "label": "ordered-r1",
+      "result_sha256": "b63c2e95417e3fd399413cc7d8f836e4e51df2f89d22b183b89ca643fc7063f2",
+      "binary_sha256": "00e787ffdae2fe1064db380eb54f4a9349dee3de143f4874ad5f1ff05d607cd9",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "output_bits": [
+        [
+          0,
+          6144
+        ],
+        [
+          0,
+          12288
+        ],
+        [
+          0,
+          12288
+        ],
+        [
+          0,
+          49152
+        ],
+        [
+          0,
+          49152
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ]
+      ],
+      "state_bits": [
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ],
+        [
+          0,
+          786432
+        ]
+      ]
+    },
+    {
+      "label": "qualified",
+      "result_sha256": "205de4272ce20f965eb36adb0adcd456f814a5721cbdae7b5b4283fb34a68660",
+      "binary_sha256": "c321d62e70c3c55905a043b27736c652a71263338ee8b08121b9ef07d854cfaa",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "ordered_f64_max": 1.155110407213833e-06,
+      "ordered_bits": [
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 98304
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 49152
+        }
+      ]
+    },
+    {
+      "label": "model64",
+      "result_sha256": "c5dc6c0edb7f55dbbf0dddf2bd66318ec939576b5092d15c8923b535098f8252",
+      "binary_sha256": "0fc4a3e766e348092df461dd97420ec29dadd3bb942d5378bde79e90158b37e6",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "model_outputs_rollup": {
+        "hidden": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 511,
+          "elements_checked": 2616320,
+          "bit_differing": 0
+        },
+        "logits": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 8,
+          "elements_checked": 1986560,
+          "bit_differing": 0
+        },
+        "verify hidden": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 15360,
+          "bit_differing": 0
+        },
+        "verify logits": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 744960,
+          "bit_differing": 0
+        },
+        "decode hidden": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 81920,
+          "bit_differing": 0
+        },
+        "decode logits": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 3973120,
+          "bit_differing": 0
+        }
+      },
+      "model_state_rollup": {
+        "prefill": {
+          "checks": 8,
+          "elements_checked": 313786368,
+          "bit_differing": 0
+        },
+        "verify": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "rollback": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "decode": {
+          "checks": 16,
+          "elements_checked": 627572736,
+          "bit_differing": 0
+        }
+      }
+    },
+    {
+      "label": "model256",
+      "result_sha256": "5975795be706fc27be65ea6cb83f3b054e78bbb5a1b4fceee54638f549bf6543",
+      "binary_sha256": "0fc4a3e766e348092df461dd97420ec29dadd3bb942d5378bde79e90158b37e6",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "model_outputs_rollup": {
+        "hidden": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 511,
+          "elements_checked": 2616320,
+          "bit_differing": 0
+        },
+        "logits": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 2,
+          "elements_checked": 496640,
+          "bit_differing": 0
+        },
+        "verify hidden": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 15360,
+          "bit_differing": 0
+        },
+        "verify logits": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 744960,
+          "bit_differing": 0
+        },
+        "decode hidden": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 81920,
+          "bit_differing": 0
+        },
+        "decode logits": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 3973120,
+          "bit_differing": 0
+        }
+      },
+      "model_state_rollup": {
+        "prefill": {
+          "checks": 2,
+          "elements_checked": 78446592,
+          "bit_differing": 0
+        },
+        "verify": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "rollback": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "decode": {
+          "checks": 16,
+          "elements_checked": 627572736,
+          "bit_differing": 0
+        }
+      }
+    },
+    {
+      "label": "main-unit",
+      "result_sha256": "cd3576da018ea54c398ca687d5a951eed21182e0ce1396624244e033451dd9da",
+      "binary_sha256": "69071e46ca287c4fe84bc7372a5b52a43fde898c1f0c2d82aefacd9ddcfd0ab8",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "ordered_f64_max": 1.155110407213833e-06,
+      "ordered_bits": [
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 393216
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 786432
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 1572864
+        },
+        {
+          "label": "state",
+          "different": 0,
+          "elements": 98304
+        },
+        {
+          "label": "output",
+          "different": 0,
+          "elements": 49152
+        }
+      ]
+    },
+    {
+      "label": "main-model64",
+      "result_sha256": "032bc2a9123ba924ff9b4d314831817cdfe463805837532e22ff25207cfa6c17",
+      "binary_sha256": "69071e46ca287c4fe84bc7372a5b52a43fde898c1f0c2d82aefacd9ddcfd0ab8",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "model_outputs_rollup": {
+        "hidden": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 511,
+          "elements_checked": 2616320,
+          "bit_differing": 0
+        },
+        "logits": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 8,
+          "elements_checked": 1986560,
+          "bit_differing": 0
+        },
+        "verify hidden": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 15360,
+          "bit_differing": 0
+        },
+        "verify logits": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 744960,
+          "bit_differing": 0
+        },
+        "decode hidden": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 81920,
+          "bit_differing": 0
+        },
+        "decode logits": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 3973120,
+          "bit_differing": 0
+        }
+      },
+      "model_state_rollup": {
+        "prefill": {
+          "checks": 8,
+          "elements_checked": 313786368,
+          "bit_differing": 0
+        },
+        "verify": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "rollback": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "decode": {
+          "checks": 16,
+          "elements_checked": 627572736,
+          "bit_differing": 0
+        }
+      }
+    },
+    {
+      "label": "main-model256",
+      "result_sha256": "0926d846db2b6ffcae2537192998844edb9c070543d32adc2cb5e2ea2fd515ef",
+      "binary_sha256": "69071e46ca287c4fe84bc7372a5b52a43fde898c1f0c2d82aefacd9ddcfd0ab8",
+      "no_foreign_gpu": true,
+      "memory_max": "34359738368",
+      "swap_max": "0",
+      "model_outputs_rollup": {
+        "hidden": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 511,
+          "elements_checked": 2616320,
+          "bit_differing": 0
+        },
+        "logits": {
+          "vectors_checked": 511,
+          "nonempty_vectors": 2,
+          "elements_checked": 496640,
+          "bit_differing": 0
+        },
+        "verify hidden": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 15360,
+          "bit_differing": 0
+        },
+        "verify logits": {
+          "vectors_checked": 3,
+          "nonempty_vectors": 3,
+          "elements_checked": 744960,
+          "bit_differing": 0
+        },
+        "decode hidden": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 81920,
+          "bit_differing": 0
+        },
+        "decode logits": {
+          "vectors_checked": 16,
+          "nonempty_vectors": 16,
+          "elements_checked": 3973120,
+          "bit_differing": 0
+        }
+      },
+      "model_state_rollup": {
+        "prefill": {
+          "checks": 2,
+          "elements_checked": 78446592,
+          "bit_differing": 0
+        },
+        "verify": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "rollback": {
+          "checks": 1,
+          "elements_checked": 39223296,
+          "bit_differing": 0
+        },
+        "decode": {
+          "checks": 16,
+          "elements_checked": 627572736,
+          "bit_differing": 0
+        }
+      }
+    }
+  ],
+  "tested_production_source_sha256": {
+    "crates/backend/cuda/src/resident/recurrent.rs": "af4eae8d5234eddbafbe58907444b89251e24d474c7b7c31298b9396f7d068c0",
+    "crates/backend/cuda/src/resident/recurrent_prefill.rs": "f257af33e94c587801b18ca69f103290223f93e3bc1926b09a896d2dff5113f0",
+    "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs": "7d6029a9a7b2360811ed976e0d1302f81cfa6f3f30856675e8e648908f343bc2"
+  },
+  "build_main": {
+    "source_sha256": {
+      "crates/backend/cuda/src/resident/recurrent.rs": "af4eae8d5234eddbafbe58907444b89251e24d474c7b7c31298b9396f7d068c0",
+      "crates/backend/cuda/src/resident/recurrent_prefill.rs": "f257af33e94c587801b18ca69f103290223f93e3bc1926b09a896d2dff5113f0",
+      "crates/backend/cuda/tests/unit/resident_recurrent_prefill.rs": "030eecfdb8624085e083b79712629d150a2114d9cbfd3282e98daf77dbcab3a5",
+      "crates/backend/cuda/tests/unit/resident_recurrent_prefill_model_check.rs": "3ed2546597f745aba0ae4f3ccfaef4018253000e8531b5d8f1524bb5be41f944",
+      "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs": "7d6029a9a7b2360811ed976e0d1302f81cfa6f3f30856675e8e648908f343bc2",
+      "crates/backend/cuda/tests/unit/resident_recurrent_prefill_benchmark_tests.rs": "19b876df37d91ed466b1a02e41c6f53d8a1365c7242084cb786ff511ab7ab0b1"
+    },
+    "argv": [
+      "/usr/bin/cargo",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "infer-backend-cuda",
+      "--features",
+      "cuda",
+      "--lib",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "returncode": 0,
+    "started_unix": 1791909475.1219945,
+    "finished_unix": 1791909573.94257,
+    "binary_sha256": "69071e46ca287c4fe84bc7372a5b52a43fde898c1f0c2d82aefacd9ddcfd0ab8"
+  },
+  "test_source_note": "After this frozen GPU test binary was built, two test-only refactors folded duplicate assertion calls and restricted the checkpoint test default/accepted widths to the actual tested 64/256 cases. Production kernel and dispatch source hashes are unchanged. CUDA all-target Clippy checks use the final test source.",
+  "final_checks": [
+    {
+      "label": "clippy",
+      "argv": [
+        "/usr/bin/cargo",
+        "clippy",
+        "--locked",
+        "--release",
+        "-p",
+        "infer-backend-cuda",
+        "--features",
+        "cuda",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "started": 1791909641.5219276,
+      "finished": 1791909647.5450945
+    },
+    {
+      "label": "tools",
+      "argv": [
+        "make",
+        "check-tools"
+      ],
+      "returncode": 0,
+      "started": 1791909647.5451517,
+      "finished": 1791909648.9251277
+    }
+  ],
+  "resources": [
+    {
+      "label": "qualified",
+      "key": "101fe856689c5cc490571eb8ddc4f5e3ca93695692b35dfc839bc0f2fcfca2b7",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:64 CONSTANT[4]:8\n Function full_entry:\n  REG:9 STACK:0 SHARED:0 LOCAL:0 CONSTANT[0]:928 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 0,
+        "FADD": 0,
+        "FFMA": 0,
+        "LDS": 0,
+        "STS": 0,
+        "LDL": 0,
+        "STL": 0
+      },
+      "payload_sha256": "71c578e88944d40b09111f9dbcc904c0fe813d8218ae6c4bce76a013dba71f81"
+    },
+    {
+      "label": "qualified",
+      "key": "16cd749beecd573313471170b70c267c89392b28bfde21ef1014417203ca5257",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:729 CONSTANT[4]:48\n Function delta_entry:\n  REG:168 STACK:112 SHARED:94868 LOCAL:0 CONSTANT[0]:1792 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 660,
+        "FADD": 585,
+        "FFMA": 33,
+        "LDS": 162,
+        "STS": 39,
+        "LDL": 0,
+        "STL": 16
+      },
+      "payload_sha256": "690e613ed9197fa2565734f35176b73ed77ac035657332271d66d3991cd55ce7"
+    },
+    {
+      "label": "qualified",
+      "key": "941a584d89144a6859a1630ff58631929048203858424bddf51892a1b2ee163b",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:1743 CONSTANT[4]:96\n Function delta_grouped_entry:\n  REG:168 STACK:160 SHARED:75460 LOCAL:0 CONSTANT[0]:1664 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 682,
+        "FADD": 535,
+        "FFMA": 33,
+        "LDS": 146,
+        "STS": 23,
+        "LDL": 0,
+        "STL": 10
+      },
+      "payload_sha256": "529ba11853a1fae8ed5168a58f2df3e83b0e31c47a3a31451d4061e833aed5b6"
+    },
+    {
+      "label": "qualified",
+      "key": "b246bb75392e859a56ec6b4d698fa3dd13a7fdaa4d2c60c1aec2337a7ecc7e07",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:1743 CONSTANT[4]:96\n Function delta_grouped_entry:\n  REG:168 STACK:160 SHARED:75460 LOCAL:0 CONSTANT[0]:1664 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 682,
+        "FADD": 535,
+        "FFMA": 33,
+        "LDS": 146,
+        "STS": 23,
+        "LDL": 0,
+        "STL": 10
+      },
+      "payload_sha256": "5776eedc88d42d73204364879c66a9f99b1697d1c831700c9cb05d8cd279ed67"
+    },
+    {
+      "label": "qualified",
+      "key": "bb92c53bcd3061ecf93c5d76e744dfdc103f77d32cc9972c2e40b4d526808dd4",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:1743 CONSTANT[4]:96\n Function delta_grouped_entry:\n  REG:168 STACK:160 SHARED:75460 LOCAL:0 CONSTANT[0]:1664 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 682,
+        "FADD": 535,
+        "FFMA": 33,
+        "LDS": 146,
+        "STS": 23,
+        "LDL": 0,
+        "STL": 10
+      },
+      "payload_sha256": "eda4aab3be652e3098599b635f633252b37f9e70c39d0ba40eb8c8017d9ca261"
+    },
+    {
+      "label": "qualified",
+      "key": "d8327df4249e725da5278d2fa8f536f600f8a65a9d0183b53e815f4e3891eaa5",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:729 CONSTANT[4]:48\n Function delta_entry:\n  REG:168 STACK:112 SHARED:94868 LOCAL:0 CONSTANT[0]:1792 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "instruction_counts": {
+        "FMUL": 660,
+        "FADD": 585,
+        "FFMA": 33,
+        "LDS": 162,
+        "STS": 39,
+        "LDL": 0,
+        "STL": 16
+      },
+      "payload_sha256": "02bf72396b2b622fdadefaa00c92c0abb1c3de2cc6fb211f8e6a8c27a73b07af"
+    }
+  ],
+  "manifest_sha256": "d521edf6e9c077a67eb98e30bad1a61365ceba18b9457ec126e336e1745a1289",
+  "raw_summary_sha256": "351f06c88d71763f1cc770e0621560e41b5445ab12e84685d312c806f88541be"
+}

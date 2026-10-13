@@ -20,12 +20,7 @@ fn recurrent_chunk_performance_gate() -> Result<(), Box<dyn std::error::Error>> 
     let device = CudaDevice::new(0)?;
     // 64 lanes is the width the 27B prompt graph captures, so the serving number has a
     // same-width isolated counterpart to compare against instead of an interpolation.
-    for (kh, vh, dim, lanes) in [
-        (2, 4, 32, 32),
-        (16, 48, 128, 32),
-        (16, 48, 128, 64),
-        (16, 48, 128, 128),
-    ] {
+    for (kh, vh, dim, lanes) in [(2, 4, 32, 32), (16, 48, 128, 64), (16, 48, 128, 256)] {
         bench_case(&device, (kh, vh, dim, lanes))?;
     }
     Ok(())
@@ -86,28 +81,43 @@ fn bench_case(
     let metadata = device.upload(vec![0, i32::try_from(lanes)?, 0, 0], &[4])?;
     let mut scratch = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
     let mut output = api::zeros::<f32>(&[lanes, vh, dim]).sync_on(&device.stream)?;
+    let generics = vec![
+        kh.to_string(),
+        vh.to_string(),
+        dim.to_string(),
+        lanes.to_string(),
+        dim.to_string(),
+    ];
     let candidate = CudaGraph::scope(&device.stream, |scope| {
-        scope.record(
-            kernels::delta(
-                (&mut state).partition([1, dim, dim]),
-                (&mut scratch).partition([1, lanes, dim]),
-                &qkv,
-                &beta,
-                &alpha,
-                &a_log,
-                &bias,
-                &metadata,
-            )
-            .generics(vec![
-                kh.to_string(),
-                vh.to_string(),
-                dim.to_string(),
-                lanes.to_string(),
-                // The whole value dimension in one block: this benchmark pairs the chunked kernel
-                // against the per-lane one at the split the model actually captures.
-                dim.to_string(),
-            ]),
-        )?;
+        if dim == 128 {
+            scope.record(
+                kernels::delta_grouped(
+                    (&mut state).partition([1, dim, dim]),
+                    (&mut scratch).partition([1, lanes, dim]),
+                    &qkv,
+                    &beta,
+                    &alpha,
+                    &a_log,
+                    &bias,
+                    &metadata,
+                )
+                .generics(generics),
+            )?;
+        } else {
+            scope.record(
+                kernels::delta(
+                    (&mut state).partition([1, dim, dim]),
+                    (&mut scratch).partition([1, lanes, dim]),
+                    &qkv,
+                    &beta,
+                    &alpha,
+                    &a_log,
+                    &bias,
+                    &metadata,
+                )
+                .generics(generics),
+            )?;
+        }
         scope.record(
             kernels::transpose((&mut output).partition([1, 1, dim]), &scratch)
                 .generics(vec![dim.to_string()]),
