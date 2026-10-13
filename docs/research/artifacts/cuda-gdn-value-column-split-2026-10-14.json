@@ -1,0 +1,1376 @@
+{
+  "schema": 1,
+  "classification": "production F32 split-core integration and separately frozen quantized candidate diagnostics; no quantized default promotion or performance certification",
+  "base_commit": "49bdcc7c71ed832f891f4bad223b787abfbad8e7",
+  "compiled_code_sources": {
+    "crates/backend/cuda/src/resident/recurrent_prefill.rs": "b6d68b4b536b334b648ebc8102926013cd1b3c2e9042f14b35a03a469c39fdd3",
+    "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs": "b6a4695a8563e0e2c4b7510d275642de654af54f4223bd5f4f752f101a8d0ccc",
+    "crates/backend/cuda/tests/unit/resident_recurrent_prefill.rs": "f8f1f05b0292b1e736126930a3151207cdbd7eb5cff155087aa06fdb64ef4632",
+    "crates/backend/cuda/tests/unit/resident_recurrent_prefill_benchmark_tests.rs": "6bd474cc635a1b0abbdfab47a9c063eebaa4b68fbf437c72f957c39adbf57d77",
+    "crates/backend/cuda/tests/unit/resident_recurrent_prefill_integration_tests.rs": "b77dab22076e592006a1f2445d2cf9c50eec3cadd03c0fe472df74d612ae734f"
+  },
+  "production_policy": {
+    "value_block": 32,
+    "ordered_key_value_dim": 128,
+    "ordered_capture_widths": [
+      64,
+      256
+    ],
+    "unquantized_default": true,
+    "quantized_default_admission": "unchanged scalar unless admitted by diagnostic loader",
+    "moe_default": "unchanged scalar",
+    "user_algorithm_flags_added": false,
+    "scratch_budget_policy": "unchanged"
+  },
+  "checks": {
+    "build": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/build-r3/result.json",
+      "sha256": "8dbcb700aea5bb56641daacd9a8619160b3036e80320530b010a9c5737402117"
+    },
+    "strict_cuda_release_clippy_all_targets": true,
+    "cuda_release_tests_built": true,
+    "cuda_release_cli_built": true,
+    "numerical": {
+      "unit": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/unit/result.json",
+          "sha256": "474329d190cd6a3c3a74d781240fc0abd2728c2b46ec3a128e14023223a48a1d"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/unit/stdout.log",
+          "sha256": "2f0b3cbe7a4985e8de79875a7753328b53c191786ba9eccc267599cd683ab742"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/unit/stderr.log",
+          "sha256": "43346a224af48b975da13624ac90503b954799198e54f2623690a1feea905263"
+        },
+        "binary_sha256": "01a3c8f043d834832034d20bb45278e23649fef266620455017d548802b1ca93",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "fixture_cases": 45,
+        "bit_comparisons": 90,
+        "maximum_f64_absolute_error": 1.155110407213833e-06,
+        "f64_absolute_error_threshold": 2e-05,
+        "all_state_and_output_bits_identical": true
+      },
+      "default_capture": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/default-capture-r2/result.json",
+          "sha256": "1dd181b6bc2726437c4add54f0fca16ffef7e3f7e3abb308fdd39d3599fad22b"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/default-capture-r2/stdout.log",
+          "sha256": "7cefaca0247071477e520c0ce77c10620dca9d44a43460ee9727f4ec59e901e2"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/default-capture-r2/stderr.log",
+          "sha256": "e3a865356d524e3877a8e141452f6f2e2aad5ed7bfe6d35eb0566c1e3bb94e6e"
+        },
+        "binary_sha256": "01a3c8f043d834832034d20bb45278e23649fef266620455017d548802b1ca93",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "widths": [
+          64,
+          256
+        ],
+        "block": 32,
+        "loader_chunked_recurrent": false,
+        "state_elements_per_checkpoint": 786432,
+        "all_hidden_logits_and_state_bits_identical": true
+      },
+      "model64": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model64/result.json",
+          "sha256": "82a3eb859174cab65a832b70cf0c8c98d9274b224d4a52507d5811e4bd984d29"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model64/stdout.log",
+          "sha256": "e20cfe6f88f8b0492e19e7c1732a850a4a0b1c47215ce1ea5420786b57ef4d9d"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model64/stderr.log",
+          "sha256": "687a848b5cc71c67440f8a77084238762bf798af75533573dd11d19decdcc3dc"
+        },
+        "binary_sha256": "01a3c8f043d834832034d20bb45278e23649fef266620455017d548802b1ca93",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "state_checkpoints": 26,
+        "f32_state_elements_per_checkpoint": 39223296,
+        "all_hidden_logits_and_state_bits_identical": true,
+        "verification_width": 3,
+        "committed_verification_rows": 1,
+        "teacher_forced_decode_steps": 16,
+        "scope": "diagnostic loader admission; production quantized default remains scalar; explicit FP8 KV-buffer bits not checked"
+      },
+      "model256": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model256/result.json",
+          "sha256": "fb46ddded741dbc5af498520c0b93eb62605c88115b4a2ff3e015a4357d59956"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model256/stdout.log",
+          "sha256": "c4ef358f6054dbdc930e9deb6b9339c0f76e4a07c9dcdccc0c234657dfea2d14"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/model256/stderr.log",
+          "sha256": "fff1a7b2b0c8dff2a6931859e2e5c027355c5f7c4589451d366facdd76092189"
+        },
+        "binary_sha256": "01a3c8f043d834832034d20bb45278e23649fef266620455017d548802b1ca93",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "state_checkpoints": 20,
+        "f32_state_elements_per_checkpoint": 39223296,
+        "all_hidden_logits_and_state_bits_identical": true,
+        "verification_width": 3,
+        "committed_verification_rows": 1,
+        "teacher_forced_decode_steps": 16,
+        "scope": "diagnostic loader admission; production quantized default remains scalar; explicit FP8 KV-buffer bits not checked"
+      },
+      "performance": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/performance/result.json",
+          "sha256": "d590ada1929ea10c32e09db1539f449d2309d3305c19c7f79bff6a1adfcd155e"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/performance/stdout.log",
+          "sha256": "e284b7d6bec03d2a2e3717cf9356a63f56a8deaad752af93a2b9e28dffa31f4c"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/performance/stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "binary_sha256": "01a3c8f043d834832034d20bb45278e23649fef266620455017d548802b1ca93",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "cuda_event_lines": [
+          "geometry=(2, 4, 32, 32) old_ms=0.081967995 new_ms=0.042928 speedup=1.9094297",
+          "geometry=(16, 48, 128, 64) old_ms=0.336928 new_ms=0.106528 speedup=3.1628118",
+          "geometry=(16, 48, 128, 256) old_ms=1.31224 new_ms=0.395488 speedup=3.3180275"
+        ],
+        "scope": "isolated scalar regression gate, not service certification"
+      }
+    }
+  },
+  "quantized_archive_candidate": {
+    "scope": "ordered-default-source enables quantized admission only for candidate qualification; these measurements are not production-main defaults",
+    "quality_vs_clean_scalar": {
+      "schema": 1,
+      "scope": "fixed arithmetic task subset with declared generation budget",
+      "baseline": {
+        "requests": 256,
+        "correct": 240,
+        "accuracy": 0.9375,
+        "format_missing": 8,
+        "length_limited": 8
+      },
+      "candidate": {
+        "requests": 256,
+        "correct": 240,
+        "accuracy": 0.9375,
+        "format_missing": 8,
+        "length_limited": 8
+      },
+      "strata": {
+        "eight_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 124,
+            "accuracy": 0.96875,
+            "format_missing": 0,
+            "length_limited": 0
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 124,
+            "accuracy": 0.96875,
+            "format_missing": 0,
+            "length_limited": 0
+          }
+        },
+        "zero_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 8,
+            "length_limited": 8
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 8,
+            "length_limited": 8
+          }
+        }
+      },
+      "regressions": [],
+      "gains": [],
+      "accuracy_change": 0.0,
+      "confidence": 0.95,
+      "noninferiority_margin_accuracy": 0.02,
+      "regression_rate_upper_bound": 0.011633876163163281,
+      "method": "one-sided Clopper-Pearson regression bound; gains cannot hide regressions",
+      "statistical_assumption": "Bernoulli task regression model; no general-capability guarantee",
+      "quality_status": "pass",
+      "quality_accepted": true,
+      "performance_accepted": false,
+      "evidence": {
+        "suite": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/tokenized-suite.json",
+          "sha256": "095329ef857567b45220bcd73b01af80aaf69ec246c8e78021421b99fb2b1b0b"
+        },
+        "baseline": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/scalar-results.json",
+          "sha256": "9a301b89918ee365937e4ee7ca1c78aa165ab860cd01bd05907a8a1d4656aa90"
+        },
+        "candidate": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/ordered-results.json",
+          "sha256": "7ea48fad7400ca9fb92cc4363d5e63610750b88fd8f05d4ced9e837f8e929db3"
+        }
+      }
+    },
+    "quality_vs_fixed_vllm": {
+      "schema": 1,
+      "scope": "fixed arithmetic task subset with declared generation budget",
+      "baseline": {
+        "requests": 256,
+        "correct": 243,
+        "accuracy": 0.94921875,
+        "format_missing": 9,
+        "length_limited": 8
+      },
+      "candidate": {
+        "requests": 256,
+        "correct": 240,
+        "accuracy": 0.9375,
+        "format_missing": 8,
+        "length_limited": 8
+      },
+      "strata": {
+        "eight_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 127,
+            "accuracy": 0.9921875,
+            "format_missing": 0,
+            "length_limited": 0
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 124,
+            "accuracy": 0.96875,
+            "format_missing": 0,
+            "length_limited": 0
+          }
+        },
+        "zero_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 9,
+            "length_limited": 8
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 8,
+            "length_limited": 8
+          }
+        }
+      },
+      "regressions": [
+        "gsm8k:1183:zero_shot",
+        "gsm8k:1137:zero_shot",
+        "gsm8k:380:eight_shot",
+        "gsm8k:527:eight_shot",
+        "gsm8k:1046:eight_shot"
+      ],
+      "gains": [
+        "gsm8k:1089:zero_shot",
+        "gsm8k:853:zero_shot"
+      ],
+      "accuracy_change": -0.01171875,
+      "confidence": 0.95,
+      "noninferiority_margin_accuracy": 0.02,
+      "regression_rate_upper_bound": 0.04062561849941071,
+      "method": "one-sided Clopper-Pearson regression bound; gains cannot hide regressions",
+      "statistical_assumption": "Bernoulli task regression model; no general-capability guarantee",
+      "quality_status": "not_demonstrated",
+      "quality_accepted": false,
+      "performance_accepted": false,
+      "evidence": {
+        "suite": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/tokenized-suite.json",
+          "sha256": "095329ef857567b45220bcd73b01af80aaf69ec246c8e78021421b99fb2b1b0b"
+        },
+        "baseline": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/vllm-reference-bridge.json",
+          "sha256": "983ac989b619ca08c6ce3c5350b1ed1b09cce5d6dbb01234ba1137c40a7900a1"
+        },
+        "candidate": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/ordered-results.json",
+          "sha256": "7ea48fad7400ca9fb92cc4363d5e63610750b88fd8f05d4ced9e837f8e929db3"
+        }
+      }
+    },
+    "clean_scalar_quality_vs_fixed_vllm": {
+      "schema": 1,
+      "scope": "fixed arithmetic task subset with declared generation budget",
+      "baseline": {
+        "requests": 256,
+        "correct": 243,
+        "accuracy": 0.94921875,
+        "format_missing": 9,
+        "length_limited": 8
+      },
+      "candidate": {
+        "requests": 256,
+        "correct": 240,
+        "accuracy": 0.9375,
+        "format_missing": 8,
+        "length_limited": 8
+      },
+      "strata": {
+        "eight_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 127,
+            "accuracy": 0.9921875,
+            "format_missing": 0,
+            "length_limited": 0
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 124,
+            "accuracy": 0.96875,
+            "format_missing": 0,
+            "length_limited": 0
+          }
+        },
+        "zero_shot": {
+          "baseline": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 9,
+            "length_limited": 8
+          },
+          "candidate": {
+            "requests": 128,
+            "correct": 116,
+            "accuracy": 0.90625,
+            "format_missing": 8,
+            "length_limited": 8
+          }
+        }
+      },
+      "regressions": [
+        "gsm8k:1183:zero_shot",
+        "gsm8k:1137:zero_shot",
+        "gsm8k:380:eight_shot",
+        "gsm8k:527:eight_shot",
+        "gsm8k:1046:eight_shot"
+      ],
+      "gains": [
+        "gsm8k:1089:zero_shot",
+        "gsm8k:853:zero_shot"
+      ],
+      "accuracy_change": -0.01171875,
+      "confidence": 0.95,
+      "noninferiority_margin_accuracy": 0.02,
+      "regression_rate_upper_bound": 0.04062561849941071,
+      "method": "one-sided Clopper-Pearson regression bound; gains cannot hide regressions",
+      "statistical_assumption": "Bernoulli task regression model; no general-capability guarantee",
+      "quality_status": "not_demonstrated",
+      "quality_accepted": false,
+      "performance_accepted": false,
+      "classification": "Existing fresh scalar control versus pinned vLLM reference; isolates reference quality gap before evaluating ordered candidate",
+      "evidence": {
+        "suite": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/tokenized-suite.json",
+          "sha256": "095329ef857567b45220bcd73b01af80aaf69ec246c8e78021421b99fb2b1b0b"
+        },
+        "baseline": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/vllm-reference-bridge.json",
+          "sha256": "983ac989b619ca08c6ce3c5350b1ed1b09cce5d6dbb01234ba1137c40a7900a1"
+        },
+        "candidate": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/scalar-results.json",
+          "sha256": "9a301b89918ee365937e4ee7ca1c78aa165ab860cd01bd05907a8a1d4656aa90"
+        }
+      }
+    },
+    "all_256_quality_streams_identical": true,
+    "vllm_reference_scope": "immutable executed reference bridged only to comparison profile identifiers; original binary/model/hardware/results preserved; no reexecution here",
+    "serving": {
+      "classification": "diagnostic candidate qualification, no performance certification",
+      "plan_sha256": "af489e0aebd5b91d62add1adc1e63eb05fb653c0123aac8d3c486a71feb75c14",
+      "reports": [
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u0-scalar/Qwen3.8-27B-NVFP4-mtp0-native-u0-scalar.json",
+          "sha256": "559359cf25f2bb90b3c2df38e23392461632dde3aa47096bbc0054fa62ba7a8b"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u0-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u0-ordered.json",
+          "sha256": "2e723c3fcc93e70b8d0528fdc8c29e1b80f9462fc8bba29bc762228da6636c64"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u1-scalar/Qwen3.8-27B-NVFP4-mtp0-native-u1-scalar.json",
+          "sha256": "514703bc071c93b8eff5e3db0d073e5b392e8b8eab3f4edc35777b2dddec1026"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u1-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u1-ordered.json",
+          "sha256": "080964c5e0453778a3e1d3f73e82c1499f4250712a43da04704dac538287eb01"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u2-scalar/Qwen3.8-27B-NVFP4-mtp0-native-u2-scalar.json",
+          "sha256": "136b2a1bcb5164ae26b2169599846738da906bea4edc854edc1ae2c2d46d017d"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u2-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u2-ordered.json",
+          "sha256": "6575a012898a869f75641432ad2f5e1585f522e8e493c1235d9c200af116ac19"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u3-scalar/Qwen3.8-27B-NVFP4-mtp0-native-u3-scalar.json",
+          "sha256": "37692ac956eb522361ccb2995cbeb070c84ff2e4a02255f53ae0df0008a77481"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u3-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u3-ordered.json",
+          "sha256": "29b94be97e4d36b77c64bbe946bdd65aa5fd1222600ec07ee7349ba4526ce35a"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u4-scalar/Qwen3.8-27B-NVFP4-mtp0-native-u4-scalar.json",
+          "sha256": "c3116af781560e5ed463a5484e120fe34647785c6731bdaf6cb8b2e49b4bdfb0"
+        },
+        {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/u4-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u4-ordered.json",
+          "sha256": "02494d384ac9f3364658d82730570d44c83b8ea233b5f6897b527dec65f9dea3"
+        }
+      ],
+      "paired_units": 5,
+      "unit_orders": [
+        [
+          "scalar",
+          "ordered"
+        ],
+        [
+          "ordered",
+          "scalar"
+        ],
+        [
+          "scalar",
+          "ordered"
+        ],
+        [
+          "ordered",
+          "scalar"
+        ],
+        [
+          "scalar",
+          "ordered"
+        ]
+      ],
+      "aggregation": "Every measured request retained. Per-unit request medians; point estimate median of five paired speed ratios. 95% percentile CI from exact enumeration of all 5^5 paired-unit bootstrap draws; no tail removal. Drift = (maximum unit median - minimum unit median) / minimum unit median.",
+      "cases": {
+        "short": {
+          "units": [
+            {
+              "unit": 0,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 45.60722300084308,
+                "tpot_seconds": 17.730732841069795
+              },
+              "ordered_ms": {
+                "ttft_seconds": 35.636414017062634,
+                "tpot_seconds": 18.45025966712643
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 1,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 45.08162901038304,
+                "tpot_seconds": 15.986804745995276
+              },
+              "ordered_ms": {
+                "ttft_seconds": 31.911881000269204,
+                "tpot_seconds": 16.408376841037168
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 2,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 42.212322005070746,
+                "tpot_seconds": 16.528320143051033
+              },
+              "ordered_ms": {
+                "ttft_seconds": 38.64389698719606,
+                "tpot_seconds": 16.444998206607703
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 3,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 46.131135954055935,
+                "tpot_seconds": 17.659755095669496
+              },
+              "ordered_ms": {
+                "ttft_seconds": 33.3254539873451,
+                "tpot_seconds": 15.906204793801798
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 4,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 46.71701998449862,
+                "tpot_seconds": 17.422258873314906
+              },
+              "ordered_ms": {
+                "ttft_seconds": 38.0800649872981,
+                "tpot_seconds": 16.892121905194863
+              },
+              "different_streams": []
+            }
+          ],
+          "metrics": {
+            "ttft_seconds": {
+              "scalar_median_ms": 45.60722300084308,
+              "ordered_median_ms": 35.636414017062634,
+              "paired_speedup_median": 1.2797927136834375,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                1.0923412309855038,
+                1.4126910604236316
+              ],
+              "scalar_unit_range_ms": [
+                42.212322005070746,
+                46.71701998449862
+              ],
+              "ordered_unit_range_ms": [
+                31.911881000269204,
+                38.64389698719606
+              ],
+              "scalar_drift_fraction": 0.10671523776604254,
+              "ordered_drift_fraction": 0.21095641422296804
+            },
+            "tpot_seconds": {
+              "scalar_median_ms": 17.422258873314906,
+              "ordered_median_ms": 16.444998206607703,
+              "paired_speedup_median": 1.0050667038935797,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                0.9610018049047491,
+                1.1102431613700212
+              ],
+              "scalar_unit_range_ms": [
+                15.986804745995276,
+                17.730732841069795
+              ],
+              "ordered_unit_range_ms": [
+                15.906204793801798,
+                18.45025966712643
+              ],
+              "scalar_drift_fraction": 0.10908546909671718,
+              "ordered_drift_fraction": 0.1599410359859053
+            }
+          },
+          "same_binary_repeatability": {
+            "scalar": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "ordered": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        "long": {
+          "units": [
+            {
+              "unit": 0,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 255.62476698542014,
+                "tpot_seconds": 17.187046507994335
+              },
+              "ordered_ms": {
+                "ttft_seconds": 170.36643100436777,
+                "tpot_seconds": 17.082973302061124
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 1,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 264.8643180145882,
+                "tpot_seconds": 17.391552126759454
+              },
+              "ordered_ms": {
+                "ttft_seconds": 183.24912700336426,
+                "tpot_seconds": 18.268651539637222
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 2,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 259.6275490359403,
+                "tpot_seconds": 17.445450936008008
+              },
+              "ordered_ms": {
+                "ttft_seconds": 167.5423689885065,
+                "tpot_seconds": 16.405571191128168
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 3,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 299.7854980058037,
+                "tpot_seconds": 19.6702684449505
+              },
+              "ordered_ms": {
+                "ttft_seconds": 158.71962497476488,
+                "tpot_seconds": 15.86257222215719
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 4,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 240.2442810125649,
+                "tpot_seconds": 15.960545190388247
+              },
+              "ordered_ms": {
+                "ttft_seconds": 158.39757799403742,
+                "tpot_seconds": 15.9059635553849
+              },
+              "different_streams": []
+            }
+          ],
+          "metrics": {
+            "ttft_seconds": {
+              "scalar_median_ms": 259.6275490359403,
+              "ordered_median_ms": 167.5423689885065,
+              "paired_speedup_median": 1.5167168845322145,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                1.4453783346521785,
+                1.88877398150019
+              ],
+              "scalar_unit_range_ms": [
+                240.2442810125649,
+                299.7854980058037
+              ],
+              "ordered_unit_range_ms": [
+                158.39757799403742,
+                183.24912700336426
+              ],
+              "scalar_drift_fraction": 0.24783614720104302,
+              "ordered_drift_fraction": 0.1568934912013764
+            },
+            "tpot_seconds": {
+              "scalar_median_ms": 17.391552126759454,
+              "ordered_median_ms": 16.405571191128168,
+              "paired_speedup_median": 1.0060922184969203,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                0.9519888257228653,
+                1.2400427981960351
+              ],
+              "scalar_unit_range_ms": [
+                15.960545190388247,
+                19.6702684449505
+              ],
+              "ordered_unit_range_ms": [
+                15.86257222215719,
+                18.268651539637222
+              ],
+              "scalar_drift_fraction": 0.23243086061974388,
+              "ordered_drift_fraction": 0.15168279669795084
+            }
+          },
+          "same_binary_repeatability": {
+            "scalar": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "ordered": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        "batch4": {
+          "units": [
+            {
+              "unit": 0,
+              "measured_requests_per_arm": 12,
+              "scalar_ms": {
+                "ttft_seconds": 184.80142450425774,
+                "tpot_seconds": 21.235042928888035
+              },
+              "ordered_ms": {
+                "ttft_seconds": 153.3670304925181,
+                "tpot_seconds": 22.03831067475091
+              },
+              "different_streams": [
+                {
+                  "repeat": 0,
+                  "slot": 0,
+                  "first_different_token_zero_based": 20
+                },
+                {
+                  "repeat": 0,
+                  "slot": 1,
+                  "first_different_token_zero_based": 20
+                }
+              ]
+            },
+            {
+              "unit": 1,
+              "measured_requests_per_arm": 12,
+              "scalar_ms": {
+                "ttft_seconds": 189.12571051623672,
+                "tpot_seconds": 22.241367365322297
+              },
+              "ordered_ms": {
+                "ttft_seconds": 151.33571851765737,
+                "tpot_seconds": 22.203602642837232
+              },
+              "different_streams": [
+                {
+                  "repeat": 1,
+                  "slot": 0,
+                  "first_different_token_zero_based": 14
+                },
+                {
+                  "repeat": 1,
+                  "slot": 2,
+                  "first_different_token_zero_based": 20
+                },
+                {
+                  "repeat": 2,
+                  "slot": 0,
+                  "first_different_token_zero_based": 22
+                },
+                {
+                  "repeat": 2,
+                  "slot": 1,
+                  "first_different_token_zero_based": 12
+                }
+              ]
+            },
+            {
+              "unit": 2,
+              "measured_requests_per_arm": 12,
+              "scalar_ms": {
+                "ttft_seconds": 187.22662047366612,
+                "tpot_seconds": 20.571869801700352
+              },
+              "ordered_ms": {
+                "ttft_seconds": 143.63749249605462,
+                "tpot_seconds": 19.45885868247835
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 3,
+              "measured_requests_per_arm": 12,
+              "scalar_ms": {
+                "ttft_seconds": 188.19593347143382,
+                "tpot_seconds": 20.93380231720706
+              },
+              "ordered_ms": {
+                "ttft_seconds": 159.2090794874821,
+                "tpot_seconds": 21.207632769512692
+              },
+              "different_streams": [
+                {
+                  "repeat": 0,
+                  "slot": 0,
+                  "first_different_token_zero_based": 20
+                },
+                {
+                  "repeat": 0,
+                  "slot": 2,
+                  "first_different_token_zero_based": 2
+                }
+              ]
+            },
+            {
+              "unit": 4,
+              "measured_requests_per_arm": 12,
+              "scalar_ms": {
+                "ttft_seconds": 174.8658805154264,
+                "tpot_seconds": 19.16013680128676
+              },
+              "ordered_ms": {
+                "ttft_seconds": 137.84950049011968,
+                "tpot_seconds": 20.051649372954483
+              },
+              "different_streams": []
+            }
+          ],
+          "metrics": {
+            "ttft_seconds": {
+              "scalar_median_ms": 187.22662047366612,
+              "ordered_median_ms": 151.33571851765737,
+              "paired_speedup_median": 1.2497096678083313,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                1.1820678448569941,
+                1.3034662275158333
+              ],
+              "scalar_unit_range_ms": [
+                174.8658805154264,
+                189.12571051623672
+              ],
+              "ordered_unit_range_ms": [
+                137.84950049011968,
+                159.2090794874821
+              ],
+              "scalar_drift_fraction": 0.0815472404266557,
+              "ordered_drift_fraction": 0.1549485411366677
+            },
+            "tpot_seconds": {
+              "scalar_median_ms": 20.93380231720706,
+              "ordered_median_ms": 21.207632769512692,
+              "paired_speedup_median": 0.9870881179770672,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                0.9555391900643252,
+                1.0571981706318783
+              ],
+              "scalar_unit_range_ms": [
+                19.16013680128676,
+                22.241367365322297
+              ],
+              "ordered_unit_range_ms": [
+                19.45885868247835,
+                22.203602642837232
+              ],
+              "scalar_drift_fraction": 0.16081464323514674,
+              "ordered_drift_fraction": 0.1410536971950146
+            }
+          },
+          "same_binary_repeatability": {
+            "scalar": {
+              "different_streams_vs_unit0": [
+                6,
+                2,
+                2,
+                2
+              ]
+            },
+            "ordered": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        "hot_long": {
+          "units": [
+            {
+              "unit": 0,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 74.33101296192035,
+                "tpot_seconds": 17.031500746111668
+              },
+              "ordered_ms": {
+                "ttft_seconds": 64.17609698837623,
+                "tpot_seconds": 16.54482587325638
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 1,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 71.96851802291349,
+                "tpot_seconds": 17.12597063502356
+              },
+              "ordered_ms": {
+                "ttft_seconds": 66.17332901805639,
+                "tpot_seconds": 17.861209031830114
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 2,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 73.76331801060587,
+                "tpot_seconds": 17.366928206424095
+              },
+              "ordered_ms": {
+                "ttft_seconds": 58.61910298699513,
+                "tpot_seconds": 16.506994428623113
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 3,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 75.22348803468049,
+                "tpot_seconds": 19.045280381327586
+              },
+              "ordered_ms": {
+                "ttft_seconds": 65.41292002657428,
+                "tpot_seconds": 18.250256999477095
+              },
+              "different_streams": []
+            },
+            {
+              "unit": 4,
+              "measured_requests_per_arm": 3,
+              "scalar_ms": {
+                "ttft_seconds": 70.10369101772085,
+                "tpot_seconds": 16.48741517408145
+              },
+              "ordered_ms": {
+                "ttft_seconds": 64.8623610031791,
+                "tpot_seconds": 16.415820016326116
+              },
+              "different_streams": []
+            }
+          ],
+          "metrics": {
+            "ttft_seconds": {
+              "scalar_median_ms": 73.76331801060587,
+              "ordered_median_ms": 64.8623610031791,
+              "paired_speedup_median": 1.1499790561882977,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                1.0808069569697725,
+                1.2583494842452732
+              ],
+              "scalar_unit_range_ms": [
+                70.10369101772085,
+                75.22348803468049
+              ],
+              "ordered_unit_range_ms": [
+                58.61910298699513,
+                66.17332901805639
+              ],
+              "scalar_drift_fraction": 0.07303177539775263,
+              "ordered_drift_fraction": 0.12886969684161143
+            },
+            "tpot_seconds": {
+              "scalar_median_ms": 17.12597063502356,
+              "ordered_median_ms": 16.54482587325638,
+              "paired_speedup_median": 1.0294155330846948,
+              "paired_speedup_bootstrap_95_percent_ci": [
+                0.9588360230544136,
+                1.0520951152869997
+              ],
+              "scalar_unit_range_ms": [
+                16.48741517408145,
+                19.045280381327586
+              ],
+              "ordered_unit_range_ms": [
+                16.415820016326116,
+                18.250256999477095
+              ],
+              "scalar_drift_fraction": 0.15514046199716947,
+              "ordered_drift_fraction": 0.11174811744564492
+            }
+          },
+          "same_binary_repeatability": {
+            "scalar": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "ordered": {
+              "different_streams_vs_unit0": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        }
+      },
+      "all_streams_identical": false,
+      "qualification_passed": false,
+      "qualification_failure_reasons": [
+        "batch4 candidate-control streams differ in 8 of 60 paired requests; scalar repeats also differ while candidate repeats agree",
+        "absolute unit-median drift exceeds declared 10 percent threshold; no raw sample removed",
+        "candidate is frozen isolated archive, not a clean committed source baseline",
+        "task quality and sustained mixed-load qualification remain pending"
+      ]
+    },
+    "current_profile": {
+      "schema": 1,
+      "classification": "diagnostic, not serving certification",
+      "source": {
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-current-profile-v1/trace-analysis.json",
+        "sha256": "4da3bbb9bc3df3566463eafdcf62293772b1d70f4d46b3b884964e5c13549da1"
+      },
+      "long": {
+        "captured_prefill_width": 256,
+        "prompt_tokens": 511,
+        "graph_count": 2,
+        "kernel_calls": 3620,
+        "kernel_sum_ms": 144.883911,
+        "gdn_calls": 96,
+        "gdn_sum_ms": 37.075934000000004,
+        "gdn_fraction_of_graph_gpu_sum": 0.2559009744014986,
+        "transpose_sum_ms": 0.61558,
+        "attention_calls": 32,
+        "attention_sum_ms": 15.343483,
+        "first_token_window_ms": 155.888896,
+        "recorded_kernel_active_union_ms": 145.461764,
+        "graphs": [
+          {
+            "id": 6521,
+            "kernel_calls": 1811,
+            "kernel_sum_ms": 77.013104,
+            "kernel_active_union_ms": 77.013104,
+            "names": {
+              "embedding_entry": 256,
+              "norm_entry": 209,
+              "quantize_entry": 273,
+              "matmul_entry": 233,
+              "dense_entry": 96,
+              "forward_entry": 48,
+              "commit_entry": 48,
+              "delta_grouped_entry": 48,
+              "transpose_entry": 48,
+              "binary_entry": 208,
+              "packed_entry": 112,
+              "unary_entry": 80,
+              "packed_prefill_entry": 56,
+              "split_entry": 32,
+              "prefill_rope_entry": 32,
+              "append_entry": 16,
+              "decode_entry": 16
+            },
+            "name_ms": {
+              "embedding_entry": 0.302815,
+              "norm_entry": 4.613292,
+              "quantize_entry": 4.947211,
+              "matmul_entry": 17.36706,
+              "dense_entry": 3.154196,
+              "forward_entry": 1.178777,
+              "commit_entry": 0.056448,
+              "delta_grouped_entry": 18.526895,
+              "transpose_entry": 0.308062,
+              "binary_entry": 1.320923,
+              "packed_entry": 7.397569,
+              "unary_entry": 0.712922,
+              "packed_prefill_entry": 3.818864,
+              "split_entry": 0.116192,
+              "prefill_rope_entry": 0.470846,
+              "append_entry": 1.724152,
+              "decode_entry": 10.99688
+            }
+          },
+          {
+            "id": 6518,
+            "kernel_calls": 1809,
+            "kernel_sum_ms": 67.870807,
+            "kernel_active_union_ms": 67.870807,
+            "names": {
+              "embedding_entry": 256,
+              "norm_entry": 209,
+              "quantize_entry": 272,
+              "matmul_entry": 232,
+              "dense_entry": 96,
+              "forward_entry": 48,
+              "commit_entry": 48,
+              "delta_grouped_entry": 48,
+              "transpose_entry": 48,
+              "binary_entry": 208,
+              "packed_entry": 112,
+              "unary_entry": 80,
+              "packed_prefill_entry": 56,
+              "split_entry": 32,
+              "prefill_rope_entry": 32,
+              "append_entry": 16,
+              "decode_entry": 16
+            },
+            "name_ms": {
+              "embedding_entry": 0.299518,
+              "norm_entry": 4.603502,
+              "quantize_entry": 4.701768,
+              "matmul_entry": 15.14787,
+              "dense_entry": 3.14466,
+              "forward_entry": 1.178331,
+              "commit_entry": 0.056159,
+              "delta_grouped_entry": 18.549039,
+              "transpose_entry": 0.307518,
+              "binary_entry": 1.320156,
+              "packed_entry": 7.393858,
+              "unary_entry": 0.711002,
+              "packed_prefill_entry": 3.794128,
+              "split_entry": 0.116478,
+              "prefill_rope_entry": 0.470591,
+              "append_entry": 1.729626,
+              "decode_entry": 4.346603
+            }
+          }
+        ]
+      },
+      "trace_warnings": {
+        "short": [
+          {
+            "timestamp": 169891529,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+            "globalPid": -144115188075855872
+          },
+          {
+            "timestamp": 169923722,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all CUDA events might have been collected.",
+            "globalPid": 322783133302784
+          },
+          {
+            "timestamp": 169925869,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all OS runtime libraries events might have been collected.",
+            "globalPid": 322783133302784
+          }
+        ],
+        "long": [
+          {
+            "timestamp": 192714069,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+            "globalPid": -144115188075855872
+          },
+          {
+            "timestamp": 192747495,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all CUDA events might have been collected.",
+            "globalPid": 322783133302784
+          },
+          {
+            "timestamp": 192749631,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all OS runtime libraries events might have been collected.",
+            "globalPid": 322783133302784
+          }
+        ],
+        "batch4": [
+          {
+            "timestamp": 261073663,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+            "globalPid": -144115188075855872
+          },
+          {
+            "timestamp": 261111428,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all CUDA events might have been collected.",
+            "globalPid": 322783133302784
+          },
+          {
+            "timestamp": 261114658,
+            "timestampType": 2,
+            "source": 3,
+            "severity": 2,
+            "text": "Not all OS runtime libraries events might have been collected.",
+            "globalPid": 322783133302784
+          }
+        ]
+      },
+      "limits": [
+        "No scheduling trace; CPU causality is not established.",
+        "Nsight warns that not all CUDA and OS runtime events may have been collected. Kernel counts agree with two 48-GDN-layer graphs; this does not establish complete API coverage.",
+        "Desktop GPU activity may affect timing. No counter-based bandwidth or occupancy claim.",
+        "Candidate enables quantized admission in a frozen experimental source archive; production quantized admission is unchanged."
+      ],
+      "next_hypothesis": {
+        "key_heads": 16,
+        "value_heads": 48,
+        "value_dim": 128,
+        "value_block": 32,
+        "qk_norm_repetitions_per_key_head": 12,
+        "gate_repetitions_per_value_head": 4,
+        "proposal": "Precompute normalized F32 Q/K and F32 beta/decay once per token/head, retaining scalar addition trees. Include extra launches and scratch traffic in paired timing.",
+        "status": "not yet implemented; operation counts are not speedup estimates"
+      }
+    },
+    "default_promotion_accepted": false,
+    "remaining_gates": [
+      "batch4 stream repeatability and route causality",
+      "timing drift within original 10% gate",
+      "fixed vLLM task-quality noninferiority (native control and candidate both fail)",
+      "sustained mixed-load qualification"
+    ]
+  },
+  "evidence": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-default-build/result.json",
+      "sha256": "511afe4ceeec2ffe411492b63eb6f3a9ebe634d22b7dcb78bb735b442ed408dd"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-default-numerical-summary.json",
+      "sha256": "8521f6e514c2de4f462273e10c9154f8fc85ea9052028363aedd318a29fe09bb"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/split-measure-plan.json",
+      "sha256": "39a4ab4961506820b2defd9ec291f3052aeb09756057ee8b063dcf2b7977ab64"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/split-measure-summary.json",
+      "sha256": "e8662e27454104d6cf5cd0fd8c9d70c317b2985980de70d0d15a7a2c17b68f82"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v3/diagnostic-summary.json",
+      "sha256": "feffb871488647a8a1a790ffb94f7b16b7f365a050306183c974d0db803744a7"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-host-profile-v1/diagnostic-summary.json",
+      "sha256": "055809cec5629d11f74523b258799b46f48034e26ef7a43d32a2e37f68076de5"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-current-profile-v1/compact-rollup.json",
+      "sha256": "79c9d869a3e00553fe81b27ff60bd023a44141446d3a1f62ae4d945009e322be"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-current-profile-v1/trace-analysis.json",
+      "sha256": "4da3bbb9bc3df3566463eafdcf62293772b1d70f4d46b3b884964e5c13549da1"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/ordered-vs-scalar-quality.json",
+      "sha256": "c2ed981b4a22407ae6fbbad6740358345f6b95dfad320f6edfce823aa1e6b3da"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/ordered-vs-vllm-quality.json",
+      "sha256": "5c6d884a00be80ddbbde4d04f1e11048c568de5259b1dc00f0ea8b7f7d669d6e"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/scalar-vs-vllm-quality.json",
+      "sha256": "63eae4e3fd0c63816e12ecab23b131697bde5d79ec64d7de7d73d2af3cfb3bae"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/stream-equivalence.json",
+      "sha256": "a5a8ce27446c6821710d392f2288473ef9710e2e840e604fb5d408184e9558b1"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v3/vllm-reference-bridge.json",
+      "sha256": "983ac989b619ca08c6ce3c5350b1ed1b09cce5d6dbb01234ba1137c40a7900a1"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/build-r3/result.json",
+      "sha256": "8dbcb700aea5bb56641daacd9a8619160b3036e80320530b010a9c5737402117"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/run-build-r3.py",
+      "sha256": "37ffc9055e90e6c7e0b8935f5f8f56356fa2d6923fe254b80bac813659a9226c"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/run-test-r3.py",
+      "sha256": "b8596475ddd266eda5a3bb4057157546d7523609512145200f04a54edbb7732f"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/run-test-r4.py",
+      "sha256": "77b73a8958136caf9a2dc8caa271d69bc41e4adeca134b8ca9409156a10957e9"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/test-inventory-record.json",
+      "sha256": "e14de160d346e9199695b9a351dbbec0c4b6733a3a56d7ccda74e0f9f8e89c24"
+    }
+  ],
+  "retained_failed_attempts": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/build",
+      "reason": "nonexistent Make targets; stopped before compilation"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/build-r2",
+      "reason": "strict Clippy rejected new nonempty assertion; changed to exact vocab length"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-split-core-v1/default-capture",
+      "reason": "incorrect test module matched zero; invocation checker rejected attempt; returncode alone is not pass"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v1",
+      "reason": "runner serialization/thread shutdown failure"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-serving-v2",
+      "reason": "CUDA cache permissions"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v1",
+      "reason": "own job stopped by foreign-GPU guard after new mpv context"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/ordered-quality-v2",
+      "reason": "own job stopped by guard after new Telegram context"
+    }
+  ],
+  "next_optimization": {
+    "key_heads": 16,
+    "value_heads": 48,
+    "value_dim": 128,
+    "value_block": 32,
+    "qk_norm_repetitions_per_key_head": 12,
+    "gate_repetitions_per_value_head": 4,
+    "proposal": "Precompute normalized F32 Q/K and F32 beta/decay once per token/head, retaining scalar addition trees. Include extra launches and scratch traffic in paired timing.",
+    "status": "isolated precomputation prototype source prepared; not built, qualified or promoted"
+  },
+  "limits": [
+    "No scheduling trace; CPU causality is not established.",
+    "Nsight warns that not all CUDA and OS runtime events may have been collected. Kernel counts agree with two 48-GDN-layer graphs; this does not establish complete API coverage.",
+    "Desktop GPU activity may affect timing. No counter-based bandwidth or occupancy claim.",
+    "Candidate enables quantized admission in a frozen experimental source archive; production quantized admission is unchanged."
+  ]
+}

@@ -472,6 +472,7 @@ fn ordered_delta_preserves_scalar_bits() -> Result<(), Box<dyn std::error::Error
     check_ordered_fixture(
         &device,
         geometry,
+        128,
         51,
         0,
         reference_fixture(geometry, 51, 0)?,
@@ -726,44 +727,58 @@ fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Er
 fn ordered_actual_graph_widths_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    for lanes in [64_usize, 256] {
-        let geometry = (16, 48, 128, lanes);
-        for (count, offset) in [(0, 0), (1, 0), (lanes - 3, 0), (lanes, -1)] {
+    for block in [32_usize, 64, 128] {
+        for lanes in [64_usize, 256] {
+            let geometry = (16, 48, 128, lanes);
+            for (count, offset) in [
+                (0, 0),
+                (1, 0),
+                (52, 0),
+                (lanes - 3, 0),
+                (lanes, -1),
+                (lanes, 0),
+            ] {
+                check_ordered_fixture(
+                    &device,
+                    geometry,
+                    block,
+                    count,
+                    offset,
+                    reference_fixture(geometry, count, offset)?,
+                )?;
+            }
             check_ordered_fixture(
                 &device,
                 geometry,
-                count,
-                offset,
-                reference_fixture(geometry, count, offset)?,
+                block,
+                lanes,
+                0,
+                ordered_correlated_fixture(geometry)?,
             )?;
         }
+        let geometry = (2, 6, 128, 64);
         check_ordered_fixture(
             &device,
             geometry,
-            lanes,
-            0,
-            ordered_correlated_fixture(geometry)?,
+            block,
+            61,
+            -1,
+            reference_fixture(geometry, 61, -1)?,
         )?;
     }
-    let geometry = (2, 6, 128, 64);
-    check_ordered_fixture(
-        &device,
-        geometry,
-        61,
-        -1,
-        reference_fixture(geometry, 61, -1)?,
-    )?;
     Ok(())
 }
 
 fn check_ordered_fixture(
     device: &CudaDevice,
     geometry: (usize, usize, usize, usize),
+    block: usize,
     count: usize,
     offset: i32,
     fixture: ReferenceFixture,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (kh, vh, dim, lanes) = geometry;
+    eprintln!("ORDERED_FIXTURE geometry={geometry:?} block={block} count={count} offset={offset}");
     let ReferenceFixture {
         qkv,
         beta,
@@ -787,8 +802,8 @@ fn check_ordered_fixture(
     let graph = CudaGraph::scope(&device.stream, |scope| {
         scope.record(
             kernels::delta_grouped(
-                (&mut state).partition([1, dim, dim]),
-                (&mut output).partition([1, lanes, dim]),
+                (&mut state).partition([1, dim, block]),
+                (&mut output).partition([1, lanes, block]),
                 &qkv_c,
                 &beta_c,
                 &alpha_c,
@@ -801,7 +816,7 @@ fn check_ordered_fixture(
                 vh.to_string(),
                 dim.to_string(),
                 lanes.to_string(),
-                dim.to_string(),
+                block.to_string(),
             ]),
         )?;
         Ok(())

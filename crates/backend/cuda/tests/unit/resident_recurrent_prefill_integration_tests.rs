@@ -166,6 +166,63 @@ fn chunked_recurrence_matches_per_lane_at_model_geometry() -> Result<()> {
     Ok(())
 }
 
+/// The default dense-model admission must exercise the split kernel without loader options.
+/// Captures otherwise share projection, padding and readout policy.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn default_ordered_prefill_matches_legacy_capture_bits() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for width in super::ORDERED_WIDTHS {
+        let (graph, mut weights) = fixture_at(&device, (16, 48, super::ORDERED_DIM))?;
+        weights.prefill_width = width;
+        assert!(!weights.chunked_recurrent);
+        assert!(super::budget::enabled(&weights, false));
+        let hidden = 48 * super::ORDERED_DIM;
+        let mut candidate = DeviceProgram::new(&device, &graph, &weights, 512, hidden, 16)?;
+        super::LEGACY_DELTA_CAPTURE.set(true);
+        let scalar = DeviceProgram::new(&device, &graph, &weights, 512, hidden, 16);
+        super::LEGACY_DELTA_CAPTURE.set(false);
+        let mut scalar = scalar?;
+        assert_eq!(candidate.prefill_width(), width);
+        assert_eq!(scalar.prefill_width(), width);
+        let mut position = 0;
+        for count in [52, width - 3, 4] {
+            let tokens: Vec<_> = (position..position + count)
+                .map(|token| u32::try_from(token % 16).unwrap())
+                .collect();
+            let actual = candidate.prefill_batch(&tokens, position, true)?;
+            let expected = scalar.prefill_batch(&tokens, position, true)?;
+            assert_eq!(actual.len(), count);
+            assert_eq!(actual.len(), expected.len());
+            assert_eq!(actual.last().expect("prefill output").1.len(), 16);
+            for (a, b) in actual.iter().zip(&expected) {
+                assert_checkpoint_hidden_bits(&a.0, &b.0, "default prefill hidden");
+                assert_checkpoint_hidden_bits(&a.1, &b.1, "default prefill logits");
+            }
+            assert_eq!(candidate.states().len(), scalar.states().len());
+            let mut checked = 0;
+            for (id, states) in candidate.states() {
+                let reference = scalar.states().get(id).expect("scalar state id");
+                assert_eq!(states.len(), reference.len());
+                for (a, b) in states.iter().zip(reference) {
+                    let a = device.read_borrowed(a)?;
+                    let b = device.read_borrowed(b)?;
+                    checked += a.len();
+                    assert_checkpoint_hidden_bits(&a, &b, "default prefill state");
+                }
+            }
+            assert_eq!(checked, 48 * super::ORDERED_DIM * super::ORDERED_DIM);
+            position += count;
+        }
+        eprintln!(
+            "DEFAULT_ORDERED_CAPTURE width={width} block={} different_bits=0",
+            super::ORDERED_BLOCK
+        );
+    }
+    Ok(())
+}
+
 fn assert_checkpoint_hidden_bits(actual: &[f32], expected: &[f32], label: &str) {
     assert_eq!(actual.len(), expected.len(), "{label}");
     for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {

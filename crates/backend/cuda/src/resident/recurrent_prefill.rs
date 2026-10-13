@@ -30,7 +30,7 @@ pub(crate) mod kernels {
         let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
         let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
         // One block of the value dimension. The state's columns are mutually independent - every
-        // reduction below is over the key dimension - so the grid gains SW times more blocks
+        // reduction below is over the key dimension - so the grid gains D / SW times more blocks
         // without changing any summation order.
         let mut old = state.load_like(state).reshape(shape![D, SW]);
         for lane in 0i32..LANES {
@@ -156,12 +156,131 @@ pub(crate) mod kernels {
         reduce_sum(partial.reshape(shape![32, SW]), 0i32)
     }
 
+    // Fold four 32-row slabs, then combine the eight worker terms in the scalar tree.
+    // The tree is explicit so changing the value tile cannot reassociate the sum.
+    // The scalar kernel does these additions
+    // before its eight-term worker sum; a flat 128-row reduction changes recurrent state.
+    fn scalar128_prediction_split_sum<const SW: i32>(
+        products: Tile<f32, { [128, SW] }>,
+    ) -> Tile<f32, { [SW] }> {
+        let groups = products.reshape(shape![4, 32, SW]);
+        let zero = 0i32.broadcast(shape![]);
+        let slab0: Tile<f32, { [1, 32, SW] }> = extract(groups, [zero, zero, zero]);
+        let slab1: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [1i32.broadcast(shape![]), zero, zero]);
+        let slab2: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [2i32.broadcast(shape![]), zero, zero]);
+        let slab3: Tile<f32, { [1, 32, SW] }> =
+            extract(groups, [3i32.broadcast(shape![]), zero, zero]);
+        let partial = (((0.0f32.broadcast(shape![1, 32, SW]) + slab0) + slab1) + slab2) + slab3;
+        let partial = partial.reshape(shape![8, 4, SW]);
+        let term0: Tile<f32, { [1, 4, SW] }> = extract(partial, [zero, zero, zero]);
+        let term1: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [1i32.broadcast(shape![]), zero, zero]);
+        let term2: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [2i32.broadcast(shape![]), zero, zero]);
+        let term3: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [3i32.broadcast(shape![]), zero, zero]);
+        let term4: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [4i32.broadcast(shape![]), zero, zero]);
+        let term5: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [5i32.broadcast(shape![]), zero, zero]);
+        let term6: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [6i32.broadcast(shape![]), zero, zero]);
+        let term7: Tile<f32, { [1, 4, SW] }> =
+            extract(partial, [7i32.broadcast(shape![]), zero, zero]);
+        let partial = (term7 + (term6 + (term5 + (term4 + (term3 + (term2 + (term0 + term1)))))))
+            .reshape(shape![4, SW]);
+        let worker0: Tile<f32, { [1, SW] }> = extract(partial, [zero, zero]);
+        let worker1: Tile<f32, { [1, SW] }> = extract(partial, [1i32.broadcast(shape![]), zero]);
+        let worker2: Tile<f32, { [1, SW] }> = extract(partial, [2i32.broadcast(shape![]), zero]);
+        let worker3: Tile<f32, { [1, SW] }> = extract(partial, [3i32.broadcast(shape![]), zero]);
+        ((worker0 + worker2) + (worker1 + worker3)).reshape(shape![SW])
+    }
+
+    // Keep the scalar Q/K norm tree when value columns are split among more blocks.
+    fn scalar128_norm_sum(products: Tile<f32, { [128] }>) -> Tile<f32, { [] }> {
+        let terms = products.reshape(shape![32, 4]);
+        let zero = 0i32.broadcast(shape![]);
+        let partial = 0.0f32.broadcast(shape![1, 4]);
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [zero, zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [1i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [2i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [3i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [4i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [5i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [6i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [7i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [8i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [9i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [10i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [11i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [12i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [13i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [14i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [15i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [16i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [17i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [18i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [19i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [20i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [21i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [22i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [23i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [24i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [25i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [26i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [27i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [28i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [29i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [30i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let row: Tile<f32, { [1, 4] }> = extract(terms, [31i32.broadcast(shape![]), zero]);
+        let partial = partial + row;
+        let partial = partial.reshape(shape![4]);
+        let worker0: Tile<f32, { [1] }> = extract(partial, [zero]);
+        let worker1: Tile<f32, { [1] }> = extract(partial, [1i32.broadcast(shape![])]);
+        let worker2: Tile<f32, { [1] }> = extract(partial, [2i32.broadcast(shape![])]);
+        let worker3: Tile<f32, { [1] }> = extract(partial, [3i32.broadcast(shape![])]);
+        ((worker0 + worker2) + (worker1 + worker3)).reshape(shape![])
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "CUDA state kernel binds explicit tensors and the padding metadata"
     )]
     #[cutile::entry()]
-    // Qualified only for D = SW = 128 at the captured 64/256-token prompt widths.
+    // D = 128 at captured 64/256-token widths. Split columns use explicit scalar trees.
     // Keep the state across tokens while preserving both scalar reduction trees.
     fn delta_grouped<
         const KH: i32,
@@ -185,7 +304,7 @@ pub(crate) mod kernels {
         let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
         let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
         // One block of the value dimension. The state's columns are mutually independent - every
-        // reduction below is over the key dimension - so the grid gains SW times more blocks
+        // reduction below is over the key dimension - so the grid gains D / SW times more blocks
         // without changing any summation order.
         let mut old = state.load_like(state).reshape(shape![D, SW]);
         for lane in 0i32..LANES {
@@ -198,8 +317,16 @@ pub(crate) mod kernels {
                 let v = vp
                     .load([lane, 2i32 * KH + pid.0, pid.2])
                     .reshape(shape![SW]);
-                let qs: Tile<f32, { [] }> = reduce_sum(q * q, 0i32);
-                let ks: Tile<f32, { [] }> = reduce_sum(k * k, 0i32);
+                let qs: Tile<f32, { [] }> = if SW == 128 {
+                    reduce_sum(q * q, 0i32)
+                } else {
+                    scalar128_norm_sum((q * q).reshape(shape![128]))
+                };
+                let ks: Tile<f32, { [] }> = if SW == 128 {
+                    reduce_sum(k * k, 0i32)
+                } else {
+                    scalar128_norm_sum((k * k).reshape(shape![128]))
+                };
                 let qs = qs.reshape(shape![1]);
                 let ks = ks.reshape(shape![1]);
                 let qinv = rsqrt(qs + 1e-6f32.broadcast(shape![1]), ftz::Disabled);
@@ -231,8 +358,11 @@ pub(crate) mod kernels {
                 let decay = exp(zero - exp(a_log.partition(shape![1]).load([pid.0])) * soft);
                 let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
                 let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-                let predicted: Tile<f32, { [SW] }> =
-                    scalar128_prediction_sum((decayed * kb).reshape(shape![128, SW]));
+                let predicted: Tile<f32, { [SW] }> = if SW == 128 {
+                    scalar128_prediction_sum((decayed * kb).reshape(shape![128, SW]))
+                } else {
+                    scalar128_prediction_split_sum((decayed * kb).reshape(shape![128, SW]))
+                };
                 let predicted = predicted.reshape(shape![SW]);
                 let diff = (v - predicted) * bt.broadcast(shape![SW]);
                 let updated: Tile<f32, { [D, SW] }> =
@@ -460,6 +590,8 @@ mod tests;
 
 /// Key/value dimension whose scalar F32 reduction trees are preserved.
 pub(super) const ORDERED_DIM: usize = 128;
+/// Independent value columns per CTA, selected by paired CUDA event measurements.
+pub(super) const ORDERED_BLOCK: usize = 32;
 /// Prompt capture widths covered by exact fixture and checkpoint comparisons.
 pub(super) const ORDERED_WIDTHS: [usize; 2] = [64, 256];
 

@@ -1,7 +1,7 @@
 //! Shared head-major scratch for token-chunk recurrent prefill.
 use super::super::capture::error;
 use super::{
-    ORDERED_DIM, ORDERED_WIDTHS,
+    ORDERED_BLOCK, ORDERED_DIM, ORDERED_WIDTHS,
     budget::{enabled, opted_in},
     kernels,
 };
@@ -28,7 +28,7 @@ impl Workspace {
         weights: &ProgramWeights,
         lanes: usize,
     ) -> Result<Self> {
-        // The ordered 128-column path preserves the scalar prediction and readout trees.
+        // Independent 32-column blocks preserve the scalar norm, prediction and readout trees.
         // Captured 64/256-row fixtures and the complete checkpoint agree bit for bit.
         // Quantized default adoption still requires full task quality and service timing.
         // Diagnostic loading can compare this path; other shapes retain the existing WY policy.
@@ -56,7 +56,7 @@ impl Workspace {
                 {
                     let shape = [key_heads, value_heads, key_dim, lanes];
                     let selected = if key_dim == ORDERED_DIM && ORDERED_WIDTHS.contains(&lanes) {
-                        Some(value_dim)
+                        Some(ORDERED_BLOCK)
                     } else if std::env::var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some() {
                         Some(
                             super::super::capture_state::value_block(value_dim)
@@ -167,14 +167,17 @@ impl Workspace {
             .map(|&x| usize::try_from(x).map_err(error))
             .collect::<std::result::Result<_, _>>()?;
         let mut output = output.reshape(&[self.lanes, value_heads, value_dim])?;
-        // The value dimension may be split so the grid fills the device and each block moves a
-        // quarter of the state per lane. Off by default until the full matrix shows a gain.
-        let block = self
-            .wy_blocks
-            .get(&node.outputs[0])
-            .copied()
-            .map_or_else(|| super::super::capture_state::value_block(value_dim), Ok)
-            .map_err(|_| error("chunk delta value split"))?;
+        // The measured ordered path splits independent value columns without changing sums.
+        // Other shapes use their existing qualified block policy.
+        let block = if key_dim == ORDERED_DIM && ORDERED_WIDTHS.contains(&self.lanes) {
+            ORDERED_BLOCK
+        } else {
+            self.wy_blocks
+                .get(&node.outputs[0])
+                .copied()
+                .map_or_else(|| super::super::capture_state::value_block(value_dim), Ok)
+                .map_err(|_| error("chunk delta value split"))?
+        };
         record_delta(
             scope,
             node,
@@ -240,7 +243,10 @@ fn record_delta(
         lanes.to_string(),
         block.to_string(),
     ];
-    if key_dim == ORDERED_DIM && block == ORDERED_DIM && ORDERED_WIDTHS.contains(&lanes) {
+    if key_dim == ORDERED_DIM
+        && [ORDERED_BLOCK, ORDERED_DIM].contains(&block)
+        && ORDERED_WIDTHS.contains(&lanes)
+    {
         scope.record(
             kernels::delta_grouped(
                 state.partition([1, key_dim, block]),

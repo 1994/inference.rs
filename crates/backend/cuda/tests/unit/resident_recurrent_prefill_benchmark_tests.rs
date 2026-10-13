@@ -25,6 +25,14 @@ fn recurrent_chunk_performance_gate() -> Result<(), Box<dyn std::error::Error>> 
     }
     Ok(())
 }
+fn production_block(dim: usize, lanes: usize) -> usize {
+    if dim == super::ORDERED_DIM && super::ORDERED_WIDTHS.contains(&lanes) {
+        super::ORDERED_BLOCK
+    } else {
+        dim
+    }
+}
+
 fn bench_case(
     device: &CudaDevice,
     geometry: (usize, usize, usize, usize),
@@ -81,19 +89,20 @@ fn bench_case(
     let metadata = device.upload(vec![0, i32::try_from(lanes)?, 0, 0], &[4])?;
     let mut scratch = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
     let mut output = api::zeros::<f32>(&[lanes, vh, dim]).sync_on(&device.stream)?;
+    let block = production_block(dim, lanes);
     let generics = vec![
         kh.to_string(),
         vh.to_string(),
         dim.to_string(),
         lanes.to_string(),
-        dim.to_string(),
+        block.to_string(),
     ];
     let candidate = CudaGraph::scope(&device.stream, |scope| {
         if dim == 128 {
             scope.record(
                 kernels::delta_grouped(
-                    (&mut state).partition([1, dim, dim]),
-                    (&mut scratch).partition([1, lanes, dim]),
+                    (&mut state).partition([1, dim, block]),
+                    (&mut scratch).partition([1, lanes, block]),
                     &qkv,
                     &beta,
                     &alpha,
