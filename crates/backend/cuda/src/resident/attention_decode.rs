@@ -156,3 +156,6 @@ mod tests;
 
 mod workspace;
 pub use workspace::Workspace;
+
+#[cfg(test)]
+pub use workspace::taps;

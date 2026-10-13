@@ -414,6 +414,16 @@ impl BatchBuilder<'_> {
 
     /// Prefill width 32: one batched arena, one metadata tensor per lane.
     fn build32(&mut self) -> Result<BatchGraph> {
+        #[cfg(test)]
+        self.attention.taps.prepare(
+            self.device,
+            self.graph,
+            self.weights,
+            self.width,
+            self.capacity,
+        )?;
+        self.attention
+            .prepare_prefill(self.device, self.graph, self.weights, self.width);
         let mut arena = ActivationArena::new_batched(
             self.device,
             self.graph,

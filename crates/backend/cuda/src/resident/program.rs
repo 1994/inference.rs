@@ -855,6 +855,11 @@ impl DeviceProgram {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) const fn attention_taps(&self) -> &super::attention_decode::taps::Taps {
+        &self.attention.taps
+    }
+
     /// Test-only preparation evidence; configurations may include strategies a replay does not use.
     #[cfg(test)]
     pub(crate) fn prepared_gemm_configs(&self) -> serde_json::Value {

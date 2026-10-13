@@ -520,3 +520,7 @@ mod prefill_width_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_quant_reuse_model.rs"]
 mod quant_reuse_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_attention_prefill_model.rs"]
+mod attention_prefill_model_tests;

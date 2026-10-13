@@ -1,4 +1,25 @@
 //! Parallel causal queries over a contiguous prompt chunk; KV layout remains head-major.
+/// Legacy full-chunk loop retained only for comparison in CUDA tests.
+#[cfg(test)]
+pub const FULL_CHUNK_BOUND: &str = "0";
+
+/// Independently captured bounds for the numerical and cost diagnostic.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CausalBlockBound {
+    FullChunk,
+    QueryTile,
+}
+#[cfg(test)]
+impl CausalBlockBound {
+    pub(crate) fn generic(self) -> String {
+        match self {
+            Self::FullChunk => FULL_CHUNK_BOUND.into(),
+            Self::QueryTile => "1".into(),
+        }
+    }
+}
+
 #[cutile::module]
 pub(crate) mod kernels {
     use cutile::core::{
@@ -10,8 +31,9 @@ pub(crate) mod kernels {
     };
     /// Finite masked score keeps online rescaling defined before the first visible key.
     const MASKED: f32 = -1.0e30;
-    /// Compensated BF16 tensor-core product with F32 inputs and accumulation; copied from
-    /// `attention::kernels::sdpa`, the only other place in the tree that uses `mmaf` attention.
+    /// Three BF16 components and six products retain F32 significand accuracy.
+    /// The former three-product approximation exceeded the established full F64
+    /// checkpoint tolerance; keep residual products rather than widening that gate.
     fn precise_mma<const M: i32, const K: i32, const N: i32>(
         left: Tile<f32, { [M, K] }>,
         right: Tile<f32, { [K, N] }>,
@@ -22,11 +44,22 @@ pub(crate) mod kernels {
         let rr: Tile<f32, { [K, N] }> = convert_tile(rh);
         let ll: Tile<bf16, { [M, K] }> = convert_tile(left - lr);
         let rl: Tile<bf16, { [K, N] }> = convert_tile(right - rr);
+        // A third BF16 component retains the remaining F32 significand bits. Include
+        // all products through second residual order; three products omit ll*rl and
+        // both third components, giving roughly 16-bit operand accuracy.
+        let lf: Tile<f32, { [M, K] }> = convert_tile(ll);
+        let rf: Tile<f32, { [K, N] }> = convert_tile(rl);
+        let lll: Tile<bf16, { [M, K] }> = convert_tile((left - lr) - lf);
+        let rll: Tile<bf16, { [K, N] }> = convert_tile((right - rr) - rf);
         let zero: Tile<f32, { [M, N] }> = constant(0.0f32, shape![M, N]);
-        let low = mmaf(ll, rh, zero);
+        let low = mmaf(lll, rh, zero);
+        let low = mmaf(lh, rll, low);
+        let low = mmaf(ll, rl, low);
+        let low = mmaf(ll, rh, low);
         let low = mmaf(lh, rl, low);
         mmaf(lh, rh, low)
     }
+
     /// Append all prompt rows before the causal query kernels read the shared cache.
     #[cutile::entry()]
     fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32, const BT: i32>(
@@ -176,6 +209,32 @@ pub(crate) mod kernels {
         }
     }
 
+    /// Whole-chunk baseline or the last active query in this CTA. The lower bound stays zero:
+    /// trimming only a fully future suffix preserves the order of every visible key block,
+    /// including the existing window masking and partial final key block.
+    fn query_blocks<const QT: i32, const KB: i32, const CAUSAL_BOUND: i32>(
+        base: i32,
+        count: i32,
+        offset: i32,
+        tile: i32,
+    ) -> i32 {
+        let mut blocks = (base + offset + count - 1i32 + KB) / KB;
+        if CAUSAL_BOUND == 1 {
+            let mut end = count;
+            let tile_end = (tile + 1i32) * QT;
+            if end > tile_end {
+                end = tile_end;
+            }
+            let last = base + offset + end - 1i32;
+            if tile * QT >= count || last < 0 {
+                blocks = 0;
+            } else {
+                blocks = (last + KB) / KB;
+            }
+        }
+        blocks
+    }
+
     /// Tensor-core twin of [`decode`]: one tile of QT consecutive lanes for one head, with the
     /// same fp8 head-major cache read through the same runtime block bound. The host binds q and
     /// out as `[lanes, heads*D]` partitioned `[QT, D]`, so grid axis 0 is the lane tile and axis 1
@@ -192,6 +251,7 @@ pub(crate) mod kernels {
         const QT: i32,
         const KB: i32,
         const BT: i32,
+        const CAUSAL_BOUND: i32,
     >(
         out: &mut Tensor<f32, { [QT, D] }>,
         query: &Tensor<f32, { [-1, -1] }>,
@@ -215,8 +275,9 @@ pub(crate) mod kernels {
         let table_blocks = table.partition(shape![1]);
         let rows: Tile<i32, { [QT] }> = iota(shape![QT]) + (pid.0 * QT).broadcast(shape![QT]);
         let positions: Tile<i32, { [QT] }> = rows + (base + offset).broadcast(shape![QT]);
-        // Only the lanes this chunk appended bound the loop; later rows are inactive and masked.
-        let blocks = (base + offset + count - 1i32 + KB) / KB;
+        // The production baseline visits the entire chunk. The diagnostic candidate avoids
+        // blocks beyond this CTA's actual last query, including inactive padded CTAs.
+        let blocks = query_blocks::<QT, KB, CAUSAL_BOUND>(base, count, offset, pid.0);
         let mut accumulator: Tile<f32, { [QT, D] }> = constant(0.0f32, shape![QT, D]);
         let mut row_max: Tile<f32, { [QT] }> = constant(MASKED, shape![QT]);
         let mut row_sum: Tile<f32, { [QT] }> = constant(0.0f32, shape![QT]);

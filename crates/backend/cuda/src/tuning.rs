@@ -1,4 +1,5 @@
 //! Paired graph measurements on loaded model weights, isolated from model adapters.
+pub mod attention;
 pub mod fp8_gemm;
 pub mod greedy;
 pub mod recurrent;
@@ -268,6 +269,9 @@ pub struct TilingTable {
     /// F32-state recurrent column decisions with independent F64 and paired evidence.
     #[serde(default)]
     pub resident_recurrent: Vec<recurrent::Entry>,
+    /// Prefill query sharing with independent F64 and complete graph measurements.
+    #[serde(default)]
+    pub resident_attention: Vec<attention::Entry>,
 }
 
 /// Read both the current per-device table and the former top-level `device`/`entries` format.
@@ -287,6 +291,8 @@ struct StoredTilingTable {
     greedy: Vec<greedy::Entry>,
     #[serde(default)]
     resident_recurrent: Vec<recurrent::Entry>,
+    #[serde(default)]
+    resident_attention: Vec<attention::Entry>,
 }
 
 impl From<StoredTilingTable> for TilingTable {
@@ -312,6 +318,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_fp8_gemm: stored.resident_fp8_gemm,
             greedy: stored.greedy,
             resident_recurrent: stored.resident_recurrent,
+            resident_attention: stored.resident_attention,
         }
     }
 }

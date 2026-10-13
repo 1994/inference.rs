@@ -4,7 +4,7 @@ mod batch;
 pub use batch::BatchOutput;
 mod attention;
 mod attention_decode;
-mod attention_prefill;
+pub(crate) mod attention_prefill;
 mod batch_projection;
 mod capture;
 mod capture_attention;
@@ -41,3 +41,6 @@ mod reset;
 pub(crate) mod greedy;
 
 mod token_readout;
+
+#[cfg(test)]
+pub(crate) use attention_decode::taps as attention_prefill_taps;

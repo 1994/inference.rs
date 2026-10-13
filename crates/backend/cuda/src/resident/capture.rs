@@ -81,7 +81,32 @@ impl Capture<'_> {
                 .map(|&dim| usize::try_from(dim).map_err(error))
                 .collect::<Result<Vec<_>, _>>()?;
             let size = output.size();
+            #[cfg(test)]
+            if self.mode == CaptureMode::Prefill && matches!(node.op, TensorOp::Attention { .. }) {
+                let input = |id| {
+                    self.weights.constants.get(&id).map_or_else(
+                        || self.arena.get(id).map_err(error),
+                        |constant| Ok(constant.as_ref()),
+                    )
+                };
+                self.attention.taps.inputs(
+                    self.scope,
+                    (*id, self.arena.lanes()),
+                    [
+                        input(node.inputs[0])?,
+                        input(node.inputs[1])?,
+                        input(node.inputs[2])?,
+                    ],
+                    (self.metadata, self.table),
+                )?;
+            }
             let output = self.operation(node, output.reshape(&[size])?, part)?;
+            #[cfg(test)]
+            if self.mode == CaptureMode::Prefill && matches!(node.op, TensorOp::Attention { .. }) {
+                self.attention
+                    .taps
+                    .output(self.scope, (*id, self.arena.lanes()), &output)?;
+            }
             self.arena.buffers[index] = Some(output.reshape(&restore)?);
         }
         Ok(())

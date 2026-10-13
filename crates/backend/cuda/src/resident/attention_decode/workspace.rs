@@ -2,9 +2,13 @@
 use super::kernels;
 use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
-use infer_core::Result;
+use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::BTreeMap;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/resident_attention_prefill_taps.rs"]
+pub mod taps;
 
 struct Buffers {
     parts: usize,
@@ -14,7 +18,10 @@ struct Buffers {
 }
 
 pub struct Workspace {
+    #[cfg(test)]
+    pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
+    prefill: BTreeMap<(TensorId, usize), crate::tuning::attention::Choice>,
 }
 
 /// Bound the extra reduction work by available parallelism and the KV workload.
@@ -71,7 +78,79 @@ impl Workspace {
                 },
             );
         }
-        Ok(Self { buffers })
+        Ok(Self {
+            #[cfg(test)]
+            taps: taps::Taps::default(),
+            buffers,
+            prefill: BTreeMap::new(),
+        })
+    }
+
+    pub(crate) fn prepare_prefill(
+        &mut self,
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &super::super::ProgramWeights,
+        lanes: usize,
+    ) {
+        let enabled = crate::tuning::attention::enabled();
+        #[cfg(test)]
+        let enabled = enabled || taps::forced_choice().is_some();
+        if !enabled {
+            self.prefill.retain(|(_, width), _| *width != lanes);
+            return;
+        }
+        let mut choices = BTreeMap::new();
+        for node in &graph.nodes {
+            let TensorOp::Attention {
+                query_heads,
+                kv_heads,
+                head_dim,
+                window,
+            } = node.op
+            else {
+                continue;
+            };
+            if !node
+                .states
+                .first()
+                .is_some_and(|id| weights.kv_scales.contains_key(id))
+            {
+                continue;
+            }
+            let shape = crate::tuning::attention::Shape {
+                heads: query_heads,
+                kv_heads,
+                dim: head_dim,
+                lanes,
+                window: window.unwrap_or(0),
+            };
+            let choice = *choices.entry(shape).or_insert_with(|| {
+                crate::tuning::attention::select(
+                    device,
+                    shape,
+                    weights.autotune,
+                    &weights.resident_tuning,
+                )
+            });
+            #[cfg(test)]
+            let choice = taps::forced_choice().unwrap_or(choice);
+            self.prefill.insert((node.outputs[0], lanes), choice);
+        }
+    }
+
+    pub(crate) fn prefill_query_tile(
+        &self,
+        output: TensorId,
+        lanes: usize,
+        fp8: bool,
+    ) -> Option<usize> {
+        if !fp8 {
+            return None;
+        }
+        self.prefill
+            .get(&(output, lanes))
+            .and_then(|choice| choice.query_tile())
     }
 
     pub(crate) fn supports(&self, heads: usize, dim: usize) -> bool {
