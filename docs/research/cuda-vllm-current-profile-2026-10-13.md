@@ -441,3 +441,31 @@ speedup 中位数至少 1.1249，未触发原 5% 回退门槛；所有进程中�
 这一修改替换已准入的默认 kernel，不增加分配、预算或用户算法开关；
 量化模型的默认准入仍受已有质量和 serving 门槛约束。
 [有效循环优化证据](artifacts/cuda-gdn-active-range-2026-10-14.json)。
+
+## 2026-10-14：有效循环优化的完整模型 profile
+
+CUDA 代码 036f56ecbeebcc42bb70605fd4bb1a13c9715bab 的
+[完整 CI](https://github.com/1994/inference.rs/actions/runs/38480229924) 已 10/10 成功。
+同一 kernel 在量化诊断归档中，采用和上一轮完全相同的准入补丁、四个固定
+场景与 46 项冻结 tuning 表，再次采集整模 trace。
+
+511 token 的两次 256 token 图仍有 3,812 个 kernel。GDN 递推由上一轮
+24.683036 ms 降至 21.710563 ms；共享 normalization 为 0.444349 ms，
+gates 为 0.625337 ms。GDN 总和从 25.752058 ms 降至 22.780249 ms，
+减少 2.971809 ms，时长减少约 11.54%，占图 kernel duration 总和的 17.4%。
+该总和为 130.841668 ms，输出 transpose 为 0.624758 ms。
+
+attention 从上一轮 15.027409 ms 变为 15.526432 ms，约上升 3.3%；
+本轮未改 attention。由于这是单次带 profiler 的诊断，该变化和请求延迟
+均保留，不能据此做配对 serving 判定。隔离图的独立复测支持目标递推收益，
+端到端验收仍按原质量、漂移、回退与请求完整性门槛进行。
+
+四场景均完成，guard 无 GPU 干扰，protected profile 峰值 5.6 GiB、自身
+swap 为零。仍保留未采集 OS scheduling、部分 CUDA events 和部分 OS runtime
+events 三类警告。量化模型的默认准入仍未改动。
+[trace、编译身份与 CI 证据](artifacts/cuda-gdn-active-range-current-profile-2026-10-14.json)。
+
+后续量化 serving 的一项证据缺口已有源码定位：ExecutionTask 含 request 和
+state 两个 ID，现有 CUDA host profiler 只输出 state。记录已有 request ID
+即可建立关联；此项尚未实施或验证，不能把 private/pooled 路由当作 token 差异
+的已确认原因。
