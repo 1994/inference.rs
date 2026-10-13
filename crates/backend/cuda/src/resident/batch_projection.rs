@@ -203,6 +203,7 @@ pub(super) fn record_slots(
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("slot projection weight"))?;
+    #[cfg(test)]
     if record_pool_small_f32(scope, node, weights, weight, &input, &mut output, columns)? {
         arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
         return Ok(());
@@ -252,11 +253,12 @@ fn record_projection(
     {
         match weight {
             ProjectionWeight::Dense(w) => {
+                #[cfg(test)]
                 if super::small_gemm::precise_dense_enabled()
                     && outputs <= columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
                 {
                     scope.record(
-                        super::small_gemm::kernels::dense_precise(
+                        super::small_gemm::precise_kernels::dense(
                             output.partition(crate::constants::SMALL_GEMM_TILE),
                             x,
                             w,
@@ -329,6 +331,7 @@ fn record_projection(
 
 /// The four-row kernel consumes the existing slot matrix without additional copies.
 /// Reuse the private GEMV tile to keep its F32 accumulation and reduction order.
+#[cfg(test)]
 fn record_pool_small_f32(
     scope: &Scope,
     node: &TensorNode,

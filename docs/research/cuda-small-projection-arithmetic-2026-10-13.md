@@ -1,5 +1,7 @@
 # CUDA 小投影的解码路径一致性（2026-10-13）
 
+后续入口修正（2026-10-13）：本记录两个候选均未通过完整质量门槛。`INFER_CUDA_PRECISE_SMALL_DENSE` 和 `INFER_CUDA_POOL_SMALL_F32` 的生产入口现已移除；候选内核和 A/B hook 只编译进 CUDA 测试程序。下文环境变量描述属于旧实验制品，保留用于复核历史证据。
+
 原服务实现的小 BF16 投影在私有 decode 使用 F32 GEMV，在 pooled decode 使用
 两项 BF16 输入分解的 Tensor Core GEMM。并发请求开始时可能先执行一步私有 decode，
 再绑定 pooled slot，因此同一二进制的生成会受这条算术路径选择影响。

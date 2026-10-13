@@ -52,7 +52,7 @@ NVFP4 和 FP8 共享每次模型加载的 30 秒驻留调优预算，target、dr
 失败原因写入日志，基线失败则保守回退。kernel 测量门禁通过不等于已证明服务 TTFT、TPOT 或吞吐提升。
 
 `--no-autotune` 禁止新的性能搜索，仍可复用有效缓存；驻留配置仍需当前真实权重的数值验收，
-未验收或预算不足时回退。`INFER_CUDA_QUANT_TILE` 和 `INFER_CUDA_VENDOR_FP8` 属于诊断覆盖，
+未验收或预算不足时回退。`INFER_CUDA_QUANT_TILE` 属于诊断覆盖，Lt 强制投影只保留在内部测试程序，
 其结果不作为自动择优证据落盘。
 
 FP8 默认只搜索保持原生 K 累积顺序的 tile。`INFER_CUDA_FP8_LT_AUTOTUNE=1`（或 `true`）

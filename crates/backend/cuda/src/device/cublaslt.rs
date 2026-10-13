@@ -335,11 +335,10 @@ pub struct Support {
 }
 
 impl Support {
-    /// Build the support for one program. Delegation stays off unless
-    /// `INFER_CUBLAS_PROJECTIONS` is set, and off when the toolkit is missing.
+    /// Production keeps qualified native projection arithmetic. Unqualified delegation
+    /// is available through the explicit constructor for isolated diagnostics.
     pub fn new(device: &crate::device::CudaDevice) -> Self {
-        let enabled = std::env::var_os("INFER_CUBLAS_PROJECTIONS").is_some();
-        Self::new_with(device, enabled)
+        Self::new_with(device, false)
     }
 
     /// Build the support with delegation decided by the caller, for benchmarks and tests that

@@ -1089,8 +1089,13 @@ fn resolve(
         .insert(key.clone(), choice);
     cached_gate(device, support, weight, &key, choice, session)
 }
-/// Lt's opaque reduction implementation has no SDK same-K arithmetic guarantee.
-/// Exact production defaults to native geometry tuning; this opt-in is a numerical profile.
+/// Lt's reduction order lacks a full model qualification. Only internal tests may search it;
+/// production automatically tunes the qualified native geometry candidates.
+#[cfg(not(test))]
+pub(crate) const fn vendor_autotune_enabled() -> bool {
+    false
+}
+#[cfg(test)]
 pub(crate) fn vendor_autotune_enabled() -> bool {
     std::env::var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
 }

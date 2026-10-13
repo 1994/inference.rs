@@ -245,7 +245,7 @@ fn checkpoint_small_outputs(
     let matrix = device.upload(input.to_vec(), &[4, columns])?;
     let single = device.upload(input[..columns].to_vec(), &[1, columns])?;
     let vector = device.upload(input[..columns].to_vec(), &[columns])?;
-    let multi = kernels::dense_precise(
+    let multi = super::precise_kernels::dense(
         api::zeros::<f32>(&[4, outputs]).partition([16, 32]),
         &matrix,
         weight,
@@ -254,7 +254,7 @@ fn checkpoint_small_outputs(
     .first()
     .unpartition()
     .sync_on(&device.stream)?;
-    let one = kernels::dense_precise(
+    let one = super::precise_kernels::dense(
         api::zeros::<f32>(&[1, outputs]).partition([16, 32]),
         &single,
         weight,

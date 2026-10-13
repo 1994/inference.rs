@@ -27,10 +27,47 @@ pub(crate) mod kernels {
         }
         out.store(acc);
     }
+    #[cutile::entry()]
+    fn scaled<E: ElementType, const K: i32>(
+        out: &mut Tensor<f32, { [16, 32] }>,
+        input: &Tensor<f32, { [-1, K] }>,
+        weight: &Tensor<E, { [-1, K] }>,
+        scale: &Tensor<f32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![16, 128]);
+        let wp = weight.partition(shape![32, 128]);
+        let mut acc: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
+        for k in 0i32..((K + 127) / 128) {
+            let input = xp.load([pid.0, k]);
+            let high: Tile<bf16, { [16, 128] }> = convert_tile(input);
+            let rounded: Tile<f32, { [16, 128] }> = convert_tile(high);
+            let low: Tile<bf16, { [16, 128] }> = convert_tile(input - rounded);
+            let weight: Tile<bf16, { [32, 128] }> = convert_tile(wp.load([pid.1, k]));
+            acc = mmaf(low, weight.transpose(), acc);
+            acc = mmaf(high, weight.transpose(), acc);
+        }
+        let scale = scale
+            .partition(shape![32])
+            .load([pid.1])
+            .reshape(shape![1, 32])
+            .broadcast(shape![16, 32]);
+        out.store(acc * scale);
+    }
+}
+
+// Unqualified arithmetic candidates exist only in the CUDA test executable.
+#[cfg(test)]
+#[cutile::module]
+pub(crate) mod precise_kernels {
+    use cutile::core::{
+        ElementType, Shape_2, StoreTileAtCurrentBlock, Tensor_2, Tile_2, bf16, constant,
+        convert_tile, get_tile_block_id, mmaf,
+    };
     /// The third BF16 component reduces the residual input quantization error.
     /// This experiment is selected consistently by private and pooled capture.
     #[cutile::entry()]
-    fn dense_precise<E: ElementType, const K: i32>(
+    fn dense<E: ElementType, const K: i32>(
         out: &mut Tensor<f32, { [16, 32] }>,
         input: &Tensor<f32, { [-1, K] }>,
         weight: &Tensor<E, { [-1, K] }>,
@@ -63,98 +100,52 @@ pub(crate) mod kernels {
         }
         out.store(acc);
     }
-
-    #[cutile::entry()]
-    fn scaled<E: ElementType, const K: i32>(
-        out: &mut Tensor<f32, { [16, 32] }>,
-        input: &Tensor<f32, { [-1, K] }>,
-        weight: &Tensor<E, { [-1, K] }>,
-        scale: &Tensor<f32, { [-1] }>,
-    ) {
-        let pid = get_tile_block_id();
-        let xp = input.partition(shape![16, 128]);
-        let wp = weight.partition(shape![32, 128]);
-        let mut acc: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
-        for k in 0i32..((K + 127) / 128) {
-            let input = xp.load([pid.0, k]);
-            let high: Tile<bf16, { [16, 128] }> = convert_tile(input);
-            let rounded: Tile<f32, { [16, 128] }> = convert_tile(high);
-            let low: Tile<bf16, { [16, 128] }> = convert_tile(input - rounded);
-            let weight: Tile<bf16, { [32, 128] }> = convert_tile(wp.load([pid.1, k]));
-            acc = mmaf(low, weight.transpose(), acc);
-            acc = mmaf(high, weight.transpose(), acc);
-        }
-        let scale = scale
-            .partition(shape![32])
-            .load([pid.1])
-            .reshape(shape![1, 32])
-            .broadcast(shape![16, 32]);
-        out.store(acc * scale);
-    }
 }
 
 #[cfg(test)]
 #[path = "../../tests/unit/resident_small_gemm.rs"]
 mod tests;
 
-/// Experimental three-component BF16 arithmetic shared by private and pooled projection.
-/// Default keeps the existing arithmetic until full model quality and complete costs pass.
+/// Internal A/B selection; failed candidates cannot be enabled in a production build.
+#[cfg(test)]
 pub(super) fn precise_dense_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if pool_f32_enabled() {
-        return false;
-    }
-    #[cfg(test)]
-    if let Some(enabled) = PRECISE_DENSE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-    *ENABLED.get_or_init(|| {
-        std::env::var("INFER_CUDA_PRECISE_SMALL_DENSE")
-            .is_ok_and(|value| value == "1" || value == "true")
-    })
+    !pool_f32_enabled() && PRECISE_DENSE.with(std::cell::Cell::get)
 }
 
 #[cfg(test)]
 thread_local! {
-    static PRECISE_DENSE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static PRECISE_DENSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 #[cfg(test)]
 pub fn with_precise_dense<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
+    struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
             PRECISE_DENSE.with(|cell| cell.set(self.0));
         }
     }
-    let restore = Restore(PRECISE_DENSE.with(|cell| cell.replace(Some(enabled))));
+    let restore = Restore(PRECISE_DENSE.with(|cell| cell.replace(enabled)));
     let result = run();
     drop(restore);
     result
 }
 
-/// Experimental four-slot F32 GEMV; private GEMV arithmetic and tile choice stay shared.
+/// Internal four-slot experiment; never dispatched by a production build.
+#[cfg(test)]
 pub(super) fn pool_f32_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    #[cfg(test)]
-    if let Some(enabled) = POOL_F32.with(std::cell::Cell::get) {
-        return enabled;
-    }
-    *ENABLED.get_or_init(|| {
-        std::env::var("INFER_CUDA_POOL_SMALL_F32")
-            .is_ok_and(|value| value == "1" || value == "true")
-    })
+    POOL_F32.with(std::cell::Cell::get)
 }
 #[cfg(test)]
-thread_local! { static POOL_F32: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) }; }
+thread_local! { static POOL_F32: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 #[cfg(test)]
 pub fn with_pool_f32<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
+    struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
             POOL_F32.with(|cell| cell.set(self.0));
         }
     }
-    let restore = Restore(POOL_F32.with(|cell| cell.replace(Some(enabled))));
+    let restore = Restore(POOL_F32.with(|cell| cell.replace(enabled)));
     let result = run();
     drop(restore);
     result

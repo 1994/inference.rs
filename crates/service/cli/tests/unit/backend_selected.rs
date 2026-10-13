@@ -24,7 +24,6 @@ fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
             gpu_memory_utilization: 0.0,
             autotune: false,
             // The exact per-token kernel; this fixture checks the Metal reservation, not prefill.
-            chunked_recurrent: false,
         },
     )?;
     let capacity = backend.model_ir().max_sequence;

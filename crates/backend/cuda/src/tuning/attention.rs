@@ -160,9 +160,13 @@ fn memo() -> &'static Memo {
     static MEMO: OnceLock<Memo> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-/// Experimental arithmetic strategy: hardware tile selection stays automatic.
-/// Full checkpoint F64 passed, but the original task-quality gate rejected tiled;
-/// keep production SIMT until complete-model quality is demonstrated.
+/// The full task-quality gate rejected tiled arithmetic. Internal tests may compare it;
+/// production has no user-selectable path into an unqualified candidate.
+#[cfg(not(test))]
+pub(crate) const fn enabled() -> bool {
+    false
+}
+#[cfg(test)]
 pub(crate) fn enabled() -> bool {
     std::env::var("INFER_CUDA_TILED_ATTENTION").is_ok_and(|v| v == "1" || v == "true")
 }

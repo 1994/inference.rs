@@ -4,6 +4,17 @@ CUDA 执行器使用原生 Rust/cuTile kernel 和设备驻留图。测量按算�
 
 本文说明现有工具和测量边界。正式测试与性能工作的 release、当前 native/vLLM 配置对齐和基线验收统一按 [性能基线方案](../plans/performance/baseline.md) 执行；自动校验仍待实施。现有服务对比有 [已审查缺口](../reviews/vllm-benchmark-methodology-2026-10-09.md)，历史矩阵不作为当前已验收 baseline。
 
+## 默认优化策略
+
+通过独立数值、完整模型质量与服务性能验收的优化进入默认执行路径；设备/shape 的合法 tile
+由内部测量自动选择。用户不需要判断某个优化算法应开还是关。
+尚未通过验收的算术与库候选保留在内部测试或独立诊断程序中，生产用户不能通过算法开关启用它们。
+profiling、冻结缓存和测试的 A/B 控制是开发诊断工具，不能用来绕过生产资格。
+
+生产 CLI 不再提供 `--chunked-recurrent`；生产环境也不读取 `INFER_CUDA_CHUNKED_RECURRENT`
+或 `INFER_CUBLAS_PROJECTIONS` 切换算术。Chunk 与 BF16 Lt 委派由独立诊断程序显式构造，
+完成资格后才纳入默认策略。历史实验命令须使用其冻结制品，不能当成当前用户配置建议。
+
 ## 投影基线
 
 ```sh
@@ -85,19 +96,16 @@ graph replay，不含模型加载、分配或首次 JIT。单候选的 capture�
 每次模型加载的 target、draft 和 program 共享 30 秒驻留调优软预算，首次驻留身份解析、搜索或
 数值验收才启动，后续新候选和新权重验收继续检查剩余预算。单次已经开始的 JIT/测量不可中断；
 超时或未完成证据时回退，不把未测 baseline 当成完整调优证据缓存。`--no-autotune` 不做新的
-性能搜索，但可读取有效缓存并做当前权重数值验收。诊断用 `INFER_CUDA_QUANT_TILE` 与
-`INFER_CUDA_VENDOR_FP8` 的覆盖结果不写入调优证据。
+性能搜索，但可读取有效缓存并做当前权重数值验收。诊断用 `INFER_CUDA_QUANT_TILE` 的覆盖结果
+不写入调优证据。Lt 独立诊断仅存在于 CUDA 测试程序，不提供生产算法选择入口。
 
-### FP8 Lt 显式数值 profile
+### FP8 Lt 内部候选验证
 
-默认只允许原生 FP8 tile 候选。设 `INFER_CUDA_FP8_LT_AUTOTUNE=1` 或 `true`，才会搜索
-合法 cuBLASLt 算法，并继续接受真实权重的四种激活 pattern、完整输出 finite/bitwise 门禁，
-以及冷/暖固定 AB 搜索和反序 BA 独立确认。其描述符、算法可用性和零 workspace 在 capture 前准备。
-
-cuBLASLt SDK 不保证与原生 kernel 使用相同 K 累积顺序，四种输入 pattern 的逐位一致也不是
-所有输入的数学等价证明。该开关明确启用一个数值 profile，不能据此改成默认 Lt 路径。
-`INFER_CUDA_VENDOR_FP8=1`（或 `true`）只用于绕过 chooser 的独立诊断，不产生 tuned 证据。
-这些算子层门禁尚不能证明完整服务性能收益；正式采用仍按模型 token、状态和服务负载验收。
+生产程序自动选择已验收的原生 FP8 tile，不读取 `INFER_CUDA_FP8_LT_AUTOTUNE` 或
+`INFER_CUDA_VENDOR_FP8` 来改变算法。Lt 候选搜索和独立诊断仅保留在 CUDA 测试程序中。
+完整输出 finite/bitwise、真实权重四种 activation pattern、冷/暖 AB 与反序 BA 确认仍用于
+内部筛选；SDK 不保证相同 K 累积顺序，这些局部检查不能替代完整模型和服务验收。
+候选合格后才能纳入自动选择，不让用户决定是否接受候选的数值差异。
 
 下列 release 入口是独立候选 sweep，可保存逐形状冷/热 L2、三轮 A/B 交替的 CUDA event 样本；
 它不替代 chooser 的反序确认、实际权重验收或服务对照。

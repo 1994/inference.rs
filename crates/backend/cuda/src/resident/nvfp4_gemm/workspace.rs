@@ -155,12 +155,9 @@ impl Workspace {
             fp8_strategies: BTreeMap::new(),
             vendor_fp8: vendor_fp8::Support::new_with(
                 device,
-                crate::tuning::fp8_gemm::vendor_autotune_enabled()
-                    || std::env::var("INFER_CUDA_VENDOR_FP8")
-                        .is_ok_and(|value| value == "1" || value == "true"),
+                crate::tuning::fp8_gemm::vendor_autotune_enabled() || vendor_diagnostic_enabled(),
             ),
-            vendor_diagnostic: std::env::var("INFER_CUDA_VENDOR_FP8")
-                .is_ok_and(|value| value == "1" || value == "true"),
+            vendor_diagnostic: vendor_diagnostic_enabled(),
         };
         workspace.extend(device, graph, weights, widths)?;
         Ok(workspace)
@@ -583,4 +580,14 @@ fn quant_key<Q: DType, S: DType>(
         codes_pointer: buffers.0.device_pointer().cu_deviceptr(),
         scales_pointer: buffers.1.device_pointer().cu_deviceptr(),
     })
+}
+
+/// Independent Lt diagnostics are confined to test executables, never production serving.
+#[cfg(not(test))]
+const fn vendor_diagnostic_enabled() -> bool {
+    false
+}
+#[cfg(test)]
+fn vendor_diagnostic_enabled() -> bool {
+    std::env::var("INFER_CUDA_VENDOR_FP8").is_ok_and(|value| value == "1" || value == "true")
 }

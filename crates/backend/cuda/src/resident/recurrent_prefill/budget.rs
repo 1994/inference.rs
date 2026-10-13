@@ -4,8 +4,10 @@ use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::BTreeSet;
 
-pub(super) fn opted_in(weights: &ProgramWeights) -> bool {
-    weights.chunked_recurrent || std::env::var_os("INFER_CUDA_CHUNKED_RECURRENT").is_some()
+/// Chunk experiments are explicitly configured by the diagnostic model loader.
+/// A production process environment cannot switch the recurrent arithmetic.
+pub(super) const fn opted_in(weights: &ProgramWeights) -> bool {
+    weights.chunked_recurrent
 }
 pub(super) fn enabled(weights: &ProgramWeights, opted_in: bool) -> bool {
     // MoE retains scalar execution after its chunk kernel failed sanitizer parity.

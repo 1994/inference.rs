@@ -278,6 +278,7 @@ impl Capture<'_> {
             }
             return Ok(matrix.reshape(&[size])?);
         }
+        #[cfg(test)]
         if self.mode == CaptureMode::Flat
             && super::small_gemm::precise_dense_enabled()
             && output.size()
@@ -290,7 +291,7 @@ impl Capture<'_> {
             let columns = input.size();
             let mut matrix = output.reshape(&[1, size])?;
             self.scope.record(
-                super::small_gemm::kernels::dense_precise(
+                super::small_gemm::precise_kernels::dense(
                     (&mut matrix).partition(crate::constants::SMALL_GEMM_TILE),
                     &input.view(&[1, columns]).map_err(error)?,
                     weight,
