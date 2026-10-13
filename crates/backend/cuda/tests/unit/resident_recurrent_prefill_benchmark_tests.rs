@@ -97,20 +97,23 @@ fn bench_case(
         lanes.to_string(),
         block.to_string(),
     ];
+    let mut prepared = (dim == super::ORDERED_DIM)
+        .then(|| super::prepared::Inputs::new(device, (kh, vh, dim), lanes))
+        .transpose()?;
     let candidate = CudaGraph::scope(&device.stream, |scope| {
         if dim == 128 {
-            scope.record(
-                kernels::delta_grouped(
-                    (&mut state).partition([1, dim, block]),
-                    (&mut scratch).partition([1, lanes, block]),
-                    &qkv,
-                    &beta,
-                    &alpha,
-                    &a_log,
-                    &bias,
-                    &metadata,
-                )
-                .generics(generics),
+            prepared.as_mut().expect("ordered preparation").record(
+                scope,
+                [
+                    &qkv.view(&[lanes, 2 * kh + vh, dim])?,
+                    &beta.view(&[lanes, vh])?,
+                    &alpha.view(&[lanes, vh])?,
+                    &a_log.view(&[vh])?,
+                    &bias.view(&[vh])?,
+                ],
+                [&mut state, &mut scratch],
+                &metadata,
+                (kh, vh, dim, lanes, block),
             )?;
         } else {
             scope.record(

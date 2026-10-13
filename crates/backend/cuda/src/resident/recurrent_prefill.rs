@@ -380,6 +380,134 @@ pub(crate) mod kernels {
         }
         state.store(old.reshape(shape![1, D, SW]));
     }
+    // One F32 normalization per Q/K head and token, preserving the scalar norm tree.
+    #[cutile::entry()]
+    fn normalize_shared<const KH: i32, const D: i32>(
+        normalized: &mut Tensor<f32, { [1, 1, D] }>,
+        qkv: &Tensor<f32, { [-1, -1, D] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let x = qkv
+            .partition(shape![1, 1, D])
+            .load([pid.0, pid.1, 0i32])
+            .reshape(shape![D]);
+        let square = scalar128_norm_sum((x * x).reshape(shape![128])).reshape(shape![1]);
+        let inverse = rsqrt(square + 1e-6f32.broadcast(shape![1]), ftz::Disabled);
+        let factor = if pid.1 < KH {
+            let d: f32 = convert_scalar(D);
+            inverse * rsqrt(d.broadcast(shape![1]), ftz::Disabled)
+        } else {
+            inverse
+        };
+        let result = x * factor.broadcast(shape![D]);
+        normalized.store(result.reshape(shape![1, 1, D]));
+    }
+
+    // Beta and decay are independent of the state columns; each is evaluated once.
+    #[cutile::entry()]
+    fn gates_shared(
+        betas: &mut Tensor<f32, { [1, 1] }>,
+        decays: &mut Tensor<f32, { [1, 1] }>,
+        beta: &Tensor<f32, { [-1, -1] }>,
+        alpha: &Tensor<f32, { [-1, -1] }>,
+        a_log: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let one = 1.0f32.broadcast(shape![1]);
+        let zero = 0.0f32.broadcast(shape![1]);
+        let bt = beta
+            .partition(shape![1, 1])
+            .load([pid.0, pid.1])
+            .reshape(shape![1]);
+        let bt = one / (one + exp(zero - bt));
+        let at = alpha
+            .partition(shape![1, 1])
+            .load([pid.0, pid.1])
+            .reshape(shape![1])
+            + bias.partition(shape![1]).load([pid.1]);
+        let soft = log(one + exp(at));
+        let large = cmpf(
+            at,
+            20.0f32.broadcast(shape![1]),
+            predicate::GreaterThan,
+            cmp_ordering::Ordered,
+        );
+        let soft = select(large, at, soft);
+        let decay = exp(zero - exp(a_log.partition(shape![1]).load([pid.1])) * soft);
+        betas.store(bt.reshape(shape![1, 1]));
+        decays.store(decay.reshape(shape![1, 1]));
+    }
+
+    #[cutile::entry()]
+    // D = 128 at captured 64/256-token widths. Split columns use explicit scalar trees.
+    // Keep the state across tokens while preserving both scalar reduction trees.
+    fn delta_precomputed<
+        const KH: i32,
+        const VH: i32,
+        const D: i32,
+        const LANES: i32,
+        const SW: i32,
+    >(
+        state: &mut Tensor<f32, { [1, D, SW] }>,
+        out: &mut Tensor<f32, { [1, LANES, SW] }>,
+        qkv: &Tensor<f32, { [-1, -1, D] }>,
+        normalized: &Tensor<f32, { [-1, -1, D] }>,
+        betas: &Tensor<f32, { [-1, -1] }>,
+        decays: &Tensor<f32, { [-1, -1] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let meta = metadata.partition(shape![1]);
+        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+        // One block of the value dimension. The state's columns are mutually independent - every
+        // reduction below is over the key dimension - so the grid gains D / SW times more blocks
+        // without changing any summation order.
+        let mut old = state.load_like(state).reshape(shape![D, SW]);
+        for lane in 0i32..LANES {
+            if lane < count && base + lane + offset >= 0 {
+                let key = pid.0 / (VH / KH);
+                let qp = normalized.partition(shape![1, 1, D]);
+                let q = qp.load([lane, key, 0i32]).reshape(shape![D]);
+                let k = qp.load([lane, KH + key, 0i32]).reshape(shape![D]);
+                let vp = qkv.partition(shape![1, 1, SW]);
+                let v = vp
+                    .load([lane, 2i32 * KH + pid.0, pid.2])
+                    .reshape(shape![SW]);
+                let bt = betas
+                    .partition(shape![1, 1])
+                    .load([lane, pid.0])
+                    .reshape(shape![1]);
+                let decay = decays
+                    .partition(shape![1, 1])
+                    .load([lane, pid.0])
+                    .reshape(shape![1]);
+                let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+                let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let predicted: Tile<f32, { [SW] }> = if SW == 128 {
+                    scalar128_prediction_sum((decayed * kb).reshape(shape![128, SW]))
+                } else {
+                    scalar128_prediction_split_sum((decayed * kb).reshape(shape![128, SW]))
+                };
+                let predicted = predicted.reshape(shape![SW]);
+                let diff = (v - predicted) * bt.broadcast(shape![SW]);
+                let updated: Tile<f32, { [D, SW] }> =
+                    decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+                let qb = q.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+                let result: Tile<f32, { [SW] }> =
+                    scalar128_readout_sum((updated * qb).reshape(shape![128, SW]));
+                old = updated;
+                out.partition_mut(shape![1, 1, SW])
+                    .store(result.reshape(shape![1, 1, SW]), [0i32, lane, 0i32]);
+            } else {
+                out.partition_mut(shape![1, 1, SW])
+                    .store(0.0f32.broadcast(shape![1, 1, SW]), [0i32, lane, 0i32]);
+            }
+        }
+        state.store(old.reshape(shape![1, D, SW]));
+    }
     // Experimental WY factorization. Each chunk solves the causal token interaction system
     // before updating the recurrent state with matrix products. F32 operands use six BF16
     // component products with F32 accumulation.
@@ -591,11 +719,12 @@ mod tests;
 /// Key/value dimension whose scalar F32 reduction trees are preserved.
 pub(super) const ORDERED_DIM: usize = 128;
 /// Independent value columns per CTA, selected by paired CUDA event measurements.
-pub(super) const ORDERED_BLOCK: usize = 32;
+pub(super) const ORDERED_BLOCK: usize = 16;
 /// Prompt capture widths covered by exact fixture and checkpoint comparisons.
 pub(super) const ORDERED_WIDTHS: [usize; 2] = [64, 256];
 
 mod budget;
+mod prepared;
 mod workspace;
 pub use budget::required_bytes;
 pub use workspace::Workspace;

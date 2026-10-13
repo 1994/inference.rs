@@ -727,7 +727,7 @@ fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Er
 fn ordered_actual_graph_widths_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    for block in [32_usize, 64, 128] {
+    for block in [8_usize, 16, 32, 64, 128] {
         for lanes in [64_usize, 256] {
             let geometry = (16, 48, 128, lanes);
             for (count, offset) in [
@@ -799,25 +799,20 @@ fn check_ordered_fixture(
     api::memcpy(&mut state, &src).sync_on(&device.stream)?;
     let mut output = api::zeros::<f32>(&[vh, lanes, dim]).sync_on(&device.stream)?;
     let metadata = device.upload(vec![0, i32::try_from(count)?, offset, 0], &[4])?;
+    let mut prepared = super::prepared::Inputs::new(device, (kh, vh, dim), lanes)?;
     let graph = CudaGraph::scope(&device.stream, |scope| {
-        scope.record(
-            kernels::delta_grouped(
-                (&mut state).partition([1, dim, block]),
-                (&mut output).partition([1, lanes, block]),
-                &qkv_c,
-                &beta_c,
-                &alpha_c,
-                &a_log,
-                &bias,
-                &metadata,
-            )
-            .generics(vec![
-                kh.to_string(),
-                vh.to_string(),
-                dim.to_string(),
-                lanes.to_string(),
-                block.to_string(),
-            ]),
+        prepared.record(
+            scope,
+            [
+                &qkv_c.view(&[lanes, 2 * kh + vh, dim])?,
+                &beta_c.view(&[lanes, vh])?,
+                &alpha_c.view(&[lanes, vh])?,
+                &a_log.view(&[vh])?,
+                &bias.view(&[vh])?,
+            ],
+            [&mut state, &mut output],
+            &metadata,
+            (kh, vh, dim, lanes, block),
         )?;
         Ok(())
     })?;

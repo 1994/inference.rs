@@ -58,8 +58,8 @@ fn quantized_recurrent_admission_counts_retained_prompt_graphs_and_shares_layers
                 Ok::<_, infer_core::Error>(total + required_bytes(&graph, &weights, width)?)
             })
     };
-    // 6 MiB output scratch at 256, one quarter at 64, shared across layers.
-    let wide = 6_291_456;
+    // 6 MiB output + 4 MiB Q/K + 96 KiB gates at 256, one quarter at 64.
+    let wide = 6_291_456 + (2 * 16 * 128 + 2 * 48) * 256 * 4;
     assert_eq!(quote(false)?, wide / 4);
     assert_eq!(quote(true)?, wide + wide / 4);
     weights.fp8_inputs.insert(TensorId::ONE);
@@ -88,4 +88,30 @@ fn recurrent_admission_rejects_scratch_overflow_before_allocation() {
         value_dim: 128,
     };
     assert!(required_bytes(&graph, &weights, 256).is_err());
+}
+
+#[test]
+fn ordered_recurrent_preparation_counts_distinct_key_geometries() -> Result<()> {
+    let mut weights = fixture_weights();
+    weights.chunked_recurrent = true;
+    let mut graph = graph();
+    let mut node = graph.nodes[0].clone();
+    node.id = OpId::new(2)?;
+    node.op = TensorOp::Delta {
+        key_heads: 8,
+        value_heads: 48,
+        key_dim: 128,
+        value_dim: 128,
+    };
+    graph.nodes.push(node.clone());
+    node.id = OpId::new(3)?;
+    graph.nodes.push(node);
+    let output = 48 * 128 * 64 * 4;
+    let first_inputs = (2 * 16 * 128 + 2 * 48) * 64 * 4;
+    let second_inputs = (2 * 8 * 128 + 2 * 48) * 64 * 4;
+    assert_eq!(
+        required_bytes(&graph, &weights, 64)?,
+        output + first_inputs + second_inputs
+    );
+    Ok(())
 }

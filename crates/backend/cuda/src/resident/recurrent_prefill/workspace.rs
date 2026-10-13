@@ -3,7 +3,7 @@ use super::super::capture::error;
 use super::{
     ORDERED_BLOCK, ORDERED_DIM, ORDERED_WIDTHS,
     budget::{enabled, opted_in},
-    kernels,
+    kernels, prepared,
 };
 use crate::{
     device::{CudaDevice, device_error},
@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 pub struct Workspace {
     buffers: BTreeMap<(usize, usize), Tensor<f32>>,
     lanes: usize,
+    prepared: prepared::Buffers,
     wy_blocks: BTreeMap<TensorId, usize>,
     prefer_wy: bool,
 }
@@ -28,7 +29,7 @@ impl Workspace {
         weights: &ProgramWeights,
         lanes: usize,
     ) -> Result<Self> {
-        // Independent 32-column blocks preserve the scalar norm, prediction and readout trees.
+        // Shared F32 inputs and independent 16-column blocks preserve the scalar norm, prediction and readout trees.
         // Captured 64/256-row fixtures and the complete checkpoint agree bit for bit.
         // Quantized default adoption still requires full task quality and service timing.
         // Diagnostic loading can compare this path; other shapes retain the existing WY policy.
@@ -94,6 +95,7 @@ impl Workspace {
         }
         Ok(Self {
             buffers,
+            prepared: prepared::allocate(device, graph, weights, lanes)?,
             lanes,
             wy_blocks,
             prefer_wy: opted_in,
@@ -185,6 +187,7 @@ impl Workspace {
             weights,
             state,
             scratch,
+            self.prepared.get_mut(&(key_heads, value_heads, key_dim)),
             metadata,
             [key_heads, value_heads, key_dim, self.lanes, block],
             self.wy_blocks.contains_key(&node.outputs[0]),
@@ -211,6 +214,7 @@ fn record_delta(
     weights: &ProgramWeights,
     state: &mut Tensor<f32>,
     scratch: &mut Tensor<f32>,
+    prepared: Option<&mut prepared::Inputs>,
     metadata: &Tensor<i32>,
     [key_heads, value_heads, key_dim, lanes, block]: [usize; DELTA_GEOMETRY_RANK],
     wy: bool,
@@ -247,19 +251,21 @@ fn record_delta(
         && [ORDERED_BLOCK, ORDERED_DIM].contains(&block)
         && ORDERED_WIDTHS.contains(&lanes)
     {
-        scope.record(
-            kernels::delta_grouped(
-                state.partition([1, key_dim, block]),
-                scratch.partition([1, lanes, block]),
-                &qkv,
-                &beta,
-                &alpha,
-                decay,
-                bias,
+        prepared
+            .ok_or_else(|| error("ordered recurrent preparation"))?
+            .record(
+                scope,
+                [
+                    &qkv,
+                    &beta,
+                    &alpha,
+                    &decay.view(&[value_heads])?,
+                    &bias.view(&[value_heads])?,
+                ],
+                [state, scratch],
                 metadata,
-            )
-            .generics(generics),
-        )?;
+                (key_heads, value_heads, key_dim, lanes, block),
+            )?;
     } else if wy {
         scope.record(
             kernels::delta_wy(

@@ -14,7 +14,7 @@ pub(super) fn enabled(weights: &ProgramWeights, opted_in: bool) -> bool {
     weights.expert_banks.is_empty()
         && (opted_in || (weights.input_scales.is_empty() && weights.fp8_inputs.is_empty()))
 }
-/// Sequential layers share output scratch by (value heads, value dimension).
+/// Sequential layers share output scratch and ordered Q/K/gate preparation buffers.
 /// Each captured prompt width owns a workspace, including explicitly opted-in
 /// quantized execution. Verification and slot decode do not retain this scratch.
 pub fn required_bytes(
@@ -50,5 +50,7 @@ pub fn required_bytes(
                 .ok_or_else(|| Error::invalid("CUDA recurrent scratch size overflow"))?;
         }
     }
-    Ok(bytes)
+    bytes
+        .checked_add(super::prepared::required_bytes(graph, weights, lanes)?)
+        .ok_or_else(|| Error::invalid("CUDA recurrent scratch size overflow"))
 }

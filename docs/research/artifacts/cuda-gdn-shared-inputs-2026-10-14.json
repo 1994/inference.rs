@@ -1,0 +1,734 @@
+{
+  "schema": 1,
+  "classification": "production ordered-path shared input preparation, with original quantized/MoE admission preserved; isolated performance evidence only",
+  "parent_commit": "97c3fb3e1fc8cbaf97b77ff79ee13093fa65c67b",
+  "source_hashes": {
+    "crates/backend/cuda/src/resident/recurrent_prefill.rs": "1a5e113e6e6fdf66ea13476d868f3ba36b03093e7245d17f82a039ade71b108b",
+    "crates/backend/cuda/src/resident/recurrent_prefill/budget.rs": "5a5f00ff7f07b35c02d3d6bb8d2a12c64cb6417418f2d60b81a81e2dd8f1cc8d",
+    "crates/backend/cuda/src/resident/recurrent_prefill/prepared.rs": "ec6885a45afc59b001b44ce0c1990b45c2ffe8121f0fd798a16171e80abffdf0",
+    "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs": "bcc3d55dfa68f5403b00556a1bf06bab41de1deb262cf4d980baae263b4e2875",
+    "crates/backend/cuda/tests/unit/loading_budget_recurrent.rs": "9bfca72876c5fcf1a4ae55360033c0b1450bd17783ce9de4f266c52e210ee192",
+    "crates/backend/cuda/tests/unit/resident_recurrent_prefill.rs": "6fbe318f2aa9d291acf3829f9678505f5c0a2eb0d404655a3cc0eab7f846ee65",
+    "crates/backend/cuda/tests/unit/resident_recurrent_prefill_benchmark_tests.rs": "bb53c1461ff7cfcc946fc1c3615cf849f8879be5eb334477d0fdb112143d95a5",
+    "tools/check/test-inventory.json": "a0a44ce82d8bfd2a23b59ae25369e36c6215f4e502e79437473be989248de9fa"
+  },
+  "production": {
+    "ordered_dim": 128,
+    "capture_widths": [
+      64,
+      256
+    ],
+    "value_columns_per_block": 16,
+    "normalized_qk_dtype": "F32",
+    "gates_dtype": "F32",
+    "state_dtype": "F32",
+    "default_behavior": "enabled by existing admission without user algorithm flags; quantized loader default and MoE admission unchanged",
+    "shared_buffers_key": [
+      "key_heads",
+      "value_heads",
+      "dimension"
+    ],
+    "wide_output_scratch_bytes": 6291456,
+    "wide_extra_preparation_bytes": 4292608,
+    "wide_total_bytes": 10584064,
+    "narrow_total_bytes": 2646016,
+    "both_widths_bytes": 13230080,
+    "per_token_head_preparation": "Q/K norm and normalized vectors once per key head; beta/decay once per value head; no F32 sum-tree reassociation"
+  },
+  "checks": {
+    "build_record": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v4/result.json",
+      "sha256": "a1cc44c4615d2c0eec74d2d75ba98107686ec118452ff336cf01a9143402c4d3"
+    },
+    "strict_clippy_cuda_release_all_targets": true,
+    "cpu_budget_tests": [
+      {
+        "argv": [
+          "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v4/cuda-tests",
+          "loading::budget::tests::recurrent::quantized_recurrent_admission_counts_retained_prompt_graphs_and_shares_layers",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "matched_one_test": true,
+        "started_unix": 1791922158.9344425,
+        "finished_unix": 1791922158.935748,
+        "stdout_sha256": "901147c387849747ec679dc3bb03ec7dfad2d35e9cd8c24414abc1e252dd277a",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runner_sha256": "4ec89ab7492ce2a9f75418930a2f93dfa88d42b2b43139de1461d0090b9096d4",
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "build_record_sha256": "a1cc44c4615d2c0eec74d2d75ba98107686ec118452ff336cf01a9143402c4d3"
+      },
+      {
+        "argv": [
+          "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v4/cuda-tests",
+          "loading::budget::tests::recurrent::recurrent_admission_counts_all_prompt_scratch_widths",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "matched_one_test": true,
+        "started_unix": 1791922158.9441805,
+        "finished_unix": 1791922158.94542,
+        "stdout_sha256": "b469bc3e5963f7fbf6b5182bb1beb4f2776c0eb0f94db7d7e1902fb6e6fae6dc",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runner_sha256": "4ec89ab7492ce2a9f75418930a2f93dfa88d42b2b43139de1461d0090b9096d4",
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "build_record_sha256": "a1cc44c4615d2c0eec74d2d75ba98107686ec118452ff336cf01a9143402c4d3"
+      },
+      {
+        "argv": [
+          "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v4/cuda-tests",
+          "loading::budget::tests::recurrent::recurrent_admission_rejects_scratch_overflow_before_allocation",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "matched_one_test": true,
+        "started_unix": 1791922158.954411,
+        "finished_unix": 1791922158.955584,
+        "stdout_sha256": "376c1bb7dba212d44efa01815f5b446d87e7b9dd5146299d05b8a17fae94367b",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runner_sha256": "4ec89ab7492ce2a9f75418930a2f93dfa88d42b2b43139de1461d0090b9096d4",
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "build_record_sha256": "a1cc44c4615d2c0eec74d2d75ba98107686ec118452ff336cf01a9143402c4d3"
+      },
+      {
+        "argv": [
+          "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v4/cuda-tests",
+          "loading::budget::tests::recurrent::ordered_recurrent_preparation_counts_distinct_key_geometries",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "matched_one_test": true,
+        "started_unix": 1791922158.9674325,
+        "finished_unix": 1791922158.9686112,
+        "stdout_sha256": "59be9b8258337beefd0d548d05f9b4ba5d986cef4ac3f2f3ad279226c7e6aa39",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runner_sha256": "4ec89ab7492ce2a9f75418930a2f93dfa88d42b2b43139de1461d0090b9096d4",
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "build_record_sha256": "a1cc44c4615d2c0eec74d2d75ba98107686ec118452ff336cf01a9143402c4d3"
+      }
+    ],
+    "gpu_numerical_and_regression": {
+      "unit": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/unit/result.json",
+          "sha256": "2fd778a718c8835613ca7c1f33ce308899a9f6eab6dba3d936f94f1360cefc5f"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/unit/stdout.log",
+          "sha256": "a1d302753fb08812861f848279d81ff5477e22d4e937bdf01493988cf450fa9d"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/unit/stderr.log",
+          "sha256": "4f3f9497c44aabccf667bd9477e67e876b304e92f5462777325e3d3b3943a7f9"
+        },
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "fixture_cases": 75,
+        "bit_checks": 150,
+        "all_state_and_output_bits_identical": true,
+        "f64_max_absolute_error": 1.155110407213833e-06,
+        "f64_threshold": 2e-05
+      },
+      "default-capture": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/default-capture/result.json",
+          "sha256": "7255b697fa1c63acb7aa6c2546a58f3821f8e2f63ce36dbac643ba184b0a347c"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/default-capture/stdout.log",
+          "sha256": "6b3aa83615a575e33346fb544a87bbcd287121c559cf3da2f8685bad0c94841f"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/default-capture/stderr.log",
+          "sha256": "70628b680a40a1d98f0c9d23637ea4ab42348631a0da85510973c74e31fa0df5"
+        },
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "widths": [
+          64,
+          256
+        ],
+        "loader_opt_in": false,
+        "all_hidden_logits_and_state_bits_identical": true,
+        "state_elements_per_checkpoint": 786432
+      },
+      "model64": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model64/result.json",
+          "sha256": "6a9725145cb0da720ceedb2cc5f83f88e33cf04b0abbb77ca2274d1b069dcd33"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model64/stdout.log",
+          "sha256": "f5bfc1f46d577b18d103bc690810c7f4aa5823662e003d54484f0aa72157caf2"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model64/stderr.log",
+          "sha256": "687a848b5cc71c67440f8a77084238762bf798af75533573dd11d19decdcc3dc"
+        },
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "prompt_tokens": 511,
+        "state_checkpoints": 26,
+        "f32_elements_per_checkpoint": 39223296,
+        "all_hidden_logits_and_state_bits_identical": true,
+        "verification_width": 3,
+        "commit_rows": 1,
+        "continued_teacher_forced_decode_steps": 16,
+        "scope": "quantized model via diagnostic loader; default quantized admission unchanged; explicit FP8 KV bytes not compared"
+      },
+      "model256": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model256/result.json",
+          "sha256": "e52948f646bbbdfecb6dd4f10fe3bdeb54b920cf1ce7c71412210be423dd3cad"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model256/stdout.log",
+          "sha256": "fefe43933ddb5b27b1ad2549dcdca1e676280509eac765829c3197379320d657"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/model256/stderr.log",
+          "sha256": "fff1a7b2b0c8dff2a6931859e2e5c027355c5f7c4589451d366facdd76092189"
+        },
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "prompt_tokens": 511,
+        "state_checkpoints": 20,
+        "f32_elements_per_checkpoint": 39223296,
+        "all_hidden_logits_and_state_bits_identical": true,
+        "verification_width": 3,
+        "commit_rows": 1,
+        "continued_teacher_forced_decode_steps": 16,
+        "scope": "quantized model via diagnostic loader; default quantized admission unchanged; explicit FP8 KV bytes not compared"
+      },
+      "performance": {
+        "result": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/performance/result.json",
+          "sha256": "39130e608287361ab1cdc87c183a840dd75c00fdbfc14ae608a66ecfc2b51b6b"
+        },
+        "stdout": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/performance/stdout.log",
+          "sha256": "c668a63bfd1f33056f6e370bc5045ada27c483b4aae33a1486eb72a42c6207e3"
+        },
+        "stderr": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/performance/stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "binary_sha256": "d745e2468c7345e43e2e42be1a712939ccc1e8cebd7f85980e1074bd68ce79dd",
+        "matched_tests": 1,
+        "guard_violations": 0,
+        "lines": [
+          "geometry=(2, 4, 32, 32) old_ms=0.082272 new_ms=0.043168 speedup=1.9058561",
+          "geometry=(16, 48, 128, 64) old_ms=0.33659202 new_ms=0.098048 speedup=3.432931",
+          "geometry=(16, 48, 128, 256) old_ms=1.3130081 new_ms=0.345696 speedup=3.7981582"
+        ],
+        "scope": "isolated scalar regression gate; no serving certificate"
+      }
+    },
+    "test_inventory": {
+      "all": 608,
+      "src": 0
+    }
+  },
+  "prior_split32_stage_profile": {
+    "artifact": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/profile-v1/stage-analysis.json",
+      "sha256": "dc1540f209b642b8cf248f9a6f9fb619a5f5c6fe00c885271a285ec38c310d06"
+    },
+    "wide_recurrent_median_ms": 0.339643,
+    "wide_normalize_gates_medians_sum_ms": 0.0132155,
+    "scope": "instrumented all warmup and timed kernel executions; sums of stage medians are not graph medians; not current16 runtime profile",
+    "limits": [
+      "Includes all warmup and timed executions. Sum of stage medians is not a paired graph median.",
+      "Instrumented timings are not service qualification or a speedup certificate.",
+      "registersPerThread is launch metadata, not measured occupancy."
+    ],
+    "warnings": [
+      {
+        "timestamp": 0,
+        "timestampType": 1,
+        "source": 3,
+        "severity": 1,
+        "text": "Profiling has started.",
+        "globalPid": -144115188075855872
+      },
+      {
+        "timestamp": 209529309,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 2,
+        "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+        "globalPid": -144115188075855872
+      },
+      {
+        "timestamp": 3459164715,
+        "timestampType": 1,
+        "source": 3,
+        "severity": 1,
+        "text": "Profiling has stopped.",
+        "globalPid": -144115188075855872
+      },
+      {
+        "timestamp": 23069,
+        "timestampType": 1,
+        "source": 2,
+        "severity": 1,
+        "text": "Process was launched by the profiler, see /tmp/nvidia/nsight_systems/quadd_session_102474178/streams/pid_2474192_stdout.log and stderr.log for program output",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 15009243,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Common injection library initialized successfully.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 19455503,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "OS runtime libraries injection initialized successfully.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 47566313,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Buffers holding CUDA trace data will be flushed on CudaProfilerStop() call. See --flush-on-cudaprofilerstop to control this behavior.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 53846552,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Loaded CUPTI library: /home/r/tools/nsight-systems-cli-2026.5.1/unpack/opt/nvidia/nsight-systems-cli/2026.5.1/target-linux-x64/libcupti.so.13.4",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 86641017,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Enabling trace for device graph launch",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 90290504,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "CUDA injection initialized successfully.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 209562152,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 1,
+        "text": "Number of CUDA events collected: \t36258.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 209563696,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 2,
+        "text": "CUDA profiling might have not been started correctly.",
+        "globalPid": 322985432973312
+      },
+      {
+        "timestamp": 209563963,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 2,
+        "text": "No CUDA events collected. Does the process use CUDA?",
+        "globalPid": 322985432973312
+      },
+      {
+        "timestamp": 209564234,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 2,
+        "text": "CUDA profiling might have not been started correctly.",
+        "globalPid": 322985500082176
+      },
+      {
+        "timestamp": 209564389,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 2,
+        "text": "No CUDA events collected. Does the process use CUDA?",
+        "globalPid": 322985500082176
+      },
+      {
+        "timestamp": 209564878,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 1,
+        "text": "Number of OS runtime libraries events collected: \t1518.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 209565181,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 1,
+        "text": "Number of OS runtime libraries events collected: \t1.",
+        "globalPid": 322985432973312
+      },
+      {
+        "timestamp": 209565413,
+        "timestampType": 2,
+        "source": 3,
+        "severity": 1,
+        "text": "Number of OS runtime libraries events collected: \t1.",
+        "globalPid": 322985500082176
+      },
+      {
+        "timestamp": 344314276,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Common injection library initialized successfully.",
+        "globalPid": 322985432973312
+      },
+      {
+        "timestamp": 350802573,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "OS runtime libraries injection initialized successfully.",
+        "globalPid": 322985432973312
+      },
+      {
+        "timestamp": 409751948,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Common injection library initialized successfully.",
+        "globalPid": 322985500082176
+      },
+      {
+        "timestamp": 414099465,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "OS runtime libraries injection initialized successfully.",
+        "globalPid": 322985500082176
+      },
+      {
+        "timestamp": 3349755365,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Number of CUPTI events produced: \t41371, CUPTI buffers: 50.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 3349758241,
+        "timestampType": 1,
+        "source": 1,
+        "severity": 1,
+        "text": "Hardware tracing used for CUDA tracing.",
+        "globalPid": 322985030320128
+      },
+      {
+        "timestamp": 16161392098,
+        "timestampType": 1,
+        "source": 2,
+        "severity": 1,
+        "text": "Number of Debuginfod queries: 24 (successful queries: 8, timed out queries: 0).",
+        "globalPid": 281474976710656
+      },
+      {
+        "timestamp": 16161401297,
+        "timestampType": 1,
+        "source": 2,
+        "severity": 1,
+        "text": "Number of used Debuginfod cached files: 0.",
+        "globalPid": 281474976710656
+      },
+      {
+        "timestamp": 16161404962,
+        "timestampType": 1,
+        "source": 2,
+        "severity": 1,
+        "text": "Total time spent on all Debuginfod queries: 11 sec (successful queries: 5 sec 813 msec).",
+        "globalPid": 281474976710656
+      }
+    ]
+  },
+  "exploratory_measurement": {
+    "artifact": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/measure-summary.json",
+      "sha256": "71d3ed6f98748d907acbfb8bec761350a9340df1dc706c74b42315c22c9cbce3"
+    },
+    "fixture_cases": 75,
+    "invocations": 30,
+    "rejected_block": 8,
+    "failed_block8_invocations": 10,
+    "all_raw_samples_retained": true,
+    "wide_block8_timing": "not measured because width64 original5% regression gate stopped each invocation"
+  },
+  "independent_confirmation": {
+    "schema": 1,
+    "classification": "predeclared independent isolated confirmation; not service certification",
+    "candidate": "shared F32 normalized Q/K and gates +16-column recurrence and transpose",
+    "control": "prior split32 and transpose",
+    "binary_sha256": "985660aa7d49da30487a99d1f919f6246c46b55f50e472bb172ffdb04afa29b0",
+    "plan_sha256": "8cc2f070fd59444c0ecc446d433827c07b2a5ce1dafc486e2f407bb7b4b6d676",
+    "exploratory_summary_sha256": "71d3ed6f98748d907acbfb8bec761350a9340df1dc706c74b42315c22c9cbce3",
+    "all10_invocations_passed": true,
+    "groups": [
+      {
+        "l2": "cold",
+        "width": 64,
+        "units": 5,
+        "control_median_ms": 0.106272,
+        "candidate_median_ms": 0.09776,
+        "paired_speedup_median": 1.08717697088649,
+        "paired_unit_bootstrap_95_percent_ci": [
+          1.0855973813420623,
+          1.0876905425340109
+        ],
+        "control_drift": 0.002110658827076756,
+        "candidate_drift": 0.002458613342074969,
+        "isolated_confirmation_accepted": true
+      },
+      {
+        "l2": "cold",
+        "width": 256,
+        "units": 5,
+        "control_median_ms": 0.39544,
+        "candidate_median_ms": 0.34544,
+        "paired_speedup_median": 1.1448489901797296,
+        "paired_unit_bootstrap_95_percent_ci": [
+          1.1444583391227827,
+          1.1448805776708015
+        ],
+        "control_drift": 0.0009712666936462856,
+        "candidate_drift": 0.000880240908038066,
+        "isolated_confirmation_accepted": true
+      },
+      {
+        "l2": "warm",
+        "width": 64,
+        "units": 5,
+        "control_median_ms": 0.103504,
+        "candidate_median_ms": 0.08494399999999999,
+        "paired_speedup_median": 1.2189560957226304,
+        "paired_unit_bootstrap_95_percent_ci": [
+          1.2174731688947469,
+          1.2203389830508475
+        ],
+        "control_drift": 0.0021651716671820687,
+        "candidate_drift": 0.0007537214999057214,
+        "isolated_confirmation_accepted": true
+      },
+      {
+        "l2": "warm",
+        "width": 256,
+        "units": 5,
+        "control_median_ms": 0.393152,
+        "candidate_median_ms": 0.309792,
+        "paired_speedup_median": 1.2695486003512033,
+        "paired_unit_bootstrap_95_percent_ci": [
+          1.267839636757649,
+          1.2703205791106515
+        ],
+        "control_drift": 0.0005291436014327223,
+        "candidate_drift": 0.0021199586349536113,
+        "isolated_confirmation_accepted": true
+      }
+    ],
+    "reports": [
+      {
+        "label": "u0-b16-warm-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u0-b16-warm-BA",
+        "files": {
+          "result.json": "704733a3fdc2ac5bea8f7a2dd9300e2b309c54b40ac578f2716e8444a66fb8dc",
+          "stdout.log": "465bacab0ada232ace73e36852871c86ad6255427aade78dcce71ee49fae3250",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "d5a66cb98106bb52b91f719423abc7b0ae11aeea2f22f36445e5ecc986e798a8"
+        }
+      },
+      {
+        "label": "u0-b16-cold-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u0-b16-cold-BA",
+        "files": {
+          "result.json": "dc43b998014e9d467643571f7c3acf17afd84334a8acea4071247f59e775d2a4",
+          "stdout.log": "5168b59b6ba50d2a47b2cf3722069e1b94b0dde6fbfbe832ec208d55c9b32660",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "53fddc5e2518e907a1e339a56183d6d5dcbee781f000fa508ce5670e75397f13"
+        }
+      },
+      {
+        "label": "u1-b16-cold-AB",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u1-b16-cold-AB",
+        "files": {
+          "result.json": "66bef4ccc04c8814e89fbcb65bea7216c26371220dc05dbb089a63e4fd5b2254",
+          "stdout.log": "213325321535b4a3d4ba857dfb7b36c321379b9a7a586d8046db3a8a43138552",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "e774957e05db3f3cd93d63f2a04a39d09ed926aa4c286a2bf50a9e6581a610cf"
+        }
+      },
+      {
+        "label": "u1-b16-warm-AB",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u1-b16-warm-AB",
+        "files": {
+          "result.json": "e6a8c8639b5eb9b334b3c1cf4dcaf546059c3aa20f4c655d312743d30c5ae7be",
+          "stdout.log": "a7aaa045c23cb60255d70ff60b8ba07b189d9711901626fe2fbf633daa3b332b",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "efbd973831ae8f3f559d09f2c74a3b166b4f4a6f67fb534d7a7904681c7988af"
+        }
+      },
+      {
+        "label": "u2-b16-warm-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u2-b16-warm-BA",
+        "files": {
+          "result.json": "84cb89cc6cc7be1f02aa639235628fd0ef174b2d712d6f6b33951a340d80672d",
+          "stdout.log": "b9bb9c00233fa416896c9d2a65383c316774a1f6717698ecb2a6032d4dcd2542",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "2b7e52a9564c678e8b0e7d77d5d5562a91746412b94bdedf9412a7cdf914ddec"
+        }
+      },
+      {
+        "label": "u2-b16-cold-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u2-b16-cold-BA",
+        "files": {
+          "result.json": "1cd263c56c3e5ab298ebab9b941269b1f56d9c9c33b9536421769c722ab40ebd",
+          "stdout.log": "00b451fce7bd3e765a8ace13279071d17a05af34292cae67ab8c7de5d2c360d6",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "297f158861c34798af61482ada8ae5021111c802fe107313dd2bbdefcf0b0458"
+        }
+      },
+      {
+        "label": "u3-b16-cold-AB",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u3-b16-cold-AB",
+        "files": {
+          "result.json": "acb43f033e1e56c9e2fd66c132fdd05feebad12238f9dceb4eeefeca698f47af",
+          "stdout.log": "1b6b83f51f71734fe3b86908f882322931eb8c123d6a32a7124f643c76bcba7c",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "f95734014f4948d82e021b92cdebf041c8671c3a1c2a7d223d114360aa5b944c"
+        }
+      },
+      {
+        "label": "u3-b16-warm-AB",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u3-b16-warm-AB",
+        "files": {
+          "result.json": "8561fdf71c1fb409378abc46b590f0dc837741377fbd57b7b30961e2259a2ddd",
+          "stdout.log": "7e88775d2635d86de9b5c2aeb7ae028fd6581722fb85ea40a71394049626623a",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "14a7c1322a50eb13ab34b9f5836d47ffb265cd13a0ec21b724887974d987f1cf"
+        }
+      },
+      {
+        "label": "u4-b16-warm-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u4-b16-warm-BA",
+        "files": {
+          "result.json": "bf32c15ee973fb43810f58627d030e1ac912e676284dcc07481322a4e9857952",
+          "stdout.log": "4d57aad600fdb8a3402e41c858c1ee6d87e7eaeb4a24744848fda3b1224293e7",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "93a5d961a0877a9c7512c89cc754b08d42c75f1908780dd12f998a5f5dec30d2"
+        }
+      },
+      {
+        "label": "u4-b16-cold-BA",
+        "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation/u4-b16-cold-BA",
+        "files": {
+          "result.json": "024136df666b0bc4583e75337144bcbc34151e21ec501e70b4db6df5e86dac84",
+          "stdout.log": "22c7bc92b8f9efe7ff95a20868307f1ee2261084d973535e80877a5f6a3c7749",
+          "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "gpu-processes.jsonl": "83aa11b3ebb54c537b3893af7dd0292dba79fd83e6428b87a8a1a99d6717e9c1"
+        }
+      }
+    ],
+    "limits": [
+      "Confidence intervals concern paired process median kernel timings, not service TTFT or TPOT.",
+      "Cold and warm cache results bracket isolated behavior; runtime behavior must be measured separately.",
+      "No altered numerical/quality thresholds. Quantized default promotion remains subject to previous service/task gates."
+    ]
+  },
+  "evidence": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/preparation.json",
+      "sha256": "477988b96993d197ef32393b2a660ac57e0e6a17d6b665be0cd184d9fdb1122e"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/run-build-r4.py",
+      "sha256": "721fab238db5a1de0cefbd7a0327091a703a283385032223fb282afc997d48eb"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/run-test.py",
+      "sha256": "61e7ba28168865be0eebdc4734846c4adeffd719935ed0893f88ce372d971555"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/run-budget.py",
+      "sha256": "4ec89ab7492ce2a9f75418930a2f93dfa88d42b2b43139de1461d0090b9096d4"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/run-tests-r2.py",
+      "sha256": "1c1143346d2a6ae77377864c6ce1ab2b5a9916f5a4eab2813bd6b5823d144848"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/build-v5/result.json",
+      "sha256": "a9bed7e56163bbb917726ee6f18d31a9eb1382ed68046cf2803df3a266c42668"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/measure-invocation-plan.json",
+      "sha256": "57f1ae4a12a053d46a339f7ed9d826edc33ba4ae0887a44a5217d22f19d9ad4f"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/measure-summary.json",
+      "sha256": "71d3ed6f98748d907acbfb8bec761350a9340df1dc706c74b42315c22c9cbce3"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation-plan.json",
+      "sha256": "8cc2f070fd59444c0ecc446d433827c07b2a5ce1dafc486e2f407bb7b4b6d676"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/confirmation-summary.json",
+      "sha256": "b95cf46002d79179226d0636c64f35b239660705affa3cf71e94a8193d09fb8d"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/normalization-sharing-v1/profile-v1/stage-analysis.json",
+      "sha256": "dc1540f209b642b8cf248f9a6f9fb619a5f5c6fe00c885271a285ec38c310d06"
+    }
+  ],
+  "retained_build_failures": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v1",
+      "reason": "numeric binding count needed a named constant"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v2",
+      "reason": "formatted test file had to be restaged before inventory"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/integration-shared-inputs-v1/build-v3",
+      "reason": "zero-copy TensorView bindings and mutable tensor partition borrows needed correct types"
+    }
+  ],
+  "limits": [
+    "Kernel-level confirmation does not certify serving TTFT/TPOT.",
+    "Full256 task and serving evidence in the prior split artifact pertains to the old32-column automatic-quantized archive, not this shared16 implementation.",
+    "No new free-generation256-task or sustained-service qualification for shared16; quantized default stays scalar.",
+    "Native and fixed-vLLM precision contracts remain different; this preserves native F32 arithmetic.",
+    "No occupancy or measured-HBM-bandwidth claim."
+  ]
+}
