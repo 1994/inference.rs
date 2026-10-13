@@ -1,0 +1,2712 @@
+{
+  "classification": "diagnostic numeric causality for current private/pooled routes; no performance, quality or production admission",
+  "parent": "aa83fea8d480f65009cd05b093c21e442d26a8da",
+  "root": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1",
+  "actual_service_geometry": {
+    "private_requested_capacity": 116,
+    "private_allocated_capacity": 128,
+    "pooled_capacity": 8192,
+    "pool_width": 4,
+    "prefill": "automatic256/narrow64;52tokens use64",
+    "MTP": 0
+  },
+  "comparison": "same52token prefix, all F32 state, all validFP8 KV, samefirstdecodeinput; private vs defaultpool8192; after oneprivate step migrate bitsidentically to defaultpoolslot0 while slot1 was pooledonly; subsequent inputscommon",
+  "controlled_intervention": "96 smallprojections per F32pool capture, two F32pool capacities128and8192; samecapacityF32pool must matchprivate atfirststep; differingcapacityF32pool is separatelymeasured",
+  "build_v6": [
+    {
+      "label": "fmt",
+      "argv": [
+        "/usr/bin/cargo",
+        "fmt",
+        "--all"
+      ],
+      "returncode": 0,
+      "started": 1791935324.424269,
+      "finished": 1791935325.0572484
+    },
+    {
+      "label": "clippy",
+      "argv": [
+        "/usr/bin/cargo",
+        "clippy",
+        "--locked",
+        "--release",
+        "-p",
+        "infer-backend-cuda",
+        "--features",
+        "cuda",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "started": 1791935325.0573127,
+      "finished": 1791935330.8970673
+    },
+    {
+      "label": "tests",
+      "argv": [
+        "/usr/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "infer-backend-cuda",
+        "--features",
+        "cuda",
+        "--lib",
+        "--no-run",
+        "--message-format=json-render-diagnostics"
+      ],
+      "returncode": 0,
+      "started": 1791935330.897138,
+      "finished": 1791935425.6055071,
+      "binary_sha256": "9a7fb42cd5618d5e90663b7403cecc6c663cf16c25490ba5d0b561b5898e8ceb"
+    }
+  ],
+  "test_source_sha256": "3fe65c7eff75c22f7719d19f91d46ff3d42d4150bf20a64e5bdc8d9425050d42",
+  "source_identity_note": "formatted source hash from frozen build record is authoritative; earlier plans include preparation hashes",
+  "run_v6": {
+    "matched_one_test": true,
+    "label": "route",
+    "workers": 0,
+    "run_id": "v6",
+    "argv": [
+      "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/build-v6/cuda-tests",
+      "loading::decode_path_tests::checkpoint_route_transition_first_difference_census",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "returncode": 0,
+    "binary_sha256": "9a7fb42cd5618d5e90663b7403cecc6c663cf16c25490ba5d0b561b5898e8ceb",
+    "runner_sha256": "56b6da0911d484b930e9986f57532ffb311135fd479c76b41dc87dac9fb87774",
+    "build_record_sha256": "eafdff20778beca817db3b5ae2fcb9256b363eceb7e93deed8934e976e3a242b",
+    "started_unix": 1791935429.8379977,
+    "finished_unix": 1791935479.0564296,
+    "before": "1160, /usr/bin/kwin_wayland, 251 MiB\n",
+    "after": "1160, /usr/bin/kwin_wayland, 251 MiB\n",
+    "violations": [],
+    "verified_desktops": [],
+    "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/inference-benchmark-2562044.service",
+    "environment": {
+      "CUDA_TOOLKIT_PATH": "/opt/cuda",
+      "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/kernel-cache",
+      "INFER_GAP_INDEX": "1",
+      "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+      "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+      "INFER_TEST_PREFILL_WIDTH": "64",
+      "INFER_TEST_ROUTE_CASES": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/cases.json",
+      "INFER_CUDA_TUNING_TABLE": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v6/tuning.json"
+    },
+    "scope": "diagnostic functional/default capture/isolated timing; no service certification"
+  },
+  "events_v6": [
+    {
+      "F32_pool_capacity128": {
+        "first_state_difference": null,
+        "hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "pool_capacity": 128,
+        "state_differences": 0
+      },
+      "F32_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 138005,
+          "elements": 786432,
+          "field": "TensorId(2895) State { layer: 56, kind: LinearAttention } part=0",
+          "first": {
+            "element": 16384,
+            "left": 0.0016392915276810527,
+            "left_bits": 987159935,
+            "right": 0.0016392916440963745,
+            "right_bits": 987159936
+          },
+          "maximum_absolute": 5.960464477539063e-08
+        },
+        "hidden": {
+          "different": 1023,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 5,
+            "left": 0.1974724382162094,
+            "left_bits": 1045050935,
+            "right": 0.19747230410575867,
+            "right_bits": 1045050926
+          },
+          "maximum_absolute": 1.430511474609375e-06
+        },
+        "logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "pool_capacity": 8192,
+        "state_differences": 830802
+      },
+      "case": "batch4-repeat1-slot0",
+      "default_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 713207,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": 4.4380620238371193e-05,
+            "left_bits": 943334740,
+            "right": 4.4379841710906476e-05,
+            "right_bits": 943334526
+          },
+          "maximum_absolute": 4.553794860839844e-05
+        },
+        "hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.4392942488193512,
+            "left_bits": 3202411309,
+            "right": -0.5975210666656494,
+            "right_bits": 3206084388
+          },
+          "maximum_absolute": 1.0551953315734863
+        },
+        "logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": {
+            "element": 0,
+            "left": 4.373624801635742,
+            "left_bits": 1082913980,
+            "right": 4.5983428955078125,
+            "right_bits": 1083385248
+          },
+          "maximum_absolute": 0.8273172378540039
+        },
+        "pool_capacity": 8192,
+        "state_differences": 38127153
+      },
+      "default_token": 32783,
+      "input_token": 2,
+      "matched_small_projection_records": 192,
+      "position": 52,
+      "private_allocated_capacity": 128,
+      "private_requested_capacity": 116,
+      "private_token": 32783,
+      "route_seed_census": true,
+      "valid_KV_rows": 53
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.165981769561768,
+          "left_bits": 1088769977,
+          "right": 6.666182994842529,
+          "right_bits": 1087721823
+        },
+        "maximum_absolute": 2.029871940612793
+      },
+      "generation_index": 2,
+      "input_token": 32783,
+      "mixed_token": 19,
+      "pooled_only_token": 19,
+      "position": 53,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.30319595336914,
+          "left_bits": 1090836964,
+          "right": 8.06905460357666,
+          "right_bits": 1090591449
+        },
+        "maximum_absolute": 1.0465984344482422
+      },
+      "generation_index": 3,
+      "input_token": 19,
+      "mixed_token": 12,
+      "pooled_only_token": 12,
+      "position": 54,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.358713150024414,
+          "left_bits": 1090895178,
+          "right": 6.605340003967285,
+          "right_bits": 1087594226
+        },
+        "maximum_absolute": 7.91840386390686
+      },
+      "generation_index": 4,
+      "input_token": 12,
+      "mixed_token": 16,
+      "pooled_only_token": 16,
+      "position": 55,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.481846809387207,
+          "left_bits": 1087335242,
+          "right": 6.218498229980469,
+          "right_bits": 1086782960
+        },
+        "maximum_absolute": 1.6880277395248413
+      },
+      "generation_index": 5,
+      "input_token": 16,
+      "mixed_token": 12,
+      "pooled_only_token": 12,
+      "position": 56,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.119152545928955,
+          "left_bits": 1088671769,
+          "right": 6.098896026611328,
+          "right_bits": 1086532136
+        },
+        "maximum_absolute": 6.104708731174469
+      },
+      "generation_index": 6,
+      "input_token": 12,
+      "mixed_token": 15,
+      "pooled_only_token": 15,
+      "position": 57,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.536272048950195,
+          "left_bits": 1091081362,
+          "right": 8.14113998413086,
+          "right_bits": 1090667036
+        },
+        "maximum_absolute": 1.2153196334838867
+      },
+      "generation_index": 7,
+      "input_token": 15,
+      "mixed_token": 25,
+      "pooled_only_token": 25,
+      "position": 58,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 3.6872761249542236,
+          "left_bits": 1080818773,
+          "right": 3.292168617248535,
+          "right_bits": 1079161572
+        },
+        "maximum_absolute": 1.050478458404541
+      },
+      "generation_index": 8,
+      "input_token": 25,
+      "mixed_token": 733,
+      "pooled_only_token": 733,
+      "position": 59,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.1257781982421875,
+          "left_bits": 1084491360,
+          "right": 5.003139019012451,
+          "right_bits": 1084234167
+        },
+        "maximum_absolute": 0.7594851851463318
+      },
+      "generation_index": 9,
+      "input_token": 733,
+      "mixed_token": 2133,
+      "pooled_only_token": 2133,
+      "position": 60,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.0353899002075195,
+          "left_bits": 1084301802,
+          "right": 4.821427345275879,
+          "right_bits": 1083853090
+        },
+        "maximum_absolute": 0.8698881268501282
+      },
+      "generation_index": 10,
+      "input_token": 2133,
+      "mixed_token": 91063,
+      "pooled_only_token": 91063,
+      "position": 61,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.525860786437988,
+          "left_bits": 1091070445,
+          "right": 8.535165786743164,
+          "right_bits": 1091080202
+        },
+        "maximum_absolute": 0.9767153263092041
+      },
+      "generation_index": 11,
+      "input_token": 91063,
+      "mixed_token": 1892,
+      "pooled_only_token": 1892,
+      "position": 62,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.041991710662842,
+          "left_bits": 1084315647,
+          "right": 4.92655611038208,
+          "right_bits": 1084073561
+        },
+        "maximum_absolute": 1.3494791984558105
+      },
+      "generation_index": 12,
+      "input_token": 1892,
+      "mixed_token": 417,
+      "pooled_only_token": 417,
+      "position": 63,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.363935470581055,
+          "left_bits": 1084990812,
+          "right": 5.501490116119385,
+          "right_bits": 1085279285
+        },
+        "maximum_absolute": 0.8855094909667969
+      },
+      "generation_index": 13,
+      "input_token": 417,
+      "mixed_token": 30875,
+      "pooled_only_token": 30875,
+      "position": 64,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.140470504760742,
+          "left_bits": 1088716476,
+          "right": 6.858686923980713,
+          "right_bits": 1088125533
+        },
+        "maximum_absolute": 1.3359174728393555
+      },
+      "generation_index": 14,
+      "input_token": 30875,
+      "mixed_token": 594,
+      "pooled_only_token": 321,
+      "position": 65,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.708430290222168,
+          "left_bits": 1087810422,
+          "right": 6.4316301345825195,
+          "right_bits": 1087229930
+        },
+        "maximum_absolute": 1.3748884201049805
+      },
+      "generation_index": 15,
+      "input_token": 594,
+      "mixed_token": 13453,
+      "pooled_only_token": 13453,
+      "position": 66,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.930729866027832,
+          "left_bits": 1086179466,
+          "right": 5.771884918212891,
+          "right_bits": 1085846344
+        },
+        "maximum_absolute": 1.1926952004432678
+      },
+      "generation_index": 16,
+      "input_token": 13453,
+      "mixed_token": 9268,
+      "pooled_only_token": 9268,
+      "position": 67,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.498154163360596,
+          "left_bits": 1087369441,
+          "right": 6.518807888031006,
+          "right_bits": 1087412755
+        },
+        "maximum_absolute": 0.7661657333374023
+      },
+      "generation_index": 17,
+      "input_token": 9268,
+      "mixed_token": 16706,
+      "pooled_only_token": 16706,
+      "position": 68,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.044265270233154,
+          "left_bits": 1082223263,
+          "right": 4.2126383781433105,
+          "right_bits": 1082576367
+        },
+        "maximum_absolute": 0.6665167808532715
+      },
+      "generation_index": 18,
+      "input_token": 16706,
+      "mixed_token": 31410,
+      "pooled_only_token": 31410,
+      "position": 69,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.019179344177246,
+          "left_bits": 1090539151,
+          "right": 7.7118682861328125,
+          "right_bits": 1089914784
+        },
+        "maximum_absolute": 1.0741090774536133
+      },
+      "generation_index": 19,
+      "input_token": 31410,
+      "mixed_token": 271,
+      "pooled_only_token": 271,
+      "position": 70,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 9.123251914978027,
+          "left_bits": 1091696855,
+          "right": 8.972949028015137,
+          "right_bits": 1091539251
+        },
+        "maximum_absolute": 1.969615951180458
+      },
+      "generation_index": 20,
+      "input_token": 271,
+      "mixed_token": 550,
+      "pooled_only_token": 550,
+      "position": 71,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.9839277267456055,
+          "left_bits": 1084193878,
+          "right": 4.648612976074219,
+          "right_bits": 1083490672
+        },
+        "maximum_absolute": 1.2222394943237305
+      },
+      "generation_index": 21,
+      "input_token": 550,
+      "mixed_token": 220,
+      "pooled_only_token": 220,
+      "position": 72,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.5938057899475098,
+          "left_bits": 1076232426,
+          "right": 2.636289119720459,
+          "right_bits": 1076410614
+        },
+        "maximum_absolute": 1.0244255065917969
+      },
+      "generation_index": 22,
+      "input_token": 220,
+      "mixed_token": 16,
+      "pooled_only_token": 16,
+      "position": 73,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.9872965812683105,
+          "left_bits": 1088395247,
+          "right": 6.4138312339782715,
+          "right_bits": 1087192603
+        },
+        "maximum_absolute": 1.1688356399536133
+      },
+      "generation_index": 23,
+      "input_token": 16,
+      "mixed_token": 13,
+      "pooled_only_token": 13,
+      "position": 74,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot0",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.112975120544434,
+          "left_bits": 1082367358,
+          "right": 3.939370632171631,
+          "right_bits": 1081876134
+        },
+        "maximum_absolute": 1.5152111053466797
+      },
+      "generation_index": 24,
+      "input_token": 13,
+      "mixed_token": 9321,
+      "pooled_only_token": 9237,
+      "position": 75,
+      "route_transition_step": true
+    },
+    {
+      "case": "batch4-repeat1-slot0",
+      "first_divergent_generation_index": 14,
+      "initial_F32_and_FP8_states_identical": true,
+      "migration_state_copy_identical": true,
+      "only_preceding_route_differs": true,
+      "production_promotion": false,
+      "route_transition_summary": true
+    },
+    {
+      "F32_pool_capacity128": {
+        "first_state_difference": null,
+        "hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "pool_capacity": 128,
+        "state_differences": 0
+      },
+      "F32_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 392318,
+          "elements": 786432,
+          "field": "TensorId(640) State { layer: 12, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": -0.001376679865643382,
+            "left_bits": 3132387766,
+            "right": -0.001376679982058704,
+            "right_bits": 3132387767
+          },
+          "maximum_absolute": 1.4901161193847656e-08
+        },
+        "hidden": {
+          "different": 2271,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.6501080989837646,
+            "left_bits": 3206966652,
+            "right": -0.6501081585884094,
+            "right_bits": 3206966653
+          },
+          "maximum_absolute": 1.9073486328125e-06
+        },
+        "logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "pool_capacity": 8192,
+        "state_differences": 8145780
+      },
+      "case": "batch4-repeat1-slot1",
+      "default_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 700312,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": -0.00011125866149086505,
+            "left_bits": 3102299018,
+            "right": -0.00011125915625598282,
+            "right_bits": 3102299086
+          },
+          "maximum_absolute": 5.14984130859375e-05
+        },
+        "hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.6501080989837646,
+            "left_bits": 3206966652,
+            "right": -0.4889945387840271,
+            "right_bits": 3204078974
+          },
+          "maximum_absolute": 0.7551002502441406
+        },
+        "logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": {
+            "element": 0,
+            "left": 3.674420118331909,
+            "left_bits": 1080764851,
+            "right": 3.833050012588501,
+            "right_bits": 1081430193
+          },
+          "maximum_absolute": 0.8769435882568359
+        },
+        "pool_capacity": 8192,
+        "state_differences": 38068079
+      },
+      "default_token": 6278,
+      "input_token": 623,
+      "matched_small_projection_records": 192,
+      "position": 52,
+      "private_allocated_capacity": 128,
+      "private_requested_capacity": 116,
+      "private_token": 6278,
+      "route_seed_census": true,
+      "valid_KV_rows": 53
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.922256946563721,
+          "left_bits": 1084064545,
+          "right": 4.67661190032959,
+          "right_bits": 1083549390
+        },
+        "maximum_absolute": 0.8628721237182617
+      },
+      "generation_index": 2,
+      "input_token": 6278,
+      "mixed_token": 19670,
+      "pooled_only_token": 19670,
+      "position": 53,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.76225471496582,
+          "left_bits": 1090020452,
+          "right": 8.142663955688477,
+          "right_bits": 1090668634
+        },
+        "maximum_absolute": 1.3407726287841797
+      },
+      "generation_index": 3,
+      "input_token": 19670,
+      "mixed_token": 11106,
+      "pooled_only_token": 11106,
+      "position": 54,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.099275588989258,
+          "left_bits": 1086532932,
+          "right": 5.8759870529174805,
+          "right_bits": 1086064662
+        },
+        "maximum_absolute": 1.1187306642532349
+      },
+      "generation_index": 4,
+      "input_token": 11106,
+      "mixed_token": 4744,
+      "pooled_only_token": 4744,
+      "position": 55,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.84583854675293,
+          "left_bits": 1086001436,
+          "right": 5.911692142486572,
+          "right_bits": 1086139541
+        },
+        "maximum_absolute": 0.6748294830322266
+      },
+      "generation_index": 5,
+      "input_token": 4744,
+      "mixed_token": 318,
+      "pooled_only_token": 318,
+      "position": 56,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.8069143295288086,
+          "left_bits": 1077126268,
+          "right": 2.549607753753662,
+          "right_bits": 1076047046
+        },
+        "maximum_absolute": 1.046863079071045
+      },
+      "generation_index": 6,
+      "input_token": 318,
+      "mixed_token": 3950,
+      "pooled_only_token": 3950,
+      "position": 57,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.640789985656738,
+          "left_bits": 1091190957,
+          "right": 8.529192924499512,
+          "right_bits": 1091073939
+        },
+        "maximum_absolute": 1.4900054335594177
+      },
+      "generation_index": 7,
+      "input_token": 3950,
+      "mixed_token": 44,
+      "pooled_only_token": 44,
+      "position": 58,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.734879016876221,
+          "left_bits": 1085768737,
+          "right": 5.741218566894531,
+          "right_bits": 1085782032
+        },
+        "maximum_absolute": 0.9603452682495117
+      },
+      "generation_index": 8,
+      "input_token": 44,
+      "mixed_token": 8,
+      "pooled_only_token": 8,
+      "position": 59,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 3.8911895751953125,
+          "left_bits": 1081674048,
+          "right": 3.9944047927856445,
+          "right_bits": 1082106964
+        },
+        "maximum_absolute": 1.1511389017105103
+      },
+      "generation_index": 9,
+      "input_token": 8,
+      "mixed_token": 42903,
+      "pooled_only_token": 42903,
+      "position": 60,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.10434627532959,
+          "left_bits": 1088640718,
+          "right": 7.041164875030518,
+          "right_bits": 1088508217
+        },
+        "maximum_absolute": 1.4524946212768555
+      },
+      "generation_index": 10,
+      "input_token": 42903,
+      "mixed_token": 11,
+      "pooled_only_token": 11,
+      "position": 61,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.621140956878662,
+          "left_bits": 1085530211,
+          "right": 5.561824321746826,
+          "right_bits": 1085405815
+        },
+        "maximum_absolute": 1.7568602561950684
+      },
+      "generation_index": 11,
+      "input_token": 11,
+      "mixed_token": 279,
+      "pooled_only_token": 279,
+      "position": 62,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.872741222381592,
+          "left_bits": 1077402366,
+          "right": 2.791900396347046,
+          "right_bits": 1077063295
+        },
+        "maximum_absolute": 2.0461177825927734
+      },
+      "generation_index": 12,
+      "input_token": 279,
+      "mixed_token": 5839,
+      "pooled_only_token": 5839,
+      "position": 63,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.842573642730713,
+          "left_bits": 1077275834,
+          "right": 2.6175899505615234,
+          "right_bits": 1076332184
+        },
+        "maximum_absolute": 1.5268802642822266
+      },
+      "generation_index": 13,
+      "input_token": 5839,
+      "mixed_token": 84810,
+      "pooled_only_token": 84810,
+      "position": 64,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.454084396362305,
+          "left_bits": 1083082716,
+          "right": 4.227940082550049,
+          "right_bits": 1082608457
+        },
+        "maximum_absolute": 1.300114631652832
+      },
+      "generation_index": 14,
+      "input_token": 84810,
+      "mixed_token": 369,
+      "pooled_only_token": 369,
+      "position": 65,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 3.734647274017334,
+          "left_bits": 1081017462,
+          "right": 4.097845077514648,
+          "right_bits": 1082335628
+        },
+        "maximum_absolute": 1.6026744842529297
+      },
+      "generation_index": 15,
+      "input_token": 369,
+      "mixed_token": 524,
+      "pooled_only_token": 524,
+      "position": 66,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.7905797958374023,
+          "left_bits": 1077057756,
+          "right": 2.9882447719573975,
+          "right_bits": 1077886823
+        },
+        "maximum_absolute": 1.4180917739868164
+      },
+      "generation_index": 16,
+      "input_token": 524,
+      "mixed_token": 12204,
+      "pooled_only_token": 12204,
+      "position": 67,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.756748199462891,
+          "left_bits": 1087911752,
+          "right": 6.796809196472168,
+          "right_bits": 1087995766
+        },
+        "maximum_absolute": 1.0612441301345825
+      },
+      "generation_index": 17,
+      "input_token": 12204,
+      "mixed_token": 318,
+      "pooled_only_token": 318,
+      "position": 68,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.9343907833099365,
+          "left_bits": 1077660943,
+          "right": 3.006019115447998,
+          "right_bits": 1077961374
+        },
+        "maximum_absolute": 1.0101133584976196
+      },
+      "generation_index": 18,
+      "input_token": 318,
+      "mixed_token": 37,
+      "pooled_only_token": 37,
+      "position": 69,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.003409385681152,
+          "left_bits": 1082137582,
+          "right": 3.712404251098633,
+          "right_bits": 1080924168
+        },
+        "maximum_absolute": 1.1256327331066132
+      },
+      "generation_index": 19,
+      "input_token": 37,
+      "mixed_token": 1537,
+      "pooled_only_token": 1537,
+      "position": 70,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 3.620591878890991,
+          "left_bits": 1080539079,
+          "right": 3.600308418273926,
+          "right_bits": 1080454004
+        },
+        "maximum_absolute": 0.9611494541168213
+      },
+      "generation_index": 20,
+      "input_token": 1537,
+      "mixed_token": 19797,
+      "pooled_only_token": 4851,
+      "position": 71,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.13900089263916,
+          "left_bits": 1084519090,
+          "right": 4.976500034332275,
+          "right_bits": 1084178301
+        },
+        "maximum_absolute": 0.9897723197937012
+      },
+      "generation_index": 21,
+      "input_token": 19797,
+      "mixed_token": 8,
+      "pooled_only_token": 8,
+      "position": 72,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.3810436725616455,
+          "left_bits": 1075340037,
+          "right": 1.7648189067840576,
+          "right_bits": 1071768982
+        },
+        "maximum_absolute": 1.7131474912166595
+      },
+      "generation_index": 22,
+      "input_token": 8,
+      "mixed_token": 694,
+      "pooled_only_token": 694,
+      "position": 73,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.71458625793457,
+          "left_bits": 1087823332,
+          "right": 6.822137355804443,
+          "right_bits": 1088048883
+        },
+        "maximum_absolute": 1.1625537872314453
+      },
+      "generation_index": 23,
+      "input_token": 694,
+      "mixed_token": 2972,
+      "pooled_only_token": 2972,
+      "position": 74,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat1-slot1",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.912810802459717,
+          "left_bits": 1084044735,
+          "right": 4.746508598327637,
+          "right_bits": 1083695974
+        },
+        "maximum_absolute": 0.729003582149744
+      },
+      "generation_index": 24,
+      "input_token": 2972,
+      "mixed_token": 16759,
+      "pooled_only_token": 16759,
+      "position": 75,
+      "route_transition_step": true
+    },
+    {
+      "case": "batch4-repeat1-slot1",
+      "first_divergent_generation_index": 20,
+      "initial_F32_and_FP8_states_identical": true,
+      "migration_state_copy_identical": true,
+      "only_preceding_route_differs": true,
+      "production_promotion": false,
+      "route_transition_summary": true
+    },
+    {
+      "F32_pool_capacity128": {
+        "first_state_difference": null,
+        "hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "pool_capacity": 128,
+        "state_differences": 0
+      },
+      "F32_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 76441,
+          "elements": 786432,
+          "field": "TensorId(230) State { layer: 4, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": -0.00014920459943823516,
+            "left_bits": 3105649614,
+            "right": -0.0001492046139901504,
+            "right_bits": 3105649615
+          },
+          "maximum_absolute": 1.4901161193847656e-08
+        },
+        "hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.30053001642227173,
+            "left_bits": 3197755154,
+            "right": -0.39956897497177124,
+            "right_bits": 3201078350
+          },
+          "maximum_absolute": 0.85107421875
+        },
+        "logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": {
+            "element": 0,
+            "left": 4.561112880706787,
+            "left_bits": 1083307171,
+            "right": 4.611086368560791,
+            "right_bits": 1083411973
+          },
+          "maximum_absolute": 1.0109992027282715
+        },
+        "pool_capacity": 8192,
+        "state_differences": 29751503
+      },
+      "case": "batch4-repeat0-slot2",
+      "default_pool_capacity8192": {
+        "first_state_difference": {
+          "different": 712813,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": 2.3830805730540305e-05,
+            "left_bits": 935848004,
+            "right": 2.3829983547329903e-05,
+            "right_bits": 935847552
+          },
+          "maximum_absolute": 4.553794860839844e-05
+        },
+        "hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.30053001642227173,
+            "left_bits": 3197755154,
+            "right": -0.214906707406044,
+            "right_bits": 3193704577
+          },
+          "maximum_absolute": 1.894186019897461
+        },
+        "logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs pool full logits",
+          "first": {
+            "element": 0,
+            "left": 4.561112880706787,
+            "left_bits": 1083307171,
+            "right": 4.4613800048828125,
+            "right_bits": 1083098016
+          },
+          "maximum_absolute": 1.2669848799705505
+        },
+        "pool_capacity": 8192,
+        "state_differences": 38120767
+      },
+      "default_token": 32783,
+      "input_token": 2,
+      "matched_small_projection_records": 192,
+      "position": 52,
+      "private_allocated_capacity": 128,
+      "private_requested_capacity": 116,
+      "private_token": 32783,
+      "route_seed_census": true,
+      "valid_KV_rows": 53
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.449077129364014,
+          "left_bits": 1087266519,
+          "right": 6.235874176025391,
+          "right_bits": 1086819400
+        },
+        "maximum_absolute": 1.1021509170532227
+      },
+      "generation_index": 2,
+      "input_token": 32783,
+      "mixed_token": 220,
+      "pooled_only_token": 19,
+      "position": 53,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 0.23753781616687775,
+          "left_bits": 1047739677,
+          "right": 0.3238987624645233,
+          "right_bits": 1051055631
+        },
+        "maximum_absolute": 0.8846556544303894
+      },
+      "generation_index": 3,
+      "input_token": 220,
+      "mixed_token": 19,
+      "pooled_only_token": 19,
+      "position": 54,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.429825305938721,
+          "left_bits": 1089323297,
+          "right": 7.088340759277344,
+          "right_bits": 1088607152
+        },
+        "maximum_absolute": 0.9825925827026367
+      },
+      "generation_index": 4,
+      "input_token": 19,
+      "mixed_token": 12,
+      "pooled_only_token": 12,
+      "position": 55,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.360047340393066,
+          "left_bits": 1087079810,
+          "right": 6.2824249267578125,
+          "right_bits": 1086917024
+        },
+        "maximum_absolute": 1.5117897987365723
+      },
+      "generation_index": 5,
+      "input_token": 12,
+      "mixed_token": 15,
+      "pooled_only_token": 15,
+      "position": 56,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.135133743286133,
+          "left_bits": 1084510980,
+          "right": 5.331029415130615,
+          "right_bits": 1084921803
+        },
+        "maximum_absolute": 0.7639381289482117
+      },
+      "generation_index": 6,
+      "input_token": 15,
+      "mixed_token": 12,
+      "pooled_only_token": 12,
+      "position": 57,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.4198689460754395,
+          "left_bits": 1085108113,
+          "right": 5.388813495635986,
+          "right_bits": 1085042985
+        },
+        "maximum_absolute": 0.7274305820465088
+      },
+      "generation_index": 7,
+      "input_token": 12,
+      "mixed_token": 17,
+      "pooled_only_token": 17,
+      "position": 58,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.711658954620361,
+          "left_bits": 1089914345,
+          "right": 7.765617370605469,
+          "right_bits": 1090027504
+        },
+        "maximum_absolute": 0.9309122562408447
+      },
+      "generation_index": 8,
+      "input_token": 17,
+      "mixed_token": 25,
+      "pooled_only_token": 25,
+      "position": 59,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 3.6539525985717773,
+          "left_bits": 1080679004,
+          "right": 3.492339849472046,
+          "right_bits": 1080001151
+        },
+        "maximum_absolute": 0.9238777160644531
+      },
+      "generation_index": 9,
+      "input_token": 25,
+      "mixed_token": 733,
+      "pooled_only_token": 733,
+      "position": 60,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.926051616668701,
+          "left_bits": 1084072503,
+          "right": 4.931514739990234,
+          "right_bits": 1084083960
+        },
+        "maximum_absolute": 1.3056707382202148
+      },
+      "generation_index": 10,
+      "input_token": 733,
+      "mixed_token": 2133,
+      "pooled_only_token": 2133,
+      "position": 61,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.672485828399658,
+          "left_bits": 1083540737,
+          "right": 4.77349853515625,
+          "right_bits": 1083752576
+        },
+        "maximum_absolute": 0.8441814184188843
+      },
+      "generation_index": 11,
+      "input_token": 2133,
+      "mixed_token": 91063,
+      "pooled_only_token": 91063,
+      "position": 62,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.132672309875488,
+          "left_bits": 1090658157,
+          "right": 7.764461517333984,
+          "right_bits": 1090025080
+        },
+        "maximum_absolute": 1.0857176780700684
+      },
+      "generation_index": 12,
+      "input_token": 91063,
+      "mixed_token": 1892,
+      "pooled_only_token": 1892,
+      "position": 63,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.021475315093994,
+          "left_bits": 1084272621,
+          "right": 5.010505676269531,
+          "right_bits": 1084249616
+        },
+        "maximum_absolute": 0.7032995223999023
+      },
+      "generation_index": 13,
+      "input_token": 1892,
+      "mixed_token": 417,
+      "pooled_only_token": 417,
+      "position": 64,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.425543785095215,
+          "left_bits": 1085120014,
+          "right": 5.366488933563232,
+          "right_bits": 1084996167
+        },
+        "maximum_absolute": 0.7693431377410889
+      },
+      "generation_index": 14,
+      "input_token": 417,
+      "mixed_token": 30875,
+      "pooled_only_token": 30875,
+      "position": 65,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.109343528747559,
+          "left_bits": 1088651198,
+          "right": 6.845905303955078,
+          "right_bits": 1088098728
+        },
+        "maximum_absolute": 0.9030051231384277
+      },
+      "generation_index": 15,
+      "input_token": 30875,
+      "mixed_token": 594,
+      "pooled_only_token": 594,
+      "position": 66,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.4108099937438965,
+          "left_bits": 1087186267,
+          "right": 6.178590774536133,
+          "right_bits": 1086699268
+        },
+        "maximum_absolute": 0.7144602537155151
+      },
+      "generation_index": 16,
+      "input_token": 594,
+      "mixed_token": 13453,
+      "pooled_only_token": 13453,
+      "position": 67,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.752988815307617,
+          "left_bits": 1085806716,
+          "right": 5.605621337890625,
+          "right_bits": 1085497664
+        },
+        "maximum_absolute": 1.1782927513122559
+      },
+      "generation_index": 17,
+      "input_token": 13453,
+      "mixed_token": 9268,
+      "pooled_only_token": 9268,
+      "position": 68,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.443851470947266,
+          "left_bits": 1087255560,
+          "right": 6.222071170806885,
+          "right_bits": 1086790453
+        },
+        "maximum_absolute": 1.0756111145019531
+      },
+      "generation_index": 18,
+      "input_token": 9268,
+      "mixed_token": 16706,
+      "pooled_only_token": 16706,
+      "position": 69,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 4.020888328552246,
+          "left_bits": 1082174238,
+          "right": 3.9663684368133545,
+          "right_bits": 1081989371
+        },
+        "maximum_absolute": 0.5627737045288086
+      },
+      "generation_index": 19,
+      "input_token": 16706,
+      "mixed_token": 31410,
+      "pooled_only_token": 31410,
+      "position": 70,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 7.489830017089844,
+          "left_bits": 1089449136,
+          "right": 7.7622857093811035,
+          "right_bits": 1090020517
+        },
+        "maximum_absolute": 1.1486754417419434
+      },
+      "generation_index": 20,
+      "input_token": 31410,
+      "mixed_token": 271,
+      "pooled_only_token": 271,
+      "position": 71,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 8.30381965637207,
+          "left_bits": 1090837618,
+          "right": 8.171740531921387,
+          "right_bits": 1090699123
+        },
+        "maximum_absolute": 2.22527645714581
+      },
+      "generation_index": 21,
+      "input_token": 271,
+      "mixed_token": 550,
+      "pooled_only_token": 550,
+      "position": 72,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248319,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 5.275786399841309,
+          "left_bits": 1084805950,
+          "right": 5.010871887207031,
+          "right_bits": 1084250384
+        },
+        "maximum_absolute": 1.4250335693359375
+      },
+      "generation_index": 22,
+      "input_token": 550,
+      "mixed_token": 220,
+      "pooled_only_token": 220,
+      "position": 73,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 2.8771629333496094,
+          "left_bits": 1077420912,
+          "right": 2.710636854171753,
+          "right_bits": 1076722451
+        },
+        "maximum_absolute": 1.1345024108886719
+      },
+      "generation_index": 23,
+      "input_token": 220,
+      "mixed_token": 16,
+      "pooled_only_token": 16,
+      "position": 74,
+      "route_transition_step": true
+    },
+    {
+      "both_routes": "default_pool",
+      "case": "batch4-repeat0-slot2",
+      "forced_common_trajectory": true,
+      "full_logits": {
+        "different": 248320,
+        "elements": 248320,
+        "field": "mixed vs pooled-only full logits",
+        "first": {
+          "element": 0,
+          "left": 6.786686420440674,
+          "left_bits": 1087974537,
+          "right": 6.785397052764893,
+          "right_bits": 1087971833
+        },
+        "maximum_absolute": 0.9698605537414551
+      },
+      "generation_index": 24,
+      "input_token": 16,
+      "mixed_token": 13,
+      "pooled_only_token": 13,
+      "position": 75,
+      "route_transition_step": true
+    },
+    {
+      "case": "batch4-repeat0-slot2",
+      "first_divergent_generation_index": 2,
+      "initial_F32_and_FP8_states_identical": true,
+      "migration_state_copy_identical": true,
+      "only_preceding_route_differs": true,
+      "production_promotion": false,
+      "route_transition_summary": true
+    }
+  ],
+  "client_exact_matches": [
+    {
+      "case": "batch4-repeat1-slot0",
+      "first_difference": 14,
+      "streams": {
+        "mixed": {
+          "unit": 0,
+          "arm": "scalar",
+          "request_id": 17,
+          "client_tokens_through_first_difference": [
+            2,
+            32783,
+            19,
+            12,
+            16,
+            12,
+            15,
+            25,
+            733,
+            2133,
+            91063,
+            1892,
+            417,
+            30875,
+            594
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            2,
+            32783,
+            19,
+            12,
+            16,
+            12,
+            15,
+            25,
+            733,
+            2133,
+            91063,
+            1892,
+            417,
+            30875,
+            594
+          ],
+          "exact_match": true
+        },
+        "pooled_only": {
+          "unit": 0,
+          "arm": "ordered",
+          "request_id": 17,
+          "client_tokens_through_first_difference": [
+            2,
+            32783,
+            19,
+            12,
+            16,
+            12,
+            15,
+            25,
+            733,
+            2133,
+            91063,
+            1892,
+            417,
+            30875,
+            321
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            2,
+            32783,
+            19,
+            12,
+            16,
+            12,
+            15,
+            25,
+            733,
+            2133,
+            91063,
+            1892,
+            417,
+            30875,
+            321
+          ],
+          "exact_match": true
+        }
+      }
+    },
+    {
+      "case": "batch4-repeat1-slot1",
+      "first_difference": 20,
+      "streams": {
+        "mixed": {
+          "unit": 0,
+          "arm": "ordered",
+          "request_id": 18,
+          "client_tokens_through_first_difference": [
+            623,
+            6278,
+            19670,
+            11106,
+            4744,
+            318,
+            3950,
+            44,
+            8,
+            42903,
+            11,
+            279,
+            5839,
+            84810,
+            369,
+            524,
+            12204,
+            318,
+            37,
+            1537,
+            19797
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            623,
+            6278,
+            19670,
+            11106,
+            4744,
+            318,
+            3950,
+            44,
+            8,
+            42903,
+            11,
+            279,
+            5839,
+            84810,
+            369,
+            524,
+            12204,
+            318,
+            37,
+            1537,
+            19797
+          ],
+          "exact_match": true
+        },
+        "pooled_only": {
+          "unit": 0,
+          "arm": "scalar",
+          "request_id": 18,
+          "client_tokens_through_first_difference": [
+            623,
+            6278,
+            19670,
+            11106,
+            4744,
+            318,
+            3950,
+            44,
+            8,
+            42903,
+            11,
+            279,
+            5839,
+            84810,
+            369,
+            524,
+            12204,
+            318,
+            37,
+            1537,
+            4851
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            623,
+            6278,
+            19670,
+            11106,
+            4744,
+            318,
+            3950,
+            44,
+            8,
+            42903,
+            11,
+            279,
+            5839,
+            84810,
+            369,
+            524,
+            12204,
+            318,
+            37,
+            1537,
+            4851
+          ],
+          "exact_match": true
+        }
+      }
+    },
+    {
+      "case": "batch4-repeat0-slot2",
+      "first_difference": 2,
+      "streams": {
+        "mixed": {
+          "unit": 2,
+          "arm": "ordered",
+          "request_id": 15,
+          "client_tokens_through_first_difference": [
+            2,
+            32783,
+            220
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            2,
+            32783,
+            220
+          ],
+          "exact_match": true
+        },
+        "pooled_only": {
+          "unit": 2,
+          "arm": "scalar",
+          "request_id": 15,
+          "client_tokens_through_first_difference": [
+            2,
+            32783,
+            19
+          ],
+          "diagnostic_tokens_through_first_difference": [
+            2,
+            32783,
+            19
+          ],
+          "exact_match": true
+        }
+      }
+    }
+  ],
+  "earlier_capacity128_diagnostic": {
+    "geometry": "private128/defaultpool128/F32pool128, prefill64",
+    "events": [
+      {
+        "case": "batch4-repeat1-slot0",
+        "default_hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs default pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.4392942488193512,
+            "left_bits": 3202411309,
+            "right": -0.4845203161239624,
+            "right_bits": 3203928844
+          },
+          "maximum_absolute": 1.13637113571167
+        },
+        "default_logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs default pool logits",
+          "first": {
+            "element": 0,
+            "left": 4.373624801635742,
+            "left_bits": 1082913980,
+            "right": 4.377534866333008,
+            "right_bits": 1082922180
+          },
+          "maximum_absolute": 0.7847845554351807
+        },
+        "default_state_differences": 38127153,
+        "default_token": 32783,
+        "first_default_state": {
+          "different": 713207,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": 4.4380620238371193e-05,
+            "left_bits": 943334740,
+            "right": 4.4379841710906476e-05,
+            "right_bits": 943334526
+          },
+          "maximum_absolute": 4.553794860839844e-05
+        },
+        "input_token": 2,
+        "matched_hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs F32 pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs F32 pool logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_small_projection_records": 96,
+        "matched_state_differences": 0,
+        "position": 52,
+        "private_token": 32783,
+        "route_seed_census": true
+      },
+      {
+        "case": "batch4-repeat1-slot0",
+        "first_divergent_generation_index": 11,
+        "initial_F32_and_FP8_states_identical": true,
+        "migration_state_copy_identical": true,
+        "only_preceding_route_differs": true,
+        "production_promotion": false,
+        "route_transition_summary": true
+      },
+      {
+        "case": "batch4-repeat1-slot1",
+        "default_hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs default pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.6501080989837646,
+            "left_bits": 3206966652,
+            "right": -0.5953687429428101,
+            "right_bits": 3206048278
+          },
+          "maximum_absolute": 0.7719725472852588
+        },
+        "default_logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs default pool logits",
+          "first": {
+            "element": 0,
+            "left": 3.674420118331909,
+            "left_bits": 1080764851,
+            "right": 3.7381231784820557,
+            "right_bits": 1081032041
+          },
+          "maximum_absolute": 0.9006861448287964
+        },
+        "default_state_differences": 38068028,
+        "default_token": 6278,
+        "first_default_state": {
+          "different": 700312,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": -0.00011125866149086505,
+            "left_bits": 3102299018,
+            "right": -0.00011125915625598282,
+            "right_bits": 3102299086
+          },
+          "maximum_absolute": 5.14984130859375e-05
+        },
+        "input_token": 623,
+        "matched_hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs F32 pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs F32 pool logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_small_projection_records": 96,
+        "matched_state_differences": 0,
+        "position": 52,
+        "private_token": 6278,
+        "route_seed_census": true
+      },
+      {
+        "case": "batch4-repeat1-slot1",
+        "first_divergent_generation_index": 15,
+        "initial_F32_and_FP8_states_identical": true,
+        "migration_state_copy_identical": true,
+        "only_preceding_route_differs": true,
+        "production_promotion": false,
+        "route_transition_summary": true
+      },
+      {
+        "case": "batch4-repeat0-slot2",
+        "default_hidden": {
+          "different": 5120,
+          "elements": 5120,
+          "field": "private vs default pool hidden",
+          "first": {
+            "element": 0,
+            "left": -0.30053001642227173,
+            "left_bits": 3197755154,
+            "right": -0.2544633448123932,
+            "right_bits": 3196209413
+          },
+          "maximum_absolute": 1.2414674758911133
+        },
+        "default_logits": {
+          "different": 248320,
+          "elements": 248320,
+          "field": "private vs default pool logits",
+          "first": {
+            "element": 0,
+            "left": 4.561112880706787,
+            "left_bits": 1083307171,
+            "right": 4.609006404876709,
+            "right_bits": 1083407611
+          },
+          "maximum_absolute": 0.8838407695293427
+        },
+        "default_state_differences": 38120707,
+        "default_token": 32783,
+        "first_default_state": {
+          "different": 712813,
+          "elements": 786432,
+          "field": "TensorId(25) State { layer: 0, kind: LinearAttention } part=0",
+          "first": {
+            "element": 0,
+            "left": 2.3830805730540305e-05,
+            "left_bits": 935848004,
+            "right": 2.3829983547329903e-05,
+            "right_bits": 935847552
+          },
+          "maximum_absolute": 4.553794860839844e-05
+        },
+        "input_token": 2,
+        "matched_hidden": {
+          "different": 0,
+          "elements": 5120,
+          "field": "private vs F32 pool hidden",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_logits": {
+          "different": 0,
+          "elements": 248320,
+          "field": "private vs F32 pool logits",
+          "first": null,
+          "maximum_absolute": 0.0
+        },
+        "matched_small_projection_records": 96,
+        "matched_state_differences": 0,
+        "position": 52,
+        "private_token": 32783,
+        "route_seed_census": true
+      },
+      {
+        "case": "batch4-repeat0-slot2",
+        "first_divergent_generation_index": null,
+        "initial_F32_and_FP8_states_identical": true,
+        "migration_state_copy_identical": true,
+        "only_preceding_route_differs": true,
+        "production_promotion": false,
+        "route_transition_summary": true
+      }
+    ],
+    "scope": "causal atsamecapacity but failed toreproduce service generationindices; not the authoritative serving geometry"
+  },
+  "failed_actualcapacity_F32only": {
+    "run": {
+      "matched_one_test": true,
+      "label": "route",
+      "workers": 0,
+      "run_id": "v5",
+      "argv": [
+        "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/build-v5/cuda-tests",
+        "loading::decode_path_tests::checkpoint_route_transition_first_difference_census",
+        "--ignored",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "returncode": 101,
+      "binary_sha256": "8b9b3a03bb91ee0daa8933821ce57381258a3312d641c68b84e47e760f885157",
+      "runner_sha256": "e61837f2c4af55888d9123110838aeb2ea3427cc2d510562ab1ed7ddbaf622f4",
+      "build_record_sha256": "0b21bb6d28feb5c8713e826fa5f6037dfe6bf894b2b1dee2070ce9a5f268354a",
+      "started_unix": 1791935194.9564707,
+      "finished_unix": 1791935233.5142837,
+      "before": "1160, /usr/bin/kwin_wayland, 251 MiB\n",
+      "after": "1160, /usr/bin/kwin_wayland, 251 MiB\n",
+      "violations": [],
+      "verified_desktops": [],
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/inference-benchmark-2560884.service",
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/kernel-cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "64",
+        "INFER_TEST_ROUTE_CASES": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/cases.json",
+        "INFER_CUDA_TUNING_TABLE": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v5/tuning.json"
+      },
+      "scope": "diagnostic functional/default capture/isolated timing; no service certification"
+    },
+    "assertion_total_differences": 831825,
+    "interpretation": "F32 smallprojection intervention alone does not make actualcapacity8192 matchprivate128; v6 preserves and decomposes this counterexample"
+  },
+  "retained_preparation_failures": [
+    "build-v1 too_many_lines",
+    "build-v2 needless_question_mark",
+    "route-v3 invalid verification_width1; no numerical execution"
+  ],
+  "CI": {
+    "run_url": "https://github.com/1994/inference.rs/actions/runs/38484453543",
+    "conclusion": "success",
+    "jobs_succeeded": 10,
+    "head_sha": "aa83fea8d480f65009cd05b093c21e442d26a8da"
+  },
+  "production_changed": false,
+  "serving_performance_acceptance": false,
+  "full256_quality_acceptance": false,
+  "prior_failed_candidates_remain_rejected": [
+    "precise private MMA",
+    "pooled F32 alone"
+  ],
+  "gates_unchanged": true,
+  "file_manifest": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/build-v4/result.json",
+      "sha256": "c719c8d5234e76f7ca6233e997e83452db98a8e38779dd5dbe6247b581544844"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/build-v5/result.json",
+      "sha256": "0b21bb6d28feb5c8713e826fa5f6037dfe6bf894b2b1dee2070ce9a5f268354a"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/build-v6/result.json",
+      "sha256": "eafdff20778beca817db3b5ae2fcb9256b363eceb7e93deed8934e976e3a242b"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v4/result.json",
+      "sha256": "36dd65dca951d96b043dfa1e5f25572227099050d7066723e55f2d87451e0489"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v5/result.json",
+      "sha256": "bb045229319c596605b8de3c0a64216cb4ce50325544445375a4daaf4ca3f0d6"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v6/result.json",
+      "sha256": "1b17a416a2d7dca13d2e7938e46105663769a3864813b0b057c10a4ec64d00e0"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v4/stdout.log",
+      "sha256": "2656d61191b11f03bd5f33493900f16947468f466271d51f8c01ea9649f07a59"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v5/stdout.log",
+      "sha256": "38b346e7bbe6f61546a7e977055ebfd65a49b252b912faff0f690bdbc2284aad"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v5/stderr.log",
+      "sha256": "aa78ec09d67047aa4d6316b0bedadf14694cc5d3b7f5524bf20d08b8035fb80a"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v6/stdout.log",
+      "sha256": "79200c23e3ce0c03a92de6266c2895f9a74e084784e1be38ed02c9deb6d66eac"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v6/events.json",
+      "sha256": "8265ce11b9a3b3ff147197add5b2a95e6e7bf35580860a82193abcf0cc8eb7e9"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/route-w0-v6/client-prefix-matches.json",
+      "sha256": "b06f2dcaa554cca08632a4350e6163f32dd954b2c18b3bfc4604cd879405c7d8"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/cases.json",
+      "sha256": "1bb4222bc21523c3cc6f632950b96d39c598bdcb4bf91f2dee9211d5cd1f8d02"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/route-transition-census-v1/tuning-frozen.json",
+      "sha256": "ed6747b0514451a2944b9291ec673a2c674f20feed33b053be1ff5231bcb0b28"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/request-state-profile-v1/committed-ci.json",
+      "sha256": "a7fde93ffdcdf460a4f3b4a26d7dd04e6cefc7a5f20eb4fadd87a5bf0eeb9bcb"
+    }
+  ]
+}

@@ -496,3 +496,50 @@ stream、request/state/slot/position 与原始 host 日志/hash 保留；默认�
 直接 pooled 与 private 一步后迁入 pooled。已有小投影算术实验不得因路由关联
 重新启用：高精度 private MMA 和 pooled F32 实验均曾未通过原完整质量门槛。
 [请求与路由证据](artifacts/cuda-gdn-request-state-route-2026-10-14.json)。
+
+## 2026-10-14：实际容量下复现 private/pooled 数值分歧
+
+请求关联代码 aa83fea8d480f65009cd05b093c21e442d26a8da 的
+[完整 CI](https://github.com/1994/inference.rs/actions/runs/38484453543) 已整体成功，
+10 项 job 全部成功。下面的数值实验只在该提交的独立归档中增加诊断测试，
+没有改变生产算术、调度、默认准入或用户开关。
+
+选取原六进程记录中三个实际 52 token 输入，从相同前缀的完整 F32 state 和
+所有有效 FP8 KV 位置出发。服务 private 请求容量为 116，实际分配 128；
+四槽 pooled 容量为 8192。一个槽在位置 52 直接 pooled，另一个槽先执行
+private，再将其状态逐位一致地迁入 pooled。之后两个槽都采用默认 pooled
+图，逐步使用同一输入 token，覆盖生成 token index 2 至 24。
+
+| 原服务案例 | 首个不同 token index | private 一步后迁入 / 直接 pooled |
+| --- | ---: | --- |
+| batch4-repeat1-slot0 | 14 | 594 / 321 |
+| batch4-repeat1-slot1 | 20 | 19797 / 4851 |
+| batch4-repeat0-slot2 | 2 | 220 / 19 |
+
+三个案例的两条受控轨迹，直到并包括首个分歧 token，都与相应原服务 stream
+逐个 token 完全一致。初始状态和迁移复制均逐位一致；此前 decode 路径的差异
+可以在后续同一 pooled 图中复现这些服务差异。这是上述三个案例的直接数值
+证据，不能自动推广为全部七条差异或完整 serving 验收。
+
+受控干预进一步区分小投影算术与容量。在相同 128 容量下，只将 pooled 的
+96 个小 BF16 投影替换为 private 的 F32 GEMV，首步 hidden、全 vocabulary
+logits、全部 F32 state 与所有有效 FP8 KV 均逐位一致。保持该干预而采用实际
+8192 pooled 容量，三个案例的 state 差异分别仍有 830,802、8,145,780、
+29,751,503 处；首步全 vocabulary logits 在前两个案例中仍逐位一致，
+第三个案例的全部 248320 项已不同。
+源码的 split-KV 规划由容量决定，128 与 8192 选择不同的 attention 组织；
+结合上述控制，这说明统一小投影算术并不足以统一两条实际路径。
+
+未经干预的默认 pooled 则在第一层 LinearAttention state 已出现差异，
+三个案例的 state/有效 KV 差异分别有 38,127,153、38,068,079、38,120,767 处。
+其首步 hidden 全 5120 项及 logits 全 248320 项均不同，尽管该步 argmax 相同。
+因此后续应同时验证小投影与 attention 的路径一致性，并按原完整质量和配对
+性能门槛验收；此前质量失败的 pooled F32 单项方案仍不准入。
+
+准备过程中曾错误设置 verification width 为 1，被加载校验拒绝，修正为 MTP0
+对应的 0；同容量 128 的早期实验得到 index 11、15、无分歧，没有复现服务尺寸。
+首次实际容量实验把“F32 小投影应消除所有差异”作为断言，因 831,825 项差异
+失败。这些源码、构建、失败与原始记录均保留；最终实验增加同容量控制，
+单独测量容量干预，没有将该失败重写为通过。最终三案例共 75 条数值事件，
+GPU guard 无干扰，protected 单元峰值 4.7 GiB、自身 swap 为零。
+[构建、逐位 census、逐 token 服务复现与失败记录](artifacts/cuda-gdn-route-arithmetic-census-2026-10-14.json)。
