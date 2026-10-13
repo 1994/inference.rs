@@ -81,7 +81,19 @@ C5 的实际 FP8 cache 中 vendor_candidates 均为 false，运行未打开 FP8 
 
 下一步沿用已有桥，对真实 FP8 大投影测完整量化、Lt、scale 图，优先补齐 M256，并记录 M4；M1 仅在算法/workspace或融合结构发生实质改变时再测。候选保持独立 F64 量化乘积参考和原 scale 顺序；不同 native 位模式单独记录，生产逐位 gate 暂不改变。完整质量通过前只作为诊断。当前仅支持零 workspace，是否允许额外 workspace 必须按实际预算和完整图收益评估。
 
-六份真实 checkpoint 权重在 M4/M256 共 12 组的完整 CPU F64 参考已经完成，包含原 activation、独立 FP8 codes/scales、完整 raw/scaled 输出及两次 F32 舍入的 epilogue 参考；384 个额外 scalar F64 输出与完整参考严格一致。GPU 量化一致性和库候选仍待验证，不能将 CPU 参考准备计作候选通过。证据 `vllm-direction-review-2026-10-13/fp8-phase-a-cpu-reference-v1/execution.json`，SHA256 `77c44011b8d23fd97d7bae684026f18b6632cabe772cd29f9ab69d7958010a67`。
+六份真实 checkpoint 权重在 M4/M256 共 12 组的完整 CPU F64 参考已经完成，包含原 activation、独立 FP8 codes/scales、完整 raw/scaled 输出及两次 F32 舍入的 epilogue 参考；384 个额外 scalar F64 输出与完整参考严格一致。随后 GPU 完成 12 份 native 和 96 个候选实例的 129392640 个 F64 输出比较，失败与非有限值均为 0；149094400 个量化 codes 完整逐字节一致，全部 input scale 此次 F32 bits 也一致。原输出门槛与量化门槛没有改变。
+
+完整 quantize＋GEMM＋原两次 RN scale 的同物理缓冲区成本完成 3 轮 cold/warm AB/BA，共 1152 条配对记录。以一份权重发现算法、固定同一算法到另一个 layer 端点作同进程检查，M256 warm 结果：
+
+| 投影 | 原 Native | Lt 完整图 | 局部加速 |
+| --- | ---: | ---: | ---: |
+| gate，layers56/63 | 161～163 µs | 115～117 µs | 1.39～1.40 倍 |
+| down，layers56/63 | 199～201 µs | 175～176 µs | 约 1.14 倍 |
+| GDN out，layers0/54 | 约 58 µs | 约 52 µs | 约 1.12 倍 |
+
+M4 warm 仅约 1.00～1.04 倍，cold 均不超过 1 倍，当前不值得强推 decode Lt。M256 gate/down 的 Native64×64 是实际未缓存 fallback，不能称为超越已调优 Native；GDN out 使用 T5 实际选中的64×128。还应比较最佳合法 Native，再评价库收益。
+
+此次 48 个 M256 候选实例普通 fixture 全部与 Native 输出逐位一致；M4 合计 391103 个位差。普通 fixture 不能代替生产四组 fixture 的 exact gate。现阶段未修改 cache、生产选择或精度门槛，完整模型质量、独立服务配对均未验收。一次实际 GPU invocation 完成全部数值和成本；第一次 admission 因桌面 util5～6% 未启动，保留记录。第二次允许记录背景利用率后执行功能阶段，紧邻成本仍按原三连续≤2%门槛，样本1/0/0通过；背景身份、显存和全部源/二进制/cache/参考均保持一致。证据 `vllm-direction-review-2026-10-13/fp8-phase-a-test-source-v1/complete-reference-and-cost-summary-v1.json`，SHA256 `85dfc2a7650c17c93211cf5fc09ea1e9ada95d15c5785e6ab3f1dc6709e9c8c8`。
 
 ## 3. Attention：共享 query/GQA 的 KV，而非只切开关
 
