@@ -117,7 +117,54 @@ v22 增加仅用于诊断的完整 96 小投影冷/热缓存配对成本测试�
 入口没有 pack/unpack，因此两图都直接读写已有矩阵，不计算不存在的拷贝收益。
 生产入口还排除带 activation quantization contract 的权重，保留其原编码检查。
 这两项改动不作为 v21 CLI 的已编译内容；后续服务工作另冻结 v22 源码二进制。
-原 256 题配对、云端完整 CI 和耗时仍需实际结果。
+v22 最终服务二进制 SHA256 为
+`0e5e1143345b973ca268ed23d0617a4c2f4d61ecf5b391e29c8c00ded94c71fd`，
+同样的原前 16 请求两轮均为 14/16、完整流差异 0，记录在
+`same-binary-pool-f32-16-v2/`。按照 `slot_replay` 的实际顺序，用执行后槽位
+分类（执行前无槽位的任务也可能在本次调用中绑定并执行 pooled graph），
+最终两轮确有 4 个请求的私有路径不同，完整流仍全部相同。
+首版 v21 两轮对应为 2 个，原补偿实验为 6 个；三个版本的原始 profile 和
+`grouping-correlation-v2.json` 均保留。随后开始 `quality-pool-f32-v2/` 原 256 题配对。
+代码提交为 `864f55c6ba5de549815d8873cf250235a21b9311`；
+[完整代码 CI](https://github.com/1994/inference.rs/actions/runs/38402296377) 的 10 项检查全部通过，
+[文档 CI](https://github.com/1994/inference.rs/actions/runs/38402296746) 已通过。
+原 256 题配对已完成。基线 **246/256**，候选 **243/256**；
+zero-shot 120→119/128，eight-shot 126→124/128。退步 4 题
+（1183/87 zero-shot、541/527 eight-shot），提升 1 题（1119 zero-shot）。
+原 95% 单侧退步率上界 **3.539722%**，超过原 2% 门槛，质量失败。
+Length/缺答案请求均保留：基线 5 个、候选 8 个。
+204 条完整 token 流不同，原额外严格流断言也保留为失败。
+两版完整请求、缓存/二进制身份以及独立评分器的原报告全部保留，
+没有用之前的 243 分基线替换这轮 246 分，也没有筛选重跑。
+
+F32 路径一致性和原独立 F64 检查通过，不能覆盖任务质量失败；
+`INFER_CUDA_POOL_SMALL_F32` 继续默认关闭，不进入正式服务性能验收。
+在代码 CI 全通过后，仅执行预先声明的三轮 96 投影冷热配对成本诊断，
+不将该诊断登记为完整质量或服务性能通过。
+
+三轮投影成本均已完成，冻结 test SHA256 为
+`96ff3e960052c8409994243ed8d0a947af0599d7244205388f82704f5185e1b6`，
+缓存未改变，每次进程前在有界窗口内取得三次 GPU utilization≤2%。
+两图都包含 96 个完整真实 BF16 小投影，输入/输出为实际 slot 矩阵布局，
+不含整个模型的其他算子，也不添加打包/解包收益。
+
+| 缓存 | 原两项 BF16，ms | 四行 F32，ms | 耗时降低 | 三轮速度比 |
+| --- | ---: | ---: | ---: | ---: |
+| cold L2 | 1.678848 | 1.374944 | 18.10% | 1.217–1.224× |
+| warm L2 | 1.671328 | 0.921952 | 44.84% | 1.812–1.813× |
+
+表中耗时为三轮中位数的中位数。此完整局部路径确实更快，但原任务质量失败，
+因此仍不接受为默认或正式服务性能结果。三轮全部日志与汇总保留在
+`pool-cost-v1/2/3.log`、各自执行 JSON、`pool-cost-summary-v1.json`。
+速度与质量的两个结论均保留，不能用局部加速抵消四题退步。
+
+旧 SwiGLU 五轮数据另复核了原服务自身的 TTFT 记录（未重跑或筛选）：
+客户端每轮中位数再取中位数为 40.702→42.537 ms，服务端为
+36.279→37.211 ms。退化不全来自客户端统计，具体 GPU 算子、执行和
+请求调度之间的因果关系仍未验证。活动请求的平均 SM 时钟约 2881–2902 MHz，
+因此不能把加载前空闲时钟不同直接解释成请求内的速度变化。
+分项记录为 `shared-quant-reuse-2026-10-13/ttft-component-audit-v1.json`，
+不替代原性能或严格 token 流失败。
 
 ## 证据
 
@@ -137,3 +184,9 @@ host memory=32 GiB、swap=0、30 分钟限制、串行运行，不终止其他 G
 - 服务复现：`same-binary-precise-16-v1/` 中完整请求、两份 execution JSONL、
   `diagnostic-summary.json` 和 `grouping-correlation-v1.json`。
 - 原质量配对：`quality-precise-v1/` 中原 256 题完整两版请求、缓存与 `paired-summary.json`（质量失败）。
+
+- 原生四行 F32：`compiled-source-v22.json`、`pool-four-reference-v22.log`、
+  `pool-four-model-v22.log`、`experimental-cli-v3.json`、`same-binary-pool-f32-16-v2/`。
+- 完整代码 CI：`code-ci-v22.json`；原生 F32 质量失败：
+  `quality-pool-f32-v2/paired-summary.json`、`rejected-pool-f32-experiment-v2.json`。
+- 三轮算子成本预先计划：`pool-cost-plan.json`；不替代正式服务验收。
