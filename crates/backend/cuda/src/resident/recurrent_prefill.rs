@@ -465,27 +465,33 @@ pub(crate) mod kernels {
         // One block of the value dimension. The state's columns are mutually independent - every
         // reduction below is over the key dimension - so the grid gains D / SW times more blocks
         // without changing any summation order.
-        // Prepared inputs have LANES padded rows. An axis-derived loop bound lets
-        // cuTile prove row access once instead of checking every token load.
+        // Prepared inputs have LANES padded rows. Clear padding once, then keep
+        // checked loads in a straight-line active loop so bounds checks can move
+        // to its preheader without changing the F32 operation tree.
         let qp = normalized.partition(shape![1, 1, D]);
+        let vp = qkv.partition(shape![1, 1, SW]);
+        let bp = betas.partition(shape![1, 1]);
+        let dp = decays.partition(shape![1, 1]);
+        let key = pid.0 / (VH / KH);
+        let key_value = KH + key;
+        let value_head = 2i32 * KH + pid.0;
+        let rows = num_tiles(&qp, 0i32);
+        let limit = if count < rows { count } else { rows };
+        let displacement = base + offset;
+        let first = if displacement < 0i32 {
+            0i32 - displacement
+        } else {
+            0i32
+        };
         let mut old = state.load_like(state).reshape(shape![D, SW]);
-        for lane in 0i32..num_tiles(&qp, 0i32) {
-            if lane < count && base + lane + offset >= 0 {
-                let key = pid.0 / (VH / KH);
+        out.store(0.0f32.broadcast(shape![1, LANES, SW]));
+        if first < limit {
+            for lane in first..limit {
                 let q = qp.load([lane, key, 0i32]).reshape(shape![D]);
-                let k = qp.load([lane, KH + key, 0i32]).reshape(shape![D]);
-                let vp = qkv.partition(shape![1, 1, SW]);
-                let v = vp
-                    .load([lane, 2i32 * KH + pid.0, pid.2])
-                    .reshape(shape![SW]);
-                let bt = betas
-                    .partition(shape![1, 1])
-                    .load([lane, pid.0])
-                    .reshape(shape![1]);
-                let decay = decays
-                    .partition(shape![1, 1])
-                    .load([lane, pid.0])
-                    .reshape(shape![1]);
+                let k = qp.load([lane, key_value, 0i32]).reshape(shape![D]);
+                let v = vp.load([lane, value_head, pid.2]).reshape(shape![SW]);
+                let bt = bp.load([lane, pid.0]).reshape(shape![1]);
+                let decay = dp.load([lane, pid.0]).reshape(shape![1]);
                 let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
                 let kb = k.reshape(shape![D, 1]).broadcast(shape![D, SW]);
                 let predicted: Tile<f32, { [SW] }> = if SW == 128 {
@@ -503,9 +509,6 @@ pub(crate) mod kernels {
                 old = updated;
                 out.partition_mut(shape![1, 1, SW])
                     .store(result.reshape(shape![1, 1, SW]), [0i32, lane, 0i32]);
-            } else {
-                out.partition_mut(shape![1, 1, SW])
-                    .store(0.0f32.broadcast(shape![1, 1, SW]), [0i32, lane, 0i32]);
             }
         }
         state.store(old.reshape(shape![1, D, SW]));
