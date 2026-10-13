@@ -1,10 +1,9 @@
-//! Capture-local common subexpression elimination for adjacent `SwiGLU` inputs.
+//! Capture-local common subexpression elimination for adjacent shared-input projections.
 use super::super::{ProgramWeights, program::ActivationQuantization};
 use crate::mlp::ProjectionWeight;
 use infer_core::TensorId;
-use infer_ir::{DataflowGraph, TensorOp};
-
-const SWIGLU_NODE_COUNT: usize = 4;
+use infer_ir::{DataflowGraph, TensorNode, TensorOp};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuantKind {
@@ -14,7 +13,7 @@ pub enum QuantKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pair {
     first: usize,
-    second: usize,
+    last: usize,
     input: TensorId,
     columns: usize,
     kind: QuantKind,
@@ -22,18 +21,18 @@ pub struct Pair {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuantPairRole {
     First(Pair),
-    Second(Pair),
+    Second { pair: Pair, index: usize },
 }
 impl QuantPairRole {
     const fn pair(self) -> Pair {
         match self {
-            Self::First(pair) | Self::Second(pair) => pair,
+            Self::First(pair) | Self::Second { pair, .. } => pair,
         }
     }
     const fn index(self) -> usize {
         match self {
             Self::First(pair) => pair.first,
-            Self::Second(pair) => pair.second,
+            Self::Second { index, .. } => index,
         }
     }
 }
@@ -66,69 +65,65 @@ impl QuantPairPlan {
         constant: impl Fn(TensorId) -> bool,
         contract: impl Fn(TensorId) -> Option<QuantKind>,
     ) -> Self {
+        let sizes: BTreeMap<_, _> = graph
+            .tensors
+            .iter()
+            .filter_map(|tensor| tensor.elements().ok().map(|size| (tensor.id, size)))
+            .collect();
+        let eligible = |node: &TensorNode| {
+            if node.op != TensorOp::Linear
+                || node.inputs.len() != 2
+                || node.outputs.len() != 1
+                || !node.states.is_empty()
+                || constant(node.inputs[0])
+                || node.outputs[0] == node.inputs[0]
+            {
+                return None;
+            }
+            let columns = *sizes.get(&node.inputs[0])?;
+            let outputs = *sizes.get(&node.outputs[0])?;
+            if columns == 0 || outputs == 0 {
+                return None;
+            }
+            Some((node.inputs[0], columns, contract(node.inputs[1])?))
+        };
         let mut roles = vec![None; graph.nodes.len()];
-        for (index, nodes) in graph.nodes.windows(SWIGLU_NODE_COUNT).enumerate() {
-            let [gate, up, active, product] = nodes else {
+        let mut index = 0;
+        while index + 1 < graph.nodes.len() {
+            let first = &graph.nodes[index];
+            let Some((input, columns, kind)) = eligible(first) else {
+                index += 1;
                 continue;
             };
-            if gate.op != TensorOp::Linear
-                || up.op != TensorOp::Linear
-                || active.op != TensorOp::Silu
-                || product.op != TensorOp::Multiply
-                || gate.inputs.len() != 2
-                || up.inputs.len() != 2
-                || gate.outputs.len() != 1
-                || up.outputs.len() != 1
-                || active.outputs.len() != 1
-                || product.outputs.len() != 1
-                || !gate.states.is_empty()
-                || !up.states.is_empty()
-                || gate.inputs[0] != up.inputs[0]
-                || constant(gate.inputs[0])
-                || active.inputs != gate.outputs
-                || product.inputs != [active.outputs[0], up.outputs[0]]
-                || gate.outputs[0] == gate.inputs[0]
-                || up.outputs[0] == up.inputs[0]
-                || gate.outputs[0] == up.outputs[0]
-            {
-                continue;
+            let mut outputs = BTreeSet::from([first.outputs[0]]);
+            let mut end = index + 1;
+            while let Some(node) = graph.nodes.get(end) {
+                if eligible(node) != Some((input, columns, kind))
+                    || !outputs.insert(node.outputs[0])
+                {
+                    break;
+                }
+                end += 1;
             }
-            let Some(kind) = contract(gate.inputs[1]) else {
-                continue;
-            };
-            if contract(up.inputs[1]) != Some(kind) {
-                continue;
-            }
-            let elements = |id| {
-                graph
-                    .tensors
-                    .iter()
-                    .find(|tensor| tensor.id == id)
-                    .and_then(|tensor| tensor.elements().ok())
-            };
-            let Some(columns) = elements(gate.inputs[0]) else {
-                continue;
-            };
-            let Some(outputs) = elements(gate.outputs[0]) else {
-                continue;
-            };
-            if columns == 0
-                || outputs == 0
-                || elements(up.outputs[0]) != Some(outputs)
-                || elements(active.outputs[0]) != Some(outputs)
-                || elements(product.outputs[0]) != Some(outputs)
-            {
+            if end == index + 1 {
+                index += 1;
                 continue;
             }
             let pair = Pair {
                 first: index,
-                second: index + 1,
-                input: gate.inputs[0],
+                last: end - 1,
+                input,
                 columns,
                 kind,
             };
             roles[index] = Some(QuantPairRole::First(pair));
-            roles[index + 1] = Some(QuantPairRole::Second(pair));
+            for (offset, role) in roles[index + 1..end].iter_mut().enumerate() {
+                *role = Some(QuantPairRole::Second {
+                    pair,
+                    index: index + 1 + offset,
+                });
+            }
+            index = end;
         }
         Self { roles }
     }
@@ -152,11 +147,13 @@ pub struct QuantKey {
 #[derive(Clone, Copy)]
 struct Primed {
     epoch: u64,
+    next: usize,
     pair: Pair,
     key: QuantKey,
 }
 #[derive(Clone, Copy)]
 pub struct QuantTicket {
+    next: usize,
     pair: Pair,
     key: QuantKey,
 }
@@ -225,11 +222,10 @@ impl CaptureQuantReuse {
         };
         match role {
             QuantPairRole::First(_) => self.primed = None,
-            QuantPairRole::Second(pair) => {
-                if !self
-                    .primed
-                    .is_some_and(|primed| primed.epoch == self.epoch && primed.pair == pair)
-                {
+            QuantPairRole::Second { pair, index } => {
+                if !self.primed.is_some_and(|primed| {
+                    primed.epoch == self.epoch && primed.pair == pair && primed.next == index
+                }) {
                     self.primed = None;
                 }
             }
@@ -257,11 +253,21 @@ impl CaptureQuantReuse {
                 self.primed = None;
                 #[cfg(test)]
                 self.recorded();
-                (false, Some(QuantTicket { pair, key }))
+                (
+                    false,
+                    Some(QuantTicket {
+                        next: pair.first + 1,
+                        pair,
+                        key,
+                    }),
+                )
             }
-            QuantPairRole::Second(_) => {
+            QuantPairRole::Second { index, .. } => {
                 let reused = self.primed.take().is_some_and(|primed| {
-                    primed.epoch == self.epoch && primed.pair == pair && primed.key == key
+                    primed.epoch == self.epoch
+                        && primed.pair == pair
+                        && primed.next == index
+                        && primed.key == key
                 });
                 if reused {
                     #[cfg(test)]
@@ -273,7 +279,12 @@ impl CaptureQuantReuse {
                     #[cfg(test)]
                     self.recorded();
                 }
-                (reused, None)
+                let ticket = (reused && index < pair.last).then_some(QuantTicket {
+                    next: index + 1,
+                    pair,
+                    key,
+                });
+                (reused, ticket)
             }
         }
     }
@@ -283,6 +294,7 @@ impl CaptureQuantReuse {
         } else if let Some(ticket) = ticket {
             self.primed = Some(Primed {
                 epoch: self.epoch,
+                next: ticket.next,
                 pair: ticket.pair,
                 key: ticket.key,
             });

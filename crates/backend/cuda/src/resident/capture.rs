@@ -119,13 +119,14 @@ impl Capture<'_> {
         graph: &DataflowGraph,
         skip_logits: bool,
     ) -> Result<(), DeviceError> {
-        let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(graph, self.weights);
+        let quant_plan = (self.mode == CaptureMode::Flat)
+            .then(|| super::nvfp4_gemm::QuantPairPlan::new(graph, self.weights));
         self.nvfp4.begin_quant_capture();
         let mut record = || {
             for (index, node) in graph.nodes.iter().enumerate() {
                 let skip = skip_logits && node.outputs.iter().any(|id| Some(*id) == graph.logits);
                 let role = (self.mode == CaptureMode::Flat && !skip)
-                    .then(|| quant_plan.role(index))
+                    .then(|| quant_plan.as_ref().and_then(|plan| plan.role(index)))
                     .flatten();
                 self.nvfp4.enter_quant_node(index, role);
                 if !skip {

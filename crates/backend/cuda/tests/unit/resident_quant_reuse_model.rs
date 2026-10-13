@@ -1,4 +1,4 @@
-//! Same-weight whole-model gate for adjacent `SwiGLU` input quantization reuse.
+//! Same-weight whole-model gate for adjacent shared-input projection quantization reuse.
 use super::{LoadOptions, LoadedModel};
 use crate::{
     device::CudaDevice,
@@ -211,6 +211,14 @@ fn shared_quantization_preserves_checkpoint_model_bits() -> Result<()> {
             ..LoadOptions::default()
         },
     )?;
+    let plan = crate::resident::nvfp4_gemm::QuantPairPlan::new(&loaded.graph, &loaded.weights);
+    let planned = (0..loaded.graph.nodes.len())
+        .filter(|&index| plan.role(index).is_some())
+        .count();
+    eprintln!(
+        "{}",
+        serde_json::json!({"quant_reuse_planned_nodes":planned})
+    );
     for width in [64, 256] {
         loaded.weights.prefill_width = width;
         loaded.weights.narrow_prefill_width = 0;

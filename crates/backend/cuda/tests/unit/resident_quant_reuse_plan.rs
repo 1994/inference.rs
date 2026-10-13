@@ -40,19 +40,19 @@ fn plan(graph: &DataflowGraph, kinds: [Option<QuantKind>; 2]) -> QuantPairPlan {
         |_| false,
         |id| match id.get() {
             10 => kinds[0],
-            11 => kinds[1],
+            11 | 12 => kinds[1],
             _ => None,
         },
     )
 }
 
 #[test]
-fn only_matching_adjacent_swiglu_contracts_are_certified() -> Result<()> {
+fn only_matching_adjacent_projection_contracts_are_certified() -> Result<()> {
     let graph = graph()?;
     for kind in [QuantKind::Fp8Token, QuantKind::Fp4(1.0_f32.to_bits())] {
         let plan = plan(&graph, [Some(kind); 2]);
         assert!(matches!(plan.role(0), Some(QuantPairRole::First(_))));
-        assert!(matches!(plan.role(1), Some(QuantPairRole::Second(_))));
+        assert!(matches!(plan.role(1), Some(QuantPairRole::Second { .. })));
         assert_eq!(plan.role(2), None);
         assert_eq!(plan.role(4), None);
     }
@@ -84,9 +84,9 @@ fn aliases_different_values_and_intervening_work_are_rejected() -> Result<()> {
             1 => graph.nodes[0].outputs[0] = TensorId::new(1)?,
             2 => graph.nodes[1].outputs[0] = TensorId::new(1)?,
             3 => graph.nodes[1].outputs[0] = graph.nodes[0].outputs[0],
-            4 => graph.nodes[2].op = TensorOp::Add,
+            4 => graph.nodes[1].op = TensorOp::Add,
             5 => graph.nodes[0].states.push(TensorId::new(9)?),
-            6 => graph.tensors[2].shape = vec![65],
+            6 => graph.tensors[0].shape = vec![0],
             _ => graph.nodes[1].outputs.push(TensorId::new(9)?),
         }
         assert!(
@@ -203,5 +203,92 @@ fn skips_errors_epochs_and_unknown_views_clear_permissions() -> Result<()> {
     reuse.enter(0, plan.role(0));
     reuse.enter(1, plan.role(1));
     assert!(!reuse.prepare(Some(key())).0);
+    Ok(())
+}
+
+fn triple_graph() -> Result<DataflowGraph> {
+    let mut graph = graph()?;
+    graph.tensors[2].shape = vec![128];
+    graph.tensors.push(TensorSpec {
+        id: TensorId::new(6)?,
+        shape: vec![12],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    });
+    graph.nodes.insert(
+        2,
+        TensorNode {
+            id: OpId::new(5)?,
+            layer: None,
+            op: TensorOp::Linear,
+            inputs: vec![TensorId::new(1)?, TensorId::new(12)?],
+            outputs: vec![TensorId::new(6)?],
+            states: vec![],
+        },
+    );
+    Ok(graph)
+}
+
+#[test]
+fn unequal_output_widths_and_three_consumers_share_one_quantizer() -> Result<()> {
+    let graph = triple_graph()?;
+    let plan = plan(&graph, [Some(QuantKind::Fp8Token); 2]);
+    assert!(matches!(plan.role(0), Some(QuantPairRole::First(_))));
+    assert!(matches!(plan.role(1), Some(QuantPairRole::Second { .. })));
+    assert!(matches!(plan.role(2), Some(QuantPairRole::Second { .. })));
+    assert_eq!(plan.role(3), None);
+    let mut reuse = CaptureQuantReuse::default();
+    reuse.set_enabled(true);
+    reuse.begin();
+    prime(&mut reuse, &plan);
+    for index in 1..=2 {
+        reuse.enter(index, plan.role(index));
+        let (skip, ticket) = reuse.prepare(Some(key()));
+        assert!(skip);
+        assert_eq!(ticket.is_some(), index == 1);
+        reuse.finish(ticket, true);
+    }
+    assert_eq!(
+        reuse.stats(),
+        QuantReuseStats {
+            recorded: 1,
+            reused: 2
+        }
+    );
+    reuse.enter(2, plan.role(2));
+    assert!(
+        !reuse.prepare(Some(key())).0,
+        "last consumer cannot be repeated"
+    );
+    Ok(())
+}
+
+#[test]
+fn later_consumers_require_every_previous_success_and_unchanged_buffers() -> Result<()> {
+    let plan = plan(&triple_graph()?, [Some(QuantKind::Fp8Token); 2]);
+    for failure in 0..5 {
+        let mut reuse = CaptureQuantReuse::default();
+        reuse.set_enabled(true);
+        reuse.begin();
+        prime(&mut reuse, &plan);
+        if failure != 0 {
+            reuse.enter(1, plan.role(1));
+            let mut second_key = key();
+            if failure == 1 {
+                second_key.codes_pointer += 1;
+            }
+            let (skip, ticket) = reuse.prepare(Some(second_key));
+            assert_eq!(skip, failure != 1);
+            if failure != 2 {
+                reuse.finish(ticket, failure != 3);
+            }
+        }
+        let mut third_key = key();
+        if failure == 4 {
+            third_key.scales_pointer += 1;
+        }
+        reuse.enter(2, plan.role(2));
+        assert!(!reuse.prepare(Some(third_key)).0, "failure {failure}");
+    }
     Ok(())
 }
