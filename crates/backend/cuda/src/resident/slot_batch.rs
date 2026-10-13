@@ -307,6 +307,14 @@ impl SlotPool {
         (&self.states[slot], &self.fp8[slot])
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_hidden(&self, device: &CudaDevice, slot: usize) -> Result<Vec<f32>> {
+        self.decode
+            .as_ref()
+            .ok_or_else(|| Error::invalid("test hidden needs decode pool"))?
+            .test_hidden(device, slot)
+    }
+
     /// Slots (state sets) in the pool.
     #[must_use]
     pub const fn width(&self) -> usize {

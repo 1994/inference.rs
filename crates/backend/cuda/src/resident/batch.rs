@@ -1106,6 +1106,16 @@ impl BatchGraph {
 pub(super) type SlotLane = (usize, u32, usize, usize);
 
 impl SlotDecodeGraph {
+    #[cfg(test)]
+    pub(super) fn test_hidden(&self, device: &CudaDevice, slot: usize) -> Result<Vec<f32>> {
+        if slot >= self.width {
+            return Err(Error::invalid("test hidden slot"));
+        }
+        let values = device.read_borrowed(&self.hidden)?;
+        let columns = values.len() / self.width;
+        Ok(values[slot * columns..(slot + 1) * columns].to_vec())
+    }
+
     /// Validate the lane set against the cursors, then stage every slot's metadata for
     /// the next replay. `graph` only retains the metadata writes until that replay.
     #[allow(

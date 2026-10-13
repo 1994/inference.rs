@@ -278,6 +278,30 @@ impl Capture<'_> {
             }
             return Ok(matrix.reshape(&[size])?);
         }
+        if self.mode == CaptureMode::Flat
+            && super::small_gemm::precise_dense_enabled()
+            && output.size()
+                <= input
+                    .size()
+                    .saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+            && let crate::mlp::ProjectionWeight::Dense(weight) = weights
+        {
+            let size = output.size();
+            let columns = input.size();
+            let mut matrix = output.reshape(&[1, size])?;
+            self.scope.record(
+                super::small_gemm::kernels::dense_precise(
+                    (&mut matrix).partition(crate::constants::SMALL_GEMM_TILE),
+                    &input.view(&[1, columns]).map_err(error)?,
+                    weight,
+                )
+                .generics(vec![
+                    cutile::half::bf16::DTYPE.as_str().into(),
+                    columns.to_string(),
+                ]),
+            )?;
+            return Ok(matrix.reshape(&[size])?);
+        }
         weights.record(
             self.scope,
             &mut output,

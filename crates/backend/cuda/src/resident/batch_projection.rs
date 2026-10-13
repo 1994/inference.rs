@@ -203,6 +203,10 @@ pub(super) fn record_slots(
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("slot projection weight"))?;
+    if record_pool_small_f32(scope, node, weights, weight, &input, &mut output, columns)? {
+        arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
+        return Ok(());
+    }
     if !super::nvfp4_gemm::record_with_input_pointer(
         scope,
         nvfp4,
@@ -248,6 +252,19 @@ fn record_projection(
     {
         match weight {
             ProjectionWeight::Dense(w) => {
+                if super::small_gemm::precise_dense_enabled()
+                    && outputs <= columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+                {
+                    scope.record(
+                        super::small_gemm::kernels::dense_precise(
+                            output.partition(crate::constants::SMALL_GEMM_TILE),
+                            x,
+                            w,
+                        )
+                        .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
+                    )?;
+                    return Ok(());
+                }
                 scope.record(
                     super::small_gemm::kernels::dense(
                         output.partition(crate::constants::SMALL_GEMM_TILE),
@@ -308,4 +325,52 @@ fn record_projection(
         }
     }
     Ok(())
+}
+
+/// The four-row kernel consumes the existing slot matrix without additional copies.
+/// Reuse the private GEMV tile to keep its F32 accumulation and reduction order.
+fn record_pool_small_f32(
+    scope: &Scope,
+    node: &TensorNode,
+    weights: &ProgramWeights,
+    weight: &ProjectionWeight,
+    input: &TensorView<'_, f32>,
+    output: &mut Tensor<f32>,
+    columns: usize,
+) -> std::result::Result<bool, DeviceError> {
+    let rows = usize::try_from(input.shape()[0]).map_err(error)?;
+    if rows != crate::constants::CB_DECODE_SLOTS
+        || !super::small_gemm::pool_f32_enabled()
+        || weights.activation_quantization(node.inputs[1]).is_some()
+        || columns == 0
+        || output.size() / rows > columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+    {
+        return Ok(false);
+    }
+    let ProjectionWeight::Dense(weight) = weight else {
+        return Ok(false);
+    };
+    let tile = weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
+        crate::strategy::LinearTiling::new(
+            crate::constants::DEFAULT_TILE_ROWS,
+            crate::constants::DEFAULT_TILE_COLUMNS,
+        )
+        .map_err(error)?,
+    );
+    scope.record(
+        batched::dense(
+            output.partition([crate::constants::CB_DECODE_SLOTS, tile.rows()]),
+            input,
+            weight,
+        )
+        .generics(vec![
+            bf16::DTYPE.as_str().into(),
+            tile.rows().to_string(),
+            tile.columns().to_string(),
+            columns.to_string(),
+        ]),
+    )?;
+    #[cfg(test)]
+    super::small_gemm::note_pool_record();
+    Ok(true)
 }

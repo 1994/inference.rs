@@ -524,3 +524,7 @@ mod quant_reuse_model_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_attention_prefill_model.rs"]
 mod attention_prefill_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_decode_path.rs"]
+mod decode_path_tests;
