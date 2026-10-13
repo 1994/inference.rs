@@ -275,3 +275,35 @@ CUDA release 上重新验证 75 组 fixture，150 次 state/output 比较全部�
 完整服务行为，处理已发现的 batch4 路由/流一致性差异，再决定准入。
 实现、源码与二进制 SHA、原始样本和全部失败索引见
 [共享输入实现与独立确认](artifacts/cuda-gdn-shared-inputs-2026-10-14.json)。
+
+## 10-14：集成共享输入后的实际模型 profile
+
+CUDA 代码提交 ac2a7fdc804804d71fb2d6811059982dd9351810 的完整 CI 已 10/10
+成功。随后从该提交创建隔离归档，只移植原量化诊断的按节点准入；计算内核、
+16 列分块和共享输入与生产提交相同。该归档用于 profile，正式量化默认准入
+仍未扩大，也没有新增用户算法开关。固定模型、511-token long 输入、46 项
+tuning cache、上下文/并发/输出长度与上一份 32 列诊断一致。
+
+长输入的两个 256 宽度 prefill 图合计 3,812 个 kernel、136.895069 ms GPU
+kernel 时间。其中状态递推 27.930901 ms，Q/K 归一化 0.446588 ms，门控
+0.625690 ms；完整 GDN 阶段共 29.003179 ms，占图 GPU 时间的 21.1864%。
+transpose 0.614394 ms，attention 15.027716 ms。
+
+历史 scalar profile 的 GDN 为 110.167342 ms、占 50.6%；32 列候选为
+37.075934 ms、占 25.59%。三份 trace 来自独立运行且有插桩，不能用这些
+差值登记正式 TTFT/TPOT 或置信加速比。各 trace 的 CUDA/OS runtime 不完整
+及缺少 OS scheduling 警告全部保留；不推断 HBM 带宽、occupancy 或 CPU 原因。
+
+下一步的 GDN 主线应针对状态递推，它占当前 GDN 时间约 96.3%，继续优化
+约 1.07 ms 的共享准备阶段已难以贡献大收益。projection 各大族合计占据较多
+时间；已核实 dense projection 的 N tile 是 64，不能假定 beta/alpha 融合
+会使 padded MMA 计算量减半。attention 仍有明显差距，checkpoint 的 32 个
+BF16 KV 缩放值在 CPU 枚举所有 254 个有限 FP8 code 后，第三个 BF16 残差
+分量均为零；这只是后续删去恒零乘法的线索，尚未完成 GPU/F64/全模型验证，
+没有修改其生产计算。最初 BF16 字节解码错误的记录已明确作废并保留。
+
+此轮诊断四种 workload 均完成，外来 GPU 进程 guard 无违规，冻结 tuning
+cache 和二进制 hash 未变。此前旧候选的完整质量/服务结果不作为新候选验收。
+原始目录为 /home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/shared-inputs-current-profile-v1；
+[实际模型 profile 汇总](artifacts/cuda-gdn-shared-inputs-current-profile-2026-10-14.json)
+记录准入 diff、编译身份、trace、警告及 CI 证据 hash。
