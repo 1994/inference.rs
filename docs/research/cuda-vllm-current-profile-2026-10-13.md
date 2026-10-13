@@ -355,3 +355,25 @@ hidden、logits、verify 3/commit 1 回滚和 16 步继续 decode 均逐位一�
 哪种硬件资源决定这些开销，需要继续用可分离的实验验证。
 
 [行边界检查优化证据](artifacts/cuda-gdn-axis-bounds-2026-10-14.json)。
+
+## 2026-10-14：行检查优化的完整模型 profile
+
+CUDA 代码提交 0e7a969e9a05b193d1a86faee458021f57cebaa2 的
+[完整 CI](https://github.com/1994/inference.rs/actions/runs/38473384061) 已 10/10 成功。
+同一生产 kernel 在量化诊断归档中，采用与上一轮相同的准入补丁、四个固定
+场景及 46 项冻结 tuning 表，重新采集了完整模型 trace。
+
+511 token 的两次 256 token 图仍执行 3,812 个 kernel。递推从上一轮
+27.930901 ms 变为 24.683036 ms；共享 normalization 为 0.445523 ms，
+gates 为 0.623499 ms，GDN 总和为 25.752058 ms，较上一轮 29.003179 ms
+少 3.251121 ms。attention 为 15.027409 ms，输出 transpose 为 0.615148 ms，
+与上一轮基本一致；整体图 kernel duration 总和为 133.509172 ms。
+GDN 在该总和中的占比从 21.2% 变为 19.3%，减少的时间集中于目标递推阶段。
+
+四个场景均完成，GPU guard 无干扰记录；protected profile 峰值 5.6 GiB，
+自身 swap 为零。Nsight 仍报告未采集 OS scheduling、部分 CUDA events 和部分
+OS runtime events，全部保留。这里是一次带 profiler 的诊断，和独立隔离复测
+相互印证，不能作为配对 serving 收益或量化模型默认准入的结论。
+
+[完整模型 trace 与 CI 证据](artifacts/cuda-gdn-axis-bounds-current-profile-2026-10-14.json)
+记录生产 kernel hash、诊断二进制及准入身份、原始 trace/hash 和全部警告。

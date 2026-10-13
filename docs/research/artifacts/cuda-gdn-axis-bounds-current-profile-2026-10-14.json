@@ -1,0 +1,441 @@
+{
+  "classification": "single Nsight diagnostic, not paired TTFT acceptance or quantized default promotion",
+  "production_commit": "0e7a969e9a05b193d1a86faee458021f57cebaa2",
+  "production_kernel_sha256": "92ea087e3f58c44b16e441da1ac9a960307858b2cb67304d0b5403e8e26e857f",
+  "binary_sha256": "a02b59e5d71408053f6862ffb0be68d6f5ad9373e3b8be01e2c454e4e03ebe7e",
+  "source_admission": {
+    "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+    "patch_files": [
+      "crates/backend/cuda/src/resident/recurrent_prefill/budget.rs",
+      "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs",
+      "crates/backend/cuda/src/resident/recurrent_prefill.rs"
+    ],
+    "source_hashes": {
+      "crates/backend/cuda/src/resident/recurrent_prefill/budget.rs": "2fc8dd6697812d2850b673b20bd80d515ccc0f41e4d2f0aed895078927486288",
+      "crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs": "7f82e138e6661193b56c2d43d40675b6a6d2d1ba988098f9132f6261e648f9c5",
+      "crates/backend/cuda/src/resident/recurrent_prefill.rs": "92ea087e3f58c44b16e441da1ac9a960307858b2cb67304d0b5403e8e26e857f"
+    },
+    "production_kernel_matches_main": true,
+    "admission_patch": "exact budget/workspace from prior shared-inputs diagnostic; no additional admission changes",
+    "inputs_sha256": "2d88b924fa4ae3e83a6763e0c2eca986791808cf21ed0e0fcbafbe26b05e6a15",
+    "tuning_sha256": "ed6747b0514451a2944b9291ec673a2c674f20feed33b053be1ff5231bcb0b28"
+  },
+  "before_profile": {
+    "source": "ac2a7fdc804804d71fb2d6811059982dd9351810",
+    "path": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/shared-inputs-current-profile-v1",
+    "long": {
+      "prompt_tokens": 511,
+      "graph_count": 2,
+      "kernel_calls": 3812,
+      "kernel_sum_ms": 136.895069,
+      "gdn_including_preparation_ms": 29.003179,
+      "gdn_fraction": 0.21186430754492697,
+      "gdn_recurrence_ms": 27.930901,
+      "gdn_normalization_ms": 0.446588,
+      "gdn_gates_ms": 0.62569,
+      "attention_ms": 15.027716,
+      "transpose_ms": 0.614394,
+      "top_families": [
+        [
+          "matmul_entry",
+          32.335409999999996
+        ],
+        [
+          "delta_precomputed_entry",
+          27.930901
+        ],
+        [
+          "packed_entry",
+          15.061475
+        ],
+        [
+          "decode_entry",
+          15.027716
+        ],
+        [
+          "quantize_entry",
+          9.743603
+        ],
+        [
+          "norm_entry",
+          9.250698
+        ],
+        [
+          "packed_prefill_entry",
+          7.7607669999999995
+        ],
+        [
+          "dense_entry",
+          6.3016749999999995
+        ],
+        [
+          "append_entry",
+          3.451479
+        ],
+        [
+          "binary_entry",
+          2.64725
+        ],
+        [
+          "forward_entry",
+          2.373826
+        ],
+        [
+          "unary_entry",
+          1.436232
+        ],
+        [
+          "prefill_rope_entry",
+          0.942771
+        ],
+        [
+          "gates_shared_entry",
+          0.62569
+        ],
+        [
+          "transpose_entry",
+          0.614394
+        ],
+        [
+          "embedding_entry",
+          0.59853
+        ],
+        [
+          "normalize_shared_entry",
+          0.446588
+        ],
+        [
+          "split_entry",
+          0.232555
+        ],
+        [
+          "commit_entry",
+          0.113509
+        ]
+      ],
+      "graph_ids": [
+        6521,
+        6518
+      ]
+    },
+    "rollup_sha256": "f727b4178891c1d24821ec749f28ed01c41eb92f1d90c5d1f92cc4ee9c48fadd"
+  },
+  "after_profile": {
+    "classification": "one Nsight timing diagnostic, not paired service certification",
+    "source_revision": "0e7a969e9a05b193d1a86faee458021f57cebaa2",
+    "trace_analysis_sha256": "cebbd00a84dde1bdb6117d38c9b46296ad8dd42b9a1940de179f1955d8907bb1",
+    "long": {
+      "prompt_tokens": 511,
+      "graph_count": 2,
+      "kernel_calls": 3812,
+      "kernel_sum_ms": 133.509172,
+      "gdn_including_preparation_ms": 25.752058,
+      "gdn_fraction": 0.19288605879452236,
+      "gdn_recurrence_ms": 24.683036,
+      "gdn_normalization_ms": 0.445523,
+      "gdn_gates_ms": 0.623499,
+      "attention_ms": 15.027408999999999,
+      "transpose_ms": 0.615148,
+      "top_families": [
+        [
+          "matmul_entry",
+          32.284647
+        ],
+        [
+          "delta_precomputed_entry",
+          24.683036
+        ],
+        [
+          "decode_entry",
+          15.027408999999999
+        ],
+        [
+          "packed_entry",
+          15.016225
+        ],
+        [
+          "quantize_entry",
+          9.731145999999999
+        ],
+        [
+          "norm_entry",
+          9.251769
+        ],
+        [
+          "packed_prefill_entry",
+          7.7274840000000005
+        ],
+        [
+          "dense_entry",
+          6.308629
+        ],
+        [
+          "append_entry",
+          3.454222
+        ],
+        [
+          "binary_entry",
+          2.650156
+        ],
+        [
+          "forward_entry",
+          2.3696599999999997
+        ],
+        [
+          "unary_entry",
+          1.431187
+        ],
+        [
+          "prefill_rope_entry",
+          0.9416279999999999
+        ],
+        [
+          "gates_shared_entry",
+          0.623499
+        ],
+        [
+          "transpose_entry",
+          0.615148
+        ],
+        [
+          "embedding_entry",
+          0.601895
+        ],
+        [
+          "normalize_shared_entry",
+          0.445523
+        ],
+        [
+          "split_entry",
+          0.232248
+        ],
+        [
+          "commit_entry",
+          0.113661
+        ]
+      ],
+      "graph_ids": [
+        6521,
+        6518
+      ]
+    },
+    "warnings": {
+      "short": [
+        {
+          "timestamp": 168598391,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+          "globalPid": -144115188075855872
+        },
+        {
+          "timestamp": 168631029,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all CUDA events might have been collected.",
+          "globalPid": 323678533320704
+        },
+        {
+          "timestamp": 168632934,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all OS runtime libraries events might have been collected.",
+          "globalPid": 323678533320704
+        }
+      ],
+      "long": [
+        {
+          "timestamp": 200731265,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+          "globalPid": -144115188075855872
+        },
+        {
+          "timestamp": 200764189,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all CUDA events might have been collected.",
+          "globalPid": 323678533320704
+        },
+        {
+          "timestamp": 200766903,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all OS runtime libraries events might have been collected.",
+          "globalPid": 323678533320704
+        }
+      ],
+      "batch4": [
+        {
+          "timestamp": 262976649,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Scheduling information is absent. The thread activity is deduced based on OS runtime libraries traces. This is inaccurate and does not take into account asynchronous interrupts and exception faults.",
+          "globalPid": -144115188075855872
+        },
+        {
+          "timestamp": 263037210,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all CUDA events might have been collected.",
+          "globalPid": 323678533320704
+        },
+        {
+          "timestamp": 263039578,
+          "timestampType": 2,
+          "source": 3,
+          "severity": 2,
+          "text": "Not all OS runtime libraries events might have been collected.",
+          "globalPid": 323678533320704
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "recurrence_duration_reduction_fraction": 0.11628214213354582,
+    "gdn_duration_reduction_fraction": 0.11209533272197503,
+    "gdn_saved_ms": 3.2511209999999977,
+    "kernel_calls_unchanged": true
+  },
+  "run_finished": {
+    "finished_unix": 1791928482.6370952,
+    "violations": [],
+    "gpu_end": "1160, /usr/bin/kwin_wayland, 251 MiB\n",
+    "cache_sha256": "ed6747b0514451a2944b9291ec673a2c674f20feed33b053be1ff5231bcb0b28",
+    "binary_sha256": "a02b59e5d71408053f6862ffb0be68d6f5ad9373e3b8be01e2c454e4e03ebe7e"
+  },
+  "evidence": {
+    "plan.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/plan.json",
+      "sha256": "8527f239084c2f07efdbdab189ff3d2c3253220f441f7b9c0d07ea45d30df51b"
+    },
+    "build/result.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/build/result.json",
+      "sha256": "42ed9273176df45e8aaf36050f37f0aa17c5f7e40979b5fe3350e7979017978b"
+    },
+    "run.py": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/run.py",
+      "sha256": "f70ed91f8be200910059e7f794dafad627ea8855e54569932918b3e225e60b15"
+    },
+    "analyze-traces.py": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/analyze-traces.py",
+      "sha256": "021d71990f49cf4de0380a0cdf28874f484f8c6d74488284a9487265ece2f763"
+    },
+    "trace-analysis.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/trace-analysis.json",
+      "sha256": "cebbd00a84dde1bdb6117d38c9b46296ad8dd42b9a1940de179f1955d8907bb1"
+    },
+    "u0-ordered/invocation.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/invocation.json",
+      "sha256": "bf59bc72c7e729297e059614dabab257a64c1ee93fb49ce9d0ba16afcea28d03"
+    },
+    "u0-ordered/nsys-control.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/nsys-control.json",
+      "sha256": "60ca2b2973b0de6227fc8b053d76e86fb16faa9686a2b003684abf5b46431187"
+    },
+    "u0-ordered/finished.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/finished.json",
+      "sha256": "f36a869d297caa86752def68e295cd1d5e7c142598108774e2d16ec925cf3aac"
+    },
+    "u0-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u0-ordered.json": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/Qwen3.8-27B-NVFP4-mtp0-native-u0-ordered.json",
+      "sha256": "1cd90df7e0499357f50761d68933859e88131acf9da03c7be590dbf82f22a4ec"
+    },
+    "u0-ordered/short.nsys-rep": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/short.nsys-rep",
+      "sha256": "0033a40e7654db1b703208339fd0d9b77f696f9e43d30798b38a0c53c32dbf54"
+    },
+    "u0-ordered/long.nsys-rep": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/long.nsys-rep",
+      "sha256": "cc77c894e509a0820bcc32c9f755b918bd2d0a71ddb55f3b6980cc9fe2f5d969"
+    },
+    "u0-ordered/batch4.nsys-rep": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/batch4.nsys-rep",
+      "sha256": "7944d7e04bd56b8ac1e1202491584d15593db8243e1dc8adae63254573f82f23"
+    },
+    "u0-ordered/short.sqlite": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/short.sqlite",
+      "sha256": "921112c7697d368cbaf6e25ab5f5a4cb5beb8edb5b5f662b46acb2b358fdae40"
+    },
+    "u0-ordered/long.sqlite": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/long.sqlite",
+      "sha256": "c6501617ad06b845a668152c2a431f1bc98dee9f95743a5619eb5513137f0718"
+    },
+    "u0-ordered/batch4.sqlite": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-current-profile-v1/u0-ordered/batch4.sqlite",
+      "sha256": "a46c6a3537f8188d2cf05d096b2e82de7cfa46ea7ca11b1fac2fb18ba84da681"
+    }
+  },
+  "limits": "safe-run 24GiB profile /12GiB analysis; own swap0; profile peak5.6GiB; no foreign compute violations",
+  "scope": "same four frozen cases, max_len65536, max_seqs16,64 output tokens,MTP0,prefix cache and46-entry frozen tuning; profiler captures repeat0 for short,long,batch4",
+  "production_ci": {
+    "url": "https://github.com/1994/inference.rs/actions/runs/38473384061",
+    "head_sha": "0e7a969e9a05b193d1a86faee458021f57cebaa2",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "tools",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Rust (macos-15)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "security",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Rust (ubuntu-24.04)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "msrv",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Package (x86_64-unknown-linux-gnu.2.28)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Package (x86_64-apple-darwin)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Package (aarch64-apple-darwin)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Package (aarch64-unknown-linux-gnu.2.28)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "quality-gate",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "raw_metadata": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/committed-ci.json",
+      "sha256": "a28e8fe08960a166b3657665304c27b17d2e782226ad91d2a465ee45e6da61ae"
+    }
+  }
+}
