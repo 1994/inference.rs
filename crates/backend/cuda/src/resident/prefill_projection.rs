@@ -28,13 +28,14 @@ pub(super) fn record(
     let flat = output.size();
     let mut output = output.reshape(&[width, flat / width])?;
     let flat_input = arena.get(node.inputs[0]).map_err(error)?;
+    let input_pointer = flat_input.device_pointer().cu_deviceptr();
     let columns = flat_input.size() / width;
     let input = flat_input.view(&[width, columns]).map_err(error)?;
     let weight = weights
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("prefill projection"))?;
-    if super::nvfp4_gemm::record(
+    if super::nvfp4_gemm::record_with_input_pointer(
         scope,
         nvfp4,
         weight,
@@ -42,6 +43,7 @@ pub(super) fn record(
         &input,
         &mut output,
         columns,
+        input_pointer,
     )? {
         arena.buffers[slot] = Some(output.reshape(&[flat])?);
         return Ok(());

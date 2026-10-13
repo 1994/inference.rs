@@ -293,6 +293,20 @@ impl SlotPool {
         }
     }
 
+    #[cfg(test)]
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "This workspace is retained for capture lifetime in production and inspected only by the graph test"
+    )]
+    pub(crate) const fn quant_reuse_stats(&self) -> (usize, usize) {
+        self._nvfp4.quant_reuse_totals()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_states(&self, slot: usize) -> (&States, &Fp8Caches) {
+        (&self.states[slot], &self.fp8[slot])
+    }
+
     /// Slots (state sets) in the pool.
     #[must_use]
     pub const fn width(&self) -> usize {

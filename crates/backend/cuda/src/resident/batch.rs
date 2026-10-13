@@ -237,10 +237,14 @@ impl BatchBuilder<'_> {
     ) -> Result<CudaGraph<()>> {
         let (lane_states, lane_fp8) = states;
         let width = lane_states.len();
-        CudaGraph::scope(&self.device.stream, |scope| {
+        let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
+        self.nvfp4.begin_quant_capture();
+        let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut no_fusion = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
+                self.nvfp4.enter_quant_node(index, quant_plan.role(index));
                 if !read_logits && node.outputs.iter().any(|id| Some(*id) == self.graph.logits) {
+                    self.nvfp4.clear_quant_reuse();
                     continue;
                 }
                 if read_logits && let Some(profile) = profile.as_mut() {
@@ -300,8 +304,9 @@ impl BatchBuilder<'_> {
                 profile.graph().finish(scope)?;
             }
             Ok(())
-        })
-        .map_err(device_error)
+        });
+        self.nvfp4.end_quant_capture();
+        result.map_err(device_error)
     }
 
     pub(super) fn capture_single(
@@ -507,7 +512,8 @@ impl BatchBuilder<'_> {
         prefill: Option<bool>,
     ) -> Result<CudaGraph<()>> {
         let width = lanes.len();
-        CudaGraph::scope(&self.device.stream, |scope| {
+        self.nvfp4.end_quant_capture();
+        let result = CudaGraph::scope(&self.device.stream, |scope| {
             for node in &self.graph.nodes {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 if logits && prefill == Some(false) {
@@ -566,8 +572,9 @@ impl BatchBuilder<'_> {
                 }
             }
             Ok(())
-        })
-        .map_err(device_error)
+        });
+        self.nvfp4.end_quant_capture();
+        result.map_err(device_error)
     }
 
     /// One graph covering all 32 lanes: Linear reads batched slots directly,
@@ -585,12 +592,14 @@ impl BatchBuilder<'_> {
         ),
     ) -> Result<CudaGraph<()>> {
         let (partials, recurrent) = workspaces;
-        CudaGraph::scope(&self.device.stream, |scope| {
+        let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
+        self.nvfp4.begin_quant_capture();
+        let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
             let mut no_fusion = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
-                if logits && !last {
+                if self.skip_quant(&quant_plan, index, logits && !last) {
                     continue;
                 }
                 if let Some(boundaries) = boundaries.as_mut() {
@@ -683,8 +692,20 @@ impl BatchBuilder<'_> {
                 boundaries.finish(scope)?;
             }
             Ok(())
-        })
-        .map_err(device_error)
+        });
+        self.nvfp4.end_quant_capture();
+        result.map_err(device_error)
+    }
+
+    fn skip_quant(
+        &mut self,
+        plan: &super::nvfp4_gemm::QuantPairPlan,
+        index: usize,
+        skip: bool,
+    ) -> bool {
+        self.nvfp4
+            .enter_quant_node(index, (!skip).then(|| plan.role(index)).flatten());
+        skip
     }
 
     fn allocate_lanes(&self, width: usize) -> Result<Vec<Lane>> {

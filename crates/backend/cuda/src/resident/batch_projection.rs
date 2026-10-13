@@ -194,6 +194,7 @@ pub(super) fn record_slots(
         .take()
         .ok_or_else(|| error("slot decode output"))?;
     let input = arena.get(node.inputs[0]).map_err(error)?;
+    let input_pointer = input.device_pointer().cu_deviceptr();
     let columns = input.size() / lanes;
     let input = input.view(&[lanes, columns]).map_err(error)?;
     let flat = output.size();
@@ -202,7 +203,7 @@ pub(super) fn record_slots(
         .projections
         .get(&node.inputs[1])
         .ok_or_else(|| error("slot projection weight"))?;
-    record_projection(
+    if !super::nvfp4_gemm::record_with_input_pointer(
         scope,
         nvfp4,
         weight,
@@ -210,7 +211,18 @@ pub(super) fn record_slots(
         &input,
         &mut output,
         columns,
-    )?;
+        input_pointer,
+    )? {
+        record_projection(
+            scope,
+            nvfp4,
+            weight,
+            weights.activation_quantization(node.inputs[1]),
+            &input,
+            &mut output,
+            columns,
+        )?;
+    }
     arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
     Ok(())
 }

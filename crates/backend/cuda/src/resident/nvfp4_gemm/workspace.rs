@@ -1,5 +1,8 @@
 //! Per-program activation quantization buffers, retained as long as captured graphs.
-use super::kernels;
+use super::{
+    kernels,
+    quant_reuse::{CaptureQuantReuse, QuantKey, QuantKind, QuantPairRole},
+};
 use crate::{
     device::{CudaDevice, device_error, vendor_fp8},
     mlp::ProjectionWeight,
@@ -18,6 +21,7 @@ type Fp8Key = (usize, usize, usize);
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
+    quant_reuse: CaptureQuantReuse,
     strategies: BTreeMap<
         (crate::tuning::resident_gemm::WeightKey, usize, usize, usize),
         crate::tuning::resident_gemm::GemmConfig,
@@ -38,6 +42,54 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Start a fresh graph-local permission epoch; no device memory is changed.
+    pub(crate) const fn begin_quant_capture(&mut self) {
+        self.quant_reuse.begin();
+    }
+    pub(crate) fn enter_quant_node(&mut self, index: usize, role: Option<QuantPairRole>) {
+        self.quant_reuse.enter(index, role);
+    }
+    pub(crate) const fn end_quant_capture(&mut self) {
+        self.quant_reuse.end();
+    }
+    pub(crate) const fn clear_quant_reuse(&mut self) {
+        self.quant_reuse.clear();
+    }
+    #[cfg(test)]
+    pub(crate) const fn set_quant_reuse_enabled(&mut self, enabled: bool) {
+        self.quant_reuse.set_enabled(enabled);
+    }
+    #[cfg(test)]
+    pub(crate) const fn quant_reuse_stats(&self) -> (usize, usize) {
+        let stats = self.quant_reuse.stats();
+        (stats.recorded, stats.reused)
+    }
+    #[cfg(test)]
+    pub(crate) const fn quant_reuse_totals(&self) -> (usize, usize) {
+        let stats = self.quant_reuse.total();
+        (stats.recorded, stats.reused)
+    }
+    #[cfg(test)]
+    pub(crate) fn quantized_fp8(
+        &self,
+        rows: usize,
+        columns: usize,
+    ) -> Option<(&Tensor<f8e4m3fn>, &Tensor<f32>)> {
+        self.fp8
+            .get(&(rows, columns, 1))
+            .map(|(codes, scales)| (codes, scales))
+    }
+    #[cfg(test)]
+    pub(crate) fn quantized_fp4(
+        &self,
+        rows: usize,
+        columns: usize,
+    ) -> Option<(&Tensor<f4e2m1fnx2>, &Tensor<f8e4m3fn>)> {
+        self.buffers
+            .get(&(rows, columns))
+            .map(|(codes, scales)| (codes, scales))
+    }
+
     /// Test evidence for prepared strategies, grouped by shape/config; this is not a replay trace.
     #[cfg(test)]
     pub(crate) fn prepared_configs(&self) -> serde_json::Value {
@@ -96,6 +148,7 @@ impl Workspace {
         widths: &[usize],
     ) -> Result<Self> {
         let mut workspace = Self {
+            quant_reuse: CaptureQuantReuse::default(),
             strategies: BTreeMap::new(),
             buffers: BTreeMap::new(),
             fp8: BTreeMap::new(),
@@ -297,7 +350,11 @@ impl Workspace {
         Ok(())
     }
 
-    pub(super) fn record(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Quantization records the exact view pointer alongside its original projection contract"
+    )]
+    pub(super) fn record_input(
         &mut self,
         scope: &Scope,
         weight: &ProjectionWeight,
@@ -305,6 +362,7 @@ impl Workspace {
         input: &TensorView<'_, f32>,
         output: &mut Tensor<f32>,
         columns: usize,
+        input_pointer: Option<u64>,
     ) -> std::result::Result<(), DeviceError> {
         let ProjectionWeight::Fp4(..) = weight else {
             return Err(super::super::capture::error("FP4 workspace weight"));
@@ -315,50 +373,69 @@ impl Workspace {
             .buffers
             .get_mut(&(rows, columns))
             .ok_or_else(|| super::super::capture::error("FP4 quantization workspace missing"))?;
-        scope.record(
-            kernels::quantize(
-                (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
-                (&mut *qs).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
-                input,
-                scale,
-            )
-            .generics(vec![columns.to_string()]),
-        )?;
-        let outputs = usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
-        let mut config = self
-            .strategies
-            .get(&(
-                crate::tuning::resident_gemm::WeightKey::new(weight, scale)
-                    .map_err(super::super::capture::error)?,
-                rows,
-                outputs,
-                columns,
-            ))
-            .copied()
-            .unwrap_or_else(|| crate::tuning::resident_gemm::GemmConfig::baseline(rows));
-        // An explicit experimental override never enters the measured table or memo.
-        if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
-            let tile = crate::constants::quant_gemm_tile(rows);
-            config.tile_m = tile[0];
-            config.tile_n = tile[1];
-            config.main_loop = if rows > crate::constants::QUANT_GEMM_TILE[0]
-                && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
-            {
-                crate::tuning::resident_gemm::MainLoop::Prefetch8
-            } else {
-                crate::tuning::resident_gemm::MainLoop::Plain
-            };
-        }
-        config.record(scope, weight, scale, &*q, &*qs, output, columns)?;
-        Ok(())
+        let key = quant_key(
+            input_pointer,
+            input,
+            output,
+            rows,
+            columns,
+            QuantKind::Fp4(scale.to_bits()),
+            (&*q, &*qs),
+        );
+        let (reuse, ticket) = self.quant_reuse.prepare(key);
+        let mut record = || {
+            if !reuse {
+                scope.record(
+                    kernels::quantize(
+                        (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
+                        (&mut *qs).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
+                        input,
+                        scale,
+                    )
+                    .generics(vec![columns.to_string()]),
+                )?;
+            }
+            let outputs =
+                usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+            let mut config = self
+                .strategies
+                .get(&(
+                    crate::tuning::resident_gemm::WeightKey::new(weight, scale)
+                        .map_err(super::super::capture::error)?,
+                    rows,
+                    outputs,
+                    columns,
+                ))
+                .copied()
+                .unwrap_or_else(|| crate::tuning::resident_gemm::GemmConfig::baseline(rows));
+            // An explicit experimental override never enters the measured table or memo.
+            if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
+                let tile = crate::constants::quant_gemm_tile(rows);
+                config.tile_m = tile[0];
+                config.tile_n = tile[1];
+                config.main_loop = if rows > crate::constants::QUANT_GEMM_TILE[0]
+                    && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
+                {
+                    crate::tuning::resident_gemm::MainLoop::Prefetch8
+                } else {
+                    crate::tuning::resident_gemm::MainLoop::Plain
+                };
+            }
+            config.record(scope, weight, scale, &*q, &*qs, output, columns)?;
+            Ok(())
+        };
+        let result = record();
+        self.quant_reuse.finish(ticket, result.is_ok());
+        result
     }
-    pub(super) fn record_fp8(
+    pub(super) fn record_fp8_input(
         &mut self,
         scope: &Scope,
         weight: &ProjectionWeight,
         input: &TensorView<'_, f32>,
         output: &mut Tensor<f32>,
         columns: usize,
+        input_pointer: Option<u64>,
     ) -> std::result::Result<(), DeviceError> {
         use super::super::{capture::error, fp8_gemm::kernels};
         if !matches!(
@@ -369,81 +446,141 @@ impl Workspace {
         }
         let rows = usize::try_from(output.shape()[0]).map_err(error)?;
         // The scales layout follows the weight's quantization mode, and the key has to say which.
-        let scale_columns = match weight {
-            ProjectionWeight::Fp8Block(..) => columns / crate::constants::FP8_BLOCK_COLUMNS,
-            _ => 1,
-        };
+        let scale_columns = fp8_scale_columns(weight, columns);
         let (q, qs) = self
             .fp8
             .get_mut(&(rows, columns, scale_columns))
             .ok_or_else(|| error("FP8 quantization workspace missing"))?;
-        let tile = crate::constants::quant_gemm_tile(rows);
-        let generics = vec![
-            columns.to_string(),
-            tile[0].to_string(),
-            tile[1].to_string(),
-        ];
-        match weight {
-            ProjectionWeight::Fp8Block(w, block_scale) => {
-                scope.record(
-                    kernels::quantize_block(
-                        (&mut *q).partition([1, crate::constants::FP8_BLOCK_COLUMNS]),
-                        (&mut *qs).partition([1, 1]),
-                        input,
-                    )
-                    .generics(vec![
-                        columns.to_string(),
-                        crate::constants::FP8_BLOCK_COLUMNS.to_string(),
-                    ]),
-                )?;
-                scope.record(
-                    kernels::matmul_block(output.partition(tile), &*q, w, &*qs, block_scale)
-                        .generics(generics),
-                )?;
-            }
-            ProjectionWeight::Fp8(w, channel_scale) => {
-                scope.record(
-                    kernels::quantize(
-                        (&mut *q).partition([1, columns.next_power_of_two()]),
-                        (&mut *qs).partition([1, 1]),
-                        input,
-                    )
-                    .generics(vec![
-                        columns.to_string(),
-                        columns.next_power_of_two().to_string(),
-                    ]),
-                )?;
-                if self.vendor_diagnostic
-                    && self
-                        .vendor_fp8
-                        .record(scope, &*q, w, output, &*qs, channel_scale)?
-                {
-                    return Ok(());
+        let kind = matches!(weight, ProjectionWeight::Fp8(..)).then_some(QuantKind::Fp8Token);
+        let key = kind.and_then(|kind| {
+            quant_key(
+                input_pointer,
+                input,
+                output,
+                rows,
+                columns,
+                kind,
+                (&*q, &*qs),
+            )
+        });
+        let (reuse, ticket) = self.quant_reuse.prepare(key);
+        let mut record = || {
+            let tile = crate::constants::quant_gemm_tile(rows);
+            let generics = [columns, tile[0], tile[1]]
+                .map(|value| value.to_string())
+                .to_vec();
+            match weight {
+                ProjectionWeight::Fp8Block(w, block_scale) => {
+                    scope.record(
+                        kernels::quantize_block(
+                            (&mut *q).partition([1, crate::constants::FP8_BLOCK_COLUMNS]),
+                            (&mut *qs).partition([1, 1]),
+                            input,
+                        )
+                        .generics(vec![
+                            columns.to_string(),
+                            crate::constants::FP8_BLOCK_COLUMNS.to_string(),
+                        ]),
+                    )?;
+                    scope.record(
+                        kernels::matmul_block(output.partition(tile), &*q, w, &*qs, block_scale)
+                            .generics(generics),
+                    )?;
                 }
-                let outputs = usize::try_from(output.shape()[1]).map_err(error)?;
-                let choice = self
-                    .fp8_strategies
-                    .get(&(
-                        crate::tuning::fp8_gemm::WeightKey::new(weight).map_err(error)?,
-                        rows,
-                        outputs,
+                ProjectionWeight::Fp8(w, channel_scale) => {
+                    if !reuse {
+                        scope.record(
+                            kernels::quantize(
+                                (&mut *q).partition([1, columns.next_power_of_two()]),
+                                (&mut *qs).partition([1, 1]),
+                                input,
+                            )
+                            .generics(vec![
+                                columns.to_string(),
+                                columns.next_power_of_two().to_string(),
+                            ]),
+                        )?;
+                    }
+                    if self.vendor_diagnostic
+                        && self
+                            .vendor_fp8
+                            .record(scope, &*q, w, output, &*qs, channel_scale)?
+                    {
+                        return Ok(());
+                    }
+                    let outputs = usize::try_from(output.shape()[1]).map_err(error)?;
+                    let choice = self
+                        .fp8_strategies
+                        .get(&(
+                            crate::tuning::fp8_gemm::WeightKey::new(weight).map_err(error)?,
+                            rows,
+                            outputs,
+                            columns,
+                        ))
+                        .copied()
+                        .unwrap_or_else(|| crate::tuning::fp8_gemm::Choice::baseline(rows));
+                    choice.record(
+                        scope,
+                        &self.vendor_fp8,
+                        &*q,
+                        w,
+                        output,
+                        &*qs,
+                        channel_scale,
                         columns,
-                    ))
-                    .copied()
-                    .unwrap_or_else(|| crate::tuning::fp8_gemm::Choice::baseline(rows));
-                choice.record(
-                    scope,
-                    &self.vendor_fp8,
-                    &*q,
-                    w,
-                    output,
-                    &*qs,
-                    channel_scale,
-                    columns,
-                )?;
+                    )?;
+                }
+                _ => return Err(error("FP8 workspace weight")),
             }
-            _ => return Err(error("FP8 workspace weight")),
-        }
-        Ok(())
+            Ok(())
+        };
+        let result = record();
+        self.quant_reuse.finish(ticket, result.is_ok());
+        result
     }
+}
+
+const fn fp8_scale_columns(weight: &ProjectionWeight, columns: usize) -> usize {
+    match weight {
+        ProjectionWeight::Fp8Block(..) => columns / crate::constants::FP8_BLOCK_COLUMNS,
+        _ => 1,
+    }
+}
+
+/// Only the certified whole-matrix paths supply a pointer; sliced/legacy views stay separate.
+fn quant_key<Q: DType, S: DType>(
+    input_pointer: Option<u64>,
+    input: &TensorView<'_, f32>,
+    output: &Tensor<f32>,
+    rows: usize,
+    columns: usize,
+    kind: QuantKind,
+    buffers: (&Tensor<Q>, &Tensor<S>),
+) -> Option<QuantKey> {
+    let input_pointer = input_pointer.filter(|pointer| *pointer != 0)?;
+    let shape: [i32; 2] = input.shape().try_into().ok()?;
+    let strides: [i32; 2] = input.strides().try_into().ok()?;
+    if shape != [i32::try_from(rows).ok()?, i32::try_from(columns).ok()?]
+        || strides != [i32::try_from(columns).ok()?, 1]
+    {
+        return None;
+    }
+    let input_end = input_pointer
+        .checked_add(u64::try_from(input.size().checked_mul(size_of::<f32>())?).ok()?)?;
+    let output_pointer = output.device_pointer().cu_deviceptr();
+    let output_end = output_pointer
+        .checked_add(u64::try_from(output.size().checked_mul(size_of::<f32>())?).ok()?)?;
+    if input_pointer < output_end && output_pointer < input_end {
+        return None;
+    }
+    Some(QuantKey {
+        input_pointer,
+        rows,
+        columns,
+        shape,
+        strides,
+        kind,
+        codes_pointer: buffers.0.device_pointer().cu_deviceptr(),
+        scales_pointer: buffers.1.device_pointer().cu_deviceptr(),
+    })
 }

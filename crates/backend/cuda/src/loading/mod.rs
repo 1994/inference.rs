@@ -516,3 +516,7 @@ fn select_prompt_width(
 #[cfg(test)]
 #[path = "../../tests/unit/loading_prefill_width.rs"]
 mod prefill_width_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_quant_reuse_model.rs"]
+mod quant_reuse_model_tests;

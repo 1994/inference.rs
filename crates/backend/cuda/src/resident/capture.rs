@@ -94,12 +94,24 @@ impl Capture<'_> {
         graph: &DataflowGraph,
         skip_logits: bool,
     ) -> Result<(), DeviceError> {
-        for node in &graph.nodes {
-            if !skip_logits || !node.outputs.iter().any(|id| Some(*id) == graph.logits) {
-                self.record(node)?;
+        let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(graph, self.weights);
+        self.nvfp4.begin_quant_capture();
+        let mut record = || {
+            for (index, node) in graph.nodes.iter().enumerate() {
+                let skip = skip_logits && node.outputs.iter().any(|id| Some(*id) == graph.logits);
+                let role = (self.mode == CaptureMode::Flat && !skip)
+                    .then(|| quant_plan.role(index))
+                    .flatten();
+                self.nvfp4.enter_quant_node(index, role);
+                if !skip {
+                    self.record(node)?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        };
+        let result = record();
+        self.nvfp4.end_quant_capture();
+        result
     }
 
     /// Row-mode twin of [`Self::record`]: kernels write one lane of each batched
@@ -224,7 +236,7 @@ impl Capture<'_> {
         if let Some(scale) = self.weights.activation_quantization(node.inputs[1]) {
             let size = output.size();
             let mut matrix = output.reshape(&[1, size])?;
-            if !super::nvfp4_gemm::record(
+            if !super::nvfp4_gemm::record_with_input_pointer(
                 self.scope,
                 self.nvfp4,
                 weights,
@@ -232,6 +244,7 @@ impl Capture<'_> {
                 &input.view(&[1, input.size()]).map_err(error)?,
                 &mut matrix,
                 input.size(),
+                input.device_pointer().cu_deviceptr(),
             )? {
                 return Err(error(
                     "activation quantization and weight encoding disagree",

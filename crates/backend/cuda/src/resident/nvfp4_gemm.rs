@@ -1,5 +1,9 @@
 //! Model-declared W4A4 projection with block-16 E4M3 activation scales.
+mod quant_reuse;
 mod workspace;
+pub use quant_reuse::QuantPairPlan;
+#[cfg(test)]
+pub use quant_reuse::with_quant_reuse_disabled;
 pub use workspace::Workspace;
 #[cutile::module]
 pub(crate) mod kernels {
@@ -164,19 +168,76 @@ pub(super) fn record(
     output: &mut cutile::prelude::Tensor<f32>,
     columns: usize,
 ) -> Result<bool, cutile::prelude::DeviceError> {
+    workspace.clear_quant_reuse();
+    record_input(
+        scope,
+        workspace,
+        weight,
+        input_scale,
+        input,
+        output,
+        columns,
+        None,
+    )
+}
+
+/// The caller supplies the pointer of the tensor from which this exact view was made.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The certified view adds its actual device pointer to the unchanged projection contract"
+)]
+pub(super) fn record_with_input_pointer(
+    scope: &cutile::prelude::Scope,
+    workspace: &mut Workspace,
+    weight: &crate::mlp::ProjectionWeight,
+    input_scale: Option<super::program::ActivationQuantization>,
+    input: &cutile::prelude::TensorView<'_, f32>,
+    output: &mut cutile::prelude::Tensor<f32>,
+    columns: usize,
+    input_pointer: u64,
+) -> Result<bool, cutile::prelude::DeviceError> {
+    record_input(
+        scope,
+        workspace,
+        weight,
+        input_scale,
+        input,
+        output,
+        columns,
+        Some(input_pointer),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "One dispatcher preserves both certified and legacy projection contracts"
+)]
+fn record_input(
+    scope: &cutile::prelude::Scope,
+    workspace: &mut Workspace,
+    weight: &crate::mlp::ProjectionWeight,
+    input_scale: Option<super::program::ActivationQuantization>,
+    input: &cutile::prelude::TensorView<'_, f32>,
+    output: &mut cutile::prelude::Tensor<f32>,
+    columns: usize,
+    input_pointer: Option<u64>,
+) -> Result<bool, cutile::prelude::DeviceError> {
     use super::program::ActivationQuantization;
     use crate::mlp::ProjectionWeight;
     match (weight, input_scale) {
         (ProjectionWeight::Fp4(..), Some(ActivationQuantization::Fp4(scale))) => {
-            workspace.record(scope, weight, scale, input, output, columns)?;
+            workspace.record_input(scope, weight, scale, input, output, columns, input_pointer)?;
         }
         (
             ProjectionWeight::Fp8(..) | ProjectionWeight::Fp8Block(..),
             Some(ActivationQuantization::Fp8Token),
         ) => {
-            workspace.record_fp8(scope, weight, input, output, columns)?;
+            workspace.record_fp8_input(scope, weight, input, output, columns, input_pointer)?;
         }
-        _ => return Ok(false),
+        _ => {
+            workspace.clear_quant_reuse();
+            return Ok(false);
+        }
     }
     Ok(true)
 }
@@ -192,3 +253,7 @@ mod pipeline_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_vendor_fp8.rs"]
 mod vendor_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_quant_reuse.rs"]
+mod quant_reuse_tests;

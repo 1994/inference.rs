@@ -861,6 +861,11 @@ impl DeviceProgram {
         self.nvfp4.prepared_configs()
     }
 
+    #[cfg(test)]
+    pub(crate) const fn quant_reuse_stats(&self) -> (usize, usize) {
+        self.nvfp4.quant_reuse_totals()
+    }
+
     /// Whether a chunk of `lanes` tokens replays on the narrow prompt graph.
     ///
     /// Both captured prompt graphs are fixed width, so the narrow one is preferred whenever the
