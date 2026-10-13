@@ -68,6 +68,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [GEMM 完整图成本与计时纠错](research/cuda-gemm-full-cost-and-fp4-library-2026-10-13.md) | 纯 GEMM 质量、五轮量化复用、真实权重 M256 Lt 完整成本、空图计时纠错 |
 | [相邻共享输入投影量化复用](research/cuda-projection-quant-reuse-2026-10-13.md) | 扩展至 GDN qkv/z 与注意力 k/v；原质量评分通过，服务流一致性待完成 |
 | [小投影解码路径一致性](research/cuda-small-projection-arithmetic-2026-10-13.md) | 2026-10-13 | 原算术差异定位；补偿和四行 F32 均通过数值/路径检查，但原 256 题质量失败；F32 局部加速仍不提升为默认 |
+| [从数学结构减少推理计算](research/cuda-mathematical-compute-reduction-2026-10-13.md) | 真实投影 MAC/零块审计；终端行裁剪、GDN 读出和 MLP 低秩方案，尚无新增服务收益 |
 | [注意力查询共享质量门槛](research/cuda-attention-query-sharing-2026-10-13.md) | 真实 F64 全输出通过、256 题原质量失败；实验开关默认关闭 |
 | [并行 WY 完整质量与解码成本](research/cuda-parallel-wy-quality-and-decode-cost-2026-10-13.md) | 两轮性能、256 题失败验收与后续 GEMM 方向 |
 | [长提示调参覆盖与独立准备](research/cuda-wide-prefill-tuning-2026-10-13.md) | 宽图缓存补齐、失败候选、CUDA 成本与因果定位 |
