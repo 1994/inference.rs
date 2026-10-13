@@ -1,0 +1,2512 @@
+{
+  "date": "2026-10-14",
+  "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+  "classification": "bit-exact production ordered-prefill kernel optimization; isolated timing, not end-to-end TTFT certification",
+  "main_kernel_sha256": "92ea087e3f58c44b16e441da1ac9a960307858b2cb67304d0b5403e8e26e857f",
+  "implementation": "Move normalized partition outside token loop and derive row loop bound with num_tiles; row access checks proven at compile/launch; same F32 arithmetic and admission",
+  "user_algorithm_switch_added": false,
+  "quantized_default_admission_changed": false,
+  "existing_f64_abs_gate": 2e-05,
+  "existing_useful_gain_gate": 1.02,
+  "existing_regression_allowance": 0.05,
+  "existing_drift_gate": 0.1,
+  "prototype_numeric": {
+    "fixtures": 75,
+    "changed16_fixtures": 15,
+    "bit_comparisons": 150,
+    "changed16_bit_comparisons": 30,
+    "bit_differences": 0,
+    "max_f64_error": 1.155110407213833e-06,
+    "changed16_max_f64_error": 1.155110407213833e-06,
+    "binary_sha256": "436d108ba93ee23f29783b87ac387492bc2a30e4a0221c3b41e018a37169e3d8"
+  },
+  "prototype_functional": {
+    "default-capture": {
+      "status": "pass",
+      "state_checkpoints": 0,
+      "state_elements_per_checkpoint": null,
+      "different_bits": 0,
+      "stderr_sha256": "70628b680a40a1d98f0c9d23637ea4ab42348631a0da85510973c74e31fa0df5"
+    },
+    "model64": {
+      "status": "pass",
+      "state_checkpoints": 26,
+      "state_elements_per_checkpoint": 39223296,
+      "different_bits": 0,
+      "stderr_sha256": "687a848b5cc71c67440f8a77084238762bf798af75533573dd11d19decdcc3dc"
+    },
+    "model256": {
+      "status": "pass",
+      "state_checkpoints": 20,
+      "state_elements_per_checkpoint": 39223296,
+      "different_bits": 0,
+      "stderr_sha256": "fff1a7b2b0c8dff2a6931859e2e5c027355c5f7c4589451d366facdd76092189"
+    }
+  },
+  "prototype_source_integrity": {
+    "status": "all Rust source hashes still match frozen prototype build",
+    "files": 584,
+    "binary_sha256": "436d108ba93ee23f29783b87ac387492bc2a30e4a0221c3b41e018a37169e3d8"
+  },
+  "timing": {
+    "measure": {
+      "groups": [
+        {
+          "clear_l2": 1,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.09759999811649323,
+          "new_median_ms": 0.08827200531959534,
+          "paired_speedup_median": 1.105539379736485,
+          "ci95": [
+            1.104491033996562,
+            1.1060358038392029
+          ],
+          "unit_median_range_fraction_old": 0.0018032542854198395,
+          "unit_median_range_fraction_new": 0.0014500743943871486,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 1,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.3460479974746704,
+          "new_median_ms": 0.30822399258613586,
+          "paired_speedup_median": 1.122774263219047,
+          "ci95": [
+            1.12202205900835,
+            1.1235337083567178
+          ],
+          "unit_median_range_fraction_old": 0.0012946710159391027,
+          "unit_median_range_fraction_new": 0.00020769112732481356,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 0,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.084927998483181,
+          "new_median_ms": 0.07574400305747986,
+          "paired_speedup_median": 1.1207769581837952,
+          "ci95": [
+            1.1203038533125735,
+            1.1233628573463328
+          ],
+          "unit_median_range_fraction_old": 0.0033911336440022905,
+          "unit_median_range_fraction_new": 0.002957352352720607,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 0,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.3097760081291199,
+          "new_median_ms": 0.27641600370407104,
+          "paired_speedup_median": 1.1210893797132282,
+          "ci95": [
+            1.1201041313974611,
+            1.1216404225088765
+          ],
+          "unit_median_range_fraction_old": 0.0016528197316274848,
+          "unit_median_range_fraction_new": 0.001736607143819794,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        }
+      ],
+      "units": [
+        {
+          "unit": 0,
+          "run_id": "discovery-u0-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.09771199524402618,
+          "new_ms": 0.0883840024471283,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "discovery-u0-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.3463360071182251,
+          "new_ms": 0.30825600028038025,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "discovery-u0-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.084927998483181,
+          "new_ms": 0.07577600330114365,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "discovery-u0-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.3096799850463867,
+          "new_ms": 0.27641600370407104,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "discovery-u1-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.08479999750852585,
+          "new_ms": 0.07558400183916092,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "discovery-u1-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.3097760081291199,
+          "new_ms": 0.27620798349380493,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "discovery-u1-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.09753599762916565,
+          "new_ms": 0.08825600147247314,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "discovery-u1-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.3458879888057709,
+          "new_ms": 0.30827200412750244,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "discovery-u2-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.09759999811649323,
+          "new_ms": 0.08825600147247314,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "discovery-u2-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.3460479974746704,
+          "new_ms": 0.30822399258613586,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "discovery-u2-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.084927998483181,
+          "new_ms": 0.07580800354480743,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "discovery-u2-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.3101919889450073,
+          "new_ms": 0.27668800950050354,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "discovery-u3-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.08508799970149994,
+          "new_ms": 0.07574400305747986,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "discovery-u3-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.30982398986816406,
+          "new_ms": 0.2762239873409271,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "discovery-u3-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.09758399426937103,
+          "new_ms": 0.08835200220346451,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "discovery-u3-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.3460479974746704,
+          "new_ms": 0.30820798873901367,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "discovery-u4-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.09763199836015701,
+          "new_ms": 0.08827200531959534,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "discovery-u4-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.3460479974746704,
+          "new_ms": 0.30820798873901367,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "discovery-u4-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.08484800159931183,
+          "new_ms": 0.07571200281381607,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "discovery-u4-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.3097760081291199,
+          "new_ms": 0.2765600085258484,
+          "raw_sample_count": 100
+        }
+      ],
+      "summary": {
+        "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/measure-summary.json",
+        "sha256": "91546accbabff0959b1f591aa7371db6ac306b36247ee13ddbb52e2eb860fe96"
+      },
+      "raw_runs": [
+        {
+          "run_id": "discovery-u0-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l21/result.json",
+              "sha256": "7bbc5018b3d08d0618c46b1c3f23712680eb1b9d86e2d0f423d068293ff6b895"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l21/stdout.log",
+              "sha256": "0cdde98badbbe13fbd3dc9ae1a27ead2ca6bf11fefab565ab3693fe7f2ae10e1"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l21/gpu-processes.jsonl",
+              "sha256": "3da0b81584754a0019ccd96ee2a903c23bb39542ae808227c5db04cd7125a3f3"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u0-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l20/result.json",
+              "sha256": "9af683b01f4a0c44106a423b84fc0e7704a29dbbac2431ccf7b217ce2f5d9607"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l20/stdout.log",
+              "sha256": "f90692c1915eba4a158eb71941b047fa7b3556f8ba382c86d7e1b49f2e98c078"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u0-l20/gpu-processes.jsonl",
+              "sha256": "1c1692a7ad812d91f707678f471f7e6c3281e8a5c0f2547bd94e267bf4eedd4f"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l20/result.json",
+              "sha256": "876301f99977ffe895874f5f67e2a97351dc4e58c3a21910a6a7df88b05cba77"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l20/stdout.log",
+              "sha256": "966b59b00a76d0b1db2d13475889dbef61cc413d417e7166ade968ad42dba579"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l20/gpu-processes.jsonl",
+              "sha256": "4bdf019a53955342851f2db84978bf88dcce5018fb92a51749e988a1546f79dc"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u1-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l21/result.json",
+              "sha256": "5d1af34e94e1136bcea4d86aa0240daa1bb02ec50e27b8596d90971df54068eb"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l21/stdout.log",
+              "sha256": "87b108853d97f7a1a99b750249a1c1bb51380369cd15040c2d0f422020e691e1"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u1-l21/gpu-processes.jsonl",
+              "sha256": "966c0eb73b659c5ce2c3e3b176d198d904898c30f24952d50a0fa6cf6c2400c3"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l21/result.json",
+              "sha256": "6a7ed53f601beb608ebef200785935a05a27a81726d8bd2f5f4b78da8fc87307"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l21/stdout.log",
+              "sha256": "d20b951c5563caaf15e002f81652415e5907b554f4b7edf9ac28cfa2d1d1d859"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l21/gpu-processes.jsonl",
+              "sha256": "82ed82957826b8a6c24a1d4446b0bb99bb6b4969ac83ad49b8e1e7d002e395f6"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u2-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l20/result.json",
+              "sha256": "5c4a2b77c17724e4d22cbe57fc40ae72958ed5be1ef0edc01732d1c375b487a1"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l20/stdout.log",
+              "sha256": "de160d3548e651110214a18e34aff911bb4089c4a88bf051a6954a25da49e710"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u2-l20/gpu-processes.jsonl",
+              "sha256": "11eb0e02357e83aaf681430f8d04ba701f40583e4de6fd9002f3fe72897c4f4b"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l20/result.json",
+              "sha256": "47dcab10d178dff5b7528d7986ad665bf940244522cfae7063ea94419ba3f531"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l20/stdout.log",
+              "sha256": "04574fc6c0915d5225fab0372b670b751450227b1184934ef9e2a87d0ced1dec"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l20/gpu-processes.jsonl",
+              "sha256": "c3eefdbfebfcc375ed9675d27d055138036858c05db6cb42504bfd3a4391758e"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u3-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l21/result.json",
+              "sha256": "43ad477122f72434d4953f5b5e2d64bd3293d7f71a55ceedd059822d8067cf0a"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l21/stdout.log",
+              "sha256": "26c59f4edfcf2703902a69b40674008c4b32bdb6e2084eb6e53c1a9a282b2726"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u3-l21/gpu-processes.jsonl",
+              "sha256": "86d82df2aed264bfb14eb7c8aff82829bf19581bac649ae9b5b01b5fc881015e"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l21/result.json",
+              "sha256": "10c9d74d96c14b7f2329fac208e7079f8dc49dc025cae971d13ae6a81cd0db11"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l21/stdout.log",
+              "sha256": "2f08b83ecc05179b33f8591f751b590a4b64933e01dcbd78f9c5d2f28188bd7e"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l21/gpu-processes.jsonl",
+              "sha256": "dae36c8c2f40b0711bc1fea19d9b4a2d295b599724eee1198d513b1e554723ae"
+            }
+          }
+        },
+        {
+          "run_id": "discovery-u4-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l20/result.json",
+              "sha256": "fca17ca91ec6b7ba470a2b72119319c7d0bcff2e0c41bb2f487d0ef9ec80795a"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l20/stdout.log",
+              "sha256": "aa2fc794cb8814d5845a72b65b3943510eec5a6596090d3d757fccbcb0e3e48f"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-discovery-u4-l20/gpu-processes.jsonl",
+              "sha256": "38af85b4e9c7426a80e7a4a4dd9efa2d59eda2887665552d6b5e0d47cfee90d2"
+            }
+          }
+        }
+      ]
+    },
+    "confirmation": {
+      "groups": [
+        {
+          "clear_l2": 1,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.09731200337409973,
+          "new_median_ms": 0.08801600337028503,
+          "paired_speedup_median": 1.1055313376662879,
+          "ci95": [
+            1.1034107661361519,
+            1.1066230490477922
+          ],
+          "unit_median_range_fraction_old": 0.00131536676069727,
+          "unit_median_range_fraction_new": 0.0029085841154738367,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 1,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.3452160060405731,
+          "new_median_ms": 0.30748799443244934,
+          "paired_speedup_median": 1.1226975110939237,
+          "ci95": [
+            1.1213476432464102,
+            1.1228664419589143
+          ],
+          "unit_median_range_fraction_old": 0.0004635030418628109,
+          "unit_median_range_fraction_new": 0.000936653296289781,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 0,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.08457600325345993,
+          "new_median_ms": 0.07542400062084198,
+          "paired_speedup_median": 1.1221325308819583,
+          "ci95": [
+            1.12039002241254,
+            1.123037707895438
+          ],
+          "unit_median_range_fraction_old": 0.0020809403151045066,
+          "unit_median_range_fraction_new": 0.0021213568227873335,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 0,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.30873599648475647,
+          "new_median_ms": 0.27532801032066345,
+          "paired_speedup_median": 1.1211945472934615,
+          "ci95": [
+            1.120185781942524,
+            1.1215996358725715
+          ],
+          "unit_median_range_fraction_old": 0.0007256169022693362,
+          "unit_median_range_fraction_new": 0.0006392829985468381,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        }
+      ],
+      "units": [
+        {
+          "unit": 0,
+          "run_id": "confirmation-u0-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.0846719965338707,
+          "new_ms": 0.07542400062084198,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "confirmation-u0-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.3086720108985901,
+          "new_ms": 0.27532801032066345,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "confirmation-u0-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.09734400361776352,
+          "new_ms": 0.08801600337028503,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 0,
+          "run_id": "confirmation-u0-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.3452480137348175,
+          "new_ms": 0.30747199058532715,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "confirmation-u1-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.09731200337409973,
+          "new_ms": 0.08806400001049042,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "confirmation-u1-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.3452160060405731,
+          "new_ms": 0.30748799443244934,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "confirmation-u1-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.08457600325345993,
+          "new_ms": 0.07548800110816956,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 1,
+          "run_id": "confirmation-u1-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.30873599648475647,
+          "new_ms": 0.27532801032066345,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "confirmation-u2-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.08470399677753448,
+          "new_ms": 0.07542400062084198,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "confirmation-u2-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.30876800417900085,
+          "new_ms": 0.27539199590682983,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "confirmation-u2-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.09731200337409973,
+          "new_ms": 0.08819200098514557,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 2,
+          "run_id": "confirmation-u2-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.34508800506591797,
+          "new_ms": 0.30774399638175964,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "confirmation-u3-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.09721600264310837,
+          "new_ms": 0.08793599903583527,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "confirmation-u3-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": true,
+          "old_ms": 0.3452320098876953,
+          "new_ms": 0.30745598673820496,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "confirmation-u3-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.08452799916267395,
+          "new_ms": 0.07539200037717819,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 3,
+          "run_id": "confirmation-u3-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": false,
+          "old_ms": 0.30854398012161255,
+          "new_ms": 0.2754400074481964,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "confirmation-u4-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.08452799916267395,
+          "new_ms": 0.07532799988985062,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "confirmation-u4-l20",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": false,
+          "candidate_first": true,
+          "old_ms": 0.30873599648475647,
+          "new_ms": 0.2752639949321747,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "confirmation-u4-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            64
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.09731200337409973,
+          "new_ms": 0.08793599903583527,
+          "raw_sample_count": 100
+        },
+        {
+          "unit": 4,
+          "run_id": "confirmation-u4-l21",
+          "geometry": [
+            16,
+            48,
+            128,
+            256
+          ],
+          "clear_l2": true,
+          "candidate_first": false,
+          "old_ms": 0.3452000021934509,
+          "new_ms": 0.3076480031013489,
+          "raw_sample_count": 100
+        }
+      ],
+      "summary": {
+        "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/confirmation-summary.json",
+        "sha256": "769cd94850d9e3c6eee1f8c2e063b95c5d8e8bcd5f90e01d260c1250b95a75c4"
+      },
+      "raw_runs": [
+        {
+          "run_id": "confirmation-u0-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l20/result.json",
+              "sha256": "ce72d33f5522f2b1da7d49e971427367fe351c1ca83de328fd73c95c389f80ab"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l20/stdout.log",
+              "sha256": "ef8218c478a3af45411884c4fbe678fa3ef03ab2f54af9476ebcce40de28f82d"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l20/gpu-processes.jsonl",
+              "sha256": "708af17c531accfee019d048d0208e974c681eaebfcf7bcd6d3ffa6efc486972"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u0-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l21/result.json",
+              "sha256": "2f7e5db0c98433f18b44d1939a7d3714eebf52581f8ceb1261aa1550c57120ed"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l21/stdout.log",
+              "sha256": "10a29fcc531b5a4411ee3700e7b67f3caf23b925dd9c43c06554b5ed5f3478f9"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u0-l21/gpu-processes.jsonl",
+              "sha256": "4f541920b93fac3f80e6de531fefd6da81479e85577289caec1afbb8200ee563"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u1-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l21/result.json",
+              "sha256": "7699158e0516bd78928a58101ae47e698cee033e42cc07a38f984d5ec8189591"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l21/stdout.log",
+              "sha256": "c1b522b0331cc685f20d03dd49bed36d9c00e1307088a588ed12a6311933932f"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l21/gpu-processes.jsonl",
+              "sha256": "88defc03e50d9a301ec0ca79b6711919ec1d2a93e8e44af2c3702b1df99ed64c"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u1-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l20/result.json",
+              "sha256": "ba1ab986fa07524e76106b55ac6b89e01c64207c19cbe22dd8b17806747b235b"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l20/stdout.log",
+              "sha256": "9bd7c24975276067b4ab6c2297b2597a09fda3e9b585a7c6914bf70b9606c580"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u1-l20/gpu-processes.jsonl",
+              "sha256": "960b116c83edee41540c721169cce747fca3f83253824d276aba9fba1fdc2d73"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u2-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l20/result.json",
+              "sha256": "d5222fcada8238eda1c23d2499957ba61df32d0e0423d38a5a849ff7f4b34fe5"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l20/stdout.log",
+              "sha256": "186601e1d534ece23790d8d02266a598d65aaeb5630eebd9a73efe995c18e741"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l20/gpu-processes.jsonl",
+              "sha256": "6b9dcecb646611e709bae75c78c76ace7ccf6625a873930079f75e65cd81a86e"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u2-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l21/result.json",
+              "sha256": "dde659a6ced430e7113bf98800d085157fc0bbd45b960fb1469bd67603dac4ca"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l21/stdout.log",
+              "sha256": "4b170e13aec677d6558f1ac246f86e6ed1028e6ed2e055b6eca4ad3fc879e9ec"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u2-l21/gpu-processes.jsonl",
+              "sha256": "8ea745d80863111e8cbf35934a7ec30e804e175239c8184b271f13cfccc09ea2"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u3-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l21/result.json",
+              "sha256": "e9dd7c4904ad4080ec8f47db12e3f19889876b76b99f802f90ecc4a94d64aa7e"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l21/stdout.log",
+              "sha256": "59b67847523b7abcbd8d15b6d86d74fc5517cbb353623fc5d99a781ec3e25ade"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l21/gpu-processes.jsonl",
+              "sha256": "2cec4befd9c46c07d198b0617074feb5fa6fbbcbef12a4c8ae62a4d14b1e8521"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u3-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l20/result.json",
+              "sha256": "85b02f8906696473217162e944e904f380d5dce3a61868dd69782b096e911a9c"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l20/stdout.log",
+              "sha256": "003f885511e4a0ef0d88116b17038cda4a3e9aade36262ad91e150b093872b1b"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u3-l20/gpu-processes.jsonl",
+              "sha256": "a812b990a33cbda2028e671a25a9bac9813909cf86ec338aca0b3ba52d0b1ffe"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u4-l20",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l20/result.json",
+              "sha256": "167c401e399a1af2df18e84e0bab089ec0eb84ceed9f155040b4c3946c7bb73b"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l20/stdout.log",
+              "sha256": "4761f0b7876f8b90085f01fc0ddc7eb7dfc6bb3b43e8869f8306fdfe208d56e7"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l20/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l20/gpu-processes.jsonl",
+              "sha256": "eef5ccbf858869644bd7d4df95b3563d1d12b47c5c4dde03a72e288571ed462e"
+            }
+          }
+        },
+        {
+          "run_id": "confirmation-u4-l21",
+          "files": {
+            "result.json": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l21/result.json",
+              "sha256": "e275679c6b0cc22114c5166c685edf95fb913d1ce16b39522b9ba2c003e567b7"
+            },
+            "stdout.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l21/stdout.log",
+              "sha256": "94311a6dd2a5848eddd87a6a353bcf1a78d24e99d6acd03269c05a2770cf7bbb"
+            },
+            "stderr.log": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l21/stderr.log",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "gpu-processes.jsonl": {
+              "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-w0-confirmation-u4-l21/gpu-processes.jsonl",
+              "sha256": "1aa26bc5d2a535f22fd88c46e50d1dc69de38e4343fd3d60c223a368581ffb82"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "production_build": [
+    {
+      "label": "fmt",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      },
+      "formatted_source_hashes": {
+        "crates/backend/cuda/src/resident/recurrent_prefill.rs": "92ea087e3f58c44b16e441da1ac9a960307858b2cb67304d0b5403e8e26e857f"
+      }
+    },
+    {
+      "label": "stage",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "layout",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "policy",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "inventory",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "tools",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "clippy",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      }
+    },
+    {
+      "label": "tests",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      },
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "executable": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/build-v1/cuda-tests"
+    },
+    {
+      "label": "cli",
+      "returncode": 0,
+      "source": {
+        "parent": "eaaeb3afd9657fa344814183d4f8de95f0148291",
+        "dirty": true,
+        "diff_sha256": "1dd18a7e204f38f16acf1980d58333a329b8370346dbd881d0fe9acbedf7aacb"
+      },
+      "binary_sha256": "3266cac24417a18fbf26169aa7b2cd4d56d069e825c98eb9b188f3d534a51da1",
+      "executable": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/build-v1/infer"
+    }
+  ],
+  "production_validation": {
+    "unit": {
+      "returncode": 0,
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "state_checkpoints": 0,
+      "state_elements_per_checkpoint": null,
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/unit/cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "64"
+      },
+      "files": {
+        "result.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/unit/result.json",
+          "sha256": "d2418a587422a130f38b5c00db9238b08471215fea2a18f08379e6f4517e1ed5"
+        },
+        "stdout.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/unit/stdout.log",
+          "sha256": "df17c21d6b659fcf37e557fe2291595ce2d35781e6497b7e59ad18c7e24485f7"
+        },
+        "stderr.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/unit/stderr.log",
+          "sha256": "4f3f9497c44aabccf667bd9477e67e876b304e92f5462777325e3d3b3943a7f9"
+        },
+        "gpu-processes.jsonl": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/unit/gpu-processes.jsonl",
+          "sha256": "1a9876d1b53c23c70ea87ae6ee9e6e7c70625cc7c1302f7d0b38de8b6fb2f4ad"
+        }
+      }
+    },
+    "default-capture": {
+      "returncode": 0,
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "state_checkpoints": 0,
+      "state_elements_per_checkpoint": null,
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/default-capture/cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "64"
+      },
+      "files": {
+        "result.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/default-capture/result.json",
+          "sha256": "38a7d0ab9104daa555a7477c1687f4fee8af4656bbbde58ff258f557958acc94"
+        },
+        "stdout.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/default-capture/stdout.log",
+          "sha256": "688b7ae1a4f95e48cc22d605d7b5aa7f999cd85fb42f2f3a8570365b141ce845"
+        },
+        "stderr.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/default-capture/stderr.log",
+          "sha256": "70628b680a40a1d98f0c9d23637ea4ab42348631a0da85510973c74e31fa0df5"
+        },
+        "gpu-processes.jsonl": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/default-capture/gpu-processes.jsonl",
+          "sha256": "75bcf7f49b9f527d394a7301ff7963f5a5a95f1219f62a0cc768a512e5ebaee1"
+        }
+      }
+    },
+    "model64": {
+      "returncode": 0,
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "state_checkpoints": 26,
+      "state_elements_per_checkpoint": 39223296,
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model64/cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "64"
+      },
+      "files": {
+        "result.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model64/result.json",
+          "sha256": "63b3555eea8d56ceca100af1ccc5041980aaa3a480f5f66918d21a066ddf4ac2"
+        },
+        "stdout.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model64/stdout.log",
+          "sha256": "c9f40c4d4a15df68be0f4e3195a380da004ed56006effdd3104c4fa6612076ca"
+        },
+        "stderr.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model64/stderr.log",
+          "sha256": "687a848b5cc71c67440f8a77084238762bf798af75533573dd11d19decdcc3dc"
+        },
+        "gpu-processes.jsonl": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model64/gpu-processes.jsonl",
+          "sha256": "9d7abde357d0d22d689e0fb04ce1a7a10033b1475dae253c8e5d8a1c3fbc3c74"
+        }
+      }
+    },
+    "model256": {
+      "returncode": 0,
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "state_checkpoints": 20,
+      "state_elements_per_checkpoint": 39223296,
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model256/cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "256"
+      },
+      "files": {
+        "result.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model256/result.json",
+          "sha256": "5920f4f09376fb4aa495dc3aa0d94679adbed027a21e44532683900202d628e1"
+        },
+        "stdout.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model256/stdout.log",
+          "sha256": "214244938646a1f11acddf74a930cdaa43d4778fe11bdf779797bf3df0c9aed3"
+        },
+        "stderr.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model256/stderr.log",
+          "sha256": "fff1a7b2b0c8dff2a6931859e2e5c027355c5f7c4589451d366facdd76092189"
+        },
+        "gpu-processes.jsonl": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/model256/gpu-processes.jsonl",
+          "sha256": "c4e1e7dab17e32d7bdc97d3dd31905e8336bb2812daf66e690d2ec0328fd8f16"
+        }
+      }
+    },
+    "performance": {
+      "returncode": 0,
+      "binary_sha256": "93499cba565efb227fe3eca5484dc6aa823d0a19f8e23f844d5315e9b082e3d8",
+      "state_checkpoints": 0,
+      "state_elements_per_checkpoint": null,
+      "environment": {
+        "CUDA_TOOLKIT_PATH": "/opt/cuda",
+        "XDG_CACHE_HOME": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/performance/cache",
+        "INFER_GAP_INDEX": "1",
+        "INFER_TEST_MODEL": "/home/r/models/Qwen3.8-27B-NVFP4",
+        "INFER_TEST_TOKENS": "/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/model-input-tokens.json",
+        "INFER_TEST_PREFILL_WIDTH": "64"
+      },
+      "files": {
+        "result.json": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/performance/result.json",
+          "sha256": "f8892f92bf7cab94f9d7c74f090b0c1e39c39cc3d11f76ed7fcc6f22cfaeec29"
+        },
+        "stdout.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/performance/stdout.log",
+          "sha256": "d356abb6d81c5614c3d4c470ce0dedeb69af14e64f9c2e13e0e328f31e450c67"
+        },
+        "stderr.log": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/performance/stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "gpu-processes.jsonl": {
+          "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/integration-axis-bounds-v1/performance/gpu-processes.jsonl",
+          "sha256": "0ae22a1b138424b8a5edfbb6f65219ed8233e70fb7d7c544b5ce99c1b22acc76"
+        }
+      }
+    }
+  },
+  "static_sass": [
+    {
+      "cache_source": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-kernel-cache/cutile/kernels/2b/2b7172c3da55af39ab43275ed199d58ad5b47fd1b5c1d8d2226721e0bfe8665e.cubin",
+      "payload_sha256": "46a1c3bd8fb7d00cdd758f93709fe8aad110a2fe120a6db87d84d3437062865a",
+      "kernel": "axis_bounds",
+      "resources": "\nResource usage:\n Common:\n  GLOBAL:1281 CONSTANT[4]:72\n Function delta_precomputed_axis_bounds_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "static_instruction_count": 904,
+      "opcode_counts": {
+        "LDC": 12,
+        "CS2R.32": 3,
+        "IMAD": 14,
+        "S2R": 3,
+        "R2UR": 38,
+        "LDCU": 19,
+        "IADD": 40,
+        "BSSY.RECONVERGENT": 9,
+        "S2UR": 3,
+        "LDCU.64": 18,
+        "I2FP.F32.U32": 1,
+        "ISETP.EQ.U32.AND": 1,
+        "MOV.64": 25,
+        "MUFU.RCP": 1,
+        "UI2FP.F32.U32.RZ": 1,
+        "ISETP.NE.U32.AND": 2,
+        "P2R": 4,
+        "UI2FP.F32.U32": 2,
+        "UFMUL": 2,
+        "ISETP.GT.AND": 4,
+        "FMUL.RZ": 2,
+        "F2I.U32.TRUNC.NTZ": 4,
+        "I2FP.F32.U32.RZ": 1,
+        "ISETP.GE.U32.AND": 12,
+        "SEL": 2,
+        "ISETP.GT.OR": 2,
+        "MOV": 67,
+        "HFMA2": 7,
+        "IADD.64": 15,
+        "BRA": 20,
+        "STL.64": 7,
+        "STL": 7,
+        "LDC.64": 13,
+        "LEPC": 7,
+        "CALL.ABS.NOINC": 7,
+        "NOP": 19,
+        "BSYNC.RECONVERGENT": 9,
+        "CS2UR": 14,
+        "UIADD3.64": 7,
+        "UISETP.GE.S64.AND": 7,
+        "BRA.U": 8,
+        "BPT.TRAP": 7,
+        "ISETP.NE.AND": 2,
+        "ISETP.GE.AND": 9,
+        "SHF.R.U64": 3,
+        "SHF.R.U32.HI": 35,
+        "LDG.E": 8,
+        "ISETP.GT.U64.AND": 5,
+        "ISETP.LE.U64.OR": 1,
+        "ISETP.GE.U32.OR": 4,
+        "UISETP.GE.AND": 1,
+        "IMAD.SHL.U32": 16,
+        "LOP3.LUT": 60,
+        "ISETP.GE.U64.AND": 3,
+        "IMAD.WIDE.U32": 25,
+        "ISETP.LT.U64.AND": 9,
+        "ISETP.GE.U64.OR": 1,
+        "LEA": 5,
+        "LEA.HI.X": 4,
+        "LDG.E.128": 4,
+        "UMOV": 1,
+        "LEA.HI": 1,
+        "IMAD.HI.U32": 1,
+        "UIADD3": 1,
+        "SHF.L.U64.HI": 3,
+        "IADD3": 2,
+        "ISETP.GE.OR": 1,
+        "ISETP.NE.U32.OR": 5,
+        "ISETP.LT.OR": 1,
+        "ISETP.GT.U32.OR": 1,
+        "STS.128": 13,
+        "STSM.16.M88": 3,
+        "BAR.SYNC.DEFER_BLOCKING": 7,
+        "LDS.128": 15,
+        "FMUL": 65,
+        "FADD": 65,
+        "LDS": 12,
+        "R2P": 1,
+        "SHFL.BFLY": 15,
+        "FSEL": 30,
+        "STS": 2,
+        "ISETP.LT.U32.AND": 7,
+        "PLOP3.LUT": 2,
+        "STG.E": 2,
+        "EXIT": 3,
+        "STG.E.128": 4
+      },
+      "backward_branch_intervals": [
+        {
+          "start_hex": "0x4a0",
+          "end_hex": "0x4c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x6b0",
+          "end_hex": "0x6d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x2f90",
+          "end_hex": "0x2fb0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x2ff0",
+          "end_hex": "0x3010",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3050",
+          "end_hex": "0x3070",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x30b0",
+          "end_hex": "0x30d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x1750",
+          "end_hex": "0x33d0",
+          "static_instruction_count": 457,
+          "opcode_counts": {
+            "ISETP.GE.AND": 6,
+            "BSSY.RECONVERGENT": 6,
+            "ISETP.GE.OR": 1,
+            "BRA": 14,
+            "LDCU": 5,
+            "ISETP.NE.U32.OR": 5,
+            "STL.64": 5,
+            "LDCU.64": 10,
+            "IADD.64": 7,
+            "STL": 5,
+            "MOV": 41,
+            "LDC.64": 5,
+            "LEPC": 5,
+            "CALL.ABS.NOINC": 5,
+            "NOP": 6,
+            "BSYNC.RECONVERGENT": 6,
+            "ISETP.GE.U32.AND": 11,
+            "HFMA2": 3,
+            "R2UR": 14,
+            "LDG.E": 5,
+            "ISETP.LT.OR": 1,
+            "P2R": 1,
+            "ISETP.NE.AND": 1,
+            "ISETP.GE.U32.OR": 3,
+            "ISETP.GT.U32.OR": 1,
+            "MOV.64": 8,
+            "STS.128": 13,
+            "STSM.16.M88": 3,
+            "BAR.SYNC.DEFER_BLOCKING": 7,
+            "LDS.128": 15,
+            "FMUL": 65,
+            "FADD": 65,
+            "LDS": 12,
+            "R2P": 1,
+            "SHFL.BFLY": 15,
+            "FSEL": 30,
+            "STS": 2,
+            "ISETP.LT.U32.AND": 2,
+            "ISETP.GT.U64.AND": 2,
+            "ISETP.LT.U64.AND": 2,
+            "PLOP3.LUT": 2,
+            "STG.E": 2,
+            "CS2UR": 8,
+            "UIADD3.64": 4,
+            "UISETP.GE.S64.AND": 4,
+            "BRA.U": 4,
+            "BPT.TRAP": 4,
+            "LDC": 5,
+            "IADD": 4,
+            "ISETP.NE.U32.AND": 1,
+            "IMAD.WIDE.U32": 5
+          }
+        },
+        {
+          "start_hex": "0x3790",
+          "end_hex": "0x37b0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        }
+      ],
+      "note": "static intervals include alternate control-flow paths; not dynamic instruction counts or hardware counters"
+    },
+    {
+      "cache_source": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-kernel-cache/cutile/kernels/90/90bd34133974e212902bfafd4eb5bee666d9ef96aeac34e0a085d911d926fefd.cubin",
+      "payload_sha256": "8e5ec6c4d413cb9ab168b755b13648508e39894c647455c7780ff2f6963d54a2",
+      "kernel": "axis_bounds",
+      "resources": "\nResource usage:\n Common:\n  GLOBAL:1279 CONSTANT[4]:72\n Function delta_precomputed_axis_bounds_entry:\n  REG:128 STACK:112 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "static_instruction_count": 904,
+      "opcode_counts": {
+        "LDC": 12,
+        "CS2R.32": 3,
+        "IMAD": 14,
+        "S2R": 3,
+        "R2UR": 38,
+        "LDCU": 19,
+        "IADD": 40,
+        "BSSY.RECONVERGENT": 9,
+        "S2UR": 3,
+        "LDCU.64": 18,
+        "I2FP.F32.U32": 1,
+        "ISETP.EQ.U32.AND": 1,
+        "MOV.64": 25,
+        "MUFU.RCP": 1,
+        "UI2FP.F32.U32.RZ": 1,
+        "ISETP.NE.U32.AND": 2,
+        "P2R": 4,
+        "UI2FP.F32.U32": 2,
+        "UFMUL": 2,
+        "ISETP.GT.AND": 4,
+        "FMUL.RZ": 2,
+        "F2I.U32.TRUNC.NTZ": 4,
+        "I2FP.F32.U32.RZ": 1,
+        "ISETP.GE.U32.AND": 12,
+        "SEL": 2,
+        "ISETP.GT.OR": 2,
+        "MOV": 67,
+        "HFMA2": 7,
+        "IADD.64": 15,
+        "BRA": 20,
+        "STL.64": 7,
+        "STL": 7,
+        "LDC.64": 13,
+        "LEPC": 7,
+        "CALL.ABS.NOINC": 7,
+        "NOP": 19,
+        "BSYNC.RECONVERGENT": 9,
+        "CS2UR": 14,
+        "UIADD3.64": 7,
+        "UISETP.GE.S64.AND": 7,
+        "BRA.U": 8,
+        "BPT.TRAP": 7,
+        "ISETP.NE.AND": 2,
+        "ISETP.GE.AND": 9,
+        "SHF.R.U64": 3,
+        "SHF.R.U32.HI": 35,
+        "LDG.E": 8,
+        "ISETP.GT.U64.AND": 5,
+        "ISETP.LE.U64.OR": 1,
+        "ISETP.GE.U32.OR": 4,
+        "UISETP.GE.AND": 1,
+        "IMAD.SHL.U32": 16,
+        "LOP3.LUT": 60,
+        "ISETP.GE.U64.AND": 3,
+        "IMAD.WIDE.U32": 25,
+        "ISETP.LT.U64.AND": 9,
+        "ISETP.GE.U64.OR": 1,
+        "LEA": 5,
+        "LEA.HI.X": 4,
+        "LDG.E.128": 4,
+        "UMOV": 1,
+        "LEA.HI": 1,
+        "IMAD.HI.U32": 1,
+        "UIADD3": 1,
+        "SHF.L.U64.HI": 3,
+        "IADD3": 2,
+        "ISETP.GE.OR": 1,
+        "ISETP.NE.U32.OR": 5,
+        "ISETP.LT.OR": 1,
+        "ISETP.GT.U32.OR": 1,
+        "STS.128": 13,
+        "STSM.16.M88": 3,
+        "BAR.SYNC.DEFER_BLOCKING": 7,
+        "LDS.128": 15,
+        "FMUL": 65,
+        "FADD": 65,
+        "LDS": 12,
+        "R2P": 1,
+        "SHFL.BFLY": 15,
+        "FSEL": 30,
+        "STS": 2,
+        "ISETP.LT.U32.AND": 7,
+        "PLOP3.LUT": 2,
+        "STG.E": 2,
+        "EXIT": 3,
+        "STG.E.128": 4
+      },
+      "backward_branch_intervals": [
+        {
+          "start_hex": "0x4a0",
+          "end_hex": "0x4c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x6b0",
+          "end_hex": "0x6d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x2f90",
+          "end_hex": "0x2fb0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x2ff0",
+          "end_hex": "0x3010",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3050",
+          "end_hex": "0x3070",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x30b0",
+          "end_hex": "0x30d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x1750",
+          "end_hex": "0x33d0",
+          "static_instruction_count": 457,
+          "opcode_counts": {
+            "ISETP.GE.AND": 6,
+            "BSSY.RECONVERGENT": 6,
+            "ISETP.GE.OR": 1,
+            "BRA": 14,
+            "LDCU": 5,
+            "ISETP.NE.U32.OR": 5,
+            "STL.64": 5,
+            "LDCU.64": 10,
+            "IADD.64": 7,
+            "STL": 5,
+            "MOV": 41,
+            "LDC.64": 5,
+            "LEPC": 5,
+            "CALL.ABS.NOINC": 5,
+            "NOP": 6,
+            "BSYNC.RECONVERGENT": 6,
+            "ISETP.GE.U32.AND": 11,
+            "HFMA2": 3,
+            "R2UR": 14,
+            "LDG.E": 5,
+            "ISETP.LT.OR": 1,
+            "P2R": 1,
+            "ISETP.NE.AND": 1,
+            "ISETP.GE.U32.OR": 3,
+            "ISETP.GT.U32.OR": 1,
+            "MOV.64": 8,
+            "STS.128": 13,
+            "STSM.16.M88": 3,
+            "BAR.SYNC.DEFER_BLOCKING": 7,
+            "LDS.128": 15,
+            "FMUL": 65,
+            "FADD": 65,
+            "LDS": 12,
+            "R2P": 1,
+            "SHFL.BFLY": 15,
+            "FSEL": 30,
+            "STS": 2,
+            "ISETP.LT.U32.AND": 2,
+            "ISETP.GT.U64.AND": 2,
+            "ISETP.LT.U64.AND": 2,
+            "PLOP3.LUT": 2,
+            "STG.E": 2,
+            "CS2UR": 8,
+            "UIADD3.64": 4,
+            "UISETP.GE.S64.AND": 4,
+            "BRA.U": 4,
+            "BPT.TRAP": 4,
+            "LDC": 5,
+            "IADD": 4,
+            "ISETP.NE.U32.AND": 1,
+            "IMAD.WIDE.U32": 5
+          }
+        },
+        {
+          "start_hex": "0x3790",
+          "end_hex": "0x37b0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        }
+      ],
+      "note": "static intervals include alternate control-flow paths; not dynamic instruction counts or hardware counters"
+    },
+    {
+      "cache_source": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-kernel-cache/cutile/kernels/f3/f332e80510dbde66cee27e18f0cfd78c98aa93126aef2c3140beb5c22933be96.cubin",
+      "payload_sha256": "97d4eb0422f4ddfa8645071699784535cabe3ec769b43c8b79283a33d7164334",
+      "kernel": "control",
+      "resources": "\nResource usage:\n Common:\n  GLOBAL:1743 CONSTANT[4]:96\n Function delta_precomputed_entry:\n  REG:127 STACK:160 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "static_instruction_count": 992,
+      "opcode_counts": {
+        "LDC": 13,
+        "CS2R.32": 3,
+        "IMAD": 14,
+        "S2R": 3,
+        "R2UR": 38,
+        "LDCU": 28,
+        "IADD": 40,
+        "BSSY.RECONVERGENT": 13,
+        "S2UR": 3,
+        "LDCU.64": 21,
+        "I2FP.F32.U32": 1,
+        "ISETP.EQ.U32.AND": 2,
+        "MOV.64": 25,
+        "MUFU.RCP": 1,
+        "UI2FP.F32.U32.RZ": 1,
+        "ISETP.NE.U32.AND": 2,
+        "P2R": 6,
+        "UI2FP.F32.U32": 2,
+        "UFMUL": 2,
+        "ISETP.GT.AND": 4,
+        "FMUL.RZ": 2,
+        "F2I.U32.TRUNC.NTZ": 4,
+        "I2FP.F32.U32.RZ": 1,
+        "ISETP.GE.U32.AND": 8,
+        "SEL": 2,
+        "ISETP.GT.OR": 2,
+        "MOV": 83,
+        "HFMA2": 6,
+        "IADD.64": 19,
+        "BRA": 27,
+        "STL.64": 10,
+        "STL": 10,
+        "LDC.64": 16,
+        "LEPC": 10,
+        "CALL.ABS.NOINC": 10,
+        "NOP": 21,
+        "BSYNC.RECONVERGENT": 13,
+        "CS2UR": 20,
+        "UIADD3.64": 10,
+        "UISETP.GE.S64.AND": 10,
+        "BRA.U": 10,
+        "BPT.TRAP": 10,
+        "ISETP.NE.AND": 4,
+        "IMAD.SHL.U32": 14,
+        "IMAD.HI.U32": 1,
+        "SHF.R.U32.HI": 33,
+        "ISETP.GE.AND": 18,
+        "LDG.E": 8,
+        "LOP3.LUT": 63,
+        "IMAD.WIDE.U32": 25,
+        "LEA.HI": 1,
+        "SHF.R.U64": 3,
+        "SHF.L.U64.HI": 3,
+        "ISETP.GT.U64.AND": 4,
+        "UMOV": 1,
+        "LEA": 5,
+        "IADD3": 2,
+        "LEA.HI.X": 4,
+        "ISETP.LT.U32.AND": 7,
+        "ISETP.GE.U64.AND": 3,
+        "ISETP.LT.U64.AND": 9,
+        "ISETP.GE.U64.OR": 1,
+        "LDG.E.128": 4,
+        "ISETP.GE.OR": 1,
+        "ISETP.NE.U32.OR": 6,
+        "ISETP.GE.U32.OR": 5,
+        "ISETP.LT.OR": 1,
+        "ISETP.GT.U32.OR": 1,
+        "STS.128": 13,
+        "STSM.16.M88": 3,
+        "BAR.SYNC.DEFER_BLOCKING": 7,
+        "LDS.128": 15,
+        "FMUL": 65,
+        "FADD": 65,
+        "LDS": 12,
+        "R2P": 1,
+        "SHFL.BFLY": 15,
+        "FSEL": 30,
+        "STS": 2,
+        "PLOP3.LUT": 2,
+        "STG.E": 2,
+        "EXIT": 3,
+        "STG.E.128": 4
+      },
+      "backward_branch_intervals": [
+        {
+          "start_hex": "0x4a0",
+          "end_hex": "0x4c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x6b0",
+          "end_hex": "0x6d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x35a0",
+          "end_hex": "0x35c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3600",
+          "end_hex": "0x3620",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3660",
+          "end_hex": "0x3680",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x36c0",
+          "end_hex": "0x36e0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3720",
+          "end_hex": "0x3740",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3780",
+          "end_hex": "0x37a0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x37e0",
+          "end_hex": "0x3800",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3840",
+          "end_hex": "0x3860",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x1720",
+          "end_hex": "0x3a10",
+          "static_instruction_count": 560,
+          "opcode_counts": {
+            "ISETP.GE.AND": 15,
+            "BSSY.RECONVERGENT": 10,
+            "ISETP.GE.OR": 1,
+            "BRA": 21,
+            "LDCU": 15,
+            "ISETP.EQ.U32.AND": 1,
+            "P2R": 2,
+            "STL.64": 8,
+            "LDCU.64": 13,
+            "IADD.64": 10,
+            "STL": 8,
+            "MOV": 55,
+            "LDC.64": 8,
+            "LEPC": 8,
+            "CALL.ABS.NOINC": 8,
+            "NOP": 10,
+            "BSYNC.RECONVERGENT": 10,
+            "ISETP.NE.U32.OR": 6,
+            "ISETP.NE.AND": 2,
+            "HFMA2": 3,
+            "ISETP.GE.U32.AND": 7,
+            "ISETP.GE.U32.OR": 5,
+            "R2UR": 14,
+            "LDG.E": 5,
+            "IADD": 4,
+            "ISETP.LT.OR": 1,
+            "LDC": 6,
+            "ISETP.GT.U32.OR": 1,
+            "MOV.64": 8,
+            "STS.128": 13,
+            "STSM.16.M88": 3,
+            "BAR.SYNC.DEFER_BLOCKING": 7,
+            "LDS.128": 15,
+            "FMUL": 65,
+            "FADD": 65,
+            "LDS": 12,
+            "R2P": 1,
+            "SHFL.BFLY": 15,
+            "FSEL": 30,
+            "STS": 2,
+            "ISETP.LT.U32.AND": 2,
+            "ISETP.GT.U64.AND": 2,
+            "ISETP.LT.U64.AND": 2,
+            "PLOP3.LUT": 2,
+            "LOP3.LUT": 3,
+            "STG.E": 2,
+            "CS2UR": 16,
+            "UIADD3.64": 8,
+            "UISETP.GE.S64.AND": 8,
+            "BRA.U": 8,
+            "BPT.TRAP": 8,
+            "ISETP.NE.U32.AND": 1,
+            "IMAD.WIDE.U32": 5
+          }
+        }
+      ],
+      "note": "static intervals include alternate control-flow paths; not dynamic instruction counts or hardware counters"
+    },
+    {
+      "cache_source": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/axis-bounds-v1/performance-kernel-cache/cutile/kernels/fc/fc05f3169747332bf5958269d341505533ea8f7752a95da1ac34c602a1e8163e.cubin",
+      "payload_sha256": "ad5ae102c83f79f8524b7e7a48145dd623492d6b9071192e3438830bc9143ff6",
+      "kernel": "control",
+      "resources": "\nResource usage:\n Common:\n  GLOBAL:1743 CONSTANT[4]:96\n Function delta_precomputed_entry:\n  REG:127 STACK:160 SHARED:30988 LOCAL:0 CONSTANT[0]:1136 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "static_instruction_count": 992,
+      "opcode_counts": {
+        "LDC": 13,
+        "CS2R.32": 3,
+        "IMAD": 14,
+        "S2R": 3,
+        "R2UR": 38,
+        "LDCU": 28,
+        "IADD": 40,
+        "BSSY.RECONVERGENT": 13,
+        "S2UR": 3,
+        "LDCU.64": 21,
+        "I2FP.F32.U32": 1,
+        "ISETP.EQ.U32.AND": 2,
+        "MOV.64": 25,
+        "MUFU.RCP": 1,
+        "UI2FP.F32.U32.RZ": 1,
+        "ISETP.NE.U32.AND": 2,
+        "P2R": 6,
+        "UI2FP.F32.U32": 2,
+        "UFMUL": 2,
+        "ISETP.GT.AND": 4,
+        "FMUL.RZ": 2,
+        "F2I.U32.TRUNC.NTZ": 4,
+        "I2FP.F32.U32.RZ": 1,
+        "ISETP.GE.U32.AND": 8,
+        "SEL": 2,
+        "ISETP.GT.OR": 2,
+        "MOV": 83,
+        "HFMA2": 6,
+        "IADD.64": 19,
+        "BRA": 27,
+        "STL.64": 10,
+        "STL": 10,
+        "LDC.64": 16,
+        "LEPC": 10,
+        "CALL.ABS.NOINC": 10,
+        "NOP": 21,
+        "BSYNC.RECONVERGENT": 13,
+        "CS2UR": 20,
+        "UIADD3.64": 10,
+        "UISETP.GE.S64.AND": 10,
+        "BRA.U": 10,
+        "BPT.TRAP": 10,
+        "ISETP.NE.AND": 4,
+        "IMAD.SHL.U32": 14,
+        "IMAD.HI.U32": 1,
+        "SHF.R.U32.HI": 33,
+        "ISETP.GE.AND": 18,
+        "LDG.E": 8,
+        "LOP3.LUT": 63,
+        "IMAD.WIDE.U32": 25,
+        "LEA.HI": 1,
+        "SHF.R.U64": 3,
+        "SHF.L.U64.HI": 3,
+        "ISETP.GT.U64.AND": 4,
+        "UMOV": 1,
+        "LEA": 5,
+        "IADD3": 2,
+        "LEA.HI.X": 4,
+        "ISETP.LT.U32.AND": 7,
+        "ISETP.GE.U64.AND": 3,
+        "ISETP.LT.U64.AND": 9,
+        "ISETP.GE.U64.OR": 1,
+        "LDG.E.128": 4,
+        "ISETP.GE.OR": 1,
+        "ISETP.NE.U32.OR": 6,
+        "ISETP.GE.U32.OR": 5,
+        "ISETP.LT.OR": 1,
+        "ISETP.GT.U32.OR": 1,
+        "STS.128": 13,
+        "STSM.16.M88": 3,
+        "BAR.SYNC.DEFER_BLOCKING": 7,
+        "LDS.128": 15,
+        "FMUL": 65,
+        "FADD": 65,
+        "LDS": 12,
+        "R2P": 1,
+        "SHFL.BFLY": 15,
+        "FSEL": 30,
+        "STS": 2,
+        "PLOP3.LUT": 2,
+        "STG.E": 2,
+        "EXIT": 3,
+        "STG.E.128": 4
+      },
+      "backward_branch_intervals": [
+        {
+          "start_hex": "0x4a0",
+          "end_hex": "0x4c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x6b0",
+          "end_hex": "0x6d0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x35a0",
+          "end_hex": "0x35c0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3600",
+          "end_hex": "0x3620",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3660",
+          "end_hex": "0x3680",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x36c0",
+          "end_hex": "0x36e0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3720",
+          "end_hex": "0x3740",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3780",
+          "end_hex": "0x37a0",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x37e0",
+          "end_hex": "0x3800",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x3840",
+          "end_hex": "0x3860",
+          "static_instruction_count": 3,
+          "opcode_counts": {
+            "CS2UR": 1,
+            "UISETP.GE.S64.AND": 1,
+            "BRA.U": 1
+          }
+        },
+        {
+          "start_hex": "0x1720",
+          "end_hex": "0x3a10",
+          "static_instruction_count": 560,
+          "opcode_counts": {
+            "ISETP.GE.AND": 15,
+            "BSSY.RECONVERGENT": 10,
+            "ISETP.GE.OR": 1,
+            "BRA": 21,
+            "LDCU": 15,
+            "ISETP.EQ.U32.AND": 1,
+            "P2R": 2,
+            "STL.64": 8,
+            "LDCU.64": 13,
+            "IADD.64": 10,
+            "STL": 8,
+            "MOV": 55,
+            "LDC.64": 8,
+            "LEPC": 8,
+            "CALL.ABS.NOINC": 8,
+            "NOP": 10,
+            "BSYNC.RECONVERGENT": 10,
+            "ISETP.NE.U32.OR": 6,
+            "ISETP.NE.AND": 2,
+            "HFMA2": 3,
+            "ISETP.GE.U32.AND": 7,
+            "ISETP.GE.U32.OR": 5,
+            "R2UR": 14,
+            "LDG.E": 5,
+            "IADD": 4,
+            "ISETP.LT.OR": 1,
+            "LDC": 6,
+            "ISETP.GT.U32.OR": 1,
+            "MOV.64": 8,
+            "STS.128": 13,
+            "STSM.16.M88": 3,
+            "BAR.SYNC.DEFER_BLOCKING": 7,
+            "LDS.128": 15,
+            "FMUL": 65,
+            "FADD": 65,
+            "LDS": 12,
+            "R2P": 1,
+            "SHFL.BFLY": 15,
+            "FSEL": 30,
+            "STS": 2,
+            "ISETP.LT.U32.AND": 2,
+            "ISETP.GT.U64.AND": 2,
+            "ISETP.LT.U64.AND": 2,
+            "PLOP3.LUT": 2,
+            "LOP3.LUT": 3,
+            "STG.E": 2,
+            "CS2UR": 16,
+            "UIADD3.64": 8,
+            "UISETP.GE.S64.AND": 8,
+            "BRA.U": 8,
+            "BPT.TRAP": 8,
+            "ISETP.NE.U32.AND": 1,
+            "IMAD.WIDE.U32": 5
+          }
+        }
+      ],
+      "note": "static intervals include alternate control-flow paths; not dynamic instruction counts or hardware counters"
+    }
+  ],
+  "rejected_experiments": {
+    "worker_warps8": {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/measure-summary.json",
+      "sha256": "fd576608646b99b1595128fe67bb5a2e623b90c45db48740989407f9efcde85c"
+    },
+    "column_layout": {
+      "decision": "rejected for production promotion",
+      "reason": "Both warm-L2 widths fail original lower95 speedup >1.02 useful-gain requirement",
+      "changed_fixture_count": 15,
+      "changed_fixture_bit_comparisons": 30,
+      "different_bits": 0,
+      "f64_max_absolute_error": 1.155110407213833e-06,
+      "performance_groups": [
+        {
+          "clear_l2": 1,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.09728000313043594,
+          "new_median_ms": 0.09201599657535553,
+          "paired_speedup_median": 1.0572075155515976,
+          "ci95": [
+            1.0570435075843265,
+            1.0578526704655222
+          ],
+          "unit_median_range_fraction_old": 0.0018091859498046252,
+          "unit_median_range_fraction_new": 0.0010433048009510471,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 1,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.34537601470947266,
+          "new_median_ms": 0.32284799218177795,
+          "paired_speedup_median": 1.0699380530867237,
+          "ci95": [
+            1.0694286011247685,
+            1.0702563226405248
+          ],
+          "unit_median_range_fraction_old": 0.0012508525402247117,
+          "unit_median_range_fraction_new": 0.0014370928925288432,
+          "lower95_exceeds_original_1p02_useful_gain": true
+        },
+        {
+          "clear_l2": 0,
+          "width": 64,
+          "units": 5,
+          "old_median_ms": 0.08451200276613235,
+          "new_median_ms": 0.08377599716186523,
+          "paired_speedup_median": 1.0097496894552591,
+          "ci95": [
+            1.008024516880845,
+            1.0112617333053884
+          ],
+          "unit_median_range_fraction_old": 0.0041650324001329805,
+          "unit_median_range_fraction_new": 0.001527895566648263,
+          "lower95_exceeds_original_1p02_useful_gain": false
+        },
+        {
+          "clear_l2": 0,
+          "width": 256,
+          "units": 5,
+          "old_median_ms": 0.3089599907398224,
+          "new_median_ms": 0.30559998750686646,
+          "paired_speedup_median": 1.010899266068585,
+          "ci95": [
+            1.0097260000590234,
+            1.0114756085610626
+          ],
+          "unit_median_range_fraction_old": 0.0010356924684987725,
+          "unit_median_range_fraction_new": 0.0020942568698939386,
+          "lower95_exceeds_original_1p02_useful_gain": false
+        }
+      ],
+      "independent_confirmation_executed": false,
+      "production_changed": false
+    }
+  },
+  "remaining_work": "Quantized serving/quality admission and sustained-load qualification remain unchanged; loop still has7 static synchronization instructions; hardware counters unavailable."
+}

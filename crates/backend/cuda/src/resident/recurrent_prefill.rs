@@ -5,8 +5,8 @@ pub(crate) mod kernels {
         BroadcastScalar, LoadTileLike, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
         StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, Tile_3,
         bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, eq_tile, exp, extract,
-        ftz, ge_tile, get_tile_block_id, gt_tile, iota, log, lt_tile, mmaf, predicate, reduce_sum,
-        reverse, rsqrt, scan_sum, select, tile_to_scalar,
+        ftz, ge_tile, get_tile_block_id, gt_tile, iota, log, lt_tile, mmaf, num_tiles, predicate,
+        reduce_sum, reverse, rsqrt, scan_sum, select, tile_to_scalar,
     };
 
     #[expect(
@@ -465,11 +465,13 @@ pub(crate) mod kernels {
         // One block of the value dimension. The state's columns are mutually independent - every
         // reduction below is over the key dimension - so the grid gains D / SW times more blocks
         // without changing any summation order.
+        // Prepared inputs have LANES padded rows. An axis-derived loop bound lets
+        // cuTile prove row access once instead of checking every token load.
+        let qp = normalized.partition(shape![1, 1, D]);
         let mut old = state.load_like(state).reshape(shape![D, SW]);
-        for lane in 0i32..LANES {
+        for lane in 0i32..num_tiles(&qp, 0i32) {
             if lane < count && base + lane + offset >= 0 {
                 let key = pid.0 / (VH / KH);
-                let qp = normalized.partition(shape![1, 1, D]);
                 let q = qp.load([lane, key, 0i32]).reshape(shape![D]);
                 let k = qp.load([lane, KH + key, 0i32]).reshape(shape![D]);
                 let vp = qkv.partition(shape![1, 1, SW]);
