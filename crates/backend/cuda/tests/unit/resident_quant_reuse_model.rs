@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 type States = BTreeMap<TensorId, Vec<Tensor<f32>>>;
 type Fp8Caches = BTreeMap<TensorId, (Tensor<f8e4m3fn>, Tensor<f8e4m3fn>)>;
 
-fn bits(actual: &[f32], expected: &[f32], label: &str) {
+pub(super) fn bits(actual: &[f32], expected: &[f32], label: &str) {
     assert_eq!(actual.len(), expected.len(), "{label} length");
     for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
         assert!(
@@ -22,7 +22,7 @@ fn bits(actual: &[f32], expected: &[f32], label: &str) {
     }
 }
 
-fn outputs(actual: &BatchOutput, expected: &BatchOutput) {
+pub(super) fn outputs(actual: &BatchOutput, expected: &BatchOutput) {
     assert_eq!(actual.len(), expected.len());
     assert_ne!(actual.len(), 0, "batch output is empty");
     for (actual, expected) in actual.iter().zip(expected) {
@@ -65,7 +65,7 @@ fn states(
     Ok(())
 }
 
-fn program_states(
+pub(super) fn program_states(
     loaded: &LoadedModel,
     actual: &DeviceProgram,
     expected: &DeviceProgram,
@@ -80,7 +80,7 @@ fn program_states(
     )
 }
 
-fn prompt() -> Result<Vec<u32>> {
+pub(super) fn prompt() -> Result<Vec<u32>> {
     let path = std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens: Vec<u32> =
         serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
@@ -93,7 +93,7 @@ fn prompt() -> Result<Vec<u32>> {
     Ok(tokens)
 }
 
-fn greedy(logits: &[f32]) -> Result<u32> {
+pub(super) fn greedy(logits: &[f32]) -> Result<u32> {
     let mut best = 0usize;
     for index in 1..logits.len() {
         if logits[index] > logits[best] {

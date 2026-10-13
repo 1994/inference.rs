@@ -17,6 +17,8 @@ mod kernels;
 mod linear_batch;
 mod metadata;
 pub(crate) mod nvfp4_gemm;
+#[cfg(test)]
+pub(crate) mod prefill_demand;
 mod prefill_gemm;
 mod prefill_projection;
 mod profile;

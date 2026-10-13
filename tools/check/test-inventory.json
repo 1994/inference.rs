@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 124
+      "tests": 158
     },
     "frontdoor": {
       "benches": 0,
@@ -168,16 +168,32 @@
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS; run under safe-run": 1,
     "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS": 1,
+    "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS; safe-run": 1,
+    "requires CUDA, INFER_TEST_MODEL, frozen 511-token INFER_TEST_TOKENS; safe-run": 1,
+    "requires CUDA, INFER_TEST_MODEL, frozen INFER_TEST_TOKENS/table; full private/pool arithmetic diagnostic, safe-run": 1,
+    "requires CUDA, INFER_TEST_MODEL, safe-run; all 96 real GDN small weights, full unchanged F64 gate": 1,
+    "requires CUDA, INFER_TEST_MODEL, safe-run; existing native F32 GEMV, all real weights and complete outputs": 1,
+    "requires CUDA, INFER_TEST_MODEL, safe-run; four slot matrix rows, all 96 weights and complete original F64/bit gates": 1,
+    "requires CUDA, INFER_TEST_MODEL/frozen tokens/table, safe-run; four distinct trajectories, inactive/rebind, complete private F32/pool equality": 1,
+    "requires CUDA, frozen INFER_TEST_MODEL/TOKENS/table; safe-run; complete F32/FP8 state and vocabulary comparisons": 1,
+    "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic": 1,
+    "requires CUDA; complete FP8/F64/bitwise gate; safe-run --test-threads 1": 1,
+    "requires CUDA; full F64/cache numerical gate and hardware AB/BA tuning": 1,
+    "requires CUDA; only after complete numerical gate; diagnostic costs, no service claim": 1,
     "requires CUDA; run inside safe-run with --test-threads 1": 2,
     "requires CUDA; run release serially inside safe-run": 1,
     "requires CUDA; run serially inside safe-run": 1,
+    "requires CUDA; smoke before full numerical gate; safe-run --test-threads 1": 1,
     "requires GPU and INFER_ATTENTION_BENCH fixtures; run under tools/bench/safe-run.sh": 1,
     "requires GPU and INFER_ATTENTION_GATE; use make check-attention": 1,
     "requires Linux NUMA policy and move_pages query permission; make check-linux-numa": 1,
     "requires NVIDIA GPU; run under tools/bench/safe-run.sh": 3,
     "requires a CUDA device; run inside safe-run": 2,
     "requires a Linux production host with get/set_mempolicy permitted; make check-linux-numa": 1,
-    "requires an NVIDIA GPU; run under tools/bench/safe-run.sh": 4
+    "requires an NVIDIA GPU; run under tools/bench/safe-run.sh": 4,
+    "requires real checkpoint and CUDA; run release serially inside safe-run": 1,
+    "requires real checkpoint and CUDA; run serially inside safe-run": 1,
+    "requires release CUDA O3, completed CI and complete bitwise gate; safe-run; internal paired prefill cost only": 1
   },
   "path_mounts": [
     {
@@ -252,8 +268,33 @@
     },
     {
       "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_quant_reuse_model.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_attention_prefill_model.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_decode_path.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_prefill_demand_model.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/nvfp4.rs",
       "mount": "../tests/unit/nvfp4.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/attention_decode/workspace.rs",
+      "mount": "../../../tests/unit/resident_attention_prefill_taps.rs"
     },
     {
       "crate": "cuda",
@@ -302,6 +343,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/resident/nvfp4_gemm/quant_reuse.rs",
+      "mount": "../../../tests/unit/resident_quant_reuse_plan.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/resident/nvfp4_gemm.rs",
       "mount": "../../tests/unit/resident_nvfp4_gemm.rs"
     },
@@ -314,6 +360,16 @@
       "crate": "cuda",
       "file": "src/resident/nvfp4_gemm.rs",
       "mount": "../../tests/unit/resident_vendor_fp8.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/nvfp4_gemm.rs",
+      "mount": "../../tests/unit/resident_quant_reuse.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/prefill_demand.rs",
+      "mount": "../../tests/unit/resident_prefill_demand.rs"
     },
     {
       "crate": "cuda",
@@ -384,6 +440,11 @@
       "crate": "cuda",
       "file": "src/target.rs",
       "mount": "../tests/unit/target.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/attention.rs",
+      "mount": "../../tests/unit/tuning_attention.rs"
     },
     {
       "crate": "cuda",
@@ -777,11 +838,11 @@
     }
   ],
   "totals": {
-    "all": 571,
+    "all": 605,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 571
+    "tests": 605
   }
 }

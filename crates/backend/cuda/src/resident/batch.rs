@@ -33,12 +33,22 @@ pub(super) struct Lane {
     checkpoints: States,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PromptReadout {
+    Hidden,
+    Logits,
+    #[cfg(test)]
+    StateOnly,
+}
+
 pub(super) struct BatchGraph {
     graph: Option<CudaGraph<()>>,
     readbacks: crate::device::Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
     prefill: CudaGraph<()>,
     prefill_last: CudaGraph<()>,
+    #[cfg(test)]
+    state_prefill: Option<CudaGraph<()>>,
     restore: Vec<CudaGraph<()>>,
     /// Split-K partial windows the captured fp4 prompt GEMMs accumulate into;
     /// declared after the graphs so their executables drop first.
@@ -398,6 +408,8 @@ impl BatchBuilder<'_> {
             readbacks: crate::device::Readbacks::default(),
             prefill,
             prefill_last,
+            #[cfg(test)]
+            state_prefill: None,
             restore,
             _partials: BTreeMap::new(),
             _recurrent: super::recurrent_prefill::Workspace::default(),
@@ -438,6 +450,72 @@ impl BatchBuilder<'_> {
                     .map_err(device_error)?,
             );
         }
+        let mut partials = self.allocate_prompt_partials()?;
+        let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+            .sync_on(&self.device.stream)
+            .map_err(device_error)?;
+        let mut recurrent = super::recurrent_prefill::Workspace::new(
+            self.device,
+            self.graph,
+            self.weights,
+            self.width,
+        )?;
+        let mut profile = profile::PrefillProfile::from_env(self.device);
+        let prefill = self.capture32(
+            &mut arena,
+            &metadata,
+            &prefill_info,
+            PromptReadout::Hidden,
+            profile.as_mut(),
+            (&mut partials, &mut recurrent),
+        )?;
+        let prefill_last = self.capture32(
+            &mut arena,
+            &metadata,
+            &prefill_info,
+            PromptReadout::Logits,
+            profile.as_mut(),
+            (&mut partials, &mut recurrent),
+        )?;
+        #[cfg(test)]
+        let state_prefill = if super::prefill_demand::enabled() {
+            Some(self.capture32(
+                &mut arena,
+                &metadata,
+                &prefill_info,
+                PromptReadout::StateOnly,
+                None,
+                (&mut partials, &mut recurrent),
+            )?)
+        } else {
+            None
+        };
+        let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
+        let logits = vec![take_result(&mut arena, self.graph.logits)?];
+        Ok(BatchGraph {
+            token_readout: None,
+            graph: None,
+            state_offset: Self::state_offset(self.weights),
+            readbacks: crate::device::Readbacks::default(),
+            prefill,
+            prefill_last,
+            #[cfg(test)]
+            state_prefill,
+            restore: Vec::new(),
+            _partials: partials,
+            _recurrent: recurrent,
+            prefill_info: Some(prefill_info),
+            metadata,
+            hidden,
+            logits,
+            width: self.width,
+            capacity: self.capacity,
+            profile,
+            _arena: Some(arena),
+        })
+    }
+
+    fn allocate_prompt_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
         let mut partials = BTreeMap::new();
         for node in &self.graph.nodes {
             if node.op != TensorOp::Linear
@@ -466,53 +544,7 @@ impl BatchBuilder<'_> {
                     .map_err(device_error)?,
             );
         }
-        let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
-            .sync_on(&self.device.stream)
-            .map_err(device_error)?;
-        let mut recurrent = super::recurrent_prefill::Workspace::new(
-            self.device,
-            self.graph,
-            self.weights,
-            self.width,
-        )?;
-        let mut profile = profile::PrefillProfile::from_env(self.device);
-        let prefill = self.capture32(
-            &mut arena,
-            &metadata,
-            &prefill_info,
-            false,
-            profile.as_mut(),
-            (&mut partials, &mut recurrent),
-        )?;
-        let prefill_last = self.capture32(
-            &mut arena,
-            &metadata,
-            &prefill_info,
-            true,
-            profile.as_mut(),
-            (&mut partials, &mut recurrent),
-        )?;
-        let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
-        let logits = vec![take_result(&mut arena, self.graph.logits)?];
-        Ok(BatchGraph {
-            token_readout: None,
-            graph: None,
-            state_offset: Self::state_offset(self.weights),
-            readbacks: crate::device::Readbacks::default(),
-            prefill,
-            prefill_last,
-            restore: Vec::new(),
-            _partials: partials,
-            _recurrent: recurrent,
-            prefill_info: Some(prefill_info),
-            metadata,
-            hidden,
-            logits,
-            width: self.width,
-            capacity: self.capacity,
-            profile,
-            _arena: Some(arena),
-        })
+        Ok(partials)
     }
 
     fn capture(
@@ -594,7 +626,7 @@ impl BatchBuilder<'_> {
         arena: &mut ActivationArena,
         metadata: &[Tensor<i32>],
         prefill_info: &Tensor<i32>,
-        last: bool,
+        readout: PromptReadout,
         profile: Option<&mut profile::PrefillProfile>,
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
@@ -602,101 +634,32 @@ impl BatchBuilder<'_> {
         ),
     ) -> Result<CudaGraph<()>> {
         let (partials, recurrent) = workspaces;
+        let last = readout == PromptReadout::Logits;
+        #[cfg(test)]
+        let demand = (readout == PromptReadout::StateOnly)
+            .then(|| super::prefill_demand::StateDemand::new(self.graph));
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
         self.nvfp4.begin_quant_capture();
         let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
-            let mut no_fusion = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
-                if self.skip_quant(&quant_plan, index, logits && !last) {
+                let skip = logits && !last;
+                #[cfg(test)]
+                let skip = skip || demand.as_ref().is_some_and(|plan| !plan.retains(index));
+                if self.skip_quant(&quant_plan, index, skip) {
                     continue;
                 }
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
                 }
-                if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
-                    continue;
-                }
-                if matches!(node.op, TensorOp::Attention { .. } | TensorOp::Rope { .. })
-                    && !node
-                        .inputs
-                        .iter()
-                        .any(|id| self.weights.constants.contains_key(id))
-                {
-                    Capture {
-                        scope,
-                        arena: &mut *arena,
-                        weights: self.weights,
-                        nvfp4: self.nvfp4,
-                        attention: self.attention,
-                        states: self.states,
-                        fp8_states: self.fp8_states,
-                        metadata: prefill_info,
-                        table: &self.tables[0],
-                        external: self.external,
-                        capacity: self.capacity,
-                        fusion: &mut no_fusion,
-                        mode: CaptureMode::Prefill,
-                    }
-                    .record(node)?;
-                    continue;
-                }
-                match dispatch32(node, self.weights) {
-                    Dispatch32::Linear => {
-                        super::prefill_projection::record(
-                            scope,
-                            node,
-                            arena,
-                            self.weights,
-                            partials,
-                            self.nvfp4,
-                            self.delegated.as_deref_mut(),
-                        )?;
-                    }
-                    Dispatch32::Batched => {
-                        Capture {
-                            scope,
-                            arena: &mut *arena,
-                            weights: self.weights,
-                            nvfp4: self.nvfp4,
-                            attention: self.attention,
-                            states: self.states,
-                            fp8_states: self.fp8_states,
-                            metadata: &metadata[0],
-                            table: &self.tables[0],
-                            external: self.external,
-                            capacity: self.capacity,
-                            fusion: &mut no_fusion,
-                            mode: CaptureMode::Batched,
-                        }
-                        .record(node)?;
-                    }
-                    Dispatch32::Row => {
-                        // Row kernels take scalar per-lane inputs, so a fused program records
-                        // its embedding and normalization against that lane's own hidden.
-                        for (lane, meta) in metadata.iter().enumerate().take(self.width) {
-                            Capture {
-                                scope,
-                                arena: &mut *arena,
-                                weights: self.weights,
-                                nvfp4: self.nvfp4,
-                                attention: self.attention,
-                                states: self.states,
-                                fp8_states: self.fp8_states,
-                                metadata: meta,
-                                // Every lane of a prompt chunk appends into the one cache this
-                                // program owns, so they all resolve through one table.
-                                table: &self.tables[0],
-                                external: &self.lane_external[lane],
-                                capacity: self.capacity,
-                                fusion: &mut self.lane_fusion[lane],
-                                mode: CaptureMode::Row(lane),
-                            }
-                            .record_row(node, lane)?;
-                        }
-                    }
-                }
+                self.record_prompt_node(
+                    scope,
+                    node,
+                    arena,
+                    (metadata, prefill_info),
+                    (partials, recurrent),
+                )?;
             }
             if let Some(boundaries) = boundaries.as_mut() {
                 boundaries.finish(scope)?;
@@ -705,6 +668,105 @@ impl BatchBuilder<'_> {
         });
         self.nvfp4.end_quant_capture();
         result.map_err(device_error)
+    }
+
+    fn record_prompt_node(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: (&[Tensor<i32>], &Tensor<i32>),
+        workspaces: (
+            &mut BTreeMap<usize, Tensor<f32>>,
+            &mut super::recurrent_prefill::Workspace,
+        ),
+    ) -> std::result::Result<(), DeviceError> {
+        let (metadata, prefill_info) = metadata;
+        let (partials, recurrent) = workspaces;
+        let mut no_fusion = None;
+        if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
+            return Ok(());
+        }
+        if matches!(node.op, TensorOp::Attention { .. } | TensorOp::Rope { .. })
+            && !node
+                .inputs
+                .iter()
+                .any(|id| self.weights.constants.contains_key(id))
+        {
+            Capture {
+                scope,
+                arena: &mut *arena,
+                weights: self.weights,
+                nvfp4: self.nvfp4,
+                attention: self.attention,
+                states: self.states,
+                fp8_states: self.fp8_states,
+                metadata: prefill_info,
+                table: &self.tables[0],
+                external: self.external,
+                capacity: self.capacity,
+                fusion: &mut no_fusion,
+                mode: CaptureMode::Prefill,
+            }
+            .record(node)?;
+            return Ok(());
+        }
+        match dispatch32(node, self.weights) {
+            Dispatch32::Linear => {
+                super::prefill_projection::record(
+                    scope,
+                    node,
+                    arena,
+                    self.weights,
+                    partials,
+                    self.nvfp4,
+                    self.delegated.as_deref_mut(),
+                )?;
+            }
+            Dispatch32::Batched => {
+                Capture {
+                    scope,
+                    arena: &mut *arena,
+                    weights: self.weights,
+                    nvfp4: self.nvfp4,
+                    attention: self.attention,
+                    states: self.states,
+                    fp8_states: self.fp8_states,
+                    metadata: &metadata[0],
+                    table: &self.tables[0],
+                    external: self.external,
+                    capacity: self.capacity,
+                    fusion: &mut no_fusion,
+                    mode: CaptureMode::Batched,
+                }
+                .record(node)?;
+            }
+            Dispatch32::Row => {
+                // Row kernels take scalar per-lane inputs, so a fused program records
+                // its embedding and normalization against that lane's own hidden.
+                for (lane, meta) in metadata.iter().enumerate().take(self.width) {
+                    Capture {
+                        scope,
+                        arena: &mut *arena,
+                        weights: self.weights,
+                        nvfp4: self.nvfp4,
+                        attention: self.attention,
+                        states: self.states,
+                        fp8_states: self.fp8_states,
+                        metadata: meta,
+                        // Every lane of a prompt chunk appends into the one cache this
+                        // program owns, so they all resolve through one table.
+                        table: &self.tables[0],
+                        external: &self.lane_external[lane],
+                        capacity: self.capacity,
+                        fusion: &mut self.lane_fusion[lane],
+                        mode: CaptureMode::Row(lane),
+                    }
+                    .record_row(node, lane)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn skip_quant(
@@ -994,6 +1056,27 @@ impl BatchGraph {
         Ok(())
     }
 
+    fn validate_prompt_positions(&self, count: usize, position: usize) -> Result<()> {
+        // The slot-decode path already refuses a state position past the arena
+        // (`stage_lanes`); the prompt path has to as well, because the prefill append and
+        // decode kernels address that many rows of KV without a checked load.
+        let last_row = i64::try_from(position).map_err(device_error)?
+            + i64::try_from(count).map_err(device_error)?
+            - 1
+            + i64::from(self.state_offset);
+        if last_row >= i64::try_from(self.capacity).map_err(device_error)? {
+            return Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                format!(
+                    "prompt state rows end at {last_row} (base {position}, {} tokens, offset {}), \
+                     past the {}-token KV arena",
+                    count, self.state_offset, self.capacity
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Batched slots read back in one copy each; per-lane rows are split on host.
     fn run32(
         &mut self,
@@ -1003,8 +1086,20 @@ impl BatchGraph {
         prefill: Option<bool>,
         read_hidden: bool,
     ) -> Result<BatchOutput> {
+        self.validate_prompt_positions(tokens.len(), position)?;
         let graph = match prefill {
-            Some(false) => &self.prefill,
+            Some(false) => {
+                #[cfg(test)]
+                if !read_hidden && super::prefill_demand::enabled() {
+                    self.state_prefill.as_ref().unwrap_or(&self.prefill)
+                } else {
+                    &self.prefill
+                }
+                #[cfg(not(test))]
+                {
+                    &self.prefill
+                }
+            }
             Some(true) => &self.prefill_last,
             None => return Err(Error::invalid("prompt-only batch cannot verify")),
         };
@@ -1017,25 +1112,6 @@ impl BatchGraph {
             position,
             self.state_offset,
         )?;
-        // The slot-decode path already refuses a state position past the arena
-        // (`stage_lanes`); the prompt path has to as well, because the prefill append and
-        // decode kernels address that many rows of KV without a checked load.
-        let last_row = i64::try_from(position).map_err(device_error)?
-            + i64::try_from(tokens.len()).map_err(device_error)?
-            - 1
-            + i64::from(self.state_offset);
-        if last_row >= i64::try_from(self.capacity).map_err(device_error)? {
-            return Err(Error::new(
-                infer_core::ErrorCode::Capacity,
-                format!(
-                    "prompt state rows end at {last_row} (base {position}, {} tokens, offset {}), \
-                     past the {}-token KV arena",
-                    tokens.len(),
-                    self.state_offset,
-                    self.capacity
-                ),
-            ));
-        }
         super::metadata::update(
             graph,
             self.prefill_info

@@ -54,6 +54,20 @@ norm 和 cache 操作；prefill 和 decode 的有效行数也不同。
 随后再评估存储收缩。单行 dispatch 必须和原有效行保持同一量化与累加口径，不能直接用
 另一个 GEMV 的浮点结果替代。这是首个无需改模型即可落实的计算消除方向。
 
+首个实现先只做无 hidden/logits 读出的中间 chunk：从所有 `node.states` 写入反向保留完整
+输入依赖闭包，省去末层 O/MLP 等 12 个节点，每行在已有 LM head skip 之外少算
+298,844,160 MAC。仍完整执行最后 attention 的 Q/readout，不把它与 KV append 分离，
+也不改变最终 chunk 的行数。两个对照程序保留相同 arena 和额外图，避免 admission 干扰。
+
+[内部规划器](../../crates/backend/cuda/src/resident/prefill_demand.rs)仅编译进 CUDA 单元测试，
+没有生产环境变量或 CLI 开关。[完整模型检查](../../crates/backend/cuda/tests/unit/resident_prefill_demand_model.rs)
+在默认 scalar recurrent、MTP=0、冻结权重/tokens/tuning 下，对宽度 64/256 和长度
+51/64/255/256/511 比较全部 F32 状态、FP8 KV、完整最终 logits、每个长度后 8 步完整
+hidden/logits 与 greedy 选择；均逐位一致，hidden readout 的完整图回退也通过。
+CUDA clippy 和 71 项常规测试通过。配对耗时入口已准备，尚无性能收益结论；
+原始 256 题质量、服务负载与 MTP 实测未完成，不采用生产默认。
+证据位于 GPU 主机 `state-prefill-demand-2026-10-13/check-v4.log` 与 `compile-check-v5.log`。
+
 ## 2. GDN 用内积读出，延后展开状态
 
 最接近“换一个公式，省掉中间计算”的例子是：

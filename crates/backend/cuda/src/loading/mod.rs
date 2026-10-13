@@ -528,3 +528,7 @@ mod attention_prefill_model_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_decode_path.rs"]
 mod decode_path_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_prefill_demand_model.rs"]
+mod prefill_demand_model_tests;
