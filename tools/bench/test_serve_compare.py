@@ -3,8 +3,11 @@
 import importlib.util
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
@@ -280,6 +283,156 @@ class IdentityTest(unittest.TestCase):
             # Two packages that differ only in weights are not the same artifact.
             (root / "model.safetensors").write_bytes(b"other")
             self.assertNotEqual(identity["shards"], module.model_identity(root)["shards"])
+
+
+class GroupStartTest(unittest.TestCase):
+    def arguments(self, engine):
+        return SimpleNamespace(engine=engine, model=Path("/models/x"), tokens=2)
+
+    def group(self):
+        return [
+            {"case": "batch4", "repeat": 0, "slot": slot, "tokens": [slot + 1]} for slot in range(4)
+        ]
+
+    def response(self, engine):
+        if engine == "native":
+            events = [
+                {"Token": {"token": 11}},
+                {"Token": {"token": 12}},
+                {
+                    "Finished": {
+                        "reason": "Length",
+                        "measurement": {
+                            "successful": True,
+                            "ttft_us": 1,
+                            "e2e_us": 2,
+                            "max_tpot_us": 1,
+                            "output_tokens": 2,
+                        },
+                    }
+                },
+            ]
+        else:
+            events = [{"choices": [{"token_ids": [11, 12], "finish_reason": "length"}]}]
+        lines = [b"data: " + json.dumps(event).encode() + b"\n" for event in events]
+        response = mock.MagicMock()
+        response.__enter__.return_value = lines
+        response.__exit__.return_value = False
+        return response
+
+    def token(self, payload, engine):
+        return (
+            payload["input"]["Sequence"]["tokens"][0]
+            if engine == "native"
+            else payload["prompt"][0]
+        )
+
+    def test_group_prepares_all_payloads_before_http_and_records_actual_send_times(self):
+        for engine in ["native", "vllm"]:
+            with self.subTest(engine=engine):
+                self.check_group(engine)
+
+    def check_group(self, engine):
+        prepared = {}
+        sends = {}
+        fast_ready = threading.Event()
+        lock = threading.Lock()
+        serialize = json.dumps
+        response = self.response(engine)
+
+        def prepare(payload):
+            token = self.token(payload, engine)
+            if token == 4:
+                self.assertTrue(fast_ready.wait(timeout=2))
+                with lock:
+                    self.assertFalse(sends, "early requests bypassed preparation barrier")
+            data = serialize(payload)
+            with lock:
+                prepared[token] = time.perf_counter_ns()
+                if len(prepared) == 3:
+                    fast_ready.set()
+            return data
+
+        def send(request, timeout):
+            token = self.token(json.loads(request.data), engine)
+            with lock:
+                self.assertEqual(len(prepared), 4)
+                sends[token] = time.perf_counter_ns()
+            self.assertEqual(timeout, 600)
+            self.assertEqual(request.get_header("Content-type"), "application/json")
+            return response
+
+        with (
+            mock.patch.object(module.json, "dumps", side_effect=prepare),
+            mock.patch.object(module.urllib.request, "urlopen", side_effect=send),
+        ):
+            timing = module.measure_group(
+                self.arguments(engine), "http://test", [], iter(range(1, 5)), self.group()
+            )
+        release = timing["group_start_monotonic_ns"]
+        self.assertGreaterEqual(release, max(prepared.values()))
+        self.assertEqual(len(sends), 4)
+        self.assertEqual(timing["start_synchronization"], "barrier_after_payload_serialization")
+        starts = []
+        ends = []
+        for row in timing["results"]:
+            token = row["slot"] + 1
+            start = row["request_start_monotonic_ns"]
+            end = row["request_end_monotonic_ns"]
+            self.assertLessEqual(release, start)
+            self.assertLessEqual(start, sends[token])
+            self.assertLessEqual(sends[token], end)
+            self.assertLessEqual(row["request_start_unix_ns"], row["request_end_unix_ns"])
+            self.assertEqual(row["token_ids"], [11, 12])
+            self.assertEqual(row["request_wall_seconds"], (end - start) / 1e9)
+            starts.append(start)
+            ends.append(end)
+        self.assertEqual(timing["request_start_skew_seconds"], (max(starts) - min(starts)) / 1e9)
+        self.assertEqual(timing["group_makespan_seconds"], (max(ends) - release) / 1e9)
+        self.assertEqual(timing["wall_seconds"], timing["group_makespan_seconds"])
+
+    def test_payload_error_releases_waiting_workers_and_preserves_original_error(self):
+        serialize = json.dumps
+
+        def prepare(payload):
+            if payload["prompt"] == [4]:
+                raise ValueError("payload preparation failed")
+            return serialize(payload)
+
+        with (
+            mock.patch.object(module.json, "dumps", side_effect=prepare),
+            mock.patch.object(module.urllib.request, "urlopen") as send,
+            self.assertRaisesRegex(ValueError, "payload preparation failed"),
+        ):
+            module.measure_group(
+                self.arguments("vllm"), "http://test", [], iter(range(1, 5)), self.group()
+            )
+        send.assert_not_called()
+
+    def test_direct_single_request_call_remains_supported(self):
+        for engine in ["native", "vllm"]:
+            with (
+                self.subTest(engine=engine),
+                mock.patch.object(
+                    module.urllib.request, "urlopen", return_value=self.response(engine)
+                ) as send,
+            ):
+                result = module.stream_request(
+                    self.arguments(engine),
+                    "http://test",
+                    Path("/models/x"),
+                    [],
+                    iter([7]),
+                    self.group()[0],
+                )
+                self.assertEqual(result["token_ids"], [11, 12])
+                self.assertEqual(result["request_id"], 7 if engine == "native" else None)
+                request = send.call_args.args[0]
+                self.assertTrue(
+                    request.full_url.endswith(
+                        "/native/v1/stream" if engine == "native" else "/v1/completions"
+                    )
+                )
 
 
 if __name__ == "__main__":
