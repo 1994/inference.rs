@@ -170,6 +170,7 @@ impl Workspace {
         weights: &ProgramWeights,
         widths: &[usize],
     ) -> Result<()> {
+        let _probe_inputs = crate::tuning::fp8_gemm::probe_inputs::Scope::new(device)?;
         for node in &graph.nodes {
             if node.op != TensorOp::Linear
                 || (!weights.input_scales.contains_key(&node.inputs[1])

@@ -23,6 +23,8 @@ use std::{
     time::Duration,
 };
 
+pub(crate) mod probe_inputs;
+
 const CONTRACT: &str = "fp8-channel-exact-v1:row-pad-pow2:maxabs/448:floor1e-12:clip448:e4m3-rne:mma-k128-f32:lt-scalar32f-scales1:fastaccum0:col-tn:raw*xs*ws:rn-ftz0:align256:workspace0:four-fixtures:exact-native-or-verified-lt-optin:search-ab-confirm-ba";
 const ROW_TILES: [usize; 2] = [
     crate::constants::QUANT_GEMM_TILE[0],
@@ -519,7 +521,9 @@ impl Captured {
         let ProjectionWeight::Fp8(weight_codes, ws) = weight else {
             return Err(Error::invalid("FP8 tuning channel weight"));
         };
-        let input = device.upload(inputs(rows, columns, fixture)?, &[rows, columns])?;
+        let input = probe_inputs::upload(device, [rows, columns], fixture, || {
+            inputs(rows, columns, fixture)
+        })?;
         let mut codes = api::zeros::<f8e4m3fn>(&[rows, columns])
             .sync_on(&device.stream)
             .map_err(device_error)?;
