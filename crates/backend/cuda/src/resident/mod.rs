@@ -49,3 +49,10 @@ pub(crate) use attention_decode::taps as attention_prefill_taps;
 
 #[cfg(test)]
 pub(crate) use small_gemm::{pool_f32_capture_records, with_pool_f32, with_precise_dense};
+
+pub(crate) mod fp8_quant_reduction;
+
+pub(crate) mod pool_gemv;
+
+#[cfg(test)]
+pub(crate) use small_gemm::kernels as small_gemm_kernels;

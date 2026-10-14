@@ -534,3 +534,23 @@ mod decode_path_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_prefill_demand_model.rs"]
 mod prefill_demand_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_parallel_quant.rs"]
+mod parallel_quant_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_parallel_quant_pool.rs"]
+mod parallel_quant_pool_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_pool_gemv_cost.rs"]
+mod pool_gemv_cost_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_pool_gemv_model.rs"]
+mod pool_gemv_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_pool_greedy_lifecycle.rs"]
+mod pool_greedy_lifecycle_tests;
