@@ -857,3 +857,48 @@ GPU算术未变支持继续调查原路由对CPU时序的敏感性，不能把18
 并发native及固定vLLM质量、持续混合负载仍待验证。main默认runtime未切换。
 [CPU原始样本、精确对照与五组完整服务记录](artifacts/cuda-admission-affine-2026-10-14.json)；
 [可审阅预算公式原型补丁](artifacts/cuda-admission-affine-prototype-2026-10-14.patch)。
+
+
+## 2026-10-14：联合投影与预算化简共同生效，TTFT 回退消失，漂移门槛仍未通过
+
+在上一cohort router的两个版本上，控制保留原96MMA，候选采用48联合MMA
+及精确affine预算公式。两端同一路由，候选无用户算法开关。重新严格release
+Clippy/测试/CLI构建，保留原MTP0、GDN标量、KVsplit与private算术。
+候选实际完整模型比较340次hidden/logits、360次完整F32state/FP8KV均逐位
+一致，覆盖三种52-token输入、511/3647输入、2/3/4槽、八步、inactive及
+release/rebind；捕获断言确认48prepare+48jointMMA。新二进制上的MTP0/
+MTP3预算旧公式对照各258项全部相同，10项预算测试通过。
+
+首次组合构建错误复用了shared Cargo target的affine-only产物：复制源码保留
+旧mtime，虽然八个既有Rust文件内容已不同，Cargo仍判定fresh，两个binary
+hash都与上一单项构建相同。它未进入测量，完整记录保留为invalid-stale-output。
+在新build目录强制刷新CUDA源输入mtime后，实际重新Clippy/编译；测试hash
+4b862ea6、CLI hash bcc37e46 均不同。完整模型的真实joint捕获数量和逐位比较
+通过后才执行服务实验。不能据fresh标签或源码manifest单独推断二进制正确。
+
+五组、十个新的无profiler进程按原交替顺序完整完成，每边105条64-token
+stream，配对差异零；每边unit0与后四进程的84项同输入输出也全相同。
+batch4 TPOT进程中位数18.918551→17.893267ms，约下降5.42%；
+配对速度1.05723，95%区间1.04966–1.05964，下界1.02门槛通过。
+整体完成时间1378.455187→1313.651788ms；配对速度1.05046，
+区间1.04214–1.05579。short TTFT41.907832→40.049170ms；
+配对速度1.04088，区间0.98697–1.09115，没有上轮>5%的配对中位数回退，
+区间也能排除5%回退，但不能宣称其有用加速下界达到1.02。
+long TTFT237.151297→233.466028ms，hot_long71.246161→65.439246ms。
+原四场景、输入/tuning、三次repeat、输出上限、65536context、prefix cache
+均不变；全部case/metric的95%区间都能排除5%回退。
+
+整体仍未准入：short TTFT控制进程漂移11.118%，batch4 TTFT候选漂移
+10.444%，分别略超原10%门槛。其余case/metric未超；没有删掉末组、扩大
+容许值或把整体失败写成通过。原main router的18条affine-only失败、原joint
+12条失败均保留，新实验cohort控制不能替换原native质量/服务参考。
+冻结案例的全部输出一致不能证明late arrival、异构不兼容peer及持续负载。
+
+本轮因此继续完整256题：新currentnative原始控制的单请求基线已启动，
+candidate及并发4尚未运行。512输出上限、MTP0、32768context、原输入/评分、
+所有length cap与native实测prefix reuse0保留，固定vLLM参考与2%单侧95%
+Clopper-Pearson退步门槛不变，收益不能抵消退步。完整质量和持续负载都未完成，
+main默认runtime未切换。最大long差距仍是原量化GDN逐token prefill，下一阶段
+继续减少其串行依赖和重复state访问；本轮不以host优化替代这条GPU主线。
+[完整模型、预算、构建身份与五组服务证据](artifacts/cuda-gdn-joint-affine-2026-10-14.json)；
+[可审阅组合原型补丁，未合入runtime](artifacts/cuda-gdn-joint-affine-prototype-2026-10-14.patch)。
