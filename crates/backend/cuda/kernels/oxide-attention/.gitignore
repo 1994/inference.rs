@@ -1,0 +1,3 @@
+# cargo-oxide compiler intermediates; only the verified embedded PTX is tracked.
+*.ll
+oxide_*_simt.ptx
