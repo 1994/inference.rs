@@ -809,3 +809,51 @@ prefix reuse为1.145/1.569ms。各阶段中位数不可直接相加当总TTFT，
 过程，不能替代未插桩的5%回退和10%漂移门槛。main默认仍未切换。
 [受控重放、原型路由、完整服务失败和TTFT边界证据](artifacts/cuda-gdn-cohort-route-replay-2026-10-14.json)；
 [可审阅路由原型补丁，未合入runtime](artifacts/cuda-gdn-cohort-router-prototype-2026-10-14.patch)。
+
+
+## 2026-10-14：预算公式消除反复图规划，短请求 TTFT 降低但原路由门槛仍失败
+
+TTFT 边界诊断后继续 profile before optimization：用当前 main 75dd 的独立
+release 归档，实际 Qwen3.8-27B-NVFP4，自动 prefill 256/64、MTP0、
+1,155 个 node、2,134 个 tensor，先测未修改的 sequence_budget。四种实际
+容量 × Logits/Full × private/shared 共16组，每组64次，CPU中位数
+796.085–805.050us。服务准入与 reserve 反复询价；原函数每次重新遍历图、
+规划 activation 生命周期并汇总投影/递推空间。该计时只量 CPU 定价，
+不能单独解释客户端 TTFT 的全部准备耗时。
+
+按原公式，只有 KV 和 Full-history CPU 读回随容量线性增长，其他几何在
+LoadedModel 加载后固定。隔离原型将程序存储价格写为 fixed + per_token ×
+rounded_capacity，最多复用四组 private/shared × Full/other 成功价格。
+容量仍先检查 1..=32768，再按原 next_power_of_two；所有组合与乘加均 checked。
+失败价格不缓存；并发首次询价可重复计算相同不可变价格，没有全局锁或用户
+算法开关。StatePool 的 retained.max(fresh)、实时 physical_available、active
+budget、prefix/state eviction 及 reclaim barrier 完全保持原实现。
+
+MTP0 与 MTP3 分别将所有16个二进制容量档位及相邻输入、None/Logits/Full、
+private/shared 与 verbatim 旧公式逐项对照，每边258项有效报价全部相同；
+0、32769、usize::MAX 的错误文本也相同。独立 CPU 基线的16项字节价格全部
+相同。10项预算/递推存储测试通过，包含乘积溢出和总和溢出。首次四组报价仍
+约0.8ms；复用报价的逐次样本约0.010–0.011us，接近此微基准计时开销，
+不据此宣传几万倍服务加速。严格 release Clippy、测试及 CLI 构建成功，
+测试/模型单元峰值4.8GiB、swap0、GPU guard无干扰。
+
+随后五组十个新独立进程按固定交替顺序，保留原四场景、输入/tuning、
+三次测量重复、64输出、MTP0、65536context、prefix cache，无host/GPU
+profiler。控制仍为原main runtime ca5；aa83..75dd 的 crates/toolsbench
+差异为空，候选仅改预算公式，没有 cohort router 或联合投影。
+short TTFT进程中位数45.715304→39.852980ms，约下降12.82%；配对速度
+1.15159，95%区间1.13917–1.17228，有用收益下界1.02门槛通过。
+long TTFT239.343486→233.410671ms；配对速度1.03028，
+区间1.02458–1.03506。单请求short/long/hot_long的45项完整配对stream
+均一致；所有场景均没有>5%配对中位数回退。
+
+整体仍未准入：每边105条stream全部完成，但18条batch4配对输出不同。
+unit0与后四进程的84项同输入对照，原路径10条、候选9条差异。
+候选batch4 TTFT进程漂移10.989%，超过原10%门槛；其他case/metric未超。
+GPU算术未变支持继续调查原路由对CPU时序的敏感性，不能把18条差异
+自动豁免或断言每条已获得因果证明。原profile与完整受控重放的private/pooled
+历史证据仍保留。下一步在同一cohort路由下组合联合投影与预算公式，检查
+已测得的batch4 TPOT收益和短请求TTFT是否同时成立。完整256题单请求/
+并发native及固定vLLM质量、持续混合负载仍待验证。main默认runtime未切换。
+[CPU原始样本、精确对照与五组完整服务记录](artifacts/cuda-admission-affine-2026-10-14.json)；
+[可审阅预算公式原型补丁](artifacts/cuda-admission-affine-prototype-2026-10-14.patch)。

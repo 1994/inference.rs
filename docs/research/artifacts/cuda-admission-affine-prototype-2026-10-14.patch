@@ -1,0 +1,252 @@
+--- a/crates/backend/cuda/src/loading/budget.rs
++++ b/crates/backend/cuda/src/loading/budget.rs
+@@ -8,6 +8,35 @@
+ const F32: u64 = crate::constants::F32_BYTES as u64;
+ /// Full-history readback stages a device copy and returns a second host copy.
+ const READBACK_COPIES: u64 = 2;
++
++/// Exact storage price for one immutable program geometry.
++#[derive(Clone, Copy, Default)]
++struct SequencePrice {
++    fixed: u64,
++    per_token: u64,
++}
++
++impl SequencePrice {
++    fn at(self, capacity: u64) -> Result<u64> {
++        add(self.fixed, mul(self.per_token, capacity)?)
++    }
++
++    fn combine(self, other: Self) -> Result<Self> {
++        Ok(Self {
++            fixed: add(self.fixed, other.fixed)?,
++            per_token: add(self.per_token, other.per_token)?,
++        })
++    }
++}
++
++/// Four bounded, successful prices: private/shared verification × full/other readout.
++pub(super) struct SequencePrices([std::sync::OnceLock<SequencePrice>; 4]);
++
++impl Default for SequencePrices {
++    fn default() -> Self {
++        Self(std::array::from_fn(|_| std::sync::OnceLock::new()))
++    }
++}
+
+ impl LoadedModel {
+     /// Upper bound for known tensor storage plus 256 MiB of graph/allocator headroom.
+@@ -30,38 +59,53 @@
+             ));
+         }
+         let capacity = capacity.next_power_of_two() as u64;
++        // Graph geometry is immutable after load; only KV and full-history storage grow
++        // with capacity. Keep one exact affine price per readout/verification geometry.
++        let index =
++            usize::from(private_verification) * 2 + usize::from(readout == OutputReadout::Full);
++        let cached = &self.sequence_prices.0[index];
++        let price = if let Some(price) = cached.get() {
++            *price
++        } else {
++            let price = self.sequence_price(readout, private_verification)?;
++            // Concurrent first quotes can calculate the same immutable price.
++            let _ = cached.set(price);
++            price
++        };
++        price.at(capacity)
++    }
++
++    fn sequence_price(
++        &self,
++        readout: OutputReadout,
++        private_verification: bool,
++    ) -> Result<SequencePrice> {
+         let hidden = self.model.hidden_size;
+         let vocabulary = self.model.vocab_size;
+-        let mut bytes = self.device().profile()?.graph_headroom_bytes();
+-        bytes = add(
+-            bytes,
+-            program(
+-                &self.graph,
+-                &self.weights,
+-                capacity,
++        let mut price = SequencePrice {
++            fixed: self.device().profile()?.graph_headroom_bytes(),
++            per_token: F32,
++        };
++        price = price.combine(program_price(
++            &self.graph,
++            &self.weights,
++            hidden,
++            vocabulary,
++            readout,
++            ProgramGeometry::new(&self.weights, private_verification),
++        )?)?;
++        if let Some(draft) = &self.draft {
++            // Draft priming retains a prefill arena and always captures private verification.
++            price = price.combine(program_price(
++                &draft.graph,
++                &draft.weights,
+                 hidden,
+                 vocabulary,
+                 readout,
+-                ProgramGeometry::new(&self.weights, private_verification),
+-            )?,
+-        )?;
+-        if let Some(draft) = &self.draft {
+-            // Draft priming has a prefill arena even though draft decode runs one token at a time.
+-            bytes = add(
+-                bytes,
+-                program(
+-                    &draft.graph,
+-                    &draft.weights,
+-                    capacity,
+-                    hidden,
+-                    vocabulary,
+-                    readout,
+-                    // LoadedModel::draft always captures a private program.
+-                    ProgramGeometry::new(&draft.weights, true),
+-                )?,
+-            )?;
+-        }
+-        add(bytes, mul(capacity, F32)?)
++                ProgramGeometry::new(&draft.weights, true),
++            )?)?;
++        }
++        Ok(price)
+     }
+
+     /// KV bytes one block of `KV_BLOCK_TOKENS` positions occupies across every attention
+@@ -106,19 +150,19 @@
+ }
+
+ /// Per-program admission: activation arenas, KV pages, projection workspaces and readout staging.
+-fn program(
++fn program_price(
+     graph: &DataflowGraph,
+     weights: &ProgramWeights,
+-    capacity: u64,
+     hidden: usize,
+     vocabulary: usize,
+     readout: OutputReadout,
+     geometry: ProgramGeometry,
+-) -> Result<u64> {
++) -> Result<SequencePrice> {
+     let verify = geometry.verification as u64;
+     let prompt = geometry.prompt_lanes() as u64;
+     let lanes = geometry.arena_lanes();
+     let mut bytes = 0;
++    let mut per_token = 0;
+     bytes = add(bytes, attention_scratch(graph)?)?;
+     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
+     // tensor in the graph; charge what the arena will actually allocate.
+@@ -153,7 +197,8 @@
+                 } else {
+                     F32
+                 };
+-                mul(mul(capacity, columns)?, 2 * size)?
++                per_token = add(per_token, mul(columns, 2 * size)?)?;
++                0
+             }
+             TensorStorage::State { .. } => mul(elements, mul(1 + verify, F32)?)?,
+         };
+@@ -181,12 +226,12 @@
+     bytes = add(bytes, mul(mul(readout_elements, readout_lanes)?, F32)?)?;
+     if readout == OutputReadout::Full {
+         // Full-history CPU readback and its returned copy are included in admission.
+-        bytes = add(
+-            bytes,
+-            mul(mul(capacity, hidden as u64)?, READBACK_COPIES * F32)?,
+-        )?;
+-    }
+-    Ok(bytes)
++        per_token = add(per_token, mul(hidden as u64, READBACK_COPIES * F32)?)?;
++    }
++    Ok(SequencePrice {
++        fixed: bytes,
++        per_token,
++    })
+ }
+ /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
+ /// Charge the supported upper bound (16 partitions), independent of device tuning.
+--- a/crates/backend/cuda/src/loading/mod.rs
++++ b/crates/backend/cuda/src/loading/mod.rs
+@@ -108,6 +108,7 @@
+     automatic_prefill: bool,
+     tuning: TuningReport,
+     requirements: infer_ir::CapabilityRequirements,
++    sequence_prices: budget::SequencePrices,
+ }
+
+ /// Vision tower bound alongside the text model.
+@@ -301,6 +302,7 @@
+             automatic_prefill,
+             tuning,
+             requirements,
++            sequence_prices: budget::SequencePrices::default(),
+         })
+     }
+     /// Provider-imported description of this model, including its modalities.
+--- a/crates/backend/cuda/tests/unit/loading_budget.rs
++++ b/crates/backend/cuda/tests/unit/loading_budget.rs
+@@ -178,15 +178,15 @@
+     weights.narrow_prefill_width = 64;
+     let graph = activation_graph(48)?;
+     let quote = |private| {
+-        program(
++        program_price(
+             &graph,
+             &weights,
+-            256,
+             48,
+             48,
+             OutputReadout::Logits,
+             ProgramGeometry::new(&weights, private),
+-        )
++        )?
++        .at(256)
+     };
+     // Two live F32 activation rows per graph lane; external rows retain their configured
+     // allocation, and prompt readback stages only its final row.
+@@ -207,15 +207,15 @@
+     weights.prefill_width = 3;
+     let graph = activation_graph(48)?;
+     let quote = |private| {
+-        program(
++        program_price(
+             &graph,
+             &weights,
+-            256,
+             48,
+             48,
+             OutputReadout::Logits,
+             ProgramGeometry::new(&weights, private),
+-        )
++        )?
++        .at(256)
+     };
+     // Without a prompt graph, prefill uses the private verification graph even when the
+     // caller requests pooled decode; its activations and readback must remain charged.
+@@ -227,3 +227,22 @@
+
+ #[path = "loading_budget_recurrent.rs"]
+ mod recurrent;
++
++#[test]
++fn affine_admission_rejects_both_product_and_total_overflow() {
++    let price = SequencePrice {
++        fixed: 1,
++        per_token: u64::MAX / 2,
++    };
++    assert_eq!(price.at(2).unwrap(), u64::MAX);
++    assert!(price.at(3).is_err());
++    assert!(SequencePrice { fixed: 2, ..price }.at(2).is_err());
++    assert!(
++        price
++            .combine(SequencePrice {
++                fixed: 0,
++                per_token: u64::MAX
++            })
++            .is_err()
++    );
++}
