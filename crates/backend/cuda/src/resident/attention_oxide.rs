@@ -16,7 +16,7 @@ const PTX: &str = include_str!("../../kernels/oxide-attention/attention-sm120.pt
 const HEADS: usize = 24;
 const KV_HEADS: usize = 4;
 const DIM: usize = 256;
-const THREADS: u32 = 256;
+const THREADS: u32 = 128;
 const SUPPORTED_LANES: [usize; 3] = [64, 256, 512];
 const REQUIRED_METADATA_FIELDS: usize = 3;
 

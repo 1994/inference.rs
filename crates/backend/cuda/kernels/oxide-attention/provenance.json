@@ -3,8 +3,9 @@
   "toolchain": "nightly-2026-10-11",
   "target": "sm_120",
   "command": "cargo oxide build --arch sm_120 --no-fmad",
-  "source_sha256": "f516fa2e944d00ca78be6f9cf4164491004985fd208dd72ac4080a3ab800ef97",
-  "ptx_sha256": "e41ad095da73871ffafa0de0318219b3f1f690f444ccad318fcd83c3b0001e66",
-  "numeric_evidence": "/home/r/benchmarks/inference.rs/oxide-attention-fp8-convert-2026-10-15/numeric-key-pair-v1/result.json",
-  "compiler_backend_sha256": "686379cccd2d03d6b582279627c6091704a15e9037b0d0004833a319aa27e015"
+  "source_sha256": "eba36e43aac50fb6306fc3a6167b0cfc8cd7f7d400500172f54def7aac63a072",
+  "ptx_sha256": "1c92b3e98865485d92e6768e3ffdecb3c2ae38ce89beb903f9281f91eea30e63",
+  "numeric_evidence": "/home/r/benchmarks/inference.rs/oxide-attention-vpair-2026-10-15/numeric-vpair128-v1/result.json",
+  "compiler_backend_sha256": "686379cccd2d03d6b582279627c6091704a15e9037b0d0004833a319aa27e015",
+  "launch_threads": 128
 }
