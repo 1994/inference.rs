@@ -115,3 +115,33 @@ fn ordered_recurrent_preparation_counts_distinct_key_geometries() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn quantized_default_prices_only_exact_ordered_recurrent_shapes() -> Result<()> {
+    let mut weights = fixture_weights();
+    weights.input_scales.insert(TensorId::ONE, 1.0);
+    assert!(!weights.chunked_recurrent);
+    let graph = graph();
+    for width in [64, 256] {
+        let expected = (48 * 128 + 2 * 16 * 128 + 2 * 48) * width * 4;
+        assert_eq!(required_bytes(&graph, &weights, width)?, expected as u64);
+    }
+    assert_eq!(required_bytes(&graph, &weights, 32)?, 0);
+    let mut unsupported = graph.clone();
+    unsupported.nodes[0].op = TensorOp::Delta {
+        key_heads: 1,
+        value_heads: 2,
+        key_dim: 32,
+        value_dim: 32,
+    };
+    assert_eq!(required_bytes(&unsupported, &weights, 64)?, 0);
+    let mut mixed = graph;
+    let mut later = unsupported.nodes[0].clone();
+    later.id = OpId::new(2)?;
+    mixed.nodes.push(later);
+    assert_eq!(
+        required_bytes(&mixed, &weights, 64)?,
+        (48 * 128 + 2 * 16 * 128 + 2 * 48) * 64 * 4
+    );
+    Ok(())
+}

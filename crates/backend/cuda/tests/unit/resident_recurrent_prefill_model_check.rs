@@ -31,17 +31,38 @@ fn checkpoint_ordered_recurrence_matches_scalar_bits() -> Result<()> {
             prefill_width: width,
             verification_width: 3,
             autotune: false,
-            // Quantized models otherwise default to scalar Delta, making this check vacuous.
-            chunked_recurrent: true,
+            // Exercise the default exact lowering; no diagnostic algorithm switch.
+            chunked_recurrent: false,
             ..LoadOptions::default()
         },
     )?;
     let capacity = (tokens.len() + 32).next_power_of_two();
+    let before = super::ORDERED_CAPTURE_COUNT.get();
     let mut candidate = loaded.sequence(capacity)?;
+    let ordered = super::ORDERED_CAPTURE_COUNT.get() - before;
+    let delta_nodes = loaded
+        .graph()
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, infer_ir::TensorOp::Delta { .. }))
+        .count();
+    assert!(
+        delta_nodes > 0 && ordered >= delta_nodes,
+        "default ordered lowering did not capture every recurrent layer"
+    );
+    eprintln!(
+        "DEFAULT_ORDERED_CAPTURE count={ordered} layers={delta_nodes} diagnostic_option=false"
+    );
+    let before = super::ORDERED_CAPTURE_COUNT.get();
     super::LEGACY_DELTA_CAPTURE.set(true);
     let legacy = loaded.sequence(capacity);
     super::LEGACY_DELTA_CAPTURE.set(false);
     let mut legacy = legacy?;
+    assert_eq!(
+        super::ORDERED_CAPTURE_COUNT.get(),
+        before,
+        "scalar control captured ordered lowering"
+    );
     for (chunk, tokens) in tokens.chunks(width).enumerate() {
         let actual = candidate.prefill_batch(tokens, chunk * width, true)?;
         let expected = legacy.prefill_batch(tokens, chunk * width, true)?;
@@ -153,4 +174,36 @@ fn compare_all_states(
         }
     }
     eprintln!("MODEL_STATE_BITS label={label} checked={elements} differing=0");
+    compare_fp8_states(loaded, candidate, scalar, label);
+}
+
+fn compare_fp8_states(
+    loaded: &LoadedModel,
+    candidate: &crate::resident::DeviceProgram,
+    scalar: &crate::resident::DeviceProgram,
+    label: &str,
+) {
+    assert_eq!(candidate.fp8_states().len(), scalar.fp8_states().len());
+    let mut elements = 0;
+    for (id, (keys, values)) in candidate.fp8_states() {
+        let (rkeys, rvalues) = &scalar.fp8_states()[id];
+        for (a, b) in [(keys, rkeys), (values, rvalues)] {
+            let a = loaded
+                .device()
+                .read_borrowed(a)
+                .expect("candidate FP8 state");
+            let b = loaded.device().read_borrowed(b).expect("scalar FP8 state");
+            assert_eq!(a.len(), b.len());
+            assert!(
+                a.iter().chain(&b).all(|x| x.0 & 127 != 127),
+                "FP8 state nonfinite"
+            );
+            assert!(
+                a.iter().zip(&b).all(|(a, b)| a.0 == b.0),
+                "{label} FP8 state {id:?} bit drift"
+            );
+            elements += a.len();
+        }
+    }
+    eprintln!("MODEL_FP8_BITS label={label} checked={elements} differing=0");
 }

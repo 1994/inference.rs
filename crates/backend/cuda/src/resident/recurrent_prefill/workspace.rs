@@ -2,7 +2,7 @@
 use super::super::capture::error;
 use super::{
     ORDERED_BLOCK, ORDERED_DIM, ORDERED_WIDTHS,
-    budget::{enabled, opted_in},
+    budget::{enabled, opted_in, ordered},
     kernels, prepared,
 };
 use crate::{
@@ -31,10 +31,11 @@ impl Workspace {
     ) -> Result<Self> {
         // Shared F32 inputs and independent 16-column blocks preserve the scalar norm, prediction and readout trees.
         // Captured 64/256-row fixtures and the complete checkpoint agree bit for bit.
-        // Quantized default adoption still requires full task quality and service timing.
-        // Diagnostic loading can compare this path; other shapes retain the existing WY policy.
+        // Quantized projections use only the exact ordered geometry automatically.
+        // Other shapes retain their existing scalar or explicit diagnostic policy.
         let opted_in = opted_in(weights);
-        if !enabled(weights, opted_in) {
+        let legacy_shapes = enabled(weights, opted_in);
+        if !legacy_shapes && !graph.nodes.iter().any(|node| ordered(node, weights, lanes)) {
             return Ok(Self {
                 lanes,
                 ..Self::default()
@@ -42,6 +43,11 @@ impl Workspace {
         }
         let mut buffers = BTreeMap::new();
         let mut wy_blocks = BTreeMap::new();
+        for node in &graph.nodes {
+            if ordered(node, weights, lanes) {
+                wy_blocks.insert(node.outputs[0], ORDERED_BLOCK);
+            }
+        }
         if opted_in {
             for node in &graph.nodes {
                 if let TensorOp::Delta {
@@ -78,6 +84,9 @@ impl Workspace {
             }
         }
         for node in &graph.nodes {
+            if !legacy_shapes && !ordered(node, weights, lanes) {
+                continue;
+            }
             if let TensorOp::Delta {
                 value_heads,
                 value_dim,
@@ -98,7 +107,7 @@ impl Workspace {
             prepared: prepared::allocate(device, graph, weights, lanes)?,
             lanes,
             wy_blocks,
-            prefer_wy: opted_in,
+            prefer_wy: opted_in || !legacy_shapes,
         })
     }
     pub(crate) fn record(
@@ -135,6 +144,9 @@ impl Workspace {
         else {
             return Ok(false);
         };
+        if self.prefer_wy && !self.wy_blocks.contains_key(&node.outputs[0]) {
+            return Ok(false);
+        }
         if key_heads == 0
             || !value_heads.is_multiple_of(key_heads)
             || key_dim != value_dim
@@ -146,9 +158,6 @@ impl Workspace {
             .iter()
             .any(|id| weights.constants.contains_key(id))
         {
-            return Ok(false);
-        }
-        if self.prefer_wy && !self.wy_blocks.contains_key(&node.outputs[0]) {
             return Ok(false);
         }
         let state = states
@@ -251,6 +260,8 @@ fn record_delta(
         && [ORDERED_BLOCK, ORDERED_DIM].contains(&block)
         && ORDERED_WIDTHS.contains(&lanes)
     {
+        #[cfg(test)]
+        super::ORDERED_CAPTURE_COUNT.set(super::ORDERED_CAPTURE_COUNT.get() + 1);
         prepared
             .ok_or_else(|| error("ordered recurrent preparation"))?
             .record(
