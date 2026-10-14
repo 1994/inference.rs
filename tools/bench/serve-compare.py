@@ -36,13 +36,14 @@ import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.error
 import urllib.request
-from functools import partial
 from pathlib import Path
 
+GROUP_START_TIMEOUT_SECONDS = 60
 CASES = ["short", "long", "batch4", "hot_long"]
 NATIVE_PREFIX_METRICS = ("prefix_tokens_reused",)
 REFERENCE_PREFIX_METRICS = ("vllm:prefix_cache_hits_total", "sglang:prefix_cache_hits_total")
@@ -446,7 +447,7 @@ def _seconds(microseconds):
     return None if microseconds is None else microseconds / 1_000_000
 
 
-def stream_request(args, base, model, eos, counter, row):
+def stream_request(args, base, model, eos, counter, row, *, start_barrier=None):
     if args.engine == "native":
         payload = {
             "id": next(counter),
@@ -472,13 +473,24 @@ def stream_request(args, base, model, eos, counter, row):
             "return_token_ids": True,
         }
         route = "/v1/completions"
-    started = time.perf_counter()
+    # Serialization and worker startup precede the common release. Record the actual client
+    # send boundary separately: a barrier cannot guarantee zero OS/network scheduling skew.
+    request = urllib.request.Request(
+        base + route,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    if start_barrier is not None:
+        start_barrier.wait()
+    start_unix_ns = time.time_ns()
+    started_ns = time.perf_counter_ns()
+    started = started_ns / 1e9
     tokens = []
     arrivals = []
     events = []
     finished = None
     try:
-        with http(base + route, payload) as response:
+        with urllib.request.urlopen(request, timeout=600) as response:
             for line in response:
                 if not line.startswith(b"data:"):
                     continue
@@ -508,7 +520,9 @@ def stream_request(args, base, model, eos, counter, row):
                     events.append({"at_seconds": at, "tokens": len(new)})
     except urllib.error.HTTPError as error:
         raise RuntimeError(error.read().decode()) from error
-    elapsed = time.perf_counter() - started
+    ended_ns = time.perf_counter_ns()
+    end_unix_ns = time.time_ns()
+    elapsed = (ended_ns - started_ns) / 1e9
     if not tokens or finished is None:
         raise RuntimeError(f"incomplete stream: {tokens}, {finished}")
     if args.engine == "native" and not finished["measurement"]["successful"]:
@@ -537,6 +551,10 @@ def stream_request(args, base, model, eos, counter, row):
         "slot": row["slot"],
         "request_id": payload["id"] if args.engine == "native" else None,
         "input_tokens": len(row["tokens"]),
+        "request_start_unix_ns": start_unix_ns,
+        "request_start_monotonic_ns": started_ns,
+        "request_end_unix_ns": end_unix_ns,
+        "request_end_monotonic_ns": ended_ns,
         "token_ids": tokens,
         "output_tokens_excluding_eos": len(visible),
         # Three distinct endpoints, named separately so they cannot be mixed up: the request
@@ -601,6 +619,54 @@ def attribute_telemetry(report, telemetry):
     return windows
 
 
+def measure_group(args, base, eos, counter, group):
+    """Release serialized requests together; retain the observed send skew and endpoints."""
+    released = {}
+
+    def release():
+        released["unix_ns"] = time.time_ns()
+        released["monotonic_ns"] = time.perf_counter_ns()
+
+    barrier = threading.Barrier(len(group), action=release, timeout=GROUP_START_TIMEOUT_SECONDS)
+
+    def run(row):
+        try:
+            return stream_request(args, base, args.model, eos, counter, row, start_barrier=barrier)
+        except BaseException:
+            # A payload error must unblock peers already waiting for the common start.
+            barrier.abort()
+            raise
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(group)) as pool:
+        futures = [pool.submit(run, row) for row in group]
+        try:
+            results = [future.result() for future in futures]
+        except BaseException as error:
+            barrier.abort()
+            errors = [future.exception() for future in futures]
+            # Keep the original preparation/network error rather than a peer's barrier error.
+            cause = next(
+                (e for e in errors if e and not isinstance(e, threading.BrokenBarrierError)),
+                error,
+            )
+            if cause is error:
+                raise
+            raise cause from error
+    ends = [r["request_end_monotonic_ns"] for r in results]
+    starts = [r["request_start_monotonic_ns"] for r in results]
+    makespan = (max(ends) - released["monotonic_ns"]) / 1e9
+    return {
+        "start_unix": released["unix_ns"] / 1e9,
+        "end_unix": max(r["request_end_unix_ns"] for r in results) / 1e9,
+        "group_start_monotonic_ns": released["monotonic_ns"],
+        "start_synchronization": "barrier_after_payload_serialization",
+        "request_start_skew_seconds": (max(starts) - min(starts)) / 1e9,
+        "wall_seconds": makespan,
+        "group_makespan_seconds": makespan,
+        "results": results,
+    }
+
+
 def measure(args, report, base, rows, save):
     counter = iter(range(1, 1_000_000))
     eos = report["eos_tokens"]
@@ -618,25 +684,16 @@ def measure(args, report, base, rows, save):
                     f"{case} repeat {repeat} has {len(group)} requests, expected {expected}"
                 )
             before = read_metrics(args, base)
-            start_unix = time.time()
-            started = time.perf_counter()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(group)) as pool:
-                results = list(
-                    pool.map(partial(stream_request, args, base, args.model, eos, counter), group)
-                )
-            makespan = time.perf_counter() - started
-            end_unix = time.time()
+            timing = measure_group(args, base, eos, counter, group)
+            results = timing["results"]
+            makespan = timing["group_makespan_seconds"]
             trial = {
                 "case": case,
                 "repeat": repeat,
                 "warmup": repeat < 0,
                 "concurrency": len(group),
                 "declared_concurrency": expected,
-                "start_unix": start_unix,
-                "end_unix": end_unix,
-                "wall_seconds": makespan,
-                "group_makespan_seconds": makespan,
-                "results": results,
+                **timing,
             }
             time.sleep(1.1)
             trial["metrics_before"] = before
