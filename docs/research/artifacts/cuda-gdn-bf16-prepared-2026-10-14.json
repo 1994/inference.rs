@@ -1,0 +1,684 @@
+{
+  "schema": 1,
+  "parent": "54aafe788d46f3cc05f520f7a04ecc427ff4c365",
+  "root": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1",
+  "scope": "isolated same-arithmetic prototype, whole-model controlled bit comparison, real-release dispatch and completed unprofiled five-process pairs; serving rejected; main defaults unchanged",
+  "algorithm": "prepare FP32 input high/low BF16 once per shared beta/alpha activation; retain16x32 MMA tile, K128, low-then-high accumulation, original private/KV/GDN routes; budget-aware retained pair buffers; no user release switch",
+  "numerics": {
+    "actual_weights": 96,
+    "component_bits": 40960,
+    "component_differences": 0,
+    "all_projection_output_differences": 0,
+    "pool_widths": [
+      2,
+      3,
+      4
+    ],
+    "cases": 3,
+    "steps": 8,
+    "output_checks": 204,
+    "all_state_checks": 216,
+    "differences": 0,
+    "inactive_at_step": 2,
+    "release_rebind_at_step": 5,
+    "scope_note": "same initial private prefix state, same pooled arithmetic and forced input tokens in both controls; does not certify arbitrary live routing or all quality"
+  },
+  "microbench_confirmation": [
+    {
+      "cold_l2": true,
+      "baseline_median_ms": 1.6763839721679688,
+      "candidate_median_ms": 1.2120959758758545,
+      "median_speedup": 1.3829927444458008,
+      "lower95": 1.3826372623443604,
+      "upper95": 1.3841052055358887,
+      "orders": [
+        true,
+        false,
+        true,
+        false,
+        true
+      ]
+    },
+    {
+      "cold_l2": false,
+      "baseline_median_ms": 1.6773760318756104,
+      "candidate_median_ms": 1.1993279457092285,
+      "median_speedup": 1.3983408212661743,
+      "lower95": 1.39750075340271,
+      "upper95": 1.3987566232681274,
+      "orders": [
+        true,
+        false,
+        true,
+        false,
+        true
+      ]
+    }
+  ],
+  "microbench_scope": "five fresh independent processes with alternating first arm after separate five discovery units; each replay includes48 prepares+96 dense MMAs; not full serving performance",
+  "release_dispatch": {
+    "scope": "diagnostic profiled kernel execution; no pairedtimingacceptance",
+    "cases": [
+      {
+        "case": "short",
+        "rows": [
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "count": 96,
+            "total_ms": 3.104208
+          },
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              48,
+              1,
+              1
+            ],
+            "count": 6048,
+            "total_ms": 12.640634
+          }
+        ]
+      },
+      {
+        "case": "long",
+        "rows": [
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "count": 192,
+            "total_ms": 6.324001
+          },
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              48,
+              1,
+              1
+            ],
+            "count": 6048,
+            "total_ms": 12.687703
+          }
+        ]
+      },
+      {
+        "case": "batch4",
+        "rows": [
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "count": 384,
+            "total_ms": 12.423914
+          },
+          {
+            "kernel": "dense_entry",
+            "grid": [
+              48,
+              1,
+              1
+            ],
+            "count": 96,
+            "total_ms": 0.200476
+          },
+          {
+            "kernel": "dense_prepared_entry",
+            "grid": [
+              1,
+              2,
+              1
+            ],
+            "count": 6048,
+            "total_ms": 72.91785
+          },
+          {
+            "kernel": "prepare_components_entry",
+            "grid": [
+              4,
+              40,
+              1
+            ],
+            "count": 3024,
+            "total_ms": 2.069985
+          }
+        ]
+      }
+    ]
+  },
+  "static_sass": [
+    {
+      "kernel": "prepared",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:64 CONSTANT[4]:8\n Function dense_prepared_entry:\n  REG:255 STACK:0 SHARED:68756 LOCAL:0 CONSTANT[0]:1536 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "HMMA_16816_F32_BF16": 32,
+      "FADD": 0
+    },
+    {
+      "kernel": "prepare",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:64 CONSTANT[4]:8\n Function prepare_components_entry:\n  REG:16 STACK:0 SHARED:0 LOCAL:0 CONSTANT[0]:1000 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "HMMA_16816_F32_BF16": 0,
+      "FADD": 1
+    },
+    {
+      "kernel": "original",
+      "resource": "\nResource usage:\n Common:\n  GLOBAL:64 CONSTANT[4]:8\n Function dense_entry:\n  REG:255 STACK:0 SHARED:52340 LOCAL:0 CONSTANT[0]:1408 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "HMMA_16816_F32_BF16": 32,
+      "FADD": 128
+    }
+  ],
+  "sass_scope": "static instruction counts, not dynamic executed counts, occupancy or spills measured",
+  "serving": {
+    "paired_units": 5,
+    "processes": 10,
+    "streams_per_arm": 105,
+    "paired_token_mismatches": 9,
+    "mismatches": [
+      {
+        "unit": 0,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 0,
+        "first_index": 20,
+        "request_ids": [
+          13,
+          13
+        ]
+      },
+      {
+        "unit": 0,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 1,
+        "first_index": 20,
+        "request_ids": [
+          14,
+          14
+        ]
+      },
+      {
+        "unit": 1,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 1,
+        "first_index": 20,
+        "request_ids": [
+          14,
+          14
+        ]
+      },
+      {
+        "unit": 1,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 2,
+        "first_index": 2,
+        "request_ids": [
+          15,
+          15
+        ]
+      },
+      {
+        "unit": 1,
+        "case": "batch4",
+        "repeat": 2,
+        "slot": 0,
+        "first_index": 22,
+        "request_ids": [
+          21,
+          21
+        ]
+      },
+      {
+        "unit": 1,
+        "case": "batch4",
+        "repeat": 2,
+        "slot": 1,
+        "first_index": 12,
+        "request_ids": [
+          22,
+          22
+        ]
+      },
+      {
+        "unit": 2,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 1,
+        "first_index": 20,
+        "request_ids": [
+          14,
+          14
+        ]
+      },
+      {
+        "unit": 2,
+        "case": "batch4",
+        "repeat": 0,
+        "slot": 2,
+        "first_index": 2,
+        "request_ids": [
+          15,
+          15
+        ]
+      },
+      {
+        "unit": 4,
+        "case": "batch4",
+        "repeat": 1,
+        "slot": 1,
+        "first_index": 20,
+        "request_ids": [
+          18,
+          18
+        ]
+      }
+    ],
+    "same_input_cross_process_differences": {
+      "scalar": 5,
+      "candidate": 8
+    },
+    "metrics": [
+      {
+        "case": "short",
+        "metric": "ttft_ms",
+        "scalar_median_ms": 46.9244520063512,
+        "candidate_median_ms": 45.545442029833794,
+        "speedup": {
+          "median": 1.0501445903655515,
+          "ci95": [
+            0.9028069579355459,
+            1.1765126996730428
+          ],
+          "units": [
+            0.9028069579355459,
+            0.9976453359530811,
+            1.0787558920977318,
+            1.0501445903655515,
+            1.1765126996730428
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.16582778820451582,
+          "candidate": 0.13976149656013814
+        },
+        "drift_at_most10pct": false
+      },
+      {
+        "case": "short",
+        "metric": "tpot_ms",
+        "scalar_median_ms": 15.69814717541227,
+        "candidate_median_ms": 15.706512444127824,
+        "speedup": {
+          "median": 0.9999241301761459,
+          "ci95": [
+            0.9973846420194792,
+            1.0015786979782824
+          ],
+          "units": [
+            0.9999241301761459,
+            1.0005113853760432,
+            0.9980189286165564,
+            0.9973846420194792,
+            1.0015786979782824
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.0012788843470710187,
+          "candidate": 0.0034890235623095123
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "short",
+        "metric": "makespan_ms",
+        "scalar_median_ms": 1035.2670089923777,
+        "candidate_median_ms": 1035.47195403371,
+        "speedup": {
+          "median": 1.0010970359673357,
+          "ci95": [
+            0.9955031252268398,
+            1.0059304198984462
+          ],
+          "units": [
+            0.9955031252268398,
+            0.9963415859927299,
+            1.0010970359673357,
+            1.002503696499044,
+            1.0059304198984462
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.005206182362606615,
+          "candidate": 0.005853556207322308
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "ttft_ms",
+        "scalar_median_ms": 238.19106799783185,
+        "candidate_median_ms": 237.627208000049,
+        "speedup": {
+          "median": 1.0119500205862508,
+          "ci95": [
+            0.9842947857749017,
+            1.0175070573995415
+          ],
+          "units": [
+            1.0175070573995415,
+            1.0054602851775212,
+            0.9842947857749017,
+            1.0119500205862508,
+            1.0160563266462086
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.014197760561314388,
+          "candidate": 0.031297847535651124
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "tpot_ms",
+        "scalar_median_ms": 15.69822122202447,
+        "candidate_median_ms": 15.685473968799684,
+        "speedup": {
+          "median": 1.0006924633473366,
+          "ci95": [
+            0.9987630499169153,
+            1.0031649596340533
+          ],
+          "units": [
+            0.9987630499169153,
+            1.0020541884840444,
+            0.9992940163711851,
+            1.0006924633473366,
+            1.0031649596340533
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.003867791173407964,
+          "candidate": 0.0014976194065010606
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "makespan_ms",
+        "scalar_median_ms": 1226.3779279892333,
+        "candidate_median_ms": 1224.1604350274429,
+        "speedup": {
+          "median": 1.0010121792379472,
+          "ci95": [
+            0.9962363876329045,
+            1.0047202938458544
+          ],
+          "units": [
+            0.9993095967255479,
+            1.0010121792379472,
+            0.9962363876329045,
+            1.0047202938458544,
+            1.0036248424324987
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.006323562350871725,
+          "candidate": 0.006678556071123998
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "ttft_ms",
+        "scalar_median_ms": 173.60982552054338,
+        "candidate_median_ms": 175.30915050883777,
+        "speedup": {
+          "median": 1.0068490440248763,
+          "ci95": [
+            0.956569470384046,
+            1.042110917708691
+          ],
+          "units": [
+            1.0180247806579505,
+            0.956569470384046,
+            1.042110917708691,
+            1.0068490440248763,
+            0.9957601002802717
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.06713845168466603,
+          "candidate": 0.04626209034628381
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "tpot_ms",
+        "scalar_median_ms": 18.93509984143921,
+        "candidate_median_ms": 18.429982317482228,
+        "speedup": {
+          "median": 1.0280446276367354,
+          "ci95": [
+            1.017458441456461,
+            1.0369091363629825
+          ],
+          "units": [
+            1.029291109097682,
+            1.017458441456461,
+            1.0369091363629825,
+            1.0267123153617168,
+            1.0280446276367354
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.009316332336523292,
+          "candidate": 0.01029249226880724
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "makespan_ms",
+        "scalar_median_ms": 1375.7602469995618,
+        "candidate_median_ms": 1341.1509720026515,
+        "speedup": {
+          "median": 1.0283431337410875,
+          "ci95": [
+            1.0064790980831857,
+            1.0389028096630935
+          ],
+          "units": [
+            1.0296197231755906,
+            1.0064790980831857,
+            1.0389028096630935,
+            1.0283431337410875,
+            1.0175956970025974
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.019029924538504606,
+          "candidate": 0.01670506884909595
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "hot_long",
+        "metric": "ttft_ms",
+        "scalar_median_ms": 67.24900397239253,
+        "candidate_median_ms": 70.69520599907264,
+        "speedup": {
+          "median": 0.9579881703239415,
+          "ci95": [
+            0.9173372739578828,
+            1.097804719983771
+          ],
+          "units": [
+            0.9173372739578828,
+            1.097804719983771,
+            0.9579881703239415,
+            0.9220768380860118,
+            0.974868734143202
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.08298266213368177,
+          "candidate": 0.13118608636854434
+        },
+        "drift_at_most10pct": false
+      },
+      {
+        "case": "hot_long",
+        "metric": "tpot_ms",
+        "scalar_median_ms": 16.23583604796006,
+        "candidate_median_ms": 16.239332586770786,
+        "speedup": {
+          "median": 1.0001248725303926,
+          "ci95": [
+            0.9932611350514537,
+            1.0009761600131608
+          ],
+          "units": [
+            1.0001248725303926,
+            0.9932611350514537,
+            0.9988038866832291,
+            1.0003391872920875,
+            1.0009761600131608
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.006029947614668796,
+          "candidate": 0.0025653285159810135
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "hot_long",
+        "metric": "makespan_ms",
+        "scalar_median_ms": 1090.3443879797123,
+        "candidate_median_ms": 1093.722963007167,
+        "speedup": {
+          "median": 1.0003524924345875,
+          "ci95": [
+            0.9946520775012869,
+            1.00093653787536
+          ],
+          "units": [
+            0.9958915087290169,
+            1.0003524924345875,
+            1.0007536360241083,
+            0.9946520775012869,
+            1.00093653787536
+          ]
+        },
+        "regression_over5pct": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "scalar": 0.0052244797847686986,
+          "candidate": 0.005537698147981107
+        },
+        "drift_at_most10pct": true
+      }
+    ],
+    "failed_gates": {
+      "identical_streams": true,
+      "regression": false,
+      "process_drift": true
+    },
+    "useful_gain_gate_passed": false,
+    "classification_note": "original strict token/drift/gain gates retained. Existing private/pooled arithmetic variability is a possible explanation, not proof that these nine mismatches are harmless.",
+    "quality_not_run": true,
+    "mixed_sustained_load_pending": true,
+    "plan_inherited_metadata_caveat": "plan contains stale units=3, ordered-arm order names and route-profile description from inherited template. Actual run.py, invocation and progress record five units and candidate arm; no host profiler enabled. Original preserved."
+  },
+  "binaries": {
+    "test": "41a87ffcd37783d79830936f931853897875d0198cdf9ab24a37d6f19c1a549e",
+    "candidate_release": "4aa4ad02d85285aff309ae6df8145b0980ce7b23bfc604e7c2faf7f84794930c",
+    "control": "ca5addc9f101d9e54e9a21eb4ad21cda0c897817b603c006133add788fdc3297"
+  },
+  "control_proof": {
+    "recorded_build_diff_sha256": "4f4eef65ae501f1ad0ab9c95cdb17858ddd4b43598e302d4d6abe215f600277f",
+    "committed_same_patch_sha256": "4f4eef65ae501f1ad0ab9c95cdb17858ddd4b43598e302d4d6abe215f600277f",
+    "patch_matches": true,
+    "current_code_diff_empty": true,
+    "baseline_binary_sha256": "ca5addc9f101d9e54e9a21eb4ad21cda0c897817b603c006133add788fdc3297",
+    "compiled_parent": "9bd87bbf2e69f7f2ae5977636a3eb870104282dc",
+    "matched_commit": "aa83fea8d480f65009cd05b093c21e442d26a8da",
+    "current_main": "3c0a1d17fd30d38263a9ba8c5b3e2a6168be750f",
+    "verified_at_parent": "54aafe788d46f3cc05f520f7a04ecc427ff4c365",
+    "aa83_to_parent_runtime_empty": true
+  },
+  "source_manifests": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/confirmation-v6.json",
+      "sha256": "c15996815ae7d23153834c722d632cfbd5c4111156d181ea2f0b53d051ca1a9a"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/discovery-v3.json",
+      "sha256": "914050401f705f0a1ba4be57e343f282ba61f5585941ed4ac84a24a83810ece8"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/model-w0-integrated-v7/result.json",
+      "sha256": "5ceac8bf5dbd1b80925e68fd0f1f2e17aaac97dcbc0ceebd45b1ba26ce44babd"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/model-w0-integrated-v7/events.json",
+      "sha256": "610ee7e3111ba8e054504a75f0d96ba5251fc1a760f798d9e8070bd2185a5432"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/release-dispatch-profile-v1/u0-candidate/dispatch-summary.json",
+      "sha256": "2834e5dc64c03f0836a474f4a796f9730c275fe84d8aec613a05aa23f1212eec"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/sass-v3/summary.json",
+      "sha256": "bdf77e56e8af9b8ceef687f430b4ebbe8b0d6997f58e0dc947b4b7ef8e2fda4b"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/paired-serving-v1/analysis-v1.json",
+      "sha256": "b1311f4be675dbc30cfd624fc0541392bfcaaa7c4ebeecf535141ebbc8c1f9df"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/build-v7/result.json",
+      "sha256": "88234d5173ef427c4898c3db32e587f9c4197160b2bb3a1390409846c5ab8a8f"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/pooled-bf16-prepared-v1/cli-build-v1/result.json",
+      "sha256": "59cef15484d84297aaf31b3b41716a37b56edff1f164b63b3d6d410338dfa432"
+    }
+  ],
+  "production_default_admitted": false,
+  "next": "joint alpha/beta output packing, preserve original MMA and count complete output splitting overhead"
+}

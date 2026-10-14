@@ -1,0 +1,1307 @@
+diff --git a/crates/backend/cuda/src/resident/batch.rs b/crates/backend/cuda/src/resident/batch.rs
+index 85242b4..8bfa7e5 100644
+--- a/crates/backend/cuda/src/resident/batch.rs
++++ b/crates/backend/cuda/src/resident/batch.rs
+@@ -115,6 +115,7 @@ pub(super) struct SlotDecodeGraph {
+     profile: Option<profile::SlotProfile>,
+     // The shared batched arena anchors the graph's activations; declared last so the
+     // graph drops first.
++    _prepared: super::small_gemm_prepared::Workspace,
+     _arena: ActivationArena,
+ }
+
+@@ -193,6 +194,24 @@ impl BatchBuilder<'_> {
+             return Err(Error::invalid("slot decode lanes"));
+         }
+         let mut arena = slot_arena(self.device, self.graph, width)?;
++        let arena_bytes = arena
++            .buffers
++            .iter()
++            .flatten()
++            .try_fold(0usize, |total, tensor| {
++                tensor
++                    .size()
++                    .checked_mul(crate::constants::F32_BYTES)
++                    .and_then(|bytes| total.checked_add(bytes))
++                    .ok_or_else(|| Error::invalid("slot arena byte overflow"))
++            })?;
++        let mut prepared = super::small_gemm_prepared::Workspace::new(
++            self.device,
++            self.graph,
++            self.weights,
++            width,
++            arena_bytes,
++        )?;
+         let metadata = slot_metadata(self.device, width)?;
+         let mut profile = profile::SlotProfile::from_env(self.device);
+         let graph = self.capture_slots(
+@@ -201,6 +220,7 @@ impl BatchBuilder<'_> {
+             (lane_states, lane_fp8),
+             &mut profile,
+             true,
++            &mut prepared,
+         )?;
+         let state_only = if self.weights.fusion.is_some() {
+             Some(self.capture_slots(
+@@ -209,6 +229,7 @@ impl BatchBuilder<'_> {
+                 (lane_states, lane_fp8),
+                 &mut profile,
+                 false,
++                &mut prepared,
+             )?)
+         } else {
+             None
+@@ -233,6 +254,7 @@ impl BatchBuilder<'_> {
+             width,
+             cursors: vec![0; width],
+             profile,
++            _prepared: prepared,
+             _arena: arena,
+         })
+     }
+@@ -244,11 +266,13 @@ impl BatchBuilder<'_> {
+         states: (&mut [States], &mut [Fp8Caches]),
+         profile: &mut Option<profile::SlotProfile>,
+         read_logits: bool,
++        prepared: &mut super::small_gemm_prepared::Workspace,
+     ) -> Result<CudaGraph<()>> {
+         let (lane_states, lane_fp8) = states;
+         let width = lane_states.len();
+         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
+         self.nvfp4.begin_quant_capture();
++        prepared.begin_capture();
+         let result = CudaGraph::scope(&self.device.stream, |scope| {
+             let mut no_fusion = None;
+             for (index, node) in self.graph.nodes.iter().enumerate() {
+@@ -267,6 +291,7 @@ impl BatchBuilder<'_> {
+                         arena,
+                         self.weights,
+                         self.nvfp4,
++                        prepared,
+                     )?;
+                     continue;
+                 }
+diff --git a/crates/backend/cuda/src/resident/batch_projection.rs b/crates/backend/cuda/src/resident/batch_projection.rs
+index baea69b..dc39e8b 100644
+--- a/crates/backend/cuda/src/resident/batch_projection.rs
++++ b/crates/backend/cuda/src/resident/batch_projection.rs
+@@ -184,7 +184,11 @@ pub(super) fn record_slots(
+     arena: &mut super::ActivationArena,
+     weights: &ProgramWeights,
+     nvfp4: &mut super::nvfp4_gemm::Workspace,
++    prepared: &mut super::small_gemm_prepared::Workspace,
+ ) -> std::result::Result<(), DeviceError> {
++    if prepared.record_joint(scope, node, arena)? {
++        return Ok(());
++    }
+     if weights.constants.contains_key(&node.inputs[0]) {
+         return Err(error("slot decode constant linear input"));
+     }
+@@ -208,6 +212,10 @@ pub(super) fn record_slots(
+         arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
+         return Ok(());
+     }
++    if prepared.record(scope, node, weights, &input, &mut output)? {
++        arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
++        return Ok(());
++    }
+     if !super::nvfp4_gemm::record_with_input_pointer(
+         scope,
+         nvfp4,
+diff --git a/crates/backend/cuda/src/resident/mod.rs b/crates/backend/cuda/src/resident/mod.rs
+index 5679f99..7e4829d 100644
+--- a/crates/backend/cuda/src/resident/mod.rs
++++ b/crates/backend/cuda/src/resident/mod.rs
+@@ -49,3 +49,8 @@ pub(crate) use attention_decode::taps as attention_prefill_taps;
+
+ #[cfg(test)]
+ pub(crate) use small_gemm::{pool_f32_capture_records, with_pool_f32, with_precise_dense};
++
++mod small_gemm_joint;
++mod small_gemm_prepared;
++#[cfg(test)]
++pub(crate) use small_gemm_prepared::{capture_counts as prepared_capture_counts, with_prepared};
+diff --git a/crates/backend/cuda/src/resident/slot_verify.rs b/crates/backend/cuda/src/resident/slot_verify.rs
+index 8c8641f..e9fdcbc 100644
+--- a/crates/backend/cuda/src/resident/slot_verify.rs
++++ b/crates/backend/cuda/src/resident/slot_verify.rs
+@@ -122,6 +122,7 @@ impl BatchBuilder<'_> {
+         profile: &mut Option<profile::SlotProfile>,
+     ) -> Result<CudaGraph<()>> {
+         let (verify, metadata) = geometry;
++        let mut prepared = super::small_gemm_prepared::Workspace::default();
+         CudaGraph::scope(&self.device.stream, |scope| {
+             let mut no_fusion = None;
+             for (index, node) in self.graph.nodes.iter().enumerate() {
+@@ -135,6 +136,7 @@ impl BatchBuilder<'_> {
+                         arena,
+                         self.weights,
+                         self.nvfp4,
++                        &mut prepared,
+                     )?;
+                     continue;
+                 }
+diff --git a/crates/backend/cuda/src/resident/small_gemm.rs b/crates/backend/cuda/src/resident/small_gemm.rs
+index 653b4c9..7d4cf11 100644
+--- a/crates/backend/cuda/src/resident/small_gemm.rs
++++ b/crates/backend/cuda/src/resident/small_gemm.rs
+@@ -7,6 +7,65 @@ pub(crate) mod kernels {
+         Tile_2, bf16, constant, convert_tile, get_tile_block_id, mmaf,
+     };
+     #[cutile::entry()]
++    fn prepare_components(
++        high: &mut Tensor<bf16, { [1, 128] }>,
++        low: &mut Tensor<bf16, { [1, 128] }>,
++        input: &Tensor<f32, { [-1, -1] }>,
++    ) {
++        let pid = get_tile_block_id();
++        let value = input.partition(shape![1, 128]).load([pid.0, pid.1]);
++        let hi: Tile<bf16, { [1, 128] }> = convert_tile(value);
++        let rounded: Tile<f32, { [1, 128] }> = convert_tile(hi);
++        let lo: Tile<bf16, { [1, 128] }> = convert_tile(value - rounded);
++        high.store(hi);
++        low.store(lo);
++    }
++    #[cutile::entry()]
++    fn join_weights<const N: i32, const K: i32>(
++        output: &mut Tensor<bf16, { [1, 128] }>,
++        first: &Tensor<bf16, { [N, K] }>,
++        second: &Tensor<bf16, { [N, K] }>,
++    ) {
++        let pid = get_tile_block_id();
++        if pid.0 < N {
++            output.store(first.partition(shape![1, 128]).load([pid.0 % N, pid.1]));
++        } else {
++            output.store(second.partition(shape![1, 128]).load([pid.0 % N, pid.1]));
++        }
++    }
++    #[cutile::entry()]
++    fn split_joint(
++        first: &mut Tensor<f32, { [1, 64] }>,
++        second: &mut Tensor<f32, { [1, 64] }>,
++        first_view: &Tensor<f32, { [-1, -1] }>,
++        second_view: &Tensor<f32, { [-1, -1] }>,
++    ) {
++        let pid = get_tile_block_id();
++        first.store(first_view.partition(shape![1, 64]).load([pid.0, pid.1]));
++        second.store(second_view.partition(shape![1, 64]).load([pid.0, pid.1]));
++    }
++    #[cutile::entry()]
++    fn dense_prepared<E: ElementType, const K: i32>(
++        out: &mut Tensor<f32, { [16, 32] }>,
++        high: &Tensor<bf16, { [-1, K] }>,
++        low: &Tensor<bf16, { [-1, K] }>,
++        weight: &Tensor<E, { [-1, K] }>,
++    ) {
++        let pid = get_tile_block_id();
++        let hp = high.partition(shape![16, 128]);
++        let lp = low.partition(shape![16, 128]);
++        let wp = weight.partition(shape![32, 128]);
++        let mut acc: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
++        for k in 0i32..((K + 127) / 128) {
++            let lo = lp.load([pid.0, k]);
++            let hi = hp.load([pid.0, k]);
++            let weight: Tile<bf16, { [32, 128] }> = convert_tile(wp.load([pid.1, k]));
++            acc = mmaf(lo, weight.transpose(), acc);
++            acc = mmaf(hi, weight.transpose(), acc);
++        }
++        out.store(acc);
++    }
++    #[cutile::entry()]
+     fn dense<E: ElementType, const K: i32>(
+         out: &mut Tensor<f32, { [16, 32] }>,
+         input: &Tensor<f32, { [-1, K] }>,
+diff --git a/crates/backend/cuda/src/resident/small_gemm_joint.rs b/crates/backend/cuda/src/resident/small_gemm_joint.rs
+new file mode 100644
+index 0000000..e8c9295
+--- /dev/null
++++ b/crates/backend/cuda/src/resident/small_gemm_joint.rs
+@@ -0,0 +1,250 @@
++//! Adjacent dense projections share one prepared input and one MMA launch.
++//! The original tile and accumulation order are retained for both outputs.
++use super::{ActivationArena, ProgramWeights, capture::error, small_gemm::kernels};
++use crate::{
++    device::{CudaDevice, device_error},
++    mlp::ProjectionWeight,
++};
++use cutile::{half::bf16, prelude::*};
++use infer_core::{Error, OpId, Result, TensorId};
++use infer_ir::{DataflowGraph, TensorNode, TensorOp};
++use std::collections::{BTreeMap, BTreeSet};
++
++struct Joint {
++    weight: Tensor<bf16>,
++    output_ids: [TensorId; 2],
++    columns: usize,
++    outputs: usize,
++}
++struct Buffers {
++    high: Tensor<bf16>,
++    low: Tensor<bf16>,
++    joint: Tensor<f32>,
++}
++struct Plan {
++    first: OpId,
++    second: OpId,
++    weights: [TensorId; 2],
++    outputs: [TensorId; 2],
++    columns: usize,
++    output_columns: usize,
++}
++#[derive(Default)]
++pub(super) struct Workspace {
++    joints: BTreeMap<OpId, Joint>,
++    seconds: BTreeSet<OpId>,
++    buffers: BTreeMap<(usize, usize), Buffers>,
++}
++impl Workspace {
++    pub(super) fn new(
++        device: &CudaDevice,
++        graph: &DataflowGraph,
++        weights: &ProgramWeights,
++        rows: usize,
++        arena_bytes: usize,
++    ) -> Result<Self> {
++        if !(2..=crate::constants::CB_DECODE_SLOTS).contains(&rows) {
++            return Ok(Self::default());
++        }
++        let plans = plans(graph, weights)?;
++        let mut shapes = BTreeSet::new();
++        let bytes = plans.iter().try_fold(arena_bytes, |sum, p| {
++            let weight_bytes = p
++                .columns
++                .checked_mul(p.output_columns)
++                .and_then(|n| n.checked_mul(4));
++            let buffer_bytes = if shapes.insert((p.columns, p.output_columns)) {
++                p.columns
++                    .checked_add(
++                        p.output_columns
++                            .checked_mul(2)
++                            .ok_or_else(|| Error::invalid("joint output size"))?,
++                    )
++                    .and_then(|n| n.checked_mul(rows))
++                    .and_then(|n| n.checked_mul(4))
++            } else {
++                Some(0)
++            };
++            weight_bytes
++                .and_then(|n| buffer_bytes.and_then(|b| n.checked_add(b)))
++                .and_then(|n| sum.checked_add(n))
++                .ok_or_else(|| Error::invalid("joint projection workspace overflow"))
++        })?;
++        if u64::try_from(bytes).map_err(device_error)? > device.profile()?.arena_budget_bytes() {
++            return Ok(Self::default());
++        }
++        let mut result = Self::default();
++        for (columns, outputs) in shapes {
++            result.buffers.insert(
++                (columns, outputs),
++                Buffers {
++                    high: api::zeros::<bf16>(&[rows, columns])
++                        .sync_on(&device.stream)
++                        .map_err(device_error)?,
++                    low: api::zeros::<bf16>(&[rows, columns])
++                        .sync_on(&device.stream)
++                        .map_err(device_error)?,
++                    joint: api::zeros::<f32>(&[rows, outputs * 2])
++                        .sync_on(&device.stream)
++                        .map_err(device_error)?,
++                },
++            );
++        }
++        for p in plans {
++            let Some(ProjectionWeight::Dense(a)) = weights.projections.get(&p.weights[0]) else {
++                return Err(Error::invariant("joint first dense weight"));
++            };
++            let Some(ProjectionWeight::Dense(b)) = weights.projections.get(&p.weights[1]) else {
++                return Err(Error::invariant("joint second dense weight"));
++            };
++            let weight = kernels::join_weights(
++                api::zeros::<bf16>(&[p.output_columns * 2, p.columns]).partition([1, 128]),
++                a,
++                b,
++            )
++            .generics(vec![p.output_columns.to_string(), p.columns.to_string()])
++            .first()
++            .unpartition()
++            .sync_on(&device.stream)
++            .map_err(device_error)?;
++            result.joints.insert(
++                p.first,
++                Joint {
++                    weight,
++                    output_ids: p.outputs,
++                    columns: p.columns,
++                    outputs: p.output_columns,
++                },
++            );
++            result.seconds.insert(p.second);
++        }
++        Ok(result)
++    }
++    pub(super) fn record(
++        &mut self,
++        scope: &Scope,
++        node: &TensorNode,
++        arena: &mut ActivationArena,
++    ) -> std::result::Result<bool, DeviceError> {
++        if self.seconds.contains(&node.id) {
++            return Ok(true);
++        }
++        let Some(joint) = self.joints.get(&node.id) else {
++            return Ok(false);
++        };
++        let rows = arena.lanes();
++        let slots = [
++            arena.slot(joint.output_ids[0]).map_err(error)?,
++            arena.slot(joint.output_ids[1]).map_err(error)?,
++        ];
++        if slots[0] == slots[1] || slots.contains(&arena.slot(node.inputs[0]).map_err(error)?) {
++            return Err(error("joint projection aliases a live input or output"));
++        }
++        let mut outputs = Vec::new();
++        for &slot in &slots {
++            outputs.push(
++                arena.buffers[slot]
++                    .take()
++                    .ok_or_else(|| error("joint output"))?
++                    .reshape(&[rows, joint.outputs])
++                    .map_err(error)?,
++            );
++        }
++        let input = arena
++            .get(node.inputs[0])
++            .map_err(error)?
++            .view(&[rows, joint.columns])
++            .map_err(error)?;
++        let buffers = self
++            .buffers
++            .get_mut(&(joint.columns, joint.outputs))
++            .ok_or_else(|| error("joint buffers"))?;
++        scope.record(kernels::prepare_components(
++            (&mut buffers.high).partition([1, 128]),
++            (&mut buffers.low).partition([1, 128]),
++            &input,
++        ))?;
++        scope.record(
++            kernels::dense_prepared(
++                (&mut buffers.joint).partition(crate::constants::SMALL_GEMM_TILE),
++                &buffers.high,
++                &buffers.low,
++                &joint.weight,
++            )
++            .generics(vec![bf16::DTYPE.as_str().into(), joint.columns.to_string()]),
++        )?;
++        let a = buffers
++            .joint
++            .slice(&[0..rows, 0..joint.outputs])
++            .map_err(error)?;
++        let b = buffers
++            .joint
++            .slice(&[0..rows, joint.outputs..joint.outputs * 2])
++            .map_err(error)?;
++        let [first, second] = outputs.as_mut_slice() else {
++            return Err(error("joint output count"));
++        };
++        scope.record(kernels::split_joint(
++            first.partition([1, 64]),
++            second.partition([1, 64]),
++            &a,
++            &b,
++        ))?;
++        for (slot, output) in slots.into_iter().zip(outputs) {
++            arena.buffers[slot] = Some(output.reshape(&[rows * joint.outputs]).map_err(error)?);
++        }
++        #[cfg(test)]
++        super::small_gemm_prepared::note_joint();
++        Ok(true)
++    }
++}
++fn plans(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<Vec<Plan>> {
++    let sizes: BTreeMap<_, _> = graph
++        .tensors
++        .iter()
++        .map(|t| Ok((t.id, t.elements()?)))
++        .collect::<Result<_>>()?;
++    let mut result = Vec::new();
++    let mut claimed = BTreeSet::new();
++    for pair in graph.nodes.windows(2) {
++        let a = &pair[0];
++        let b = &pair[1];
++        if claimed.contains(&a.id) || claimed.contains(&b.id) {
++            continue;
++        }
++        if a.op != TensorOp::Linear
++            || b.op != TensorOp::Linear
++            || a.inputs[0] != b.inputs[0]
++            || a.outputs[0] == b.outputs[0]
++            || weights.constants.contains_key(&a.inputs[0])
++        {
++            continue;
++        }
++        let columns = sizes[&a.inputs[0]];
++        let outputs = sizes[&a.outputs[0]];
++        if outputs != 48
++            || columns <= outputs
++            || sizes[&b.outputs[0]] != outputs
++            || [a, b].iter().any(|n| {
++                weights.activation_quantization(n.inputs[1]).is_some()
++                    || !matches!(
++                        weights.projections.get(&n.inputs[1]),
++                        Some(ProjectionWeight::Dense(_))
++                    )
++            })
++        {
++            continue;
++        }
++        claimed.insert(a.id);
++        claimed.insert(b.id);
++        result.push(Plan {
++            first: a.id,
++            second: b.id,
++            weights: [a.inputs[1], b.inputs[1]],
++            outputs: [a.outputs[0], b.outputs[0]],
++            columns,
++            output_columns: outputs,
++        });
++    }
++    Ok(result)
++}
+diff --git a/crates/backend/cuda/src/resident/small_gemm_prepared.rs b/crates/backend/cuda/src/resident/small_gemm_prepared.rs
+new file mode 100644
+index 0000000..a3a8465
+--- /dev/null
++++ b/crates/backend/cuda/src/resident/small_gemm_prepared.rs
+@@ -0,0 +1,183 @@
++//! Prepared two-component BF16 inputs retained across slot-graph replays.
++use super::{ProgramWeights, capture::error, small_gemm::kernels};
++use crate::{
++    device::{CudaDevice, device_error},
++    mlp::ProjectionWeight,
++};
++use cutile::{half::bf16, prelude::*};
++use infer_core::{Error, Result, TensorId};
++use infer_ir::{DataflowGraph, TensorNode, TensorOp};
++use std::collections::{BTreeMap, BTreeSet};
++
++struct Pair {
++    high: Tensor<bf16>,
++    low: Tensor<bf16>,
++    input: Option<TensorId>,
++}
++#[derive(Default)]
++pub(super) struct Workspace {
++    pairs: BTreeMap<usize, Pair>,
++    joint: super::small_gemm_joint::Workspace,
++}
++impl Workspace {
++    pub(super) fn new(
++        device: &CudaDevice,
++        graph: &DataflowGraph,
++        weights: &ProgramWeights,
++        rows: usize,
++        arena_bytes: usize,
++    ) -> Result<Self> {
++        #[cfg(test)]
++        if !ENABLED.with(std::cell::Cell::get) {
++            return Ok(Self::default());
++        }
++        let sizes: BTreeMap<_, _> = graph
++            .tensors
++            .iter()
++            .map(|t| Ok((t.id, t.elements()?)))
++            .collect::<Result<_>>()?;
++        let mut columns = BTreeSet::new();
++        for node in &graph.nodes {
++            if node.op != TensorOp::Linear
++                || !matches!(
++                    weights.projections.get(&node.inputs[1]),
++                    Some(ProjectionWeight::Dense(_))
++                )
++                || weights.activation_quantization(node.inputs[1]).is_some()
++            {
++                continue;
++            }
++            let k = sizes[&node.inputs[0]];
++            if k > 0
++                && sizes[&node.outputs[0]]
++                    <= k.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
++            {
++                columns.insert(k);
++            }
++        }
++        let bytes = columns.iter().try_fold(arena_bytes, |total, &k| {
++            k.checked_mul(rows)
++                .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
++                .and_then(|n| total.checked_add(n))
++                .ok_or_else(|| Error::invalid("prepared projection workspace overflow"))
++        })?;
++        if u64::try_from(bytes).map_err(device_error)? > device.profile()?.arena_budget_bytes() {
++            return Ok(Self::default());
++        }
++        let mut pairs = BTreeMap::new();
++        for k in columns {
++            pairs.insert(
++                k,
++                Pair {
++                    high: api::zeros::<bf16>(&[rows, k])
++                        .sync_on(&device.stream)
++                        .map_err(device_error)?,
++                    low: api::zeros::<bf16>(&[rows, k])
++                        .sync_on(&device.stream)
++                        .map_err(device_error)?,
++                    input: None,
++                },
++            );
++        }
++        let joint = super::small_gemm_joint::Workspace::new(device, graph, weights, rows, bytes)?;
++        Ok(Self { pairs, joint })
++    }
++    pub(super) fn record_joint(
++        &mut self,
++        scope: &Scope,
++        node: &TensorNode,
++        arena: &mut super::ActivationArena,
++    ) -> std::result::Result<bool, DeviceError> {
++        #[cfg(test)]
++        if super::small_gemm::precise_dense_enabled() || super::small_gemm::pool_f32_enabled() {
++            return Ok(false);
++        }
++        self.joint.record(scope, node, arena)
++    }
++    pub(super) fn begin_capture(&mut self) {
++        for pair in self.pairs.values_mut() {
++            pair.input = None;
++        }
++    }
++    pub(super) fn record(
++        &mut self,
++        scope: &Scope,
++        node: &TensorNode,
++        weights: &ProgramWeights,
++        input: &TensorView<'_, f32>,
++        output: &mut Tensor<f32>,
++    ) -> std::result::Result<bool, DeviceError> {
++        #[cfg(test)]
++        if super::small_gemm::precise_dense_enabled() || super::small_gemm::pool_f32_enabled() {
++            return Ok(false);
++        }
++        let k = usize::try_from(input.shape()[1]).map_err(error)?;
++        let Some(pair) = self.pairs.get_mut(&k) else {
++            return Ok(false);
++        };
++        if weights.activation_quantization(node.inputs[1]).is_some() {
++            return Ok(false);
++        }
++        let rows = usize::try_from(input.shape()[0]).map_err(error)?;
++        if output.size() / rows > k.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO) {
++            return Ok(false);
++        }
++        let Some(ProjectionWeight::Dense(weight)) = weights.projections.get(&node.inputs[1]) else {
++            return Ok(false);
++        };
++        if pair.input != Some(node.inputs[0]) {
++            scope.record(kernels::prepare_components(
++                (&mut pair.high).partition([1, 128]),
++                (&mut pair.low).partition([1, 128]),
++                input,
++            ))?;
++            pair.input = Some(node.inputs[0]);
++            #[cfg(test)]
++            PREPARES.with(|n| n.set(n.get() + 1));
++        }
++        scope.record(
++            kernels::dense_prepared(
++                output.partition(crate::constants::SMALL_GEMM_TILE),
++                &pair.high,
++                &pair.low,
++                weight,
++            )
++            .generics(vec![bf16::DTYPE.as_str().into(), k.to_string()]),
++        )?;
++        #[cfg(test)]
++        MMAS.with(|n| n.set(n.get() + 1));
++        Ok(true)
++    }
++}
++#[cfg(test)]
++thread_local! {
++    static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
++    static PREPARES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++    static MMAS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++#[cfg(test)]
++pub fn with_prepared<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
++    struct Restore(bool);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            ENABLED.with(|cell| cell.set(self.0));
++        }
++    }
++    let restore = Restore(ENABLED.with(|cell| cell.replace(enabled)));
++    let result = run();
++    drop(restore);
++    result
++}
++#[cfg(test)]
++pub fn capture_counts() -> (usize, usize) {
++    (
++        PREPARES.with(std::cell::Cell::get),
++        MMAS.with(std::cell::Cell::get),
++    )
++}
++
++#[cfg(test)]
++pub(super) fn note_joint() {
++    PREPARES.with(|n| n.set(n.get() + 1));
++    MMAS.with(|n| n.set(n.get() + 1));
++}
+diff --git a/crates/backend/cuda/tests/unit/resident_decode_path.rs b/crates/backend/cuda/tests/unit/resident_decode_path.rs
+index 6193d25..0a9a716 100644
+--- a/crates/backend/cuda/tests/unit/resident_decode_path.rs
++++ b/crates/backend/cuda/tests/unit/resident_decode_path.rs
+@@ -440,3 +440,185 @@ fn checkpoint_pool_four_slots_private_f32_census() -> Result<()> {
+     );
+     Ok(())
+ }
++
++#[test]
++#[ignore = "requires CUDA/checkpoint/frozen cases, safe-run; legacyMMA versus preparedMMA state census"]
++fn checkpoint_pool_prepared_full_model_census() -> Result<()> {
++    let model = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
++    let path =
++        std::env::var("INFER_TEST_ROUTE_CASES").map_err(|e| Error::invalid(e.to_string()))?;
++    let cases: Vec<Value> =
++        serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
++            .map_err(|e| Error::invalid(e.to_string()))?;
++    CudaDevice::enable_kernel_cache()?;
++    let loaded = LoadedModel::open(
++        CudaDevice::new(0)?,
++        model,
++        ModelId::ONE,
++        LoadOptions {
++            prefill_width: 64,
++            autotune: false,
++            mtp_depth: 0,
++            ..LoadOptions::default()
++        },
++    )?;
++    for case in cases {
++        for width in [2, 3, 4] {
++            prepared_pool_case(&loaded, &case, width)?;
++        }
++    }
++    Ok(())
++}
++
++fn prepared_pool_case(loaded: &LoadedModel, case: &Value, width: usize) -> Result<()> {
++    use crate::resident::{prepared_capture_counts, with_prepared};
++    let tokens: Vec<u32> = serde_json::from_value(case["tokens"].clone())
++        .map_err(|e| Error::invalid(e.to_string()))?;
++    let (seed, prompt) = prepared_pool_prefix(loaded, &tokens)?;
++    let first = greedy(
++        &prompt
++            .last()
++            .ok_or_else(|| Error::invariant("prefix output"))?
++            .1,
++    )?;
++    let mut old = with_prepared(false, || loaded.slot_pool(width, 8192))?;
++    let before = prepared_capture_counts();
++    let mut new = with_prepared(true, || loaded.slot_pool(width, 8192))?;
++    let after = prepared_capture_counts();
++    assert_eq!((after.0 - before.0, after.1 - before.1), (48, 48));
++    let vocabulary = u32::try_from(
++        prompt
++            .last()
++            .ok_or_else(|| Error::invariant("prefix output"))?
++            .1
++            .len(),
++    )
++    .map_err(|e| Error::invalid(e.to_string()))?;
++    let mut positions = vec![tokens.len(); width];
++    let mut next: Vec<u32> = (0..width)
++        .map(|slot| (first + u32::try_from(slot * 11).expect("slot")) % vocabulary)
++        .collect();
++    for slot in 0..width {
++        for pool in [&mut old, &mut new] {
++            assert_eq!(pool.take_free(), Some(slot));
++            pool.bind(
++                slot,
++                seed.states(),
++                seed.fp8_states(),
++                tokens.len(),
++                loaded.device(),
++            )?;
++        }
++        assert_eq!(
++            prepared_pool_state_bits(loaded.device(), &old, &new, slot)?,
++            0
++        );
++    }
++    for step in 0..8 {
++        if step == 5 {
++            let slot = width - 1;
++            for pool in [&mut old, &mut new] {
++                pool.release(slot);
++                assert_eq!(pool.take_free(), Some(slot));
++                pool.bind(
++                    slot,
++                    seed.states(),
++                    seed.fp8_states(),
++                    tokens.len(),
++                    loaded.device(),
++                )?;
++            }
++            positions[slot] = tokens.len();
++        }
++        let active: Vec<_> = (0..width)
++            .filter(|slot| step != 2 || slot % 2 == 0)
++            .collect();
++        let lanes: Vec<_> = active
++            .iter()
++            .map(|&slot| (slot, next[slot], positions[slot], positions[slot]))
++            .collect();
++        let a = old.run_lanes(loaded.device(), &lanes)?;
++        let b = new.run_lanes(loaded.device(), &lanes)?;
++        for ((&slot, left), right) in active.iter().zip(&a).zip(&b) {
++            let hidden = agreement(
++                &old.test_hidden(loaded.device(), slot)?,
++                &new.test_hidden(loaded.device(), slot)?,
++                "oldMMA vs prepared hidden",
++            );
++            let logits = agreement(&left.1, &right.1, "oldMMA vs prepared logits");
++            println!(
++                "{}",
++                json!({"prepared_pool_output":true,"case":case["case_id"],"width":width,"step":step,"slot":slot,"hidden":hidden,"logits":logits})
++            );
++            assert_eq!(differences(&hidden) + differences(&logits), 0);
++            next[slot] = (greedy(&left.1)? + u32::try_from(slot * 3).expect("slot")) % vocabulary;
++            positions[slot] += 1;
++        }
++        for slot in 0..width {
++            let changed = prepared_pool_state_bits(loaded.device(), &old, &new, slot)?;
++            println!(
++                "{}",
++                json!({"prepared_pool_state":true,"case":case["case_id"],"width":width,"step":step,"slot":slot,"different":changed,"complete_F32_and_FP8":true})
++            );
++            assert_eq!(changed, 0);
++        }
++    }
++    Ok(())
++}
++
++fn prepared_pool_state_bits(
++    device: &CudaDevice,
++    old: &SlotPool,
++    new: &SlotPool,
++    slot: usize,
++) -> Result<usize> {
++    let (a, af) = old.test_states(slot);
++    let (b, bf) = new.test_states(slot);
++    assert_eq!(a.len(), b.len());
++    assert_eq!(af.len(), bf.len());
++    let mut changed = 0;
++    for (id, parts) in a {
++        assert_eq!(parts.len(), b[id].len());
++        for (left, right) in parts.iter().zip(&b[id]) {
++            let x = device.read_borrowed(left)?;
++            let y = device.read_borrowed(right)?;
++            let count = agreement(&x, &y, &format!("state{id:?}"));
++            changed += differences(&count);
++            if differences(&count) > 0 {
++                println!("{count}");
++            }
++        }
++    }
++    for (id, (k, v)) in af {
++        let (rk, rv) = &bf[id];
++        for (left, right) in [(k, rk), (v, rv)] {
++            let x = device.read_borrowed(left)?;
++            let y = device.read_borrowed(right)?;
++            assert_eq!(x.len(), y.len());
++            assert!(x.iter().chain(&y).all(|n| n.0 & 127 != 127));
++            changed += x
++                .iter()
++                .zip(&y)
++                .filter(|(left, right)| left.0 != right.0)
++                .count();
++        }
++    }
++    Ok(changed)
++}
++
++fn prepared_pool_prefix(
++    loaded: &LoadedModel,
++    tokens: &[u32],
++) -> Result<(DeviceProgram, crate::resident::BatchOutput)> {
++    let capacity = tokens
++        .len()
++        .checked_add(64)
++        .ok_or_else(|| Error::invalid("prefix capacity overflow"))?;
++    let mut seed = loaded.sequence(capacity)?;
++    let mut prompt = Vec::new();
++    for (chunk, input) in tokens.chunks(64).enumerate() {
++        let position = chunk * 64;
++        prompt = seed.prefill_batch(input, position, position + input.len() == tokens.len())?;
++    }
++    Ok((seed, prompt))
++}
+diff --git a/crates/backend/cuda/tests/unit/resident_small_gemm.rs b/crates/backend/cuda/tests/unit/resident_small_gemm.rs
+index 5c4349b..2b98a31 100644
+--- a/crates/backend/cuda/tests/unit/resident_small_gemm.rs
++++ b/crates/backend/cuda/tests/unit/resident_small_gemm.rs
+@@ -705,3 +705,454 @@ fn checkpoint_pool_small_f32_projection_cost() -> Result<(), Box<dyn std::error:
+     }
+     Ok(())
+ }
++
++#[test]
++#[ignore = "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic"]
++fn checkpoint_pool_bf16_prepared_projection_cost() -> Result<(), Box<dyn std::error::Error>> {
++    use cutile::bench::BenchOptions;
++    use std::time::Duration;
++    if cfg!(debug_assertions) {
++        return Err("cost diagnostic requires release".into());
++    }
++    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
++    if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
++        return Err("cost diagnostic requires CUDA O3".into());
++    }
++    CudaDevice::enable_kernel_cache()?;
++    let device = CudaDevice::new(0)?;
++    let weights = prepared_checkpoint_weights(&device)?;
++    assert_eq!(weights.len(), 96);
++    let first = &weights[0];
++    assert!(
++        weights
++            .iter()
++            .all(|weight| weight.outputs == first.outputs && weight.columns == first.columns)
++    );
++    let input = device.upload(
++        checkpoint_small_input(first.columns, "ordinary"),
++        &[4, first.columns],
++    )?;
++    let mut output = api::zeros::<f32>(&[4, first.outputs]).sync_on(&device.stream)?;
++    let mut high = api::zeros::<bf16>(&[4, first.columns]).sync_on(&device.stream)?;
++    let mut low = api::zeros::<bf16>(&[4, first.columns]).sync_on(&device.stream)?;
++    check_prepared_components(&device, &input, &mut high, &mut low)?;
++    check_prepared_projection_bits(&device, &weights, &input, &high, &low)?;
++
++    let baseline = CudaGraph::scope(&device.stream, |scope| {
++        for weight in &weights {
++            scope.record(
++                kernels::dense((&mut output).partition([16, 32]), &input, &weight.device).generics(
++                    vec![bf16::DTYPE.as_str().into(), weight.columns.to_string()],
++                ),
++            )?;
++        }
++        Ok(())
++    })?;
++    let candidate = CudaGraph::scope(&device.stream, |scope| {
++        for (index, weight) in weights.iter().enumerate() {
++            if index % 2 == 0 {
++                scope.record(kernels::prepare_components(
++                    (&mut high).partition([1, 128]),
++                    (&mut low).partition([1, 128]),
++                    &input,
++                ))?;
++            }
++            scope.record(
++                kernels::dense_prepared(
++                    (&mut output).partition([16, 32]),
++                    &high,
++                    &low,
++                    &weight.device,
++                )
++                .generics(vec![
++                    bf16::DTYPE.as_str().into(),
++                    weight.columns.to_string(),
++                ]),
++            )?;
++        }
++        Ok(())
++    })?;
++    for cold in [true, false] {
++        let options = BenchOptions {
++            warmup: Duration::from_millis(50),
++            rep: Duration::from_millis(150),
++            min_reps: 20,
++            max_reps: 100,
++            clear_l2: cold,
++        };
++        let (old, new) = prepared_timing_pair(&device, &options, &baseline, &candidate)?;
++        println!(
++            "{}",
++            serde_json::json!({"pool_bf16_prepared_cost":true,"scope":"96 real small BF16 projections in two complete captured graphs; actual slot entry has no pack/unpack; service work outside these projections excluded","weights":96,"shape":[4,first.outputs,first.columns],"cold_l2":cold,"baseline_ms":old.median_ms(),"candidate_ms":new.median_ms(),"speedup":old.median_ms()/new.median_ms(),"service_performance_acceptance":false,"prepare_launches":48,"candidate_first":std::env::var("INFER_TEST_PREPARED_CANDIDATE_FIRST").is_ok_and(|value|value=="1"),"old_samples_ms":old.times_ms(),"new_samples_ms":new.times_ms()})
++        );
++    }
++    Ok(())
++}
++
++fn check_prepared_components(
++    device: &CudaDevice,
++    input: &Tensor<f32>,
++    high: &mut Tensor<bf16>,
++    low: &mut Tensor<bf16>,
++) -> Result<(), Box<dyn std::error::Error>> {
++    let graph = CudaGraph::scope(&device.stream, |scope| {
++        scope.record(kernels::prepare_components(
++            (&mut *high).partition([1, 128]),
++            (&mut *low).partition([1, 128]),
++            input,
++        ))?;
++        Ok(())
++    })?;
++    graph.launch().sync_on(&device.stream)?;
++    let source = device.read_borrowed(input)?;
++    let hi = device.read_borrowed(high)?;
++    let lo = device.read_borrowed(low)?;
++    assert_eq!(source.len(), hi.len());
++    assert_eq!(source.len(), lo.len());
++    let mut different = 0;
++    for ((value, high), low) in source.iter().zip(&hi).zip(&lo) {
++        let expected_high = bf16::from_f32(*value);
++        let expected_low = bf16::from_f32(*value - expected_high.to_f32());
++        different += usize::from(high.to_bits() != expected_high.to_bits())
++            + usize::from(low.to_bits() != expected_low.to_bits());
++    }
++    println!(
++        "{}",
++        serde_json::json!({"prepared_component_bits":true,"elements":source.len()*2,"different":different})
++    );
++    assert_eq!(different, 0);
++    Ok(())
++}
++
++fn check_prepared_projection_bits(
++    device: &CudaDevice,
++    weights: &[CheckpointDenseWeight],
++    input: &Tensor<f32>,
++    high: &Tensor<bf16>,
++    low: &Tensor<bf16>,
++) -> Result<(), Box<dyn std::error::Error>> {
++    for (index, weight) in weights.iter().enumerate() {
++        let shape = [4, weight.outputs];
++        let old = kernels::dense(
++            api::zeros::<f32>(&shape).partition([16, 32]),
++            input,
++            &weight.device,
++        )
++        .generics(vec![
++            bf16::DTYPE.as_str().into(),
++            weight.columns.to_string(),
++        ])
++        .first()
++        .unpartition()
++        .sync_on(&device.stream)?
++        .to_host_vec()
++        .sync_on(&device.stream)?;
++        let new = kernels::dense_prepared(
++            api::zeros::<f32>(&shape).partition([16, 32]),
++            high,
++            low,
++            &weight.device,
++        )
++        .generics(vec![
++            bf16::DTYPE.as_str().into(),
++            weight.columns.to_string(),
++        ])
++        .first()
++        .unpartition()
++        .sync_on(&device.stream)?
++        .to_host_vec()
++        .sync_on(&device.stream)?;
++        assert_eq!(old.len(), new.len());
++        assert!(old.iter().chain(&new).all(|value| value.is_finite()));
++        let different = old
++            .iter()
++            .zip(&new)
++            .filter(|(left, right)| left.to_bits() != right.to_bits())
++            .count();
++        println!(
++            "{}",
++            serde_json::json!({"prepared_projection_bits":true,"weight_index":index,"elements":old.len(),"different":different})
++        );
++        assert_eq!(
++            different, 0,
++            "preparing input changed existing MMA arithmetic"
++        );
++    }
++    Ok(())
++}
++
++fn prepared_checkpoint_weights(
++    device: &CudaDevice,
++) -> Result<Vec<CheckpointDenseWeight>, Box<dyn std::error::Error>> {
++    use infer_models::QuantizedPackage;
++    let package =
++        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
++    package
++        .weights
++        .values()
++        .filter(|source| {
++            source.data.name.contains(".linear_attn.in_proj_a.weight")
++                || source.data.name.contains(".linear_attn.in_proj_b.weight")
++        })
++        .map(|source| CheckpointDenseWeight::load(device, &package, source))
++        .collect::<Result<Vec<_>, _>>()
++}
++
++fn prepared_timing_pair(
++    device: &CudaDevice,
++    options: &cutile::bench::BenchOptions,
++    baseline: &CudaGraph<()>,
++    candidate: &CudaGraph<()>,
++) -> Result<(cutile::bench::Measurement, cutile::bench::Measurement), Box<dyn std::error::Error>> {
++    let run = |graph: &CudaGraph<()>| {
++        graph
++            .launch()
++            .sync_on(&device.stream)
++            .map_err(|error| cutile::error::tensor_error(&error.to_string()))
++    };
++    if std::env::var("INFER_TEST_PREPARED_CANDIDATE_FIRST").is_ok_and(|value| value == "1") {
++        let (new, old) = cutile::bench::do_bench_paired(
++            &device.stream,
++            options,
++            |_| run(candidate),
++            |_| run(baseline),
++        )?;
++        Ok((old, new))
++    } else {
++        Ok(cutile::bench::do_bench_paired(
++            &device.stream,
++            options,
++            |_| run(baseline),
++            |_| run(candidate),
++        )?)
++    }
++}
++
++#[test]
++#[ignore = "requires CUDA/checkpoint/release/safe-run; paired real weights and complete split cost"]
++fn checkpoint_pool_bf16_joint_projection_cost() -> Result<(), Box<dyn std::error::Error>> {
++    use cutile::bench::BenchOptions;
++    use std::time::Duration;
++    if cfg!(debug_assertions) {
++        return Err("joint diagnostic requires release".into());
++    }
++    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
++    if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
++        return Err("joint diagnostic requires CUDA O3".into());
++    }
++    CudaDevice::enable_kernel_cache()?;
++    let device = CudaDevice::new(0)?;
++    let pairs = joint_checkpoint_weights(&device)?;
++    assert_eq!(pairs.len(), 48);
++    let columns = pairs[0].0.columns;
++    let outputs = pairs[0].0.outputs;
++    assert_eq!(outputs, 48);
++    let mut first = api::zeros::<f32>(&[4, outputs]).sync_on(&device.stream)?;
++    let mut second = api::zeros::<f32>(&[4, outputs]).sync_on(&device.stream)?;
++    let mut joint = api::zeros::<f32>(&[4, outputs * 2]).sync_on(&device.stream)?;
++    let mut high = api::zeros::<bf16>(&[4, columns]).sync_on(&device.stream)?;
++    let mut low = api::zeros::<bf16>(&[4, columns]).sync_on(&device.stream)?;
++    check_joint_projection_bits(&device, &pairs)?;
++    let input = device.upload(checkpoint_small_input(columns, "ordinary"), &[4, columns])?;
++    let baseline = CudaGraph::scope(&device.stream, |scope| {
++        for (a, b, _) in &pairs {
++            for (target, weight) in [(&mut first, a), (&mut second, b)] {
++                scope.record(
++                    kernels::dense(target.partition([16, 32]), &input, &weight.device)
++                        .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
++                )?;
++            }
++        }
++        Ok(())
++    })?;
++    let packed: Vec<_> = pairs.iter().map(|(_, _, p)| Arc::clone(p)).collect();
++    let candidate = joint_projection_graph(
++        &device,
++        &input,
++        &mut high,
++        &mut low,
++        &mut joint,
++        &mut first,
++        &mut second,
++        &packed,
++    )?;
++    for cold in [true, false] {
++        let options = BenchOptions {
++            warmup: Duration::from_millis(50),
++            rep: Duration::from_millis(150),
++            min_reps: 20,
++            max_reps: 100,
++            clear_l2: cold,
++        };
++        let (old, new) = prepared_timing_pair(&device, &options, &baseline, &candidate)?;
++        println!(
++            "{}",
++            serde_json::json!({"pool_bf16_joint_cost":true,
++            "scope":"48 actual alpha/beta pairs; 48 preparation plus 48 joint MMA plus 48 split kernels; weight packing is once at capture setup and excluded from replay",
++            "cold_l2":cold,"baseline_ms":old.median_ms(),"candidate_ms":new.median_ms(),
++            "speedup":old.median_ms()/new.median_ms(),"old_samples_ms":old.times_ms(),
++            "new_samples_ms":new.times_ms(),"service_performance_acceptance":false})
++        );
++    }
++    Ok(())
++}
++
++type JointWeight = (
++    CheckpointDenseWeight,
++    CheckpointDenseWeight,
++    Arc<Tensor<bf16>>,
++);
++fn joint_checkpoint_weights(
++    device: &CudaDevice,
++) -> Result<Vec<JointWeight>, Box<dyn std::error::Error>> {
++    use infer_models::QuantizedPackage;
++    use std::collections::BTreeMap;
++    let package =
++        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
++    let mut selected = BTreeMap::new();
++    for source in package.weights.values() {
++        for (part, suffix) in [
++            (0, ".linear_attn.in_proj_a.weight"),
++            (1, ".linear_attn.in_proj_b.weight"),
++        ] {
++            if let Some(layer) = source.data.name.strip_suffix(suffix) {
++                selected
++                    .entry(layer.to_owned())
++                    .or_insert_with(BTreeMap::new)
++                    .insert(part, source);
++            }
++        }
++    }
++    let mut result = Vec::new();
++    for (layer, sources) in selected {
++        assert_eq!(sources.len(), 2, "layer {layer} alpha/beta pair");
++        let a = CheckpointDenseWeight::load(device, &package, sources[&0])?;
++        let b = CheckpointDenseWeight::load(device, &package, sources[&1])?;
++        assert_eq!((a.columns, a.outputs), (b.columns, b.outputs));
++        let packed = device.upload(
++            a.values
++                .iter()
++                .chain(&b.values)
++                .map(|v| bf16::from_f32(*v))
++                .collect(),
++            &[a.outputs + b.outputs, a.columns],
++        )?;
++        result.push((a, b, packed));
++    }
++    Ok(result)
++}
++
++#[expect(
++    clippy::too_many_arguments,
++    reason = "isolated captured replay includes all preparation and output copies"
++)]
++fn joint_projection_graph(
++    device: &CudaDevice,
++    input: &Tensor<f32>,
++    high: &mut Tensor<bf16>,
++    low: &mut Tensor<bf16>,
++    joint: &mut Tensor<f32>,
++    first: &mut Tensor<f32>,
++    second: &mut Tensor<f32>,
++    packed: &[Arc<Tensor<bf16>>],
++) -> Result<CudaGraph<()>, DeviceError> {
++    let columns = usize::try_from(input.shape()[1]).map_err(super::super::capture::error)?;
++    let rows = usize::try_from(input.shape()[0]).map_err(super::super::capture::error)?;
++    let outputs = first.size() / rows;
++    CudaGraph::scope(&device.stream, |scope| {
++        for weight in packed {
++            scope.record(kernels::prepare_components(
++                (&mut *high).partition([1, 128]),
++                (&mut *low).partition([1, 128]),
++                input,
++            ))?;
++            scope.record(
++                kernels::dense_prepared((&mut *joint).partition([16, 32]), &*high, &*low, weight)
++                    .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
++            )?;
++            let a = joint
++                .slice(&[0..rows, 0..outputs])
++                .map_err(super::super::capture::error)?;
++            let b = joint
++                .slice(&[0..rows, outputs..outputs * 2])
++                .map_err(super::super::capture::error)?;
++            scope.record(kernels::split_joint(
++                (&mut *first).partition([1, 64]),
++                (&mut *second).partition([1, 64]),
++                &a,
++                &b,
++            ))?;
++        }
++        Ok(())
++    })
++}
++
++fn check_joint_projection_bits(
++    device: &CudaDevice,
++    pairs: &[JointWeight],
++) -> Result<(), Box<dyn std::error::Error>> {
++    let columns = pairs[0].0.columns;
++    let outputs = pairs[0].0.outputs;
++    assert_eq!(outputs, 48);
++    let mut first = api::zeros::<f32>(&[4, outputs]).sync_on(&device.stream)?;
++    let mut second = api::zeros::<f32>(&[4, outputs]).sync_on(&device.stream)?;
++    let mut joint = api::zeros::<f32>(&[4, outputs * 2]).sync_on(&device.stream)?;
++    let mut high = api::zeros::<bf16>(&[4, columns]).sync_on(&device.stream)?;
++    let mut low = api::zeros::<bf16>(&[4, columns]).sync_on(&device.stream)?;
++    for fixture in ["zero", "ordinary", "sparse", "wide_exponent"] {
++        let input = device.upload(checkpoint_small_input(columns, fixture), &[4, columns])?;
++        check_prepared_components(device, &input, &mut high, &mut low)?;
++        for (index, (a, b, packed)) in pairs.iter().enumerate() {
++            let original = CudaGraph::scope(&device.stream, |scope| {
++                for (target, weight) in [(&mut first, a), (&mut second, b)] {
++                    scope.record(
++                        kernels::dense(target.partition([16, 32]), &input, &weight.device)
++                            .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
++                    )?;
++                }
++                Ok(())
++            })?;
++            original.launch().sync_on(&device.stream)?;
++            let a_values = device.read_borrowed(&first)?;
++            let b_values = device.read_borrowed(&second)?;
++            let candidate = joint_projection_graph(
++                device,
++                &input,
++                &mut high,
++                &mut low,
++                &mut joint,
++                &mut first,
++                &mut second,
++                std::slice::from_ref(packed),
++            )?;
++            candidate.launch().sync_on(&device.stream)?;
++            let new_a = device.read_borrowed(&first)?;
++            let new_b = device.read_borrowed(&second)?;
++            assert!(
++                a_values
++                    .iter()
++                    .chain(&b_values)
++                    .chain(&new_a)
++                    .chain(&new_b)
++                    .all(|v| v.is_finite())
++            );
++            let different = a_values
++                .iter()
++                .chain(&b_values)
++                .zip(new_a.iter().chain(&new_b))
++                .filter(|(old, new)| old.to_bits() != new.to_bits())
++                .count();
++            println!(
++                "{}",
++                serde_json::json!({"joint_projection_bits":true,
++                "pair_index":index,"fixture":fixture,"elements":a_values.len()+b_values.len(),
++                "different":different,"columns":columns,"outputs":outputs})
++            );
++            assert_eq!(
++                different, 0,
++                "joint projection changed existing MMA arithmetic"
++            );
++        }
++    }
++    Ok(())
++}

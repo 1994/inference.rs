@@ -616,3 +616,134 @@ STACK 为零。这是静态生成代码，不是动态指令或 occupancy 测量
 均不准入，也没有继续采集性能。下一步保留原 16×32 MMA tile，探索复用同一
 输入的 BF16 high/low 分解，消除重复转换而保持原 MMA 累加顺序。
 [完整拒绝记录与原始 profile 查询证据](artifacts/cuda-gdn-covered-kv-quality-rejection-2026-10-14.json)。
+
+
+## 2026-10-14：复用 BF16 分解保持逐位一致，但 serving 尚未准入
+
+保留原 16×32×128 tile、两个 BF16 输入分量和每个 K 块先 low 后 high 的 MMA，
+同一归一化输入的 beta/alpha 共用一次分解。独立 release 归档默认执行此路径，
+没有用户算法开关；main 尚未采用。持有的 high/low 缓冲区按实际 arena 预算
+检查，捕获图先于缓冲区释放，两种 slot 捕获重置输入复用记录。
+
+96 个真实 checkpoint 小投影的 192 项输出逐个逐位一致，四行普通输入的
+40,960 个 high/low 分量也与独立 CPU BF16 转换逐位一致。完整模型另从相同
+private 前缀复制 state/KV，覆盖三个实际输入、2/3/4 槽、八步固定输入轨迹、
+inactive 和 release/rebind：204 次完整 hidden/logits 输出、216 次完整 F32 state/
+FP8 KV 检查均无差异。这没有覆盖全部任务质量或任意服务路由。
+
+先做五个 discovery 进程，再做五个新进程交替先后顺序的确认。每次候选 replay
+实际包含 48 次分解与 96 次 MMA，全部原始计时保留。确认的冷缓存中位数
+1.676384→1.212096 ms，配对速度 1.38299 倍，95% 区间 1.38264–1.38411；
+热缓存 1.677376→1.199328 ms，1.39834 倍，区间 1.39750–1.39876。
+这是小投影隔离成本，不是服务收益。
+
+候选 release Nsight trace 的 batch4 出现 6048 次 dense_prepared 和 3024 次
+prepare_components，合计 74.987835 ms，确认生产形态二进制实际执行新路径。
+该插桩计时没有配对，不能与旧 trace 105.176557 ms 作为正式延迟验收。
+静态 SASS 保留原 32 条 HMMA，MMA 内 FADD 从 128 条变为零；shared memory
+从 52,340 增至 68,756 bytes，REG 仍为 255。没有动态硬件计数器，不声称测得
+occupancy 或实际执行指令量下降。
+
+无 host/GPU profiler 的五组独立进程服务配对全部完成，两边各 105 条测量
+stream，64 token 上限、四个冻结场景、三次测量重复、固定输入/tuning、MTP0、
+65536 context、prefix cache 与原来相同，启动顺序交替。
+batch4 TPOT 进程中位数 18.93510→18.42998 ms；配对速度中位数 1.02804，
+95% 区间 1.01746–1.03691，低于原有下界至少 1.02 的有用收益门槛。
+整体完成时间 1375.76025→1341.15097 ms，配对区间下界也仅为 1.00648。
+
+105 条配对 stream 中有九条 token 不同，全部位于 batch4，严格输出门槛失败。
+相同冻结 case/repeat/slot 在 unit0 与后四个进程之间，旧路径有五条、候选有
+八条差异；每边为 84 条同输入对照。这提示既有路由波动，但不能把九条差异
+自动认定为无害，也不作接受新优化的豁免。short TTFT 两边进程漂移分别
+16.58%、13.98%，hot_long 候选漂移 13.12%，均超过原 10% 门槛。
+没有删样本或改变门槛，没有宣称无 profiler 服务验收通过。完整 256 题质量
+和持续混合负载尚未为此候选执行，不能以之前其他方案的记录替代。
+
+原 plan 沿用了旧模板的 units=3、ordered 顺序名和 route-profile 描述；
+实际 run.py、十个 invocation 与 progress 均记录五组 scalar/candidate，并确认
+没有启用 profiler。原 plan 保留，分析与本证据显式注明这些继承字段。
+当前 native 控制二进制的构建补丁与 aa83 提交逐字节一致，aa83 至本实验
+54aafe7 的 crates/tools/bench 差异为空，main runtime 控制有效。
+
+下一步仍沿减少重复工作的主线，把相邻共用输入的 beta/alpha 投影联合为
+96 列。原来两个 48 列输出各补齐到 64 列；保持 32 列 MMA tile 后，联合输出
+只需三个 block，减少一个 block 的补齐工作。必须同时计入输出拆分成本，
+先验证逐位一致，再验证完整模型和原服务/质量门槛。
+[逐位验证、微基准、dispatch 与完整服务失败记录](artifacts/cuda-gdn-bf16-prepared-2026-10-14.json)。
+
+## 2026-10-14：联合 beta/alpha 投影消除重复转换与补齐计算
+
+本轮沿 GDN 小投影减少重复工作，保留原精度和累加树。两个投影共用同一输入，
+利用 concat(X·W_betaᵀ, X·W_alphaᵀ) = X·concat_rows(W_beta, W_alpha)ᵀ，
+在建图时按原 BF16 bits 合并权重。原来两个 48 列输出分别补齐至 64 列，
+联合 96 列仅需三个 32 列 block，名义补齐列工作减少 25%。输入 high/low
+分解也共享；原 16×32 MMA、K128、每块 low 后 high 的顺序保留。
+
+独立 release 归档中，2/3/4 槽的相邻、共用输入、48 输出 Dense BF16 投影
+默认联合，不包含激活量化或常量输入，没有用户算法开关。private GEMV、
+GDN recurrence、KV split 和 verification 路径保持原实现；预算不足时保留
+旧 prepared 路径。新增联合权重与全部 high/low、联合输出缓冲区计入原 arena/
+prepared 工作区预算。只配对相邻、不重叠的节点，并检查两个输出 slot 与输入
+不别名；图的释放早于其持有的权重和缓冲区。该形状限定仍是实验范围，main
+runtime 未合入。
+
+每个 replay 包含 48 个 prepare、48 个联合 MMA、48 个 split，总计 144 次，
+与上一 prepared 方案相同，不能声称总 kernel 启动减半。昂贵 MMA 从 96 次
+减至 48 次；原始未准备路径只有 96 次投影启动。计时包含全部输出拆分成本，
+不包含只在建图时执行的权重合并，也不包含模型其他工作。
+
+先做一轮 discovery，再以五个新独立进程交替先后顺序确认。每个进程都在
+全部 48 对真实同层权重上验证 zero/ordinary/sparse/wide_exponent 四类输入，
+192 次、73,728 项投影输出逐位一致。确认的冷缓存中位数
+1.677824→0.664880 ms，配对速度 2.52374 倍，95% 区间 2.52053–2.52645；
+热缓存 1.668864→0.654736 ms，2.54969 倍，区间 2.54823–2.55332。
+全部原始向量保留。这些只是完整小投影 replay 的隔离结果。
+
+实际建图后的完整模型覆盖三个 52 token 输入、511 token 输入和完整
+3647 token 输入，每个采用 2/3/4 槽，连续八步并覆盖 inactive 与 release/rebind。
+从相同 private prefix 的完整状态复制后，340 次完整 hidden/logits 输出比较、
+360 次完整 F32 state/FP8 KV 比较全部逐位一致。长输入按正常 64 token 分块
+预填充，仅最后块读 logits；每个候选 slot 图断言捕获 48 个 prepare、48 个
+联合 MMA，避免 fallback 造成伪通过。完整模型测试与 release CLI 均严格
+Clippy/构建成功，GPU guard 无干扰，数值测试 protected 单元峰值 4.7 GiB，
+自身 swap 为零。这不能替代全部质量集或任意服务路由的验证。
+
+首次集成的权重拷贝 kernel 被 host launch 上限拒绝：96 行目标 grid 的条件
+被用于只有 48 行的源。修正为有界 pid.0 % N 源行索引，保留编译器检查。
+下一轮全部短输入比较通过后，新增长输入被 width64 的直接 prefill 接口拒绝；
+整轮仍保留为失败，改用正常分块重跑。两次准备性 Clippy 修复及一次类型
+qualification 修复也保留原始源码和构建记录，未将失败改写为成功。
+
+反汇编确认联合 MMA 仍有 32 条静态 HMMA.16816.F32.BF16、REG255、
+STACK0、SHARED68756；split 为 REG18、STACK0、SHARED0。
+这是静态代码证据，不是 occupancy 或动态硬件计数测量。
+
+随后完成无 host/GPU profiler 的五组、十个独立服务进程，交替启动顺序，
+每个进程运行原四个冻结场景、三个测量 repeat，64 输出上限、65536 context、
+MTP0、固定46条 tuning与原 token 输入不变。每边105条 stream 全部完成。
+batch4 TPOT 的进程中位数 18.905391→17.927086 ms，约下降5.17%；
+配对速度中位数1.05457，95%区间1.05437–1.06331，原下界1.02门槛通过。
+整体完成时间1385.720685→1313.646923 ms；其配对速度中位数1.04838，
+区间1.03710–1.05826。完整每进程、每场景、原始stream与telemetry均保留。
+其余场景没有超过5%的配对中位数回退，但short TTFT置信区间不能排除5%
+回退，不能因此宣称全部场景均完成无回退认证。
+
+整体准入仍失败：12/105条配对token stream不同，全部位于batch4。
+short 与 hot_long 的基线 TTFT 进程漂移分别15.22%和12.74%，超过10%；
+候选相应漂移6.22%和8.71%。相同输入在unit0与后四个进程之间，每边84项
+比较，旧路径有19条、候选有11条输出差异。这些波动保留，没有删样本。
+
+九条候选差异的完整64-token序列能在本轮其他基线进程找到。另对照上轮五个
+相同基线二进制、输入、tuning、65536 context的进程，仍只有九条匹配：
+unit0的batch4-repeat1-slot1、unit2的同输入和repeat2-slot1三条尚未匹配。
+这是额外的观察性census，不是扩充或替换本轮五组统计样本，也不是路由的
+因果证明。原始文件输入hash2d88...与harness规范化输入hash855e...区分记录；
+扩展查询曾把二者直接比较而拒绝，纠正hash类型后才做逐序列观察。原有12条
+失败仍保留，不能用受控逐位一致或基线自身波动为其豁免。
+
+因此没有切换main默认，没有以小算子的2.5倍或batch4的约5%代替整体通过，
+也没有用其他候选的256题结果替代本候选单请求/并发质量及持续混合负载。
+下一步应对上述实际请求关联state/slot/初始private与pooled历史，从相同输入
+和实际状态路径重放，区分布局数值、迁移和调度，避免未经定位继续更改算术。
+[完整数值、性能、失败与逐序列census](artifacts/cuda-gdn-bf16-joint-2026-10-14.json)；
+[可审阅实验补丁，未合入runtime](artifacts/cuda-gdn-bf16-joint-prototype-2026-10-14.patch)。
