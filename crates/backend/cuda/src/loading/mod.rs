@@ -558,3 +558,7 @@ mod pool_greedy_lifecycle_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_oxide_attention.rs"]
 mod oxide_attention_tests;
+
+#[cfg(all(test, feature = "cuda"))]
+#[path = "../../tests/unit/resident_recurrent_oxide_model.rs"]
+mod oxide_gdn_tests;

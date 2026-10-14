@@ -1,0 +1,9 @@
+{
+  "cuda_rust_commit": "bc46b1ffb751885073066b087594045f07f0f81b",
+  "toolchain": "nightly-2026-10-11",
+  "target": "sm_120",
+  "command": "cargo oxide build --arch sm_120 --no-fmad",
+  "source_sha256": "dc4e3e6fcd2d18079e2aef76186c583aaece69f3b2a060b34393e3bb553131aa",
+  "ptx_sha256": "85085d92c5d340a3efc790451b6068601e3829293468ae7d6795e5d8b2987629",
+  "compiler_backend_sha256": "686379cccd2d03d6b582279627c6091704a15e9037b0d0004833a319aa27e015"
+}

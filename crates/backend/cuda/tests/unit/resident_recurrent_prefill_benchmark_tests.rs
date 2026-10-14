@@ -64,8 +64,7 @@ fn bench_case(
                 super::super::recurrent::recurrent::delta(
                     output.partition([1, 1, dim]),
                     (&mut state).partition([1, dim, dim]),
-                    &qkv.view(&[lanes * cols])?
-                        .slice(std::slice::from_ref(&(lane * cols..(lane + 1) * cols)))?,
+                    &qkv.slice(std::slice::from_ref(&(lane * cols..(lane + 1) * cols)))?,
                     &beta
                         .view(&[lanes * vh])?
                         .slice(std::slice::from_ref(&(lane * vh..(lane + 1) * vh)))?,
@@ -104,13 +103,7 @@ fn bench_case(
         if dim == 128 {
             prepared.as_mut().expect("ordered preparation").record(
                 scope,
-                [
-                    &qkv.view(&[lanes, 2 * kh + vh, dim])?,
-                    &beta.view(&[lanes, vh])?,
-                    &alpha.view(&[lanes, vh])?,
-                    &a_log.view(&[vh])?,
-                    &bias.view(&[vh])?,
-                ],
+                [&qkv, &beta, &alpha, &a_log, &bias],
                 [&mut state, &mut scratch],
                 &metadata,
                 (kh, vh, dim, lanes, block),
