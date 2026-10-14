@@ -142,6 +142,8 @@ def check_exceptions():
                         # Function/Module retention and input/output resource leases.
                         ROOT / "crates/backend/cuda/src/resident/attention_oxide.rs",
                         ROOT / "crates/backend/cuda/src/resident/recurrent_prefill/oxide.rs",
+                        # Exhaustive conversion measurement: fixed buffers, access leases, owning stream sync.
+                        ROOT / "crates/backend/cuda/tests/unit/tuning_attention_fp8_convert.rs",
                         ROOT / "crates/backend/cuda/src/resident/batch.rs",
                         ROOT / "crates/backend/cuda/src/resident/slot_verify.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",

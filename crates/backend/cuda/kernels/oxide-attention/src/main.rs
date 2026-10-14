@@ -39,13 +39,13 @@ const FP8_SIGN_BIT: u32 = 128;
 const HEAD_DIM: usize = 256;
 const FP8_SUBNORMAL_DIVISOR: f32 = 512.0f32;
 const MASKED_SCORE_MAGNITUDE: f32 = 1.0e30;
-use cuda_device::{SharedArray, kernel, thread, warp};
+use cuda_device::{SharedArray, kernel, thread, warp, convert};
 use cuda_host::cuda_module;
 #[cuda_module]
 mod kernels {
     use super::*;
     #[inline(always)]
-    fn fp8(x: u8) -> f32 {
+    fn fp8_original(x: u8) -> f32 {
         let sign = (x as u32 & FP8_SIGN_BIT) << INDEX_24;
         let exponent = (x as u32 & FP8_MAGNITUDE_MASK) >> INDEX_03;
         let mantissa = x as u32 & INDEX_07 as u32;
@@ -55,6 +55,25 @@ mod kernels {
         } else {
             f32::from_bits(sign | ((exponent + FP8_EXPONENT_BIAS) << INDEX_23) | (mantissa << INDEX_20))
         }
+    }
+    #[inline(always)]
+    fn fp8(x: u8) -> f32 {
+        // The original decoder maps the two reserved NaN codes to signed 480.
+        // Preserve that behavior while finite codes use exact hardware widening.
+        if u32::from(x) & FP8_MAGNITUDE_MASK == FP8_MAGNITUDE_MASK {
+            fp8_original(x)
+        } else {
+            convert::cvt_f32_f16x2_lo(convert::cvt_rn_f16x2_e4m3x2(u16::from(x)))
+        }
+    }
+    #[inline(always)]
+    fn fp8_pair_bits(packed: u16) -> (f32,f32) {
+        let (mut lo,mut hi)=convert::cvt_f32x2_f16x2(convert::cvt_rn_f16x2_e4m3x2(packed));
+        let a=packed as u8;
+        let b=(packed >> STRIPE_LANES) as u8;
+        if u32::from(a) & FP8_MAGNITUDE_MASK == FP8_MAGNITUDE_MASK {lo=fp8_original(a);}
+        if u32::from(b) & FP8_MAGNITUDE_MASK == FP8_MAGNITUDE_MASK {hi=fp8_original(b);}
+        (lo,hi)
     }
     #[inline(always)]
     fn sum8(a: f32, b: f32, c: f32, d: f32, e: f32, f: f32, g: f32, h: f32) -> f32 {
@@ -130,22 +149,30 @@ mod kernels {
             let mut keyrow = warp_id * 2 + lane / DOT_LANES;
             while keyrow < WARP_SIZE {
                 let kb = cachebase + keyrow * HEAD_DIM + dot_lane * DOT_LANES;
-                let p0 = q0 * (fp8(unsafe { *keys.add(kb + 0) }) * k_scale);
-                let p1 = q1 * (fp8(unsafe { *keys.add(kb + 1) }) * k_scale);
-                let p2 = q2 * (fp8(unsafe { *keys.add(kb + 2) }) * k_scale);
-                let p3 = q3 * (fp8(unsafe { *keys.add(kb + INDEX_03) }) * k_scale);
-                let p4 = q4 * (fp8(unsafe { *keys.add(kb + INDEX_04) }) * k_scale);
-                let p5 = q5 * (fp8(unsafe { *keys.add(kb + INDEX_05) }) * k_scale);
-                let p6 = q6 * (fp8(unsafe { *keys.add(kb + INDEX_06) }) * k_scale);
-                let p7 = q7 * (fp8(unsafe { *keys.add(kb + INDEX_07) }) * k_scale);
-                let p8 = q8 * (fp8(unsafe { *keys.add(kb + STRIPE_LANES) }) * k_scale);
-                let p9 = q9 * (fp8(unsafe { *keys.add(kb + INDEX_09) }) * k_scale);
-                let p10 = q10 * (fp8(unsafe { *keys.add(kb + INDEX_10) }) * k_scale);
-                let p11 = q11 * (fp8(unsafe { *keys.add(kb + INDEX_11) }) * k_scale);
-                let p12 = q12 * (fp8(unsafe { *keys.add(kb + INDEX_12) }) * k_scale);
-                let p13 = q13 * (fp8(unsafe { *keys.add(kb + INDEX_13) }) * k_scale);
-                let p14 = q14 * (fp8(unsafe { *keys.add(kb + INDEX_14) }) * k_scale);
-                let p15 = q15 * (fp8(unsafe { *keys.add(kb + INDEX_15) }) * k_scale);
+                let (k0,k1)=fp8_pair_bits(unsafe { *keys.add(kb + 0).cast::<u16>() });
+                let p0=q0*(k0*k_scale);
+                let p1=q1*(k1*k_scale);
+                let (k2,k3)=fp8_pair_bits(unsafe { *keys.add(kb + 2).cast::<u16>() });
+                let p2=q2*(k2*k_scale);
+                let p3=q3*(k3*k_scale);
+                let (k4,k5)=fp8_pair_bits(unsafe { *keys.add(kb + INDEX_04).cast::<u16>() });
+                let p4=q4*(k4*k_scale);
+                let p5=q5*(k5*k_scale);
+                let (k6,k7)=fp8_pair_bits(unsafe { *keys.add(kb + INDEX_06).cast::<u16>() });
+                let p6=q6*(k6*k_scale);
+                let p7=q7*(k7*k_scale);
+                let (k8,k9)=fp8_pair_bits(unsafe { *keys.add(kb + STRIPE_LANES).cast::<u16>() });
+                let p8=q8*(k8*k_scale);
+                let p9=q9*(k9*k_scale);
+                let (k10,k11)=fp8_pair_bits(unsafe { *keys.add(kb + INDEX_10).cast::<u16>() });
+                let p10=q10*(k10*k_scale);
+                let p11=q11*(k11*k_scale);
+                let (k12,k13)=fp8_pair_bits(unsafe { *keys.add(kb + INDEX_12).cast::<u16>() });
+                let p12=q12*(k12*k_scale);
+                let p13=q13*(k13*k_scale);
+                let (k14,k15)=fp8_pair_bits(unsafe { *keys.add(kb + INDEX_14).cast::<u16>() });
+                let p14=q14*(k14*k_scale);
+                let p15=q15*(k15*k_scale);
                 let even = ((p0 + p2) + (p4 + p6)) + ((p8 + p10) + (p12 + p14));
                 let odd = ((p1 + p3) + (p5 + p7)) + ((p9 + p11) + (p13 + p15));
                 let mut score = even + odd;

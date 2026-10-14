@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 181
+      "tests": 183
     },
     "frontdoor": {
       "benches": 0,
@@ -187,7 +187,9 @@
     "requires CUDA/checkpoint/safe-run; actual pool inactive/reactivate/rebind full states": 1,
     "requires CUDA/checkpoint/safe-run; all96 real small weights, original private GEMV bits": 1,
     "requires CUDA/safe-run; actual automatic tuning, full proofs and persisted cache": 1,
+    "requires CUDA/safe-run; complete pipeline cold/warm AB/BA with pre/post bits": 1,
     "requires CUDA/safe-run; exact finite row max and quantizer cost": 1,
+    "requires CUDA/safe-run; exhaustive codes and full bits/F64 before any timing": 1,
     "requires CUDA/safe-run; full original F32 state/output and independent F64": 1,
     "requires CUDA/safe-run; graph operand lifetime and cross-stream access contract": 1,
     "requires CUDA; complete FP8/F64/bitwise gate; safe-run --test-threads 1": 1,
@@ -357,6 +359,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/resident/attention_oxide.rs",
+      "mount": "../../tests/unit/resident_attention_oxide_resources.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/resident/attention_prefill.rs",
       "mount": "../../tests/unit/resident_attention_prefill.rs"
     },
@@ -502,6 +509,16 @@
     },
     {
       "crate": "cuda",
+      "file": "src/tuning/attention/exact.rs",
+      "mount": "../../../tests/unit/tuning_attention_exact.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/attention/exact.rs",
+      "mount": "../../../tests/unit/tuning_attention_fp8_convert.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/tuning/attention.rs",
       "mount": "../../tests/unit/tuning_attention.rs"
     },
@@ -519,6 +536,11 @@
       "crate": "cuda",
       "file": "src/tuning/greedy.rs",
       "mount": "../../tests/unit/tuning_greedy.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/recurrent/exact.rs",
+      "mount": "../../../tests/unit/tuning_recurrent_exact.rs"
     },
     {
       "crate": "cuda",
@@ -902,11 +924,11 @@
     }
   ],
   "totals": {
-    "all": 628,
+    "all": 630,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 628
+    "tests": 630
   }
 }

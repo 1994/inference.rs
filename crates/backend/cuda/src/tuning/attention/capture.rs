@@ -271,6 +271,14 @@ impl Captured {
         } else {
             None
         };
+        Self::new_with_support(device, fixture, choice, oxide)
+    }
+    fn new_with_support(
+        device: &CudaDevice,
+        fixture: &Fixture,
+        choice: Choice,
+        oxide: Option<crate::resident::attention_oxide::Support>,
+    ) -> Result<Self> {
         let mut operands = Operands::new(device, fixture, choice)?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
             operands.record(scope, fixture, choice, oxide.as_ref())
@@ -281,6 +289,47 @@ impl Captured {
             operands,
             _oxide: oxide,
         })
+    }
+    #[cfg(test)]
+    pub fn candidate(
+        device: &CudaDevice,
+        fixture: &Fixture,
+        support: crate::resident::attention_oxide::Support,
+    ) -> Result<Self> {
+        Self::new_with_support(device, fixture, Choice::RustSimt, Some(support))
+    }
+    #[cfg(test)]
+    pub fn graph_variant(
+        &mut self,
+        device: &CudaDevice,
+        f: &Fixture,
+        support: &crate::resident::attention_oxide::Support,
+    ) -> Result<CudaGraph<()>> {
+        CudaGraph::scope(&device.stream, |scope| {
+            self.operands
+                .record(scope, f, Choice::RustSimt, Some(support))
+        })
+        .map_err(device_error)
+    }
+    #[cfg(test)]
+    pub fn verify_variant(
+        &self,
+        device: &CudaDevice,
+        f: &Fixture,
+        graph: &CudaGraph<()>,
+    ) -> Result<usize> {
+        self.verify(device, f)?;
+        let expected = device.read_borrowed(&self.operands.output)?;
+        self.verify_graph(device, f, graph)?;
+        let actual = device.read_borrowed(&self.operands.output)?;
+        if !actual
+            .iter()
+            .zip(&expected)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+        {
+            return Err(Error::invariant("same-address attention bits differ"));
+        }
+        Ok(actual.len())
     }
     pub fn exact_match(&self, device: &CudaDevice, baseline: &Self) -> Result<usize> {
         baseline
@@ -307,7 +356,10 @@ impl Captured {
         Ok(actual.len())
     }
     pub fn verify(&self, device: &CudaDevice, f: &Fixture) -> Result<f64> {
-        self.graph
+        self.verify_graph(device, f, &self.graph)
+    }
+    fn verify_graph(&self, device: &CudaDevice, f: &Fixture, graph: &CudaGraph<()>) -> Result<f64> {
+        graph
             .launch()
             .sync_on(&device.stream)
             .map_err(device_error)?;
