@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "oxide_gdn_simt"
 version = "0.1.0"
 edition = "2024"
