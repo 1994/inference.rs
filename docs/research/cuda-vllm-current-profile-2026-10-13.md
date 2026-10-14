@@ -576,3 +576,43 @@ F32 激活拆为两个 BF16 分量后分别执行 MMA；四行 F32 核保留 pri
 grid 和 merge，功能通过本身不证明速度改善。全部版本、构建失败、原始
 事件、冻结输入/cache 与二进制身份保留。
 [实际长度原型的数值证据](artifacts/cuda-gdn-covered-kv-prototype-2026-10-14.json)。
+
+## 2026-10-14：联合原型完整质量失败，转向保留原算术的小投影布局
+
+联合方案已做成独立 release CLI，符合条件的 2/3/4 行小投影直接采用 F32，
+没有实验环境变量。严格 release Clippy、测试和 CLI 构建通过。完整模型检查
+扩展至 2/3/4 槽，每种三个实际输入、24 步，共 216 次 hidden/logits/F32 state/
+有效 FP8 KV 比较逐位一致；inactive 与 release/rebind 的八轮检查也逐位一致，
+覆盖 5,575,680 项输出及完整 state/FP8 KV。这里的 private 控制运行在候选的
+attention policy 下；旧测试的 private_arithmetic_unchanged 标签不能证明容量
+1024 的原 private attention 算术没有变化。
+
+该 release 候选随后完成冻结 256 题单请求质量集，保留 512 token 上限、MTP0、
+32768 context、原 scorer/冻结表，全部请求完成，测得 prefix reuse 为零。
+五个达到长度上限的样本保留，没有删去。候选为 240/256，固定 vLLM 为
+243/256；相对 vLLM 有六项退步、三项收益，95% 退步率上界 4.5733%，
+超过原 2% 门槛，质量失败。因此未做默认切换或性能验收。
+
+相对旧 clean49bd native 记录，两边总分虽同为 240/256，仍有三项退步、
+三项收益，109 条完整 token stream 不同；其退步率上界 3.0008%。
+这是历史 native 的诊断对照，尚未运行新的当前 native 质量进程，不能称为
+fresh paired 验收。由于固定 vLLM 的硬门槛已经失败，没有继续消耗并发质量
+和正式性能验收。所有错误项、输出上限样本、输入、二进制与原始记录保留。
+
+重新查询原始 Nsight sqlite，小投影的布局差距有直接时间证据：short 的
+private decode 共 6048 次 dense_entry、grid[48,1,1]，总计 12.619115 ms，
+平均 2.0865 us；batch4 的 pooled 共 6048 次、grid[1,2,1]，总计
+105.176557 ms，平均 17.3903 us。这是原始插桩 trace 的 kernel 均值，
+不是新方案的配对延迟验收，也没有据此声称测得 occupancy。
+
+下一独立原型保留 pooled 的 BF16 high/low 分量、逐 K 块 low 后 high 的 MMA
+与原 KV/private/GDN 路径，仅将 output tile 从 32 缩至 8。48 输出列的
+grid 从两个 block 变为六个，补齐输出列从 64 变为 48。先验证 96 个真实
+checkpoint 投影逐位一致，再做冷/热缓存配对计时。实际 8 列版本在第一个
+投影的 192/192 项上不逐位一致，计时前即停止；进一步测试的 16 列版本
+也在同一关失败。反汇编显示两者均没有 HMMA，分别出现普通乘加展开与
+176/1736 bytes 的 STACK；原 32 列版本有 32 条静态 HMMA.16816.F32.BF16，
+STACK 为零。这是静态生成代码，不是动态指令或 occupancy 测量。两种布局
+均不准入，也没有继续采集性能。下一步保留原 16×32 MMA tile，探索复用同一
+输入的 BF16 high/low 分解，消除重复转换而保持原 MMA 累加顺序。
+[完整拒绝记录与原始 profile 查询证据](artifacts/cuda-gdn-covered-kv-quality-rejection-2026-10-14.json)。
