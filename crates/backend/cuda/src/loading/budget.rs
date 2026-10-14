@@ -8,6 +8,37 @@ use infer_ir::{DataflowGraph, OutputReadout, StateKind, TensorOp, TensorStorage}
 const F32: u64 = crate::constants::F32_BYTES as u64;
 /// Full-history readback stages a device copy and returns a second host copy.
 const READBACK_COPIES: u64 = 2;
+/// Private/shared verification crossed with full/other readout.
+const PRICE_GEOMETRIES: usize = 4;
+
+/// Exact storage price for one immutable program geometry.
+#[derive(Clone, Copy, Default)]
+struct SequencePrice {
+    fixed: u64,
+    per_token: u64,
+}
+
+impl SequencePrice {
+    fn at(self, capacity: u64) -> Result<u64> {
+        add(self.fixed, mul(self.per_token, capacity)?)
+    }
+
+    fn combine(self, other: Self) -> Result<Self> {
+        Ok(Self {
+            fixed: add(self.fixed, other.fixed)?,
+            per_token: add(self.per_token, other.per_token)?,
+        })
+    }
+}
+
+/// Four bounded, successful prices: private/shared verification × full/other readout.
+pub(super) struct SequencePrices([std::sync::OnceLock<SequencePrice>; PRICE_GEOMETRIES]);
+
+impl Default for SequencePrices {
+    fn default() -> Self {
+        Self(std::array::from_fn(|_| std::sync::OnceLock::new()))
+    }
+}
 
 impl LoadedModel {
     /// Upper bound for known tensor storage plus 256 MiB of graph/allocator headroom.
@@ -30,38 +61,53 @@ impl LoadedModel {
             ));
         }
         let capacity = capacity.next_power_of_two() as u64;
+        // Graph geometry is immutable after load; only KV and full-history storage grow
+        // with capacity. Keep one exact affine price per readout/verification geometry.
+        let index =
+            usize::from(private_verification) * 2 + usize::from(readout == OutputReadout::Full);
+        let cached = &self.sequence_prices.0[index];
+        let price = if let Some(price) = cached.get() {
+            *price
+        } else {
+            let price = self.sequence_price(readout, private_verification)?;
+            // Concurrent first quotes can calculate the same immutable price.
+            let _ = cached.set(price);
+            price
+        };
+        price.at(capacity)
+    }
+
+    fn sequence_price(
+        &self,
+        readout: OutputReadout,
+        private_verification: bool,
+    ) -> Result<SequencePrice> {
         let hidden = self.model.hidden_size;
         let vocabulary = self.model.vocab_size;
-        let mut bytes = self.device().profile()?.graph_headroom_bytes();
-        bytes = add(
-            bytes,
-            program(
-                &self.graph,
-                &self.weights,
-                capacity,
+        let mut price = SequencePrice {
+            fixed: self.device().profile()?.graph_headroom_bytes(),
+            per_token: F32,
+        };
+        price = price.combine(program_price(
+            &self.graph,
+            &self.weights,
+            hidden,
+            vocabulary,
+            readout,
+            ProgramGeometry::new(&self.weights, private_verification),
+        )?)?;
+        if let Some(draft) = &self.draft {
+            // Draft priming retains a prefill arena and always captures private verification.
+            price = price.combine(program_price(
+                &draft.graph,
+                &draft.weights,
                 hidden,
                 vocabulary,
                 readout,
-                ProgramGeometry::new(&self.weights, private_verification),
-            )?,
-        )?;
-        if let Some(draft) = &self.draft {
-            // Draft priming has a prefill arena even though draft decode runs one token at a time.
-            bytes = add(
-                bytes,
-                program(
-                    &draft.graph,
-                    &draft.weights,
-                    capacity,
-                    hidden,
-                    vocabulary,
-                    readout,
-                    // LoadedModel::draft always captures a private program.
-                    ProgramGeometry::new(&draft.weights, true),
-                )?,
-            )?;
+                ProgramGeometry::new(&draft.weights, true),
+            )?)?;
         }
-        add(bytes, mul(capacity, F32)?)
+        Ok(price)
     }
 
     /// KV bytes one block of `KV_BLOCK_TOKENS` positions occupies across every attention
@@ -106,19 +152,19 @@ fn kv_block_bytes(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64
 }
 
 /// Per-program admission: activation arenas, KV pages, projection workspaces and readout staging.
-fn program(
+fn program_price(
     graph: &DataflowGraph,
     weights: &ProgramWeights,
-    capacity: u64,
     hidden: usize,
     vocabulary: usize,
     readout: OutputReadout,
     geometry: ProgramGeometry,
-) -> Result<u64> {
+) -> Result<SequencePrice> {
     let verify = geometry.verification as u64;
     let prompt = geometry.prompt_lanes() as u64;
     let lanes = geometry.arena_lanes();
     let mut bytes = 0;
+    let mut per_token = 0;
     bytes = add(bytes, attention_scratch(graph)?)?;
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
@@ -153,7 +199,8 @@ fn program(
                 } else {
                     F32
                 };
-                mul(mul(capacity, columns)?, 2 * size)?
+                per_token = add(per_token, mul(columns, 2 * size)?)?;
+                0
             }
             TensorStorage::State { .. } => mul(elements, mul(1 + verify, F32)?)?,
         };
@@ -181,12 +228,12 @@ fn program(
     bytes = add(bytes, mul(mul(readout_elements, readout_lanes)?, F32)?)?;
     if readout == OutputReadout::Full {
         // Full-history CPU readback and its returned copy are included in admission.
-        bytes = add(
-            bytes,
-            mul(mul(capacity, hidden as u64)?, READBACK_COPIES * F32)?,
-        )?;
+        per_token = add(per_token, mul(hidden as u64, READBACK_COPIES * F32)?)?;
     }
-    Ok(bytes)
+    Ok(SequencePrice {
+        fixed: bytes,
+        per_token,
+    })
 }
 /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
 /// Charge the supported upper bound (16 partitions), independent of device tuning.

@@ -108,6 +108,7 @@ pub struct LoadedModel {
     automatic_prefill: bool,
     tuning: TuningReport,
     requirements: infer_ir::CapabilityRequirements,
+    sequence_prices: budget::SequencePrices,
 }
 
 /// Vision tower bound alongside the text model.
@@ -301,6 +302,7 @@ impl LoadedModel {
             automatic_prefill,
             tuning,
             requirements,
+            sequence_prices: budget::SequencePrices::default(),
         })
     }
     /// Provider-imported description of this model, including its modalities.

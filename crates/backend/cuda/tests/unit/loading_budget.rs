@@ -178,15 +178,15 @@ fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Re
     weights.narrow_prefill_width = 64;
     let graph = activation_graph(48)?;
     let quote = |private| {
-        program(
+        program_price(
             &graph,
             &weights,
-            256,
             48,
             48,
             OutputReadout::Logits,
             ProgramGeometry::new(&weights, private),
-        )
+        )?
+        .at(256)
     };
     // Two live F32 activation rows per graph lane; external rows retain their configured
     // allocation, and prompt readback stages only its final row.
@@ -207,15 +207,15 @@ fn pooled_admission_keeps_verification_required_by_prompt_fallback() -> Result<(
     weights.prefill_width = 3;
     let graph = activation_graph(48)?;
     let quote = |private| {
-        program(
+        program_price(
             &graph,
             &weights,
-            256,
             48,
             48,
             OutputReadout::Logits,
             ProgramGeometry::new(&weights, private),
-        )
+        )?
+        .at(256)
     };
     // Without a prompt graph, prefill uses the private verification graph even when the
     // caller requests pooled decode; its activations and readback must remain charged.
@@ -227,3 +227,79 @@ fn pooled_admission_keeps_verification_required_by_prompt_fallback() -> Result<(
 
 #[path = "loading_budget_recurrent.rs"]
 mod recurrent;
+
+#[test]
+fn affine_admission_rejects_both_product_and_total_overflow() {
+    let price = SequencePrice {
+        fixed: 1,
+        per_token: u64::MAX / 2,
+    };
+    assert_eq!(price.at(2).unwrap(), u64::MAX);
+    assert!(price.at(3).is_err());
+    assert!(SequencePrice { fixed: 2, ..price }.at(2).is_err());
+    assert!(
+        price
+            .combine(SequencePrice {
+                fixed: 0,
+                per_token: u64::MAX
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn affine_admission_counts_fp8_and_f32_kv_and_full_history() -> Result<()> {
+    let mut weights = fixture_weights();
+    let graph = activation_graph(48)?;
+    let mut with_kv = graph.clone();
+    for (id, columns) in [(4, 128), (5, 256)] {
+        with_kv.tensors.push(TensorSpec {
+            id: TensorId::new(id)?,
+            shape: vec![64, columns],
+            dtype: DType::F32,
+            storage: TensorStorage::State {
+                layer: usize::try_from(id).expect("small fixture layer"),
+                kind: StateKind::AttentionKv,
+            },
+        });
+    }
+    weights.kv_scales.insert(TensorId::new(4)?, [1.0, 1.0]);
+    for private in [true, false] {
+        let base = program_price(
+            &graph,
+            &weights,
+            48,
+            48,
+            OutputReadout::Logits,
+            ProgramGeometry::new(&weights, private),
+        )?
+        .at(1)?;
+        for readout in [
+            OutputReadout::None,
+            OutputReadout::Logits,
+            OutputReadout::Full,
+        ] {
+            let price = program_price(
+                &with_kv,
+                &weights,
+                48,
+                48,
+                readout,
+                ProgramGeometry::new(&weights, private),
+            )?;
+            // Key and value storage: one FP8 and one F32 state. Full history adds
+            // a device staging copy and a host copy for each 48-element row.
+            let growth = 2 * (128 + 256 * F32)
+                + if readout == OutputReadout::Full {
+                    48 * READBACK_COPIES * F32
+                } else {
+                    0
+                };
+            for power in 0..=15 {
+                let capacity = 1_u64 << power;
+                assert_eq!(price.at(capacity)?, base + growth * capacity);
+            }
+        }
+    }
+    Ok(())
+}
