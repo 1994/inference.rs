@@ -1,5 +1,6 @@
 //! Independent host F64 scalar recurrence, from original F32 inputs.
 use super::{CHUNK_ROWS, MAX_F64_ERROR, MAX_LANES, SHAPE_RANK, SUPPORTED_DIMS};
+use crate::constants::METADATA_FIELDS;
 use infer_core::{Error, Result};
 
 const FIXTURE_OFFSET: usize = 3;
@@ -19,7 +20,7 @@ const SOFTPLUS_LINEAR_THRESHOLD: f64 = 20.0;
 
 pub(super) struct Fixture {
     pub shape: [usize; SHAPE_RANK],
-    pub metadata: [i32; 4],
+    pub metadata: [i32; METADATA_FIELDS],
     pub qkv: Vec<f32>,
     pub beta: Vec<f32>,
     pub alpha: Vec<f32>,
@@ -55,7 +56,7 @@ impl Fixture {
     pub fn new_case(
         shape: [usize; SHAPE_RANK],
         correlated: bool,
-        metadata: [i32; 4],
+        metadata: [i32; METADATA_FIELDS],
     ) -> Result<Self> {
         let [kh, vh, dim, lanes] = shape;
         if kh == 0
@@ -184,7 +185,7 @@ pub(super) fn maximum_error(actual: &[f32], expected: &[f64]) -> Result<f64> {
     Ok(error)
 }
 
-fn active(lane: usize, metadata: [i32; 4]) -> Result<bool> {
+fn active(lane: usize, metadata: [i32; METADATA_FIELDS]) -> Result<bool> {
     let lane = i32::try_from(lane).map_err(|_| Error::invalid("reference lane"))?;
     Ok(lane < metadata[1] && metadata[0] + lane + metadata[2] >= 0)
 }

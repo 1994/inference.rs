@@ -357,11 +357,6 @@
     },
     {
       "crate": "cuda",
-      "file": "src/resident/attention_oxide.rs",
-      "mount": "../../tests/unit/resident_attention_oxide_resources.rs"
-    },
-    {
-      "crate": "cuda",
       "file": "src/resident/attention_prefill.rs",
       "mount": "../../tests/unit/resident_attention_prefill.rs"
     },
@@ -507,11 +502,6 @@
     },
     {
       "crate": "cuda",
-      "file": "src/tuning/attention/exact.rs",
-      "mount": "../../../tests/unit/tuning_attention_exact.rs"
-    },
-    {
-      "crate": "cuda",
       "file": "src/tuning/attention.rs",
       "mount": "../../tests/unit/tuning_attention.rs"
     },
@@ -529,11 +519,6 @@
       "crate": "cuda",
       "file": "src/tuning/greedy.rs",
       "mount": "../../tests/unit/tuning_greedy.rs"
-    },
-    {
-      "crate": "cuda",
-      "file": "src/tuning/recurrent/exact.rs",
-      "mount": "../../../tests/unit/tuning_recurrent_exact.rs"
     },
     {
       "crate": "cuda",

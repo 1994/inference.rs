@@ -3,7 +3,7 @@
   "toolchain": "nightly-2026-10-11",
   "target": "sm_120",
   "command": "cargo oxide build --arch sm_120 --no-fmad",
-  "source_sha256": "93af5312ad4c15a8b290662b9b9472ec6850cbd105298e5bacf0b47cfe246a5b",
+  "source_sha256": "1e00b85072bd59ff3a5f63084111e72cf0cf2a84433ebd0bff9fd05681213160",
   "ptx_sha256": "a713e46e1fd33b9bb2cde2733b204d01fdc03f1d5414219202bee703135b66a1",
   "numeric_evidence": "/home/r/benchmarks/inference.rs/cuda-oxide-attention-2026-10-15/turn-result-v2.json",
   "compiler_backend_sha256": "686379cccd2d03d6b582279627c6091704a15e9037b0d0004833a319aa27e015"

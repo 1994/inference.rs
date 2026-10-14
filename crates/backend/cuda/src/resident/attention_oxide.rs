@@ -17,6 +17,8 @@ const HEADS: usize = 24;
 const KV_HEADS: usize = 4;
 const DIM: usize = 256;
 const THREADS: u32 = 256;
+const SUPPORTED_LANES: [usize; 3] = [64, 256, 512];
+const REQUIRED_METADATA_FIELDS: usize = 3;
 
 pub struct Support {
     function: Arc<Function>,
@@ -84,7 +86,7 @@ impl Support {
         scales: [f32; 2],
     ) -> std::result::Result<bool, DeviceError> {
         if (heads, kv_heads, dim) != (HEADS, KV_HEADS, DIM)
-            || ![64, 256, 512].contains(&lanes)
+            || !SUPPORTED_LANES.contains(&lanes)
             || E::DTYPE != cuda_core::f8e4m3fn::DTYPE
             || size_of::<E>() != 1
             || capacity == 0
@@ -104,7 +106,7 @@ impl Support {
             || !bindings.keys.is_contiguous()
             || !bindings.values.is_contiguous()
             || !bindings.metadata.is_contiguous()
-            || bindings.metadata.size() < 3
+            || bindings.metadata.size() < REQUIRED_METADATA_FIELDS
             || !bindings.table.is_contiguous()
             || bindings.table.size() == 0
         {

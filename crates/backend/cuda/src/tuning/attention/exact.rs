@@ -14,11 +14,14 @@ use std::{
 };
 
 const SCHEMA: &str = "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1";
+const SUPPORTED_GEOMETRY: (usize, usize, usize) = (24, 4, 256);
+const SUPPORTED_LANES: [usize; 2] = [64, 256];
+const SHA256_HEX_LEN: usize = 64;
 const TIMED_FIXTURES: [usize; 2] = [0, 1];
 
 fn supported(s: Shape) -> bool {
-    (s.heads, s.kv_heads, s.dim) == (24, 4, 256)
-        && [64, 256].contains(&s.lanes)
+    (s.heads, s.kv_heads, s.dim) == SUPPORTED_GEOMETRY
+        && SUPPORTED_LANES.contains(&s.lanes)
         && i32::try_from(s.window).is_ok()
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +54,7 @@ impl Entry {
         supported(self.key.shape)
             && self.key.schema == SCHEMA
             && !self.key.hardware.is_empty()
-            && self.key.fingerprint.len() == 64
+            && self.key.fingerprint.len() == SHA256_HEX_LEN
             && self.key.fingerprint.bytes().all(|c| c.is_ascii_hexdigit())
             && self.key.driver_build.as_ref().is_none_or(|s| !s.is_empty())
             && self.verified_fixtures == reference::FIXTURES

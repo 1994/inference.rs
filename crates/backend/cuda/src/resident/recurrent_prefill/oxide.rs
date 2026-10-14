@@ -14,6 +14,13 @@ const KH: usize = 16;
 const VH: usize = 48;
 const DIM: usize = 128;
 const BLOCK: usize = 8;
+const SHAPE_RANK: usize = 4;
+const GEOMETRY_RANK: usize = 3;
+const SUPPORTED_LANES: [usize; 2] = [64, 256];
+const STATE_SHAPE: [i32; 3] = [48, 128, 128];
+const REQUIRED_METADATA_FIELDS: usize = 3;
+const GRID_BLOCKS: u32 = 768;
+const THREADS: u32 = 128;
 const PTX: &str = include_str!("../../../kernels/oxide-gdn/gdn-sm120.ptx");
 pub struct Support {
     function: Arc<Function>,
@@ -33,12 +40,12 @@ impl Support {
     }
     pub(super) fn select(
         device: &CudaDevice,
-        shape: [usize; 4],
+        shape: [usize; SHAPE_RANK],
         autotune: bool,
         session: &crate::tuning::resident_gemm::ResidentTuningSession,
     ) -> Result<Option<Self>> {
-        if shape[..3] != [KH, VH, DIM]
-            || ![64, 256].contains(&shape[3])
+        if shape[..GEOMETRY_RANK] != [KH, VH, DIM]
+            || !SUPPORTED_LANES.contains(&shape[3])
             || device.profile()?.architecture != "sm_120"
         {
             return Ok(None);
@@ -136,14 +143,14 @@ pub(super) fn record(
     stream: usize,
     lanes: usize,
 ) -> std::result::Result<(), DeviceError> {
-    if ![64, 256].contains(&lanes)
-        || bindings.state.shape() != [48, 128, 128]
+    if !SUPPORTED_LANES.contains(&lanes)
+        || bindings.state.shape() != STATE_SHAPE
         || bindings.output.size() != VH * lanes * DIM
         || bindings.qkv.size() != lanes * (2 * KH + VH) * DIM
         || bindings.normalized.size() != lanes * 2 * KH * DIM
         || bindings.beta.size() != lanes * VH
         || bindings.decay.size() != lanes * VH
-        || bindings.metadata.size() < 3
+        || bindings.metadata.size() < REQUIRED_METADATA_FIELDS
         || ![
             &*bindings.state,
             &*bindings.output,
@@ -177,8 +184,8 @@ pub(super) fn record(
     }
     launch.push_arg(u32::try_from(lanes).map_err(|e| DeviceError::Internal(e.to_string()))?);
     launch.set_launch_config(LaunchConfig {
-        grid_dim: (768, 1, 1),
-        block_dim: (128, 1, 1),
+        grid_dim: (GRID_BLOCKS, 1, 1),
+        block_dim: (THREADS, 1, 1),
         shared_mem_bytes: 0,
     });
     scope.record(Recorded {

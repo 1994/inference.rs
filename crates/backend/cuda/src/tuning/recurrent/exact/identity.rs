@@ -1,5 +1,5 @@
 //! Actual native IR/compiler identity and embedded Rust device artifact identity.
-use super::super::reference::Fixture;
+use super::super::{SHAPE_RANK, reference::Fixture};
 use super::capture::Captured;
 use crate::device::CudaDevice;
 use infer_core::{Error, Result};
@@ -8,8 +8,8 @@ use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
 };
-type IdentityCache = Mutex<BTreeMap<([usize; 4], String), String>>;
-pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; 4]) -> Result<String> {
+type IdentityCache = Mutex<BTreeMap<([usize; SHAPE_RANK], String), String>>;
+pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; SHAPE_RANK]) -> Result<String> {
     use cutile::cutile_compiler::{cuda_tile_runtime_utils as compiler, hints::CompileOptions};
     static CACHE: OnceLock<IdentityCache> = OnceLock::new();
     let context = format!(

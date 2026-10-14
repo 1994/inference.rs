@@ -1,7 +1,7 @@
 //! Exact Rust SIMT prepared recurrence selected by measured hardware/shape evidence.
 mod capture;
 mod identity;
-use super::{Key, Times, reference::Fixture};
+use super::{CUDA_OPT_LEVEL, Key, SHAPE_RANK, Times, reference::Fixture};
 use crate::{
     device::{CudaDevice, device_error},
     resident::recurrent_prefill::oxide,
@@ -20,6 +20,17 @@ use std::{
     time::Duration,
 };
 const SCHEMA: &str = "rust-simt-sm120:gdn-f32-16-48-128:canonical-pred-readout:no-fma:original-prepare-transpose:bits-f64-abs2e-5:fixtures9:counts51-tail-full:cold-warm-ab-ba-v1";
+const KEY_HEADS: usize = 16;
+const VALUE_HEADS: usize = 48;
+const DIM: usize = 128;
+const GEOMETRY_RANK: usize = 3;
+const SUPPORTED_LANES: [usize; 2] = [64, 256];
+const SHA256_HEX_LEN: usize = 64;
+const SHORT_COUNT: i32 = 51;
+const OFFSET_COUNT: i32 = 52;
+const OFFSET_BASE: i32 = 17;
+const NEGATIVE_OFFSET: i32 = -18;
+const LATE_BASE: i32 = 128;
 const FIXTURES: usize = 9;
 const TIMED: [usize; 3] = [2, 3, 7];
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +63,7 @@ impl Entry {
         supported(self.key.shape)
             && self.key.schema == SCHEMA
             && !self.key.hardware.is_empty()
-            && self.key.kernel_fingerprint.len() == 64
+            && self.key.kernel_fingerprint.len() == SHA256_HEX_LEN
             && self
                 .key
                 .kernel_fingerprint
@@ -60,7 +71,8 @@ impl Entry {
                 .all(|c| c.is_ascii_hexdigit())
             && self.key.driver_build.as_ref().is_none_or(|s| !s.is_empty())
             && self.verified_fixtures == FIXTURES
-            && self.verified_elements == FIXTURES * (48 * 128 * 128 + self.key.shape[3] * 48 * 128)
+            && self.verified_elements
+                == FIXTURES * (VALUE_HEADS * DIM * DIM + self.key.shape[3] * VALUE_HEADS * DIM)
             && self.max_f64_error.is_finite()
             && (0.0..super::MAX_F64_ERROR).contains(&self.max_f64_error)
             && [&self.forward, &self.reverse].iter().all(|cases| {
@@ -78,8 +90,8 @@ impl Entry {
                     .all(Case::confirmed))
     }
 }
-fn supported(shape: [usize; 4]) -> bool {
-    shape[..3] == [16, 48, 128] && [64, 256].contains(&shape[3])
+fn supported(shape: [usize; SHAPE_RANK]) -> bool {
+    shape[..GEOMETRY_RANK] == [KEY_HEADS, VALUE_HEADS, DIM] && SUPPORTED_LANES.contains(&shape[3])
 }
 type Memo = Mutex<BTreeMap<Key, Entry>>;
 fn memo() -> &'static Memo {
@@ -88,7 +100,7 @@ fn memo() -> &'static Memo {
 }
 pub(crate) fn select(
     device: &CudaDevice,
-    shape: [usize; 4],
+    shape: [usize; SHAPE_RANK],
     autotune: bool,
     session: &ResidentTuningSession,
 ) -> bool {
@@ -105,7 +117,7 @@ pub(crate) fn select(
 }
 fn resolve(
     device: &CudaDevice,
-    shape: [usize; 4],
+    shape: [usize; SHAPE_RANK],
     autotune: bool,
     session: &ResidentTuningSession,
 ) -> Result<bool> {
@@ -181,16 +193,16 @@ fn resolve(
         .insert(key, entry);
     Ok(selected)
 }
-fn fixtures(shape: [usize; 4]) -> Result<Vec<Fixture>> {
+fn fixtures(shape: [usize; SHAPE_RANK]) -> Result<Vec<Fixture>> {
     let width = i32::try_from(shape[3]).map_err(device_error)?;
     let cases = [
         (false, [0, 0, 0, 0]),
         (false, [0, 1, 0, 0]),
-        (false, [0, 51, 0, 0]),
+        (false, [0, SHORT_COUNT, 0, 0]),
         (false, [0, width - 1, 0, 0]),
-        (false, [17, 52, -18, 0]),
+        (false, [OFFSET_BASE, OFFSET_COUNT, NEGATIVE_OFFSET, 0]),
         (false, [0, width, -1, 0]),
-        (false, [128, width, 0, 0]),
+        (false, [LATE_BASE, width, 0, 0]),
         (false, [0, width, 0, 0]),
         (true, [0, width, 0, 0]),
     ];
@@ -263,7 +275,10 @@ fn cases(
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
     let compile = cutile::cutile_compiler::hints::CompileOptions::default();
-    if cfg!(debug_assertions) || compile.device_debug || compile.opt_level.is_some_and(|x| x != 3) {
+    if cfg!(debug_assertions)
+        || compile.device_debug
+        || compile.opt_level.is_some_and(|x| x != CUDA_OPT_LEVEL)
+    {
         return Err(Error::invalid(
             "exact GDN tuning requires release and CUDA O3",
         ));
@@ -288,7 +303,7 @@ fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Resul
     };
     let entry = Entry {
         verified_fixtures: FIXTURES,
-        verified_elements: FIXTURES * (48 * 128 * 128 + key.shape[3] * 48 * 128),
+        verified_elements: FIXTURES * (VALUE_HEADS * DIM * DIM + key.shape[3] * VALUE_HEADS * DIM),
         rust_simt: forward.iter().chain(&reverse).all(Case::confirmed),
         key,
         max_f64_error,

@@ -1,5 +1,6 @@
 //! Complete prepared recurrence captures, including original transpose and state reset.
 use super::super::reference::{Fixture, maximum_error};
+use crate::constants::METADATA_FIELDS;
 use crate::{
     device::{CudaDevice, device_error},
     resident::recurrent_prefill::{kernels, oxide},
@@ -9,6 +10,7 @@ use infer_core::{Error, Result};
 const KH: usize = 16;
 const VH: usize = 48;
 const DIM: usize = 128;
+const NATIVE_VALUE_COLUMNS: usize = 16;
 fn zeros(device: &CudaDevice, shape: &[usize]) -> Result<Tensor<f32>> {
     api::zeros::<f32>(shape)
         .sync_on(&device.stream)
@@ -39,7 +41,7 @@ impl Captured {
             alpha: device.upload(f.alpha.clone(), &[width, VH])?,
             a_log: device.upload(f.a_log.clone(), &[VH])?,
             bias: device.upload(f.bias.clone(), &[VH])?,
-            metadata: device.upload(f.metadata.to_vec(), &[4])?,
+            metadata: device.upload(f.metadata.to_vec(), &[METADATA_FIELDS])?,
             initial: device.upload(f.initial.clone(), &[VH, DIM, DIM])?,
             normalized: zeros(device, &[width, 2 * KH, DIM])?,
             betas: zeros(device, &[width, VH])?,
@@ -87,8 +89,8 @@ impl Captured {
             } else {
                 scope.record(
                     kernels::delta_precomputed(
-                        (&mut self.state).partition([1, DIM, 16]),
-                        (&mut self.scratch).partition([1, width, 16]),
+                        (&mut self.state).partition([1, DIM, NATIVE_VALUE_COLUMNS]),
+                        (&mut self.scratch).partition([1, width, NATIVE_VALUE_COLUMNS]),
                         &self.qkv,
                         &self.normalized,
                         &self.betas,
@@ -130,8 +132,8 @@ impl Captured {
             .l2_cache_key_on(&device.stream)
             .map_err(device_error)?,
             kernels::delta_precomputed(
-                (&mut self.state).partition([1, DIM, 16]),
-                (&mut self.scratch).partition([1, width, 16]),
+                (&mut self.state).partition([1, DIM, NATIVE_VALUE_COLUMNS]),
+                (&mut self.scratch).partition([1, width, NATIVE_VALUE_COLUMNS]),
                 &self.qkv,
                 &self.normalized,
                 &self.betas,
