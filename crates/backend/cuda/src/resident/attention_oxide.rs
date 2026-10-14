@@ -141,7 +141,7 @@ impl Support {
         scope.record(Recorded {
             launch,
             stream: self.stream,
-            _bindings: bindings,
+            bindings,
         })?;
         #[cfg(test)]
         CAPTURES.set(CAPTURES.get() + 1);
@@ -152,7 +152,7 @@ impl Support {
 struct Recorded<'a, E: DType> {
     launch: AsyncKernelLaunch,
     stream: usize,
-    _bindings: Bindings<'a, E>,
+    bindings: Bindings<'a, E>,
 }
 impl<E: DType> GraphNode for Recorded<'_, E> {}
 #[expect(
@@ -167,6 +167,12 @@ impl<E: DType> DeviceOp for Recorded<'_, E> {
                 "Rust attention stream mismatch".into(),
             ));
         }
+        KernelInputStored::retain(&self.bindings.query, ctx)?;
+        KernelInputStored::retain(&self.bindings.keys, ctx)?;
+        KernelInputStored::retain(&self.bindings.values, ctx)?;
+        KernelInputStored::retain(&self.bindings.metadata, ctx)?;
+        KernelInputStored::retain(&self.bindings.table, ctx)?;
+        KernelOutputStored::retain(&(&mut *self.bindings.output).partition([1, DIM]), ctx)?;
         ctx.retain(Arc::clone(&self.launch.func))?;
         // SAFETY: the stream was checked, all buffers remain owned by the program and the module is retained.
         unsafe { self.launch.execute(ctx) }
@@ -223,3 +229,7 @@ pub fn artifact_identity() -> &'static str {
         )
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_attention_oxide_resources.rs"]
+mod resources_tests;
