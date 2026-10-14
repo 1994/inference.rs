@@ -554,3 +554,7 @@ mod pool_gemv_model_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_pool_greedy_lifecycle.rs"]
 mod pool_greedy_lifecycle_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_oxide_attention.rs"]
+mod oxide_attention_tests;

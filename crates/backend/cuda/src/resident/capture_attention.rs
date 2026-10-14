@@ -115,10 +115,7 @@ impl Capture<'_> {
     ) -> AttentionResult<E> {
         use super::attention_prefill::kernels;
         let TensorOp::Attention {
-            query_heads,
-            kv_heads,
-            head_dim,
-            window,
+            kv_heads, head_dim, ..
         } = node.op
         else {
             return Err(error("expected attention"));
@@ -149,7 +146,52 @@ impl Capture<'_> {
                 crate::constants::KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
+        self.record_prefill_decode(node, output, keys, values, scales)
+    }
+
+    fn record_prefill_decode<E: DType>(
+        &self,
+        node: &TensorNode,
+        output: Tensor<f32>,
+        keys: Tensor<E>,
+        values: Tensor<E>,
+        scales: [f32; 2],
+    ) -> AttentionResult<E> {
+        use super::attention_prefill::kernels;
+        let TensorOp::Attention {
+            query_heads,
+            kv_heads,
+            head_dim,
+            window,
+        } = node.op
+        else {
+            return Err(error("expected attention"));
+        };
+        let lanes = self.arena.lanes();
         let mut output = output.reshape(&[lanes * query_heads, head_dim])?;
+        let query = if let Some(value) = self.weights.constants.get(&node.inputs[0]) {
+            value
+        } else {
+            self.arena.get(node.inputs[0]).map_err(error)?
+        };
+        if let Some(oxide) = &self.attention.oxide
+            && oxide.record(
+                self.scope,
+                super::attention_oxide::Bindings {
+                    output: &mut output,
+                    query,
+                    keys: &keys,
+                    values: &values,
+                    metadata: self.metadata,
+                    table: self.table,
+                },
+                (query_heads, kv_heads, head_dim, lanes, self.capacity),
+                i32::try_from(window.unwrap_or(0)).map_err(error)?,
+                scales,
+            )?
+        {
+            return Ok((output, keys, values));
+        }
         // Query/head axes remain separate so each CTA addresses its own KV head.
         // Selection was measured and independently checked before graph capture.
         if let Some(query_tile) = self.attention.prefill_query_tile(

@@ -18,6 +18,7 @@ struct Buffers {
 }
 
 pub struct Workspace {
+    pub(in crate::resident) oxide: Option<super::super::attention_oxide::Support>,
     #[cfg(test)]
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
@@ -83,6 +84,7 @@ impl Workspace {
         Ok(Self {
             #[cfg(test)]
             taps: taps::Taps::default(),
+            oxide: super::super::attention_oxide::Support::prepare(device, graph)?,
             buffers,
             prefill: BTreeMap::new(),
         })
