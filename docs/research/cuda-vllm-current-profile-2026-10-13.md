@@ -747,3 +747,65 @@ unit0的batch4-repeat1-slot1、unit2的同输入和repeat2-slot1三条尚未匹�
 和实际状态路径重放，区分布局数值、迁移和调度，避免未经定位继续更改算术。
 [完整数值、性能、失败与逐序列census](artifacts/cuda-gdn-bf16-joint-2026-10-14.json)；
 [可审阅实验补丁，未合入runtime](artifacts/cuda-gdn-bf16-joint-prototype-2026-10-14.patch)。
+
+
+## 2026-10-14：完整重放定位首次路由，兼容活动请求原型消除冻结场景差异
+
+上轮三条未匹配的输出集中于 batch4-repeat1-slot1 的两次进程和
+repeat2-slot1 的一次进程。新两组、四进程 host 诊断将实际 request/state/slot
+关联：原 scalar 的 repeat2-slot1 在位置52与三个prefill任务同组，执行private；
+位置53起pooled，其完整64-token序列与此前候选的一条差异序列一致。
+源码run_grouped只合并连续eligible decode段，未绑定的普通decode段不足两条
+会退出slot分配并执行private。已有pool在load时捕获，故这里是准入条件的
+路由选择，不是新联合投影算术本身的数值证明。
+
+随后用原自动prefill配置、私有请求116/实际容量128、pooled容量8192，
+对上述两个实际52-token输入做完整64-token贪心重放。两种历史分别为直接
+pooled，以及先private一步再逐位复制迁入pooled；每种在两个不同物理slot
+重复。对相同初始状态和相同历史，原96MMA与48联合MMA的500次完整
+hidden/logits、504次完整F32state/FP8KV比较全部逐位一致；16次迁移检查
+的完整F32与有效FP8也无差异，物理slot位置不改变该历史的64-token序列。
+两种历史首个token差异分别在index20和12。全部三条此前未匹配候选的
+完整64-token输出均匹配private一步历史，配对原native均匹配直接pooled。
+这是受控干预和完整序列复现；原无profiler记录没有初始路由日志，不能
+倒推为已记录了其实际历史，也没有豁免原12/105输出门槛失败。
+
+隔离release原型使一个ready decode在存在其他兼容活动Logits状态时也可bind
+到已捕获pool，包含其余请求还在prefill的情况。poisoned和非Logits状态不作为兼容peer，未绑定的超容量状态也排除；
+已持有slot的状态视为兼容。只有一个兼容活动状态仍用原private路径，已有slot lease
+在peer结束后继续pooled。两个控制源都用同一路由规则，一个保留原96MMA，
+一个执行48联合MMA；没有用户算法开关，原精度、KVsplit和GDN未变。
+两边严格release Clippy/CLI构建成功。两组host诊断42条配对输出全部相同；
+每边unit0与unit1的21条同输入输出也全部相同。全部48条batch4诊断stream
+从首次decode就pooled；36条单请求stream没有pooled decode。该诊断不作计时验收，
+late arrival、异构长度/不兼容peer与持续混合负载仍待验证。
+
+再完成无profiler的五组、十个独立进程，原四场景、输入/tuning、三次测量重复、
+64输出、MTP0、65536context、prefix cache与原门槛不变。每边105条stream
+全部完成，配对输出差异为零，每边unit0与后四进程的84项同输入比较也全相同。
+batch4 TPOT进程中位数18.875866→17.911129ms，约下降5.11%；配对速度
+1.05606，95%区间1.05379–1.05716，原有下界1.02门槛通过。
+整体完成时间1377.713982→1317.443578ms；配对速度1.04766，
+区间1.04395–1.05323。这是相同实验路由下联合投影的隔离服务对照；
+当前main原始router的12条失败及质量参考仍保留，不以新控制替换。
+
+整体仍未准入：short TTFT控制/候选进程中位数44.376119/47.287863ms，
+配对速度中位数0.93843，即候选配对中位数约慢6.56%，超过原5%门槛。
+其控制进程漂移17.05%，hot_long候选漂移12.37%，超过10%。其余TPOT和
+整体时间没有>5%的配对中位数回退；短请求总完成时间稳定不能代替TTFT。
+没有删样本、改变门槛或据private代码未改就把回退认定为无害噪声。
+本原型的完整256题单请求/并发质量、主分支native和固定vLLM对照尚未完成。
+
+为定位TTFT，在独立构建复用已有INFER_CUDA_EXECUTION_PROFILE，增加state
+reserve、prefix reuse生命周期，以及执行和客户端起止UTC。两个版本Clippy/
+release构建通过，按相反启动顺序完成两组诊断。生命周期span不记录成功，
+不能把span结束单独当成功证据。单请求36个样本的时间分解闭合误差最大约
+3.06us；batch4共享组时间不能独占归因到某请求，未进入单请求分解。
+
+short的prefill执行中位数控制36.241、候选36.405ms，接近；客户端请求到reserve
+开始为3.352/4.152ms，reserve本身2.333/2.509ms。hot_long reserve为2.190/3.112ms，
+prefix reuse为1.145/1.569ms。各阶段中位数不可直接相加当总TTFT，原逐请求
+记录与闭合残差均保留。日志会改变调度，这些结果只支持下一步细分准入/准备
+过程，不能替代未插桩的5%回退和10%漂移门槛。main默认仍未切换。
+[受控重放、原型路由、完整服务失败和TTFT边界证据](artifacts/cuda-gdn-cohort-route-replay-2026-10-14.json)；
+[可审阅路由原型补丁，未合入runtime](artifacts/cuda-gdn-cohort-router-prototype-2026-10-14.patch)。

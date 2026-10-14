@@ -1,0 +1,954 @@
+{
+  "schema": 1,
+  "parent": "9a56bb214f757fac34500716160d2a9c7e52df89",
+  "scope": "actual request routing diagnostic and full64 controlled reproduction; cohortroute experimental default code plus105unprofiled pairedstreams; output equality restored in frozen cases, overall qualification still fails shortTTFT regression/drift; main runtime unchanged",
+  "roots": {
+    "route_trace": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-request-route-profile-v1",
+    "controlled_replay": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-route-replay-v1",
+    "cohort": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1",
+    "TTFT": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-ttft-boundary-profile-v1"
+  },
+  "cause_evidence": {
+    "observed": "u0 originalscalar request22 repeat2slot1 atposition52 grouped withthreeprefills, no assignedslot; nextposition53 pooled",
+    "source": "run_grouped partitions consecutiveeligibledeocodes, execute_slot_segment refusesinitialsingleton whenverify absent",
+    "precision_discontinuity": "existing privateF32 GEMV andpooledtwo-BF16smallMMA pluscapacity128vs8192 KVsplit; not changed in thisturn",
+    "scope": "controlled histories fully reproduce three earlierunmatchedstreams; unprofiled original runs lackroute logs, so their exactinitialhistories cannot be retroactively verified"
+  },
+  "controlled": {
+    "outputs": 500,
+    "states": 504,
+    "old_vs_joint_differences": 0,
+    "migration_checks": 16,
+    "histories": [
+      "directpool",
+      "oneprivatefirst"
+    ],
+    "row_invariance": [
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "steps": 63,
+    "fulltokens": 64,
+    "summaries": [
+      {
+        "MMA_launches": 48,
+        "case": "batch4-repeat1-slot1",
+        "direct_tokens": [
+          623,
+          6278,
+          19670,
+          11106,
+          4744,
+          318,
+          3950,
+          44,
+          8,
+          42903,
+          11,
+          279,
+          5839,
+          84810,
+          369,
+          524,
+          12204,
+          318,
+          37,
+          1537,
+          4851,
+          8,
+          694,
+          2972,
+          16759,
+          32288,
+          332,
+          321,
+          2972,
+          16759,
+          8390,
+          159034,
+          733,
+          2133,
+          20459,
+          318,
+          4650,
+          343,
+          3950,
+          44,
+          11,
+          25204,
+          5182,
+          12,
+          3950,
+          44,
+          11,
+          466,
+          326,
+          3697,
+          512,
+          8,
+          28476,
+          364,
+          61610,
+          539,
+          17610,
+          1204,
+          7154,
+          513,
+          38710,
+          318,
+          13646,
+          286
+        ],
+        "first_route_difference": 20,
+        "joint_history_summary": true,
+        "old_vs_joint_all_states_and_outputs_identical": true,
+        "pooled_capacity": 8192,
+        "private_capacity": 128,
+        "private_first_tokens": [
+          623,
+          6278,
+          19670,
+          11106,
+          4744,
+          318,
+          3950,
+          44,
+          8,
+          42903,
+          11,
+          279,
+          5839,
+          84810,
+          369,
+          524,
+          12204,
+          318,
+          37,
+          1537,
+          19797,
+          8,
+          694,
+          2972,
+          16759,
+          32288,
+          332,
+          321,
+          2972,
+          16759,
+          8390,
+          159034,
+          1061,
+          369,
+          1521,
+          436,
+          10673,
+          42903,
+          369,
+          28731,
+          539,
+          279,
+          2972,
+          66983,
+          332,
+          16456,
+          321,
+          279,
+          2972,
+          1536,
+          12,
+          1094,
+          318,
+          79852,
+          8,
+          18887,
+          93868,
+          864,
+          513,
+          4779,
+          48184,
+          7289,
+          4598,
+          1056
+        ],
+        "production_admitted": false,
+        "real_stream_matches": [
+          {
+            "full64_direct_match": true,
+            "full64_private_first_match": false,
+            "reference": "formal-u0-scalar"
+          },
+          {
+            "full64_direct_match": false,
+            "full64_private_first_match": true,
+            "reference": "formal-u0-candidate"
+          },
+          {
+            "full64_direct_match": true,
+            "full64_private_first_match": false,
+            "reference": "formal-u2-scalar"
+          },
+          {
+            "full64_direct_match": false,
+            "full64_private_first_match": true,
+            "reference": "formal-u2-candidate"
+          }
+        ]
+      },
+      {
+        "MMA_launches": 48,
+        "case": "batch4-repeat2-slot1",
+        "direct_tokens": [
+          623,
+          6278,
+          19670,
+          11106,
+          4744,
+          318,
+          3950,
+          44,
+          8,
+          42903,
+          11,
+          279,
+          5839,
+          84810,
+          369,
+          524,
+          12204,
+          318,
+          37,
+          1537,
+          4851,
+          8,
+          694,
+          2972,
+          16759,
+          32288,
+          332,
+          321,
+          2972,
+          16759,
+          8390,
+          159034,
+          1061,
+          369,
+          1521,
+          436,
+          10673,
+          42903,
+          369,
+          28731,
+          539,
+          279,
+          2972,
+          66983,
+          332,
+          321,
+          2972,
+          6479,
+          56727,
+          1633,
+          332,
+          7289,
+          11,
+          864,
+          1325,
+          8019,
+          10632,
+          13914,
+          321,
+          5141,
+          12,
+          1094,
+          318,
+          79852
+        ],
+        "first_route_difference": 12,
+        "joint_history_summary": true,
+        "old_vs_joint_all_states_and_outputs_identical": true,
+        "pooled_capacity": 8192,
+        "private_capacity": 128,
+        "private_first_tokens": [
+          623,
+          6278,
+          19670,
+          11106,
+          4744,
+          318,
+          3950,
+          44,
+          8,
+          42903,
+          11,
+          279,
+          84810,
+          369,
+          17967,
+          12204,
+          318,
+          37,
+          1537,
+          19797,
+          8,
+          694,
+          4598,
+          2972,
+          16759,
+          32288,
+          332,
+          321,
+          2972,
+          16759,
+          8390,
+          159034,
+          1061,
+          369,
+          1521,
+          436,
+          10673,
+          42903,
+          369,
+          28731,
+          539,
+          279,
+          2972,
+          31489,
+          9956,
+          93868,
+          1332,
+          1754,
+          3817,
+          9191,
+          7225,
+          8019,
+          279,
+          4307,
+          1558,
+          13914,
+          321,
+          279,
+          5141,
+          12,
+          1094,
+          318,
+          79852,
+          8
+        ],
+        "production_admitted": false,
+        "real_stream_matches": [
+          {
+            "full64_direct_match": true,
+            "full64_private_first_match": false,
+            "reference": "formal-u2-scalar"
+          },
+          {
+            "full64_direct_match": false,
+            "full64_private_first_match": true,
+            "reference": "formal-u2-candidate"
+          }
+        ]
+      }
+    ],
+    "binary": "63c95f43921626a4fd28858303b7d25a94787f03e87550e340ed33804784fd6c",
+    "scope": "twoactual inputs completecontrolled numericalandstreamreplay; noqualificationgatewaiver"
+  },
+  "cohort_prototype": {
+    "behavior": "readydecode maybindsingleton whileanothercompatibleactiveLogitsstate exists, includingprefillingpeer; solecompatible state retainsprivatepath; existinglease retainedafterpeersfinish",
+    "no_user_algorithm_switch": true,
+    "late_arrival_not_certified": true,
+    "router_patch_sha256": "4e83a1353b5994711dcb64d1d5989dc90624443bda571f258410c95a3d01394d",
+    "profiled_consistency": {
+      "rows": [
+        {
+          "unit": 0,
+          "arm": "control",
+          "batch4_streams": 12,
+          "batch4_private_decodes": 0,
+          "single_streams": 9,
+          "single_pooled_decodes": 0
+        },
+        {
+          "unit": 0,
+          "arm": "joint",
+          "batch4_streams": 12,
+          "batch4_private_decodes": 0,
+          "single_streams": 9,
+          "single_pooled_decodes": 0
+        },
+        {
+          "unit": 1,
+          "arm": "control",
+          "batch4_streams": 12,
+          "batch4_private_decodes": 0,
+          "single_streams": 9,
+          "single_pooled_decodes": 0
+        },
+        {
+          "unit": 1,
+          "arm": "joint",
+          "batch4_streams": 12,
+          "batch4_private_decodes": 0,
+          "single_streams": 9,
+          "single_pooled_decodes": 0
+        }
+      ],
+      "paired_streams": 42,
+      "paired_differences": 0,
+      "within_arm_cross_process_differences": {
+        "control": 0,
+        "joint": 0
+      },
+      "scope": "host diagnostic only; 4frozen cases; latearrivals/quality/sustainedload pending",
+      "original_gate_failures_not_waived": true
+    },
+    "peer_rule": "not poisoned, Logits, and either capacity fits pool or already holds a slot; unbound overcapacity andnonLogits peers excluded"
+  },
+  "serving": {
+    "comparison": "newexperimental cohortrouter original96MMA control vs samecohortrouter prepared48jointMMA; distinct from originalmainbaseline",
+    "streams_per_arm": 105,
+    "paired_mismatches": 0,
+    "cross_process_differences": {
+      "control": 0,
+      "joint": 0
+    },
+    "stream_defects": [],
+    "metrics": [
+      {
+        "case": "short",
+        "metric": "ttft_ms",
+        "control_median_ms": 44.376118981745094,
+        "joint_median_ms": 47.28786298073828,
+        "speedup": {
+          "median": 0.9384251303515402,
+          "ci95": [
+            0.8996256539098315,
+            1.076796626027597
+          ],
+          "units": [
+            1.076796626027597,
+            0.9769955222731126,
+            0.9113074097147852,
+            0.8996256539098315,
+            0.9384251303515402
+          ]
+        },
+        "regression_over5pct": true,
+        "does_not_exclude_5pct_regression_at95": true,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.17048303633306716,
+          "joint": 0.0904364986203865
+        },
+        "drift_at_most10pct": false
+      },
+      {
+        "case": "short",
+        "metric": "tpot_ms",
+        "control_median_ms": 15.679096380832592,
+        "joint_median_ms": 15.691949666241214,
+        "speedup": {
+          "median": 0.9997339560539915,
+          "ci95": [
+            0.9977142266091655,
+            1.0013239885551364
+          ],
+          "units": [
+            1.0003980228621687,
+            0.9997339560539915,
+            0.9977142266091655,
+            0.9978629817260113,
+            1.0013239885551364
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.0021983573319146466,
+          "joint": 0.004889212080432692
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "short",
+        "metric": "makespan_ms",
+        "control_median_ms": 1032.8507189988159,
+        "joint_median_ms": 1033.3006380242296,
+        "speedup": {
+          "median": 0.9974800037133572,
+          "ci95": [
+            0.9940852406152788,
+            1.003787704589206
+          ],
+          "units": [
+            1.003787704589206,
+            0.9974800037133572,
+            0.9940852406152788,
+            0.9959842020241296,
+            0.9995645807145982
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.0074002954574601265,
+          "joint": 0.006112284490417341
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "ttft_ms",
+        "control_median_ms": 236.3606150029227,
+        "joint_median_ms": 237.5675810035318,
+        "speedup": {
+          "median": 1.0089939944282629,
+          "ci95": [
+            0.982392525874184,
+            1.01193970715945
+          ],
+          "units": [
+            0.9929195178457048,
+            1.0089939944282629,
+            0.982392525874184,
+            1.01193970715945,
+            1.0101661710175085
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.021154441639359423,
+          "joint": 0.03249008998830161
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "tpot_ms",
+        "control_median_ms": 15.687931365045232,
+        "joint_median_ms": 15.678406634833664,
+        "speedup": {
+          "median": 0.9995506862124165,
+          "ci95": [
+            0.9964014279824787,
+            1.0029272243801979
+          ],
+          "units": [
+            0.9995506862124165,
+            1.002581458665636,
+            0.9994396573102617,
+            0.9964014279824787,
+            1.0029272243801979
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.004614823486393194,
+          "joint": 0.004073124451935639
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "long",
+        "metric": "makespan_ms",
+        "control_median_ms": 1225.793491001241,
+        "joint_median_ms": 1227.3345490102656,
+        "speedup": {
+          "median": 0.9991327091617929,
+          "ci95": [
+            0.9960594493196282,
+            1.0062323000520017
+          ],
+          "units": [
+            0.9969828068225881,
+            1.001783995039254,
+            0.9960594493196282,
+            0.9991327091617929,
+            1.0062323000520017
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.006847655669233621,
+          "joint": 0.008541422550166544
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "ttft_ms",
+        "control_median_ms": 180.30508200172335,
+        "joint_median_ms": 174.50048500904813,
+        "speedup": {
+          "median": 1.0256324978955627,
+          "ci95": [
+            0.9994124666917055,
+            1.0583729895548843
+          ],
+          "units": [
+            0.9994124666917055,
+            1.0126713654036148,
+            1.046927372747895,
+            1.0583729895548843,
+            1.0256324978955627
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.047050608796055604,
+          "joint": 0.03836198227142873
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "tpot_ms",
+        "control_median_ms": 18.8758656191307,
+        "joint_median_ms": 17.911128928452463,
+        "speedup": {
+          "median": 1.0560563863757877,
+          "ci95": [
+            1.05379483794267,
+            1.0571633356610617
+          ],
+          "units": [
+            1.0560563863757877,
+            1.0551058281146157,
+            1.0568489645647854,
+            1.05379483794267,
+            1.0571633356610617
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": true,
+        "process_drift": {
+          "control": 0.009886735433045857,
+          "joint": 0.008905135760712168
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "batch4",
+        "metric": "makespan_ms",
+        "control_median_ms": 1377.7139820158482,
+        "joint_median_ms": 1317.4435780383646,
+        "speedup": {
+          "median": 1.0476637219623763,
+          "ci95": [
+            1.0439510214494396,
+            1.0532346016486724
+          ],
+          "units": [
+            1.0439510214494396,
+            1.0476637219623763,
+            1.0532346016486724,
+            1.045667015808725,
+            1.0531645828508025
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": true,
+        "process_drift": {
+          "control": 0.019491368055659875,
+          "joint": 0.014166388195963941
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "hot_long",
+        "metric": "ttft_ms",
+        "control_median_ms": 70.0199719867669,
+        "joint_median_ms": 72.13415700243786,
+        "speedup": {
+          "median": 1.0075546873901369,
+          "ci95": [
+            0.9158813068498881,
+            1.0585521979249541
+          ],
+          "units": [
+            0.9546988925967383,
+            1.0585521979249541,
+            1.050817218754012,
+            1.0075546873901369,
+            0.9158813068498881
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": true,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.09946559864264848,
+          "joint": 0.12369866782640826
+        },
+        "drift_at_most10pct": false
+      },
+      {
+        "case": "hot_long",
+        "metric": "tpot_ms",
+        "control_median_ms": 16.23128120610047,
+        "joint_median_ms": 16.19930660337328,
+        "speedup": {
+          "median": 1.001121498678475,
+          "ci95": [
+            0.9981652016792618,
+            1.0047298962758928
+          ],
+          "units": [
+            0.9991128511881326,
+            1.0041879911073637,
+            0.9981652016792618,
+            1.001121498678475,
+            1.0047298962758928
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.005358240725682029,
+          "joint": 0.002627139357569197
+        },
+        "drift_at_most10pct": true
+      },
+      {
+        "case": "hot_long",
+        "metric": "makespan_ms",
+        "control_median_ms": 1091.6499169543386,
+        "joint_median_ms": 1092.35411696136,
+        "speedup": {
+          "median": 1.0011087814267576,
+          "ci95": [
+            0.9967741476747939,
+            1.0075567529692613
+          ],
+          "units": [
+            0.9967741476747939,
+            1.0075567529692613,
+            1.0012252225049412,
+            1.0011087814267576,
+            0.997912936015583
+          ]
+        },
+        "regression_over5pct": false,
+        "does_not_exclude_5pct_regression_at95": false,
+        "useful_gain_lower95_at_least1_02": false,
+        "process_drift": {
+          "control": 0.006845035541010791,
+          "joint": 0.006983409870997548
+        },
+        "drift_at_most10pct": true
+      }
+    ],
+    "failed_gates": {
+      "identical_streams": false,
+      "incomplete_streams": false,
+      "regression": true,
+      "process_drift": true,
+      "target_batch4_tpot_gain": false
+    },
+    "original_main_12_mismatches_still_failed": true,
+    "bootstrap": "exact empirical 5^5 resampling of five process paired ratios, median percentile95%",
+    "full_quality_and_sustainedload_pending": true
+  },
+  "TTFT_boundary": {
+    "instrumentation": "existing opt-in profile addsreserve/prefixspans andexecution UTC; client exactstart UTC; no math/route change; operation success not recorded",
+    "aggregate": [
+      {
+        "arm": "control",
+        "case": "short",
+        "samples": 6,
+        "ttft_median_ms": 43.21131596225314,
+        "stages_median_ms": {
+          "before_reserve_us": 3.352,
+          "reserve_us": 2.3325,
+          "prefix_reuse_us": 0.001,
+          "preparation_unattributed_us": 0.21,
+          "after_preparation_before_execute_us": 0.3645,
+          "prefill_execution_us": 36.241,
+          "between_chunks_us": 0.0,
+          "after_execute_to_first_client_token_us": 0.673125
+        },
+        "max_closure_error_us": 1.9419700056314468
+      },
+      {
+        "arm": "control",
+        "case": "long",
+        "samples": 6,
+        "ttft_median_ms": 236.39366548741236,
+        "stages_median_ms": {
+          "before_reserve_us": 4.368,
+          "reserve_us": 3.029,
+          "prefix_reuse_us": 0.0015,
+          "preparation_unattributed_us": 0.269,
+          "after_preparation_before_execute_us": 0.4665,
+          "prefill_execution_us": 228.563,
+          "between_chunks_us": 0.3965,
+          "after_execute_to_first_client_token_us": 0.8695
+        },
+        "max_closure_error_us": 2.9170076809823513
+      },
+      {
+        "arm": "control",
+        "case": "hot_long",
+        "samples": 6,
+        "ttft_median_ms": 68.6736524803564,
+        "stages_median_ms": {
+          "before_reserve_us": 2.9855,
+          "reserve_us": 2.1895,
+          "prefix_reuse_us": 1.1445,
+          "preparation_unattributed_us": 0.217,
+          "after_preparation_before_execute_us": 0.352,
+          "prefill_execution_us": 60.443,
+          "between_chunks_us": 0.0,
+          "after_execute_to_first_client_token_us": 0.757125
+        },
+        "max_closure_error_us": 2.0609813518822193
+      },
+      {
+        "arm": "joint",
+        "case": "short",
+        "samples": 6,
+        "ttft_median_ms": 44.50551950139925,
+        "stages_median_ms": {
+          "before_reserve_us": 4.1515,
+          "reserve_us": 2.5085,
+          "prefix_reuse_us": 0.0015,
+          "preparation_unattributed_us": 0.2765,
+          "after_preparation_before_execute_us": 0.4465,
+          "prefill_execution_us": 36.4045,
+          "between_chunks_us": 0.0,
+          "after_execute_to_first_client_token_us": 0.5645
+        },
+        "max_closure_error_us": 2.089012388139963
+      },
+      {
+        "arm": "joint",
+        "case": "long",
+        "samples": 6,
+        "ttft_median_ms": 239.99620499671437,
+        "stages_median_ms": {
+          "before_reserve_us": 5.612,
+          "reserve_us": 3.5625,
+          "prefix_reuse_us": 0.002,
+          "preparation_unattributed_us": 0.3185,
+          "after_preparation_before_execute_us": 0.486,
+          "prefill_execution_us": 228.817,
+          "between_chunks_us": 0.342,
+          "after_execute_to_first_client_token_us": 0.677125
+        },
+        "max_closure_error_us": 3.0510070137679577
+      },
+      {
+        "arm": "joint",
+        "case": "hot_long",
+        "samples": 6,
+        "ttft_median_ms": 69.265569007257,
+        "stages_median_ms": {
+          "before_reserve_us": 2.926,
+          "reserve_us": 3.1115,
+          "prefix_reuse_us": 1.569,
+          "preparation_unattributed_us": 0.407,
+          "after_preparation_before_execute_us": 0.607,
+          "prefill_execution_us": 60.6925,
+          "between_chunks_us": 0.0,
+          "after_execute_to_first_client_token_us": 0.645875
+        },
+        "max_closure_error_us": 1.9760125875473022
+      }
+    ],
+    "scope": "UTC aligned preparation/execution/client single-request diagnostic; host profiler and additional logging perturb timing; no performance acceptance or reassignment of unprofiled regression",
+    "group_attribution": "group wall time includes other requests and cannot be attributed as per-request compute",
+    "cannot_waive_unprofiled_regression": true
+  },
+  "binaries": {
+    "cohort-route-prototype-v1/control": "ac92665e993885fbe8ff275ec86982e4ac9fdf2834cde2480374b9157a1bda67",
+    "cohort-route-prototype-v1/joint": "073f1233e9c3a1ccf717bfc381ca65ae4e2ed0b46bc7abeb4cb596d7e7b8f508",
+    "cohort-ttft-boundary-profile-v1/control": "3c8c8efb27804ba5641c9850c522c15723bb58aea564f287b1520f61f44d2049",
+    "cohort-ttft-boundary-profile-v1/joint": "146dd6783a840ee57f9800e3863e4037db5f30848b40a75447c978b36dac5b43"
+  },
+  "raw": [
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-route-replay-v1/build-v1/result.json",
+      "sha256": "6da581df139887732e147c3648befd78c113790888a3aab1d92f734cdd5074c1"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-route-replay-v1/model-w0-full64-v1/result.json",
+      "sha256": "30c28cc186f1b8a3c42fa38669f90519d82d449c35bc9a46528334ab25b2d586"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-route-replay-v1/model-w0-full64-v1/events.json",
+      "sha256": "44162157296e3b84977c150e798c1634997293d7edad133142185e292b1824f3"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-route-replay-v1/cases.json",
+      "sha256": "6d99cae49e0350aa7f9961beda7d57eb20b27c1c0f9599aa2e4434ad6a67c080"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-request-route-profile-v1/analysis-v1.json",
+      "sha256": "e4e5cc019715cca9f8efe43c1aea5da9759e6145127bf17fb3e29422fedbf909"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/joint-request-route-profile-v1/formal-stream-observational-matches.json",
+      "sha256": "0e01cccca023205c9b1b8b501716b84e674b9e46bf5d54a3f22747adaccaf15f"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/plan.json",
+      "sha256": "b10a37f935b95b120a5df2f395e40a7dc75ee8aa46a604ba7d64d29ef4715574"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/cohort-router.patch",
+      "sha256": "4e83a1353b5994711dcb64d1d5989dc90624443bda571f258410c95a3d01394d"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/profile-v1/consistency-summary.json",
+      "sha256": "7eeaeca5f3999d5639e1dff9ae1ea0cdc3847cf1358bd9f76175c4c0a7f9c80a"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/paired-serving-v1/analysis-v1.json",
+      "sha256": "f53bad76d8735490ec13cf07be06aecf365c64a3b2082370e6cd866a39f4b811"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-ttft-boundary-profile-v1/plan.json",
+      "sha256": "39a67fb9a9fdd184edacc14f8ec2dc3b534d74534dc54160ec41e83ab5d415a8"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-ttft-boundary-profile-v1/profile-v1/boundary-analysis-v1.json",
+      "sha256": "c5ca54de84cc35416aa035988daab867629475fd56da8f62329cb73bea302dbb"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/control-cli-build-v1/result.json",
+      "sha256": "dc4bec8597283192984c2f391c7857f2562c11a8c22470e551afe714b01e4fa1"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-route-prototype-v1/joint-cli-build-v1/result.json",
+      "sha256": "e3a0b40ce843e5c5d11d79d3dee93ff8017eb40ac39a1ddc6888949542e079b3"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-ttft-boundary-profile-v1/control-cli-build-v1/result.json",
+      "sha256": "31ba840a081ca231d3232b999effff44f4998029cb02a831736f8c60349df0a5"
+    },
+    {
+      "path": "/home/r/benchmarks/inference.rs/gdn-recurrence-layout-2026-10-14/cohort-ttft-boundary-profile-v1/joint-cli-build-v1/result.json",
+      "sha256": "0271b682164bf9ad62e0e1d9853858ab001279dbba3d3a0eb3e74f01fc2974f0"
+    }
+  ],
+  "production_default_admitted": false,
+  "next": "profile queue/admission/reserve stage internals andvalidate latearrivals/incompatiblepeers; fullsingle/concurrentquality vs originalnativeandfixedvLLM, no>5%regressions/drift andsustainedload remainmandatory"
+}

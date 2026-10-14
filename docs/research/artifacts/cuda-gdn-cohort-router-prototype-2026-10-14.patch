@@ -1,0 +1,41 @@
+diff --git a/crates/backend/cuda/src/executor/execution.rs b/crates/backend/cuda/src/executor/execution.rs
+index c730b67..4bae94c 100644
+--- a/crates/backend/cuda/src/executor/execution.rs
++++ b/crates/backend/cuda/src/executor/execution.rs
+@@ -357,6 +357,23 @@ impl CudaBackend {
+         segment: std::ops::Range<usize>,
+         outputs: &mut [Option<TaskOutput>],
+     ) -> Result<Vec<usize>> {
++        let capacity = self
++            .slots
++            .as_ref()
++            .ok_or_else(|| Error::invariant("CUDA slot pool"))?
++            .capacity();
++        // A ready decode still joins its concurrent cohort when its peers are prefilling.
++        // Consecutive task ordering must not select private arithmetic for that first step.
++        let concurrent = self
++            .states
++            .values()
++            .filter(|state| {
++                !state.poisoned
++                    && state.readout == OutputReadout::Logits
++                    && (state.capacity <= capacity || state.slot.is_some())
++            })
++            .nth(1)
++            .is_some();
+         let pool = self
+             .slots
+             .as_mut()
+@@ -383,7 +400,11 @@ impl CudaBackend {
+             };
+             newly.push((index, slot));
+         }
+-        let minimum = if pool.verify().is_some() { 1 } else { 2 };
++        let minimum = if pool.verify().is_some() || concurrent {
++            1
++        } else {
++            2
++        };
+         if participants.is_empty() && newly.len() < minimum {
+             for (_, slot) in newly {
+                 pool.release(slot);
