@@ -18,12 +18,12 @@ const KV_HEADS: usize = 4;
 const DIM: usize = 256;
 const THREADS: u32 = 256;
 
-pub(super) struct Support {
+pub struct Support {
     function: Arc<Function>,
     stream: usize,
 }
 
-pub(super) struct Bindings<'a, E: DType> {
+pub struct Bindings<'a, E: DType> {
     pub output: &'a mut Tensor<f32>,
     pub query: &'a Tensor<f32>,
     pub keys: &'a Tensor<E>,
@@ -33,13 +33,13 @@ pub(super) struct Bindings<'a, E: DType> {
 }
 
 impl Support {
-    pub(super) fn prepare(device: &CudaDevice, graph: &DataflowGraph) -> Result<Option<Self>> {
+    pub(super) fn eligible(device: &CudaDevice, graph: &DataflowGraph) -> Result<bool> {
         #[cfg(test)]
         if DISABLED.get() {
-            return Ok(None);
+            return Ok(false);
         }
-        if device.profile()?.architecture != "sm_120"
-            || !graph.nodes.iter().any(|node| {
+        Ok(device.profile()?.architecture == "sm_120"
+            && graph.nodes.iter().any(|node| {
                 matches!(
                     node.op,
                     TensorOp::Attention {
@@ -49,8 +49,11 @@ impl Support {
                         ..
                     }
                 )
-            })
-        {
+            }))
+    }
+
+    pub fn load(device: &CudaDevice) -> Result<Option<Self>> {
+        if device.profile()?.architecture != "sm_120" {
             return Ok(None);
         }
         let module = device
@@ -72,7 +75,7 @@ impl Support {
         unsafe_code,
         reason = "graph-owned tensors with checked contiguous extents are marshalled into the pinned Rust kernel"
     )]
-    pub(super) fn record<E: DType>(
+    pub fn record<E: DType>(
         &self,
         scope: &Scope,
         bindings: Bindings<'_, E>,
@@ -204,4 +207,19 @@ pub fn with_cutile<T>(f: impl FnOnce() -> T) -> T {
     let result = f();
     drop(guard);
     result
+}
+
+pub fn artifact_identity() -> &'static str {
+    use sha2::{Digest, Sha256};
+    static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let source = include_str!("../../kernels/oxide-attention/src/main.rs");
+        let provenance = include_str!("../../kernels/oxide-attention/provenance.json");
+        format!(
+            "{:x}:{:x}:{:x}",
+            Sha256::digest(PTX),
+            Sha256::digest(source),
+            Sha256::digest(provenance)
+        )
+    })
 }

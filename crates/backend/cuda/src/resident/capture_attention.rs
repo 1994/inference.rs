@@ -174,7 +174,8 @@ impl Capture<'_> {
         } else {
             self.arena.get(node.inputs[0]).map_err(error)?
         };
-        if let Some(oxide) = &self.attention.oxide
+        if self.attention.prefill_uses_oxide(node.outputs[0], lanes)
+            && let Some(oxide) = &self.attention.oxide
             && oxide.record(
                 self.scope,
                 super::attention_oxide::Bindings {

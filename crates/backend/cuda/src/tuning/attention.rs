@@ -1,5 +1,6 @@
 //! Device-scoped query sharing search; complete attention graphs retain the FP8 KV contract.
 mod capture;
+pub mod exact;
 mod reference;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,
@@ -47,12 +48,13 @@ impl Shape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Choice {
     Simt,
+    RustSimt,
     Tiled { query_tile: usize },
 }
 impl Choice {
     pub(crate) const fn query_tile(self) -> Option<usize> {
         match self {
-            Self::Simt => None,
+            Self::Simt | Self::RustSimt => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }
