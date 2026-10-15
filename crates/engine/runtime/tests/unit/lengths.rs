@@ -82,3 +82,16 @@ fn the_remaining_output_budget_respects_the_cap_and_the_total() {
     assert_eq!(limits.remaining_output(14).unwrap(), 2);
     assert!(limits.remaining_output(16).is_err());
 }
+
+#[test]
+fn default_prompt_cap_tracks_large_model_contexts() -> Result<()> {
+    for model_limit in [65_537, 131_072, 262_144, 1_048_576] {
+        let limits = ResolvedLengthLimits::resolve(model_limit, &RuntimeConfig::default())?;
+        assert_eq!(limits.total, model_limit);
+        assert_eq!(limits.input_cap, model_limit);
+        assert_eq!(limits.sources.input_cap, LimitSource::Model);
+        limits.check(model_limit - 256, 256)?;
+        assert!(limits.check(model_limit, 1).is_err());
+    }
+    Ok(())
+}

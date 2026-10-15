@@ -138,8 +138,6 @@ mod device {
     pub const CONV_STATE_TENSORS: usize = 3;
     /// Convolution kernels process one tile of channels per block.
     pub const CONV_KERNEL_TILE: usize = 128;
-    /// Sequence length bound for resident graphs and admission.
-    pub const MAX_CAPACITY_TOKENS: usize = 32768;
     /// Hidden size bound for resident programs.
     pub const MAX_HIDDEN_SIZE: usize = 32768;
     /// Maximum shared decode slots. Independent of the per-sequence draft depth;

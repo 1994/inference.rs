@@ -221,6 +221,7 @@ impl CudaBackend {
         }
         self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
         self.slots = Some(pool);
+        self.reclaimed_slot_capacity = None;
     }
 
     /// Capture the decode slot pool at load time so the first concurrent requests batch
@@ -229,7 +230,11 @@ impl CudaBackend {
     /// verification graph the pool would discard on its first step.
     /// Failure leaves the lazy first-step path in charge.
     pub(super) fn warm_slot_pool(&mut self) {
-        let capacity = crate::constants::CB_SLOT_TOKENS;
+        let capacity = crate::constants::CB_SLOT_TOKENS.min(self.loaded.model().max_sequence);
+        self.warm_slot_pool_at(capacity);
+    }
+
+    pub(super) fn warm_slot_pool_at(&mut self, capacity: usize) {
         let Some(pool) = self.create_slot_pool(capacity) else {
             tracing::warn!(
                 target: "infer::executor",
@@ -242,6 +247,7 @@ impl CudaBackend {
         let width = pool.width();
         self.draft_slots = self.prepare_draft_pool(width, capacity);
         self.slots = Some(pool);
+        self.reclaimed_slot_capacity = None;
         tracing::info!(
             target: "infer::executor",
             width,

@@ -1,5 +1,13 @@
+#[path = "unit/runner_bytes_capacity.rs"]
+mod bytes_capacity;
+#[path = "unit/runner_capacity_progress.rs"]
+mod capacity_progress;
 #[path = "unit/runner_maintenance.rs"]
 mod maintenance;
+#[path = "unit/runner_queue_deadline.rs"]
+mod queue_deadline;
+#[path = "unit/runner_reservation.rs"]
+mod reservation;
 mod support;
 use infer_core::{Error, FinishReason, ModelId, Result, StateId};
 use infer_ir::{
@@ -23,6 +31,7 @@ struct ReserveGate {
     entered: mpsc::Sender<()>,
     owned: Arc<AtomicUsize>,
     reservation_limit: Arc<AtomicUsize>,
+    byte_capacity: Arc<AtomicUsize>,
     reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
@@ -73,6 +82,26 @@ impl BackendProvider for ReserveGate {
         }
         Ok(())
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        match self.byte_capacity.load(Ordering::Acquire) {
+            usize::MAX => Ok(None),
+            bytes => u64::try_from(bytes)
+                .map(Some)
+                .map_err(|e| Error::invalid(e.to_string())),
+        }
+    }
+    fn free_state_bytes(&self) -> Result<Option<u64>> {
+        Ok(self.state_capacity_bytes()?.map(|bytes| {
+            bytes.saturating_sub(
+                u64::try_from(self.owned.load(Ordering::Acquire))
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(1024),
+            )
+        }))
+    }
+    fn state_reservation_bytes_for(&self, _: usize, _: OutputReadout) -> Result<Option<u64>> {
+        Ok(self.state_capacity_bytes()?.map(|_| 1024))
+    }
     fn reset_state(&mut self, state: StateId) -> Result<()> {
         self.inner.reset_state(state)
     }
@@ -116,6 +145,7 @@ struct Fixture {
     entered: mpsc::Receiver<()>,
     owned: Arc<AtomicUsize>,
     reservation_limit: Arc<AtomicUsize>,
+    byte_capacity: Arc<AtomicUsize>,
     reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
@@ -126,11 +156,20 @@ impl Fixture {
         Self::with_draft(gated, 0)
     }
     fn with_draft(gated: bool, draft_depth: usize) -> Result<Self> {
+        Self::with_timeouts(gated, draft_depth, None, Duration::from_millis(20))
+    }
+    fn with_timeouts(
+        gated: bool,
+        draft_depth: usize,
+        queue_wait_us: Option<u64>,
+        timeout: Duration,
+    ) -> Result<Self> {
         let ir = support::model(ModelId::ONE);
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
         let owned = Arc::new(AtomicUsize::new(0));
         let reservation_limit = Arc::new(AtomicUsize::new(usize::MAX));
+        let byte_capacity = Arc::new(AtomicUsize::new(usize::MAX));
         let reservation_attempts = Arc::new(AtomicUsize::new(0));
         let observed_work = Arc::new(AtomicUsize::new(0));
         let observed_sampling = Arc::new(AtomicUsize::new(0));
@@ -142,6 +181,7 @@ impl Fixture {
             entered,
             owned: owned.clone(),
             reservation_limit: reservation_limit.clone(),
+            byte_capacity: byte_capacity.clone(),
             reservation_attempts: reservation_attempts.clone(),
             observed_work: observed_work.clone(),
             observed_sampling: observed_sampling.clone(),
@@ -156,16 +196,23 @@ impl Fixture {
             &registry,
             RuntimeConfig {
                 max_num_seqs: 1,
+                // Queue-deadline scenes can wait beyond the default device timeout.
+                submission_timeout_us: u64::try_from(timeout.as_micros())
+                    .unwrap_or(u64::MAX)
+                    .max(RuntimeConfig::default().submission_timeout_us),
+                max_queue_wait_us: queue_wait_us
+                    .unwrap_or_else(|| RuntimeConfig::default().max_queue_wait_us),
                 ..RuntimeConfig::default()
             },
         )?
-        .into_threaded(4, Duration::from_millis(20))?;
+        .into_threaded(4, timeout)?;
         Ok(Self {
             engine,
             release,
             entered: start,
             owned,
             reservation_limit,
+            byte_capacity,
             reservation_attempts,
             observed_work,
             observed_sampling,
@@ -173,7 +220,10 @@ impl Fixture {
         })
     }
     fn admit(&mut self, id: u64) -> Result<()> {
-        let prepared = self.engine.request_preparer()?.prepare(request(id)?)?;
+        self.admit_request(request(id)?)
+    }
+    fn admit_request(&mut self, request: CanonicalRequest) -> Result<()> {
+        let prepared = self.engine.request_preparer()?.prepare(request)?;
         let mut quote = self.engine.admission_quote(&prepared)?;
         let limit = Instant::now() + Duration::from_secs(3);
         let bytes = loop {

@@ -39,6 +39,9 @@ impl BackendProvider for CudaBackend {
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
         self.check_program(model, program)
     }
+    fn prepare_state_reservation(&mut self, capacity: usize, readout: OutputReadout) -> Result<()> {
+        self.prepare_reservation_for(capacity, readout)
+    }
     fn state_reservation_bytes(&self, capacity: usize) -> Result<Option<u64>> {
         self.state_reservation_bytes_for(capacity, OutputReadout::Full)
     }
@@ -53,6 +56,9 @@ impl BackendProvider for CudaBackend {
         self.reservation_budget(capacity, readout, private)
             .map(Some)
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        Ok(Some(self.budget))
+    }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         self.available().map(Some)
     }
@@ -62,7 +68,7 @@ impl BackendProvider for CudaBackend {
     /// holds whole-state snapshots outside the pool, so its coverage is reported in block
     /// units for observability without ever feeding the available count. `total_blocks` is
     /// floored at the private path's single-sequence ceiling: a sequence too long for the
-    /// pool still gets a private reservation up to `MAX_CAPACITY_TOKENS`, and the admission
+    /// pool still gets a private reservation up to the model context, and the admission
     /// isolation check compares against this field.
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         let pool = self.slots.as_ref()?;
@@ -79,7 +85,7 @@ impl BackendProvider for CudaBackend {
         Some(KvCacheInspection {
             pinned_blocks: 0,
             block_size: block,
-            total_blocks: pool_blocks.max(crate::constants::MAX_CAPACITY_TOKENS.div_ceil(block)),
+            total_blocks: pool_blocks.max(self.loaded.model().max_sequence.div_ceil(block)),
             free_blocks: pool.free_slots().saturating_mul(per_slot),
             active_blocks,
             cached_blocks: self.prefix.cached_tokens().div_ceil(block),

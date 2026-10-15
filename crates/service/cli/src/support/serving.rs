@@ -40,7 +40,6 @@ pub fn derive_config(
             .max_num_batched_tokens
             .max(config.scheduler.prefill_chunk_tokens);
     }
-    config.max_input_tokens = config.max_input_tokens.min(model.max_sequence);
     // Cold graph capture can take as long as a device submission. The generic resource
     // default is intended for already-warm pools and is too short for JIT-backed loading.
     config.resource_timeout_us = config.submission_timeout_us;

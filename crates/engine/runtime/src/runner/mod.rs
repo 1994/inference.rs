@@ -58,6 +58,7 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 struct Snapshot {
     free_bytes: Option<u64>,
+    state_capacity_bytes: Option<u64>,
     kv: Option<KvCacheInspection>,
     growth: infer_core::map::BoundedMap<StateId, PageGrowth>,
     error: Option<Error>,
@@ -66,6 +67,7 @@ impl Snapshot {
     fn new(states: usize) -> Result<Self> {
         Ok(Self {
             free_bytes: None,
+            state_capacity_bytes: None,
             kv: None,
             growth: infer_core::map::BoundedMap::new(states)?,
             error: None,
@@ -257,6 +259,7 @@ where
         }
         let mut snapshot = Snapshot::new(config.max_states)?;
         snapshot.free_bytes = backend.free_state_bytes()?;
+        snapshot.state_capacity_bytes = backend.state_capacity_bytes()?;
         snapshot.kv = backend.kv_cache();
         let snapshot = Arc::new(snapshot);
         let snapshots = [

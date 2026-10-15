@@ -172,7 +172,13 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 }
             };
             match self.backend.begin_resource(command) {
-                Ok(ticket) => pending.ticket = Some(ticket),
+                Ok(ticket) => {
+                    // A retry after resource progress starts a fresh acknowledgement wait.
+                    if pending.retry_epoch.take().is_some() {
+                        pending.started = self.now_us;
+                    }
+                    pending.ticket = Some(ticket);
+                }
                 Err(error) if error.code == ErrorCode::Capacity => return Ok(None),
                 Err(error) => return Err(error),
             }

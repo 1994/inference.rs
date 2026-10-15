@@ -350,6 +350,7 @@ impl LoadedModel {
     /// # Errors
     /// Rejects invalid capacity, exceeded state budgets or CUDA graph capture failures.
     pub fn sequence(&self, capacity: usize) -> Result<DeviceProgram> {
+        self.validate_capacity(capacity)?;
         DeviceProgram::new(
             &self.device,
             &self.graph,
@@ -364,6 +365,7 @@ impl LoadedModel {
     /// # Errors
     /// Rejects invalid capacity, exceeded state budgets or CUDA graph capture failures.
     pub(crate) fn sequence_pooled(&self, capacity: usize) -> Result<DeviceProgram> {
+        self.validate_capacity(capacity)?;
         DeviceProgram::new_pooled(
             &self.device,
             &self.graph,
@@ -379,6 +381,7 @@ impl LoadedModel {
     /// # Errors
     /// Rejects invalid capacity, missing draft configuration or capture failures.
     pub fn draft(&self, capacity: usize) -> Result<Option<DeviceProgram>> {
+        self.validate_capacity(capacity)?;
         let Some(draft) = &self.draft else {
             return Ok(None);
         };
@@ -398,6 +401,7 @@ impl LoadedModel {
         width: usize,
         capacity: usize,
     ) -> Result<Option<crate::resident::slot_batch::SlotPool>> {
+        self.validate_capacity(capacity)?;
         let Some(draft) = &self.draft else {
             return Ok(None);
         };
@@ -436,6 +440,7 @@ impl LoadedModel {
         width: usize,
         capacity: usize,
     ) -> Result<crate::resident::slot_batch::SlotPool> {
+        self.validate_capacity(capacity)?;
         crate::resident::slot_batch::SlotPool::new(
             &self.device,
             &self.graph,

@@ -64,6 +64,67 @@ impl CudaBackend {
         pooled >= pool.width()
     }
 
+    /// Release a prewarmed pool only when no live sequence relies on it, the request
+    /// cannot use it, and ordinary cache reclamation cannot satisfy the quote.
+    pub(super) fn prepare_reservation_for(
+        &mut self,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        if self.slots.is_none()
+            && self.states.is_empty()
+            && readout == OutputReadout::Logits
+            && let Some(previous) = self.reclaimed_slot_capacity
+            && capacity <= previous
+        {
+            self.idle()?;
+            self.warm_slot_pool_at(previous);
+        }
+        let Some(pool) = &self.slots else {
+            return Ok(());
+        };
+        if !self.states.is_empty()
+            || (readout == OutputReadout::Logits && capacity <= pool.capacity())
+            || pool.free_slots() != pool.width()
+            || self
+                .draft_slots
+                .as_ref()
+                .is_some_and(|draft| draft.free_slots() != draft.width())
+        {
+            return Ok(());
+        }
+        let needed = self.reservation_budget(capacity, readout, true)?;
+        if needed > self.budget || needed <= self.available()? {
+            return Ok(());
+        }
+        self.idle()?;
+        let pool_width = pool.width();
+        let pool_capacity = pool.capacity();
+        let before = self.physical_available()?;
+        drop(self.draft_slots.take());
+        drop(self.slots.take());
+        // The pool's padded storage may exceed a non-power-of-two model ceiling.
+        self.reclaimed_slot_capacity = Some(pool_capacity.min(self.loaded.model().max_sequence));
+        // Rebuild before a compatible quote, preserving pooled state pricing.
+        self.slots_disabled = false;
+        if let Err(error) = self.loaded.device().reclaim_barrier() {
+            self.fatal = Some(error.clone());
+            return Err(error);
+        }
+        let after = self.physical_available()?;
+        tracing::info!(
+            target: "infer::cuda_admission",
+            capacity,
+            needed_bytes = needed,
+            before_bytes = before,
+            after_bytes = after,
+            pool_width,
+            pool_capacity,
+            "reclaimed idle incompatible CUDA slot pools before admission"
+        );
+        Ok(())
+    }
+
     pub(super) fn reserve(
         &mut self,
         id: StateId,
@@ -77,6 +138,7 @@ impl CudaBackend {
                 "CUDA state already reserved",
             ));
         }
+        self.prepare_reservation_for(capacity, readout)?;
         let private_verification = self.private_verification_for(capacity, readout);
         let budget = self.reservation_budget(capacity, readout, private_verification)?;
         if self.states.len() >= self.maximum_states

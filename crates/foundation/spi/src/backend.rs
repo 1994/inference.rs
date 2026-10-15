@@ -77,6 +77,18 @@ pub trait BackendProvider {
     fn state_reservation_bytes(&self, _capacity: usize) -> Result<Option<u64>> {
         Ok(None)
     }
+    /// Prepare an admission quote on the owning thread. Backends may reclaim idle,
+    /// incompatible storage before reporting the reservation price and free capacity.
+    /// Live state and its storage must remain unchanged.
+    /// # Errors
+    /// Returns allocator, ownership or device errors while preparing the quote.
+    fn prepare_state_reservation(
+        &mut self,
+        _capacity: usize,
+        _readout: infer_ir::OutputReadout,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// Size the retained state for the workload's output contract.
     /// # Errors
     /// Returns layout/capacity errors.
@@ -91,6 +103,15 @@ pub trait BackendProvider {
     /// # Errors
     /// Returns a backend or invariant error if the physical allocator cannot report its available capacity.
     fn free_state_bytes(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
+    /// State-byte budget for a single queued reservation, independent of live leases.
+    /// The runtime uses this only when the adapter owns deferred reservation intent.
+    /// Returning None keeps admission bounded by current free bytes.
+    /// Actual reservation must still check live physical capacity.
+    /// # Errors
+    /// Returns backend errors while reading the configured state budget.
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
         Ok(None)
     }
     fn kv_cache(&self) -> Option<KvCacheInspection> {
