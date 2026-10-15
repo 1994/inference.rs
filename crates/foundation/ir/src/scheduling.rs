@@ -25,12 +25,12 @@ const DEFAULT_MAX_PROFILES: usize = 512;
 const DEFAULT_EWMA_ALPHA_PERCENT: u32 = 25;
 /// Default safety margin added to predicted cost, in percent.
 const DEFAULT_SAFETY_MARGIN_PERCENT: u32 = 20;
-/// Default maximum concurrently active requests allowed for a tenant.
-const DEFAULT_MAX_ACTIVE_REQUESTS: usize = 256;
-/// Default maximum reserved tokens allowed for a tenant.
-const DEFAULT_MAX_RESERVED_TOKENS: usize = 65536;
-/// Default maximum state pages allowed for a tenant.
-const DEFAULT_MAX_STATE_PAGES: usize = 4096;
+/// Unconfigured tenants share the runtime request capacity without an additional quota.
+const DEFAULT_MAX_ACTIVE_REQUESTS: usize = usize::MAX;
+/// Token capacity follows model and resource admission unless a tenant quota is explicit.
+const DEFAULT_MAX_RESERVED_TOKENS: usize = usize::MAX;
+/// Page capacity follows the backend pool unless a tenant quota is explicit.
+const DEFAULT_MAX_STATE_PAGES: usize = usize::MAX;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

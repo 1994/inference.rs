@@ -199,3 +199,57 @@ fn soft_slo_admission_records_risk_and_tenant_weight_override_is_enforced() {
     assert!(decision.slo_at_risk);
     assert!(decision.rejection.is_none());
 }
+
+#[test]
+fn long_context_admission_uses_resources_and_explicit_tenant_quotas() {
+    let mut input = admission();
+    input.tenant_active = 300;
+    input.tenant_tokens = 3 * 262_144;
+    input.reserved_tokens = 262_144;
+    input.tenant_pages = input.tenant_tokens / 16;
+    input.required_pages = input.reserved_tokens / 16;
+    let policy = ResourceAdmission::new(AdmissionConfig::default()).unwrap();
+    assert!(policy.check(&input).unwrap().rejection.is_none());
+    input.free_bytes = Some(512);
+    assert_eq!(
+        policy.check(&input).unwrap().rejection,
+        Some(AdmissionReason::StateBytes)
+    );
+    input.free_bytes = Some(4096);
+    input.free_pages = 0;
+    assert_eq!(
+        policy.check(&input).unwrap().rejection,
+        Some(AdmissionReason::Capacity)
+    );
+    input.free_pages = 4;
+    for (quota, expected) in [
+        (
+            TenantQuota {
+                max_active_requests: 256,
+                ..Default::default()
+            },
+            AdmissionReason::TenantRequests,
+        ),
+        (
+            TenantQuota {
+                max_reserved_tokens: 65536,
+                ..Default::default()
+            },
+            AdmissionReason::TenantTokens,
+        ),
+        (
+            TenantQuota {
+                max_state_pages: 4096,
+                ..Default::default()
+            },
+            AdmissionReason::TenantPages,
+        ),
+    ] {
+        let policy = ResourceAdmission::new(AdmissionConfig {
+            tenants: std::collections::BTreeMap::from([("a".into(), quota)]),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(policy.check(&input).unwrap().rejection, Some(expected));
+    }
+}
