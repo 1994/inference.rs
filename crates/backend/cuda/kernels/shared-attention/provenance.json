@@ -1,0 +1,18 @@
+{
+  "target": "sm_120",
+  "compiler": "nvcc V13.4.92",
+  "language": "CUDA C++ device code;no host C++ runtime",
+  "arguments": [
+    "--ptx",
+    "-arch=compute_120",
+    "-O3",
+    "--fmad=false",
+    "--ftz=false",
+    "--prec-div=true",
+    "--prec-sqrt=true"
+  ],
+  "source_sha256": "c7dfc72ac824684b21d80084e6ac86d74f3aefcd2b3d20beb363e7373248175a",
+  "ptx_sha256": "5115ac86ed9a5fde4259a739007f603c0bf23b238b75333d2a0a5a7182d43a4e",
+  "canonical_attention_ptx_sha256": "e41ad095da73871ffafa0de0318219b3f1f690f444ccad318fcd83c3b0001e66",
+  "numeric_evidence": "/home/r/benchmarks/inference.rs/long-context-throughput-2026-10-15/attention-shared-kv-validation-v1/run-v1/result.json"
+}

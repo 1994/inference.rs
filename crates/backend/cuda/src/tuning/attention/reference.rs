@@ -1,4 +1,5 @@
 //! Independent full-output softmax and FP8 cache reference for pre-capture search.
+mod history;
 use super::Shape;
 use crate::device::device_error;
 use cuda_core::f8e4m3fn;

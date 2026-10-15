@@ -2,6 +2,7 @@
 mod capture;
 pub mod exact;
 mod reference;
+pub mod shared;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,
     resident_gemm::ResidentTuningSession,
@@ -49,14 +50,18 @@ impl Shape {
 pub enum Choice {
     Simt,
     RustSimt,
+    SharedKv,
     Tiled { query_tile: usize },
 }
 impl Choice {
     pub(crate) const fn query_tile(self) -> Option<usize> {
         match self {
-            Self::Simt | Self::RustSimt => None,
+            Self::Simt | Self::RustSimt | Self::SharedKv => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
+    }
+    pub(crate) const fn uses_oxide(self) -> bool {
+        matches!(self, Self::RustSimt | Self::SharedKv)
     }
     fn valid(self) -> bool {
         matches!(self, Self::Simt) || self.query_tile().is_some_and(|q| QUERY_TILES.contains(&q))
