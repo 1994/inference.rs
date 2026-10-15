@@ -147,9 +147,9 @@ impl SlotPool {
         output: (usize, usize),
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
+        let capacity = super::capacity::padded(capacity)?;
         if !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&width)
             || capacity == 0
-            || capacity > crate::constants::MAX_CAPACITY_TOKENS
             || hidden == 0
             || vocabulary == 0
         {

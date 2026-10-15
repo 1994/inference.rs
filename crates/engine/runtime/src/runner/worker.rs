@@ -201,7 +201,8 @@ impl<B: BackendProvider> Worker<B> {
                 }
                 let changes_state = matches!(
                     &command,
-                    infer_spi::ResourceCommand::Reserve { .. }
+                    infer_spi::ResourceCommand::ReservationBytes { .. }
+                        | infer_spi::ResourceCommand::Reserve { .. }
                         | infer_spi::ResourceCommand::Reset { .. }
                         | infer_spi::ResourceCommand::Prefix { .. }
                 );

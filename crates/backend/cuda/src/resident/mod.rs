@@ -7,6 +7,7 @@ mod attention_decode;
 pub(crate) mod attention_oxide;
 pub(crate) mod attention_prefill;
 mod batch_projection;
+pub(crate) mod capacity;
 mod capture;
 mod capture_attention;
 mod capture_checkpoint;

@@ -10,8 +10,8 @@ const DEFAULT_MAX_REQUESTS: usize = 256;
 const DEFAULT_CANDIDATE_LIMIT: usize = 256;
 /// Default request-unit budget for one submission.
 const DEFAULT_MAX_REQUEST_UNITS: usize = 256;
-/// Default prompt window accepted per request, in tokens.
-const DEFAULT_MAX_INPUT_TOKENS: usize = 65536;
+/// Unset prompt cap: the resolved model/service context bounds actual requests.
+const DEFAULT_MAX_INPUT_TOKENS: usize = usize::MAX;
 /// Default number of KV state pages pinned by the runtime.
 const DEFAULT_STATE_PAGES: usize = 4096;
 /// Default number of KV tokens addressed by one state page.
@@ -32,8 +32,9 @@ const DEFAULT_SUBMISSION_TIMEOUT_US: u64 = 30_000_000;
 const DEFAULT_RESOURCE_TIMEOUT_US: u64 = 250_000;
 /// Default client output timeout, in microseconds.
 const DEFAULT_OUTPUT_TIMEOUT_US: u64 = 5_000_000;
-/// Default bound on time a request may wait in the queue, in microseconds.
-const DEFAULT_MAX_QUEUE_WAIT_US: u64 = 30_000_000;
+/// Queueing has no implicit deadline; request SLOs and explicit service limits still apply.
+/// Submission, resource acknowledgement and output stalls keep their separate timeouts.
+const DEFAULT_MAX_QUEUE_WAIT_US: u64 = u64::MAX;
 /// Default number of decision/history records retained for replay.
 const DEFAULT_HISTORY_CAPACITY: usize = 4096;
 /// Default token budget retained for replay history.
@@ -63,6 +64,7 @@ pub struct RuntimeConfig {
     /// the effective total context.
     #[serde(default)]
     pub max_output_tokens: Option<usize>,
+    /// Optional service prompt cap. The default follows the resolved model context.
     pub max_input_tokens: usize,
     pub num_gpu_blocks: usize,
     pub block_size: usize,

@@ -1,5 +1,11 @@
+#[path = "unit/runner_capacity_progress.rs"]
+mod capacity_progress;
 #[path = "unit/runner_maintenance.rs"]
 mod maintenance;
+#[path = "unit/runner_queue_deadline.rs"]
+mod queue_deadline;
+#[path = "unit/runner_reservation.rs"]
+mod reservation;
 mod support;
 use infer_core::{Error, FinishReason, ModelId, Result, StateId};
 use infer_ir::{
@@ -126,6 +132,14 @@ impl Fixture {
         Self::with_draft(gated, 0)
     }
     fn with_draft(gated: bool, draft_depth: usize) -> Result<Self> {
+        Self::with_timeouts(gated, draft_depth, None, Duration::from_millis(20))
+    }
+    fn with_timeouts(
+        gated: bool,
+        draft_depth: usize,
+        queue_wait_us: Option<u64>,
+        timeout: Duration,
+    ) -> Result<Self> {
         let ir = support::model(ModelId::ONE);
         let (release, gate) = mpsc::channel();
         let (entered, start) = mpsc::channel();
@@ -156,10 +170,16 @@ impl Fixture {
             &registry,
             RuntimeConfig {
                 max_num_seqs: 1,
+                // Queue-deadline scenes can wait beyond the default device timeout.
+                submission_timeout_us: u64::try_from(timeout.as_micros())
+                    .unwrap_or(u64::MAX)
+                    .max(RuntimeConfig::default().submission_timeout_us),
+                max_queue_wait_us: queue_wait_us
+                    .unwrap_or_else(|| RuntimeConfig::default().max_queue_wait_us),
                 ..RuntimeConfig::default()
             },
         )?
-        .into_threaded(4, Duration::from_millis(20))?;
+        .into_threaded(4, timeout)?;
         Ok(Self {
             engine,
             release,
@@ -173,7 +193,10 @@ impl Fixture {
         })
     }
     fn admit(&mut self, id: u64) -> Result<()> {
-        let prepared = self.engine.request_preparer()?.prepare(request(id)?)?;
+        self.admit_request(request(id)?)
+    }
+    fn admit_request(&mut self, request: CanonicalRequest) -> Result<()> {
+        let prepared = self.engine.request_preparer()?.prepare(request)?;
         let mut quote = self.engine.admission_quote(&prepared)?;
         let limit = Instant::now() + Duration::from_secs(3);
         let bytes = loop {

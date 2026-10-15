@@ -37,6 +37,9 @@ pub struct CudaBackend {
     /// `None` with `slots_disabled` means initialization failed and decode stays serial.
     slots: Option<SlotPool>,
     draft_slots: Option<SlotPool>,
+    /// Geometry of an idle pool evicted for a long request. Restore it before
+    /// pricing the next compatible request, so short batches keep pooled admission.
+    reclaimed_slot_capacity: Option<usize>,
     slots_disabled: bool,
     /// Reason the last pool attempt failed, reported when batching is given up for good.
     pool_failure_reason: Option<String>,
@@ -173,6 +176,7 @@ impl CudaBackend {
             reused_tokens: 0,
             slots: None,
             draft_slots: None,
+            reclaimed_slot_capacity: None,
             slots_disabled: false,
             pool_failure_reason: None,
             busy: false,

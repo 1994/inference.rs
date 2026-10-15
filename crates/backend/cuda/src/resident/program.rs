@@ -3,8 +3,8 @@ mod geometry;
 mod greedy;
 use crate::{
     constants::{
-        CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, MAX_CAPACITY_TOKENS, MAX_HIDDEN_SIZE,
-        METADATA_FIELDS, MIB, PREFILL_LANES,
+        CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, MAX_HIDDEN_SIZE, METADATA_FIELDS, MIB,
+        PREFILL_LANES,
     },
     device::{CudaDevice, device_error},
     mlp::ProjectionWeight,
@@ -300,12 +300,7 @@ fn program_capacity(
     hidden: usize,
     vocabulary: usize,
 ) -> Result<usize> {
-    if capacity == 0
-        || capacity > MAX_CAPACITY_TOKENS
-        || vocabulary == 0
-        || hidden == 0
-        || hidden > MAX_HIDDEN_SIZE
-    {
+    if vocabulary == 0 || hidden == 0 || hidden > MAX_HIDDEN_SIZE {
         return Err(Error::invalid("resident capacity or vocabulary"));
     }
     if graph
@@ -318,7 +313,7 @@ fn program_capacity(
     if let Some(fusion) = &weights.fusion {
         fusion.validate(hidden)?;
     }
-    Ok(capacity.next_power_of_two())
+    super::capacity::padded(capacity)
 }
 
 impl DeviceProgram {

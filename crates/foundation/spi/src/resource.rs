@@ -177,9 +177,12 @@ pub fn execute_resource<B: BackendProvider + ?Sized>(
     command: ResourceCommand,
 ) -> Result<ResourceReply> {
     match command {
-        ResourceCommand::ReservationBytes { capacity, readout } => backend
-            .state_reservation_bytes_for(capacity, readout)
-            .map(ResourceReply::ReservationBytes),
+        ResourceCommand::ReservationBytes { capacity, readout } => {
+            backend.prepare_state_reservation(capacity, readout)?;
+            backend
+                .state_reservation_bytes_for(capacity, readout)
+                .map(ResourceReply::ReservationBytes)
+        }
         ResourceCommand::Reserve {
             state,
             capacity,

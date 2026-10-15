@@ -44,6 +44,10 @@ impl Default for SequencePrices {
 }
 
 impl LoadedModel {
+    pub(super) fn validate_capacity(&self, capacity: usize) -> Result<usize> {
+        crate::resident::capacity::for_model(capacity, self.model.max_sequence)
+    }
+
     /// Upper bound for known tensor storage plus 256 MiB of graph/allocator headroom.
     /// This is admission accounting, not a measurement of CUDA driver allocations.
     ///
@@ -58,12 +62,7 @@ impl LoadedModel {
         readout: OutputReadout,
         private_verification: bool,
     ) -> Result<u64> {
-        if capacity == 0 || capacity > crate::constants::MAX_CAPACITY_TOKENS {
-            return Err(Error::invalid(
-                "CUDA sequence capacity must be in 1..=32768",
-            ));
-        }
-        let capacity = capacity.next_power_of_two() as u64;
+        let capacity = self.validate_capacity(capacity)? as u64;
         // Graph geometry is immutable after load; only KV and full-history storage grow
         // with capacity. Keep one exact affine price per readout/verification geometry.
         let index =

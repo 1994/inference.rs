@@ -271,6 +271,13 @@ impl BackendProvider for SelectedBackend {
     fn speculation_capability(&self) -> infer_ir::SpeculationCapability {
         forward!(self, speculation_capability)
     }
+    fn prepare_state_reservation(
+        &mut self,
+        capacity: usize,
+        readout: infer_ir::OutputReadout,
+    ) -> Result<()> {
+        forward!(self, prepare_state_reservation, capacity, readout)
+    }
     fn state_reservation_bytes(&self, capacity: usize) -> Result<Option<u64>> {
         forward!(self, state_reservation_bytes, capacity)
     }

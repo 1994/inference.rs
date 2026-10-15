@@ -306,7 +306,13 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             ReservationQuote::Acknowledged(bytes) => {
                 self.check_admission_with_bytes(&request, &plan, bytes)?
             }
-            ReservationQuote::Query => self.check_admission(&request, &plan)?,
+            ReservationQuote::Query => {
+                self.backend.prepare_state_reservation(
+                    plan.reserved_tokens,
+                    crate::stages::prefill::retained_readout(&request.workload),
+                )?;
+                self.check_admission(&request, &plan)?
+            }
         };
         let context = plan
             .units
