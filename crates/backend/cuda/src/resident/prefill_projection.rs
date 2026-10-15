@@ -1,8 +1,11 @@
 use super::{ProgramWeights, capture::error, prefill_gemm::gemm};
-use crate::mlp::ProjectionWeight;
+use crate::{device::DeviceProfile, mlp::ProjectionWeight};
 use cutile::prelude::*;
 use infer_ir::TensorNode;
 use std::collections::BTreeMap;
+
+const NARROW_DENSE_SHAPE: (usize, usize, usize) = (64, 48, 5120);
+const NARROW_DENSE_TILE: [usize; 2] = [crate::constants::PREFILL_LANES, 16];
 
 /// Zero-copy prompt GEMM: the batched input slot holds all 32 rows and the
 /// output slot is reshaped to `[32, rows]` in place; no packing kernels remain.
@@ -12,7 +15,7 @@ pub(super) fn record(
     scope: &Scope,
     node: &TensorNode,
     arena: &mut super::ActivationArena,
-    weights: &ProgramWeights,
+    (weights, profile): (&ProgramWeights, &DeviceProfile),
     partials: &mut BTreeMap<usize, Tensor<f32>>,
     nvfp4: &mut super::nvfp4_gemm::Workspace,
     delegated: Option<&mut crate::device::cublaslt::Support>,
@@ -63,6 +66,10 @@ pub(super) fn record(
             let rows = flat / width;
             let dims = (width, rows, columns);
             if records_vendor_gemm(scope, delegated, flat_input, w, &output, dims)? {
+                arena.buffers[slot] = Some(output.reshape(&[flat])?);
+                return Ok(());
+            }
+            if records_narrow_dense(scope, profile, &input, w, &mut output, dims)? {
                 arena.buffers[slot] = Some(output.reshape(&[flat])?);
                 return Ok(());
             }
@@ -191,3 +198,61 @@ fn records_precise_sparse(
     )?;
     Ok(true)
 }
+
+fn narrow_dense_layout(architecture: &str, shape: (usize, usize, usize)) -> bool {
+    architecture == "sm_120" && shape == NARROW_DENSE_SHAPE
+}
+
+fn records_narrow_dense(
+    scope: &Scope,
+    profile: &DeviceProfile,
+    input: &TensorView<'_, f32>,
+    weight: &Tensor<cutile::half::bf16>,
+    output: &mut Tensor<f32>,
+    shape: (usize, usize, usize),
+) -> Result<bool, DeviceError> {
+    #[cfg(test)]
+    if DENSE_REFERENCE.get() {
+        return Ok(false);
+    }
+    if !narrow_dense_layout(&profile.architecture, shape) {
+        return Ok(false);
+    }
+    scope.record(
+        gemm::dense_n16(output.partition(NARROW_DENSE_TILE), input, weight)
+            .generics(vec![shape.2.to_string()]),
+    )?;
+    #[cfg(test)]
+    NARROW_DENSE_CAPTURES.set(NARROW_DENSE_CAPTURES.get() + 1);
+    Ok(true)
+}
+
+#[cfg(test)]
+thread_local! {
+    static DENSE_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NARROW_DENSE_CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub fn narrow_dense_captures() -> usize {
+    NARROW_DENSE_CAPTURES.get()
+}
+
+/// Captures the original dense kernel for a numerical comparison on this test thread.
+#[cfg(test)]
+pub fn with_dense_reference<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DENSE_REFERENCE.set(self.0);
+        }
+    }
+    let restore = Restore(DENSE_REFERENCE.replace(true));
+    let value = run();
+    drop(restore);
+    value
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_prefill_projection.rs"]
+mod tests;

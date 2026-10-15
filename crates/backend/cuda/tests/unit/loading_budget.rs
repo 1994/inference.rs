@@ -185,6 +185,7 @@ fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Re
             48,
             OutputReadout::Logits,
             ProgramGeometry::new(&weights, private),
+            &fixture_profile(),
         )?
         .at(256)
     };
@@ -214,6 +215,7 @@ fn pooled_admission_keeps_verification_required_by_prompt_fallback() -> Result<(
             48,
             OutputReadout::Logits,
             ProgramGeometry::new(&weights, private),
+            &fixture_profile(),
         )?
         .at(256)
     };
@@ -272,6 +274,7 @@ fn affine_admission_counts_fp8_and_f32_kv_and_full_history() -> Result<()> {
             48,
             OutputReadout::Logits,
             ProgramGeometry::new(&weights, private),
+            &fixture_profile(),
         )?
         .at(1)?;
         for readout in [
@@ -286,6 +289,7 @@ fn affine_admission_counts_fp8_and_f32_kv_and_full_history() -> Result<()> {
                 48,
                 readout,
                 ProgramGeometry::new(&weights, private),
+                &fixture_profile(),
             )?;
             // Key and value storage: one FP8 and one F32 state. Full history adds
             // a device staging copy and a host copy for each 48-element row.
@@ -302,4 +306,16 @@ fn affine_admission_counts_fp8_and_f32_kv_and_full_history() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn fixture_profile() -> DeviceProfile {
+    DeviceProfile {
+        name: "CPU budget fixture".into(),
+        architecture: "sm_120".into(),
+        multiprocessors: 0,
+        total_memory_bytes: 0,
+        memory_clock_khz: 0,
+        memory_bus_width_bits: 0,
+        l2_cache_bytes: 0,
+    }
 }

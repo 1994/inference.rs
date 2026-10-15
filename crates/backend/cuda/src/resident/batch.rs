@@ -54,6 +54,7 @@ pub(super) struct BatchGraph {
     /// declared after the graphs so their executables drop first.
     _partials: BTreeMap<usize, Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
+    _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
     prefill_info: Option<Tensor<i32>>,
     hidden: Vec<Arc<Tensor<f32>>>,
@@ -413,6 +414,7 @@ impl BatchBuilder<'_> {
             restore,
             _partials: BTreeMap::new(),
             _recurrent: super::recurrent_prefill::Workspace::default(),
+            _fusion: None,
             prefill_info: None,
             metadata,
             hidden,
@@ -460,6 +462,8 @@ impl BatchBuilder<'_> {
             self.weights,
             self.width,
         )?;
+        let mut fusion =
+            super::fusion_batch::Workspace::allocate(self.device, self.weights, self.width)?;
         let mut profile = profile::PrefillProfile::from_env(self.device);
         let prefill = self.capture32(
             &mut arena,
@@ -467,7 +471,7 @@ impl BatchBuilder<'_> {
             &prefill_info,
             PromptReadout::Hidden,
             profile.as_mut(),
-            (&mut partials, &mut recurrent),
+            (&mut partials, &mut recurrent, &mut fusion),
         )?;
         let prefill_last = self.capture32(
             &mut arena,
@@ -475,7 +479,7 @@ impl BatchBuilder<'_> {
             &prefill_info,
             PromptReadout::Logits,
             profile.as_mut(),
-            (&mut partials, &mut recurrent),
+            (&mut partials, &mut recurrent, &mut fusion),
         )?;
         #[cfg(test)]
         let state_prefill = if super::prefill_demand::enabled() {
@@ -485,7 +489,7 @@ impl BatchBuilder<'_> {
                 &prefill_info,
                 PromptReadout::StateOnly,
                 None,
-                (&mut partials, &mut recurrent),
+                (&mut partials, &mut recurrent, &mut fusion),
             )?)
         } else {
             None
@@ -504,6 +508,7 @@ impl BatchBuilder<'_> {
             restore: Vec::new(),
             _partials: partials,
             _recurrent: recurrent,
+            _fusion: fusion,
             prefill_info: Some(prefill_info),
             metadata,
             hidden,
@@ -631,9 +636,10 @@ impl BatchBuilder<'_> {
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
             &mut super::recurrent_prefill::Workspace,
+            &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> Result<CudaGraph<()>> {
-        let (partials, recurrent) = workspaces;
+        let (partials, recurrent, fusion) = workspaces;
         let last = readout == PromptReadout::Logits;
         #[cfg(test)]
         let demand = (readout == PromptReadout::StateOnly)
@@ -658,7 +664,7 @@ impl BatchBuilder<'_> {
                     node,
                     arena,
                     (metadata, prefill_info),
-                    (partials, recurrent),
+                    (partials, recurrent, fusion),
                 )?;
             }
             if let Some(boundaries) = boundaries.as_mut() {
@@ -679,10 +685,16 @@ impl BatchBuilder<'_> {
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
             &mut super::recurrent_prefill::Workspace,
+            &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> std::result::Result<(), DeviceError> {
         let (metadata, prefill_info) = metadata;
-        let (partials, recurrent) = workspaces;
+        let (partials, recurrent, fusion) = workspaces;
+        if let Some(workspace) = fusion.as_mut()
+            && super::fusion_batch::record(self, scope, node, arena, metadata, workspace)?
+        {
+            return Ok(());
+        }
         let mut no_fusion = None;
         if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
             return Ok(());
@@ -717,7 +729,7 @@ impl BatchBuilder<'_> {
                     scope,
                     node,
                     arena,
-                    self.weights,
+                    (self.weights, self.device.profile().map_err(error)?),
                     partials,
                     self.nvfp4,
                     self.delegated.as_deref_mut(),
@@ -1166,6 +1178,54 @@ impl BatchGraph {
                 Ok((hidden, logits))
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "Test observes the retained graph owner allocation"
+    )]
+    pub(super) fn test_fusion_scratch_bytes(&self) -> usize {
+        self._fusion
+            .as_ref()
+            .map_or(0, super::fusion_batch::Workspace::bytes)
+    }
+
+    /// Passive readback of the most recent prompt replay; never launches a graph.
+    #[cfg(test)]
+    pub(super) fn test_retained_prompt_hidden(
+        &self,
+        device: &CudaDevice,
+        position: usize,
+        rows: usize,
+    ) -> Result<Vec<Vec<f32>>> {
+        if rows == 0 || rows > self.width || self.hidden.len() != 1 {
+            return Err(Error::invalid("test retained prompt rows"));
+        }
+        let info = device.read_borrowed(
+            self.prefill_info
+                .as_ref()
+                .ok_or_else(|| Error::invariant("test retained prompt metadata"))?,
+        )?;
+        let expected = [
+            i32::try_from(position).map_err(device_error)?,
+            i32::try_from(rows).map_err(device_error)?,
+        ];
+        if info.get(..2) != Some(expected.as_slice()) {
+            return Err(Error::invalid(
+                "test retained prompt is not the requested replay",
+            ));
+        }
+        let values = device.read_borrowed(&self.hidden[0])?;
+        let columns = values.len() / self.width;
+        if columns == 0 || values.len() % self.width != 0 {
+            return Err(Error::invariant("test retained prompt hidden shape"));
+        }
+        Ok(values
+            .chunks_exact(columns)
+            .take(rows)
+            .map(<[f32]>::to_vec)
+            .collect())
     }
 
     pub fn restore(&self, device: &CudaDevice, count: usize) -> Result<()> {

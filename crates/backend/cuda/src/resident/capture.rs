@@ -324,46 +324,14 @@ impl Capture<'_> {
         node: &TensorNode,
         output: &mut Tensor<f32>,
     ) -> Result<(), DeviceError> {
-        let weight = self
-            .weights
-            .embeddings
-            .get(&node.inputs[0])
-            .ok_or_else(|| error("missing device embedding"))?;
         let dimension = output.size();
-        if let Some(fusion) = &self.weights.fusion {
-            let work = self
+        if self.weights.fusion.is_some() {
+            let normalized = self.fusion_input(node, dimension)?;
+            let fusion = self
+                .weights
                 .fusion
-                .as_mut()
-                .ok_or_else(|| error("missing fusion workspace"))?;
-            self.scope.record(
-                attention::embedding(
-                    (&mut work.embedding).partition([crate::constants::AUX_KERNEL_TILE]),
-                    weight,
-                    self.external,
-                    self.metadata,
-                )
-                .generics(vec![dimension.to_string(), "0".into()]),
-            )?;
-            let mut normalized = work
-                .normalized
-                .take()
-                .ok_or_else(|| error("fusion buffer"))?
-                .reshape(&[2, dimension])?;
-            self.scope.record(
-                aux::fusion_norm(
-                    (&mut normalized).partition([1, dimension.next_power_of_two()]),
-                    &work.embedding,
-                    self.external,
-                    &fusion.norms,
-                    fusion.epsilon,
-                    fusion.offset,
-                )
-                .generics(vec![
-                    dimension.to_string(),
-                    dimension.next_power_of_two().to_string(),
-                ]),
-            )?;
-            let normalized = normalized.reshape(&[2 * dimension])?;
+                .as_ref()
+                .ok_or_else(|| error("missing fusion weights"))?;
             fusion.projection.record(
                 self.scope,
                 output,
@@ -371,8 +339,16 @@ impl Capture<'_> {
                 2 * dimension,
                 fusion.tiling,
             )?;
-            work.normalized = Some(normalized);
+            self.fusion
+                .as_mut()
+                .ok_or_else(|| error("missing fusion workspace"))?
+                .normalized = Some(normalized);
         } else {
+            let weight = self
+                .weights
+                .embeddings
+                .get(&node.inputs[0])
+                .ok_or_else(|| error("missing device embedding"))?;
             self.scope.record(
                 attention::embedding(
                     output.partition([crate::constants::AUX_KERNEL_TILE]),
@@ -384,6 +360,57 @@ impl Capture<'_> {
             )?;
         }
         Ok(())
+    }
+
+    /// Original row embedding and fusion normalization, before its projection.
+    pub(super) fn fusion_input(
+        &mut self,
+        node: &TensorNode,
+        dimension: usize,
+    ) -> Result<Tensor<f32>, DeviceError> {
+        let weight = self
+            .weights
+            .embeddings
+            .get(&node.inputs[0])
+            .ok_or_else(|| error("missing device embedding"))?;
+        let fusion = self
+            .weights
+            .fusion
+            .as_ref()
+            .ok_or_else(|| error("missing fusion weights"))?;
+        let work = self
+            .fusion
+            .as_mut()
+            .ok_or_else(|| error("missing fusion workspace"))?;
+        self.scope.record(
+            attention::embedding(
+                (&mut work.embedding).partition([crate::constants::AUX_KERNEL_TILE]),
+                weight,
+                self.external,
+                self.metadata,
+            )
+            .generics(vec![dimension.to_string(), "0".into()]),
+        )?;
+        let mut normalized = work
+            .normalized
+            .take()
+            .ok_or_else(|| error("fusion buffer"))?
+            .reshape(&[2, dimension])?;
+        self.scope.record(
+            aux::fusion_norm(
+                (&mut normalized).partition([1, dimension.next_power_of_two()]),
+                &work.embedding,
+                self.external,
+                &fusion.norms,
+                fusion.epsilon,
+                fusion.offset,
+            )
+            .generics(vec![
+                dimension.to_string(),
+                dimension.next_power_of_two().to_string(),
+            ]),
+        )?;
+        Ok(normalized.reshape(&[2 * dimension])?)
     }
 
     fn norm(
@@ -405,21 +432,28 @@ impl Capture<'_> {
         let g = self.input(node.inputs[usize::from(gated)])?;
         let gate = g.view(&[heads, dimension])?;
         let weight = self.input(node.inputs[if gated { 2 } else { 1 }])?;
-        self.scope.record(
-            aux::norm(
-                (&mut output).partition([1, dimension.next_power_of_two()]),
-                &input,
-                &weight,
-                &gate,
-                epsilon,
-                offset,
-            )
-            .generics(vec![
-                dimension.to_string(),
-                dimension.next_power_of_two().to_string(),
-                i32::from(gated).to_string(),
-            ]),
-        )?;
+        let options = if gated {
+            crate::tuning::gated_norm::options(output.device_id(), dimension, heads, epsilon)
+        } else {
+            cutile::tile_kernel::CompileOptions::default()
+        };
+        #[cfg(test)]
+        let options = super::gated_norm_discovery::model_options(dimension, gated, heads, options);
+        let kernel = aux::norm(
+            (&mut output).partition([1, dimension.next_power_of_two()]),
+            &input,
+            &weight,
+            &gate,
+            epsilon,
+            offset,
+        )
+        .generics(vec![
+            dimension.to_string(),
+            dimension.next_power_of_two().to_string(),
+            i32::from(gated).to_string(),
+        ])
+        .compile_options(options);
+        self.scope.record(kernel)?;
         Ok(output)
     }
 }
