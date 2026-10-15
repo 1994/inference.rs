@@ -24,22 +24,24 @@ pub struct Workspace {
     prefill: BTreeMap<(TensorId, usize), crate::tuning::attention::Choice>,
 }
 
-/// Bound the extra reduction work by available parallelism and the KV workload.
-/// Like `FlashInfer`'s work estimator, this uses device occupancy inputs rather than a
-/// GPU/model name. This conservative policy is not a substitute for kernel autotuning.
-fn partitions(heads: usize, capacity: usize, multiprocessors: usize) -> usize {
-    if capacity < crate::constants::ATTENTION_SPLIT_THRESHOLD {
+/// A hardware/window-scoped partition count gives private and pooled sequences the same
+/// F32 reduction tree. Reserved KV capacity only changes storage, never arithmetic.
+fn partitions(heads: usize, window: Option<usize>, multiprocessors: usize) -> usize {
+    if window.is_some_and(|tokens| tokens < crate::constants::ATTENTION_SPLIT_THRESHOLD) {
         return 1;
     }
     let limit = multiprocessors
         .div_ceil(heads)
-        .min(capacity / crate::constants::ATTENTION_SPLIT_MIN_TOKENS)
         .clamp(1, crate::constants::ATTENTION_SPLIT_MAX_PARTS);
     1 << limit.ilog2()
 }
 
 impl Workspace {
-    pub(crate) fn new(device: &CudaDevice, graph: &DataflowGraph, capacity: usize) -> Result<Self> {
+    pub(crate) fn new(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        _capacity: usize,
+    ) -> Result<Self> {
         let mut buffers = BTreeMap::new();
         let sms = usize::try_from(device.profile()?.multiprocessors)
             .map_err(|_| infer_core::Error::invalid("CUDA multiprocessor count"))?;
@@ -58,7 +60,7 @@ impl Workspace {
                     "attention dimensions must be positive",
                 ));
             }
-            let parts = partitions(query_heads, capacity.min(window.unwrap_or(capacity)), sms);
+            let parts = partitions(query_heads, window, sms);
             if parts == 1 || buffers.contains_key(&(query_heads, head_dim)) {
                 continue;
             }

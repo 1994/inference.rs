@@ -16,8 +16,6 @@ mod device {
     pub const KV_CACHE_RANK: usize = 3;
     /// Minimum KV span where split decoding amortizes its reduction.
     pub const ATTENTION_SPLIT_THRESHOLD: usize = 1024;
-    /// Minimum tokens assigned to a split attention partition.
-    pub const ATTENTION_SPLIT_MIN_TOKENS: usize = 128;
     /// Maximum split attention partitions and their scratch budget.
     pub const ATTENTION_SPLIT_MAX_PARTS: usize = 16;
     /// External hidden, embedding and two normalized rows used by draft fusion.

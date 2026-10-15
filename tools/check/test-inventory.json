@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 161
+      "tests": 171
     },
     "frontdoor": {
       "benches": 0,
@@ -176,7 +176,14 @@
     "requires CUDA, INFER_TEST_MODEL, safe-run; four slot matrix rows, all 96 weights and complete original F64/bit gates": 1,
     "requires CUDA, INFER_TEST_MODEL/frozen tokens/table, safe-run; four distinct trajectories, inactive/rebind, complete private F32/pool equality": 1,
     "requires CUDA, frozen INFER_TEST_MODEL/TOKENS/table; safe-run; complete F32/FP8 state and vocabulary comparisons": 1,
+    "requires CUDA, release, safe-run; validates actual probe input bits and temporary ownership": 1,
+    "requires CUDA/checkpoint/failing52token inputs/safe-run; GPUselected versus full logits/crosscapacity join": 1,
+    "requires CUDA/checkpoint/frozen511tokens/safe-run; actual parallel quantization and complete state equivalence": 1,
+    "requires CUDA/checkpoint/frozen511tokens/safe-run; original private versus default pool full-model bits": 1,
     "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic": 1,
+    "requires CUDA/checkpoint/safe-run; actual pool inactive/reactivate/rebind full states": 1,
+    "requires CUDA/checkpoint/safe-run; all96 real small weights, original private GEMV bits": 1,
+    "requires CUDA/safe-run; exact finite row max and quantizer cost": 1,
     "requires CUDA; complete FP8/F64/bitwise gate; safe-run --test-threads 1": 1,
     "requires CUDA; exact ordered recurrence at captured prompt widths": 1,
     "requires CUDA; full F64/cache numerical gate and hardware AB/BA tuning": 1,
@@ -289,6 +296,31 @@
     },
     {
       "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_parallel_quant.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_parallel_quant_pool.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_pool_gemv_cost.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_pool_gemv_model.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_pool_greedy_lifecycle.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/nvfp4.rs",
       "mount": "../tests/unit/nvfp4.rs"
     },
@@ -326,6 +358,11 @@
       "crate": "cuda",
       "file": "src/resident/fp8_gemm.rs",
       "mount": "../../tests/unit/resident_fp8_gemm.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/fp8_quant_reduction.rs",
+      "mount": "../../tests/unit/resident_fp8_quant_reduction.rs"
     },
     {
       "crate": "cuda",
@@ -446,6 +483,11 @@
       "crate": "cuda",
       "file": "src/tuning/attention.rs",
       "mount": "../../tests/unit/tuning_attention.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/fp8_gemm/probe_inputs.rs",
+      "mount": "../../../tests/unit/fp8_probe_inputs.rs"
     },
     {
       "crate": "cuda",
@@ -839,11 +881,11 @@
     }
   ],
   "totals": {
-    "all": 608,
+    "all": 618,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 608
+    "tests": 618
   }
 }

@@ -487,17 +487,7 @@ impl Workspace {
                 }
                 ProjectionWeight::Fp8(w, channel_scale) => {
                     if !reuse {
-                        scope.record(
-                            kernels::quantize(
-                                (&mut *q).partition([1, columns.next_power_of_two()]),
-                                (&mut *qs).partition([1, 1]),
-                                input,
-                            )
-                            .generics(vec![
-                                columns.to_string(),
-                                columns.next_power_of_two().to_string(),
-                            ]),
-                        )?;
+                        super::super::fp8_quant_reduction::record(scope, q, qs, input, columns)?;
                     }
                     if self.vendor_diagnostic
                         && self
