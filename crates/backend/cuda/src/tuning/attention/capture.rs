@@ -143,7 +143,7 @@ impl Operands {
             .generics(Self::append_generics(s, f.capacity)),
         )?;
         let window = i32::try_from(f.window).map_err(|e| DeviceError::Internal(e.to_string()))?;
-        if choice == Choice::RustSimt {
+        if matches!(choice, Choice::RustSimt | Choice::SharedKv) {
             let supported = oxide
                 .ok_or_else(|| DeviceError::Internal("Rust attention module missing".into()))?
                 .record(
@@ -266,7 +266,9 @@ pub(super) struct Captured {
 }
 impl Captured {
     pub fn new(device: &CudaDevice, fixture: &Fixture, choice: Choice) -> Result<Self> {
-        let oxide = if choice == Choice::RustSimt {
+        let oxide = if choice == Choice::SharedKv {
+            crate::resident::attention_oxide::Support::load_shared(device)?
+        } else if choice == Choice::RustSimt {
             crate::resident::attention_oxide::Support::load(device)?
         } else {
             None

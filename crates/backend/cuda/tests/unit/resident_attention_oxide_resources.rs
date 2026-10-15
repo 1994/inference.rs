@@ -10,26 +10,29 @@ fn upload<T: DType>(device: &CudaDevice, data: Vec<T>, shape: &[usize]) -> Resul
         .reshape(shape)
         .map_err(device_error)
 }
-#[test]
-#[ignore = "requires CUDA/safe-run; graph operand lifetime and cross-stream access contract"]
-fn rust_attention_graph_retains_operands_and_write_lease() -> Result<()> {
-    let device = CudaDevice::new(0)?;
-    let support =
-        Support::load(&device)?.ok_or_else(|| infer_core::Error::invalid("SM120 required"))?;
-    let query = upload(&device, vec![0.0; 64 * HEADS * DIM], &[64, HEADS * DIM])?;
+fn resource_contract(device: &CudaDevice, support: &Support, lanes: usize) -> Result<()> {
+    let query = upload(
+        device,
+        vec![0.0; lanes * HEADS * DIM],
+        &[lanes, HEADS * DIM],
+    )?;
     let mut keys = upload(
-        &device,
+        device,
         vec![f8e4m3fn(0); KV_HEADS * 128 * DIM],
         &[KV_HEADS, 128, DIM],
     )?;
     let values = upload(
-        &device,
+        device,
         vec![f8e4m3fn(0); KV_HEADS * 128 * DIM],
         &[KV_HEADS, 128, DIM],
     )?;
-    let metadata = upload(&device, vec![0, 1, 0, 0], &[4])?;
-    let table = upload(&device, vec![0, 1, 2, 3], &[4])?;
-    let mut output = upload(&device, vec![0.0; 64 * HEADS * DIM], &[64 * HEADS, DIM])?;
+    let metadata = upload(device, vec![0, 1, 0, 0], &[4])?;
+    let table = upload(device, vec![0, 1, 2, 3], &[4])?;
+    let mut output = upload(
+        device,
+        vec![0.0; lanes * HEADS * DIM],
+        &[lanes * HEADS, DIM],
+    )?;
     let graph = CudaGraph::scope(&device.stream, |scope| {
         if !support.record(
             scope,
@@ -41,7 +44,7 @@ fn rust_attention_graph_retains_operands_and_write_lease() -> Result<()> {
                 metadata: &metadata,
                 table: &table,
             },
-            (HEADS, KV_HEADS, DIM, 64, 128),
+            (HEADS, KV_HEADS, DIM, lanes, 128),
             0,
             [0.5, 2.0],
         )? {
@@ -88,4 +91,22 @@ fn rust_attention_graph_retains_operands_and_write_lease() -> Result<()> {
         "output_exclusive_access":true,"operands_dropped_before_replay":true,"replays":3})
     );
     Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA/safe-run; graph operand lifetime and cross-stream access contract"]
+fn rust_attention_graph_retains_operands_and_write_lease() -> Result<()> {
+    let device = CudaDevice::new(0)?;
+    let support =
+        Support::load(&device)?.ok_or_else(|| infer_core::Error::invalid("SM120 required"))?;
+    resource_contract(&device, &support, 64)
+}
+#[test]
+#[ignore = "requires CUDA/safe-run; shared KV graph operand lifetime and exclusive access"]
+fn shared_attention_graph_retains_operands_and_write_lease() -> Result<()> {
+    let device = CudaDevice::new(0)?;
+    let support = Support::load_shared(&device)?
+        .ok_or_else(|| infer_core::Error::invalid("SM120 required"))?;
+    assert_eq!(support.rows_per_cta, 12);
+    resource_contract(&device, &support, 256)
 }

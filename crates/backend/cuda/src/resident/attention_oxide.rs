@@ -11,6 +11,7 @@ use cutile::{
 };
 use infer_core::Result;
 use infer_ir::{DataflowGraph, TensorOp};
+mod shared;
 
 const PTX: &str = include_str!("../../kernels/oxide-attention/attention-sm120.ptx");
 const HEADS: usize = 24;
@@ -23,6 +24,8 @@ const REQUIRED_METADATA_FIELDS: usize = 3;
 pub struct Support {
     function: Arc<Function>,
     stream: usize,
+    threads: u32,
+    rows_per_cta: usize,
 }
 
 pub struct Bindings<'a, E: DType> {
@@ -70,7 +73,13 @@ impl Support {
                     .map_err(device_error)?,
             ),
             stream: device.stream.cu_stream() as usize,
+            threads: THREADS,
+            rows_per_cta: 1,
         }))
+    }
+
+    pub fn load_shared(device: &CudaDevice) -> Result<Option<Self>> {
+        shared::load(device)
     }
 
     #[cfg(test)]
@@ -87,6 +96,8 @@ impl Support {
                     .map_err(device_error)?,
             ),
             stream: device.stream.cu_stream() as usize,
+            threads: THREADS,
+            rows_per_cta: 1,
         })
     }
     #[expect(
@@ -103,6 +114,7 @@ impl Support {
     ) -> std::result::Result<bool, DeviceError> {
         if (heads, kv_heads, dim) != (HEADS, KV_HEADS, DIM)
             || !SUPPORTED_LANES.contains(&lanes)
+            || (self.rows_per_cta != 1 && lanes != shared::LANES)
             || E::DTYPE != cuda_core::f8e4m3fn::DTYPE
             || size_of::<E>() != 1
             || capacity == 0
@@ -149,11 +161,12 @@ impl Support {
         launch.push_arg(scales[1]);
         launch.set_launch_config(LaunchConfig {
             grid_dim: (
-                u32::try_from(lanes * HEADS).map_err(super::capture::error)?,
+                u32::try_from((lanes * HEADS).div_ceil(self.rows_per_cta))
+                    .map_err(super::capture::error)?,
                 1,
                 1,
             ),
-            block_dim: (THREADS, 1, 1),
+            block_dim: (self.threads, 1, 1),
             shared_mem_bytes: 0,
         });
         scope.record(Recorded {
@@ -251,3 +264,7 @@ pub fn artifact_identity() -> &'static str {
 #[cfg(test)]
 #[path = "../../tests/unit/resident_attention_oxide_resources.rs"]
 mod resources_tests;
+
+pub fn shared_identity() -> &'static str {
+    shared::artifact_identity()
+}
