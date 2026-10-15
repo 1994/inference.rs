@@ -1,0 +1,1206 @@
+{
+  "classification": "Default-path experimental backend; not qualified for production admission",
+  "hardware": {
+    "device": "RTX 5090",
+    "architecture": "sm_120",
+    "driver": "615.78.08",
+    "L2_bytes": 100663296
+  },
+  "serving": {
+    "classification": "Five independent native-serving paired diagnostic units; no full vLLM/quality certification",
+    "pairs": [
+      {
+        "unit": 0,
+        "complete_streams": 28,
+        "output_token_differences": 0,
+        "hot_reused_equal": true
+      },
+      {
+        "unit": 1,
+        "complete_streams": 28,
+        "output_token_differences": 0,
+        "hot_reused_equal": true
+      },
+      {
+        "unit": 2,
+        "complete_streams": 28,
+        "output_token_differences": 0,
+        "hot_reused_equal": true
+      },
+      {
+        "unit": 3,
+        "complete_streams": 28,
+        "output_token_differences": 0,
+        "hot_reused_equal": true
+      },
+      {
+        "unit": 4,
+        "complete_streams": 28,
+        "output_token_differences": 0,
+        "hot_reused_equal": true
+      }
+    ],
+    "metrics": [
+      {
+        "case": "short",
+        "metric": "ttft_seconds",
+        "control_ms": 28.017168981023133,
+        "candidate_ms": 27.881581045221537,
+        "paired_ratios": [
+          1.0189997216936344,
+          1.0097622988979205,
+          1.0000928678866385,
+          0.9408472158287663,
+          1.0066531394461569
+        ],
+        "geomean_ratio": 0.9948703794720374,
+        "ci95_log_student_t": [
+          0.9561983390710256,
+          1.0351064538685801
+        ],
+        "independent_medians_ms": {
+          "control": [
+            26.774074998684227,
+            28.017168981023133,
+            28.578625002410263,
+            29.425462009385228,
+            27.69730699947104
+          ],
+          "joint": [
+            27.282774972263724,
+            28.290680958889425,
+            28.581279038917273,
+            27.684864006005228,
+            27.881581045221537
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.050265357978030334,
+          "joint": 0.02509534852277162
+        }
+      },
+      {
+        "case": "short",
+        "metric": "tpot_seconds",
+        "control_ms": 15.125350730072352,
+        "candidate_ms": 15.129668777623761,
+        "paired_ratios": [
+          1.00052310410024,
+          0.9936576224965401,
+          1.0009085282693237,
+          0.9963839479574926,
+          1.0049213160536006
+        ],
+        "geomean_ratio": 0.9992712951358973,
+        "ci95_log_student_t": [
+          0.9938723425736228,
+          1.0046995761013489
+        ],
+        "independent_medians_ms": {
+          "control": [
+            15.121758523737155,
+            15.193714047892996,
+            15.125350730072352,
+            15.143837475787022,
+            15.0632406511004
+          ],
+          "joint": [
+            15.129668777623761,
+            15.097349777721636,
+            15.13909253879406,
+            15.0890765713513,
+            15.137371619135909
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.004519783973321312,
+          "joint": 0.0026829540599391244
+        }
+      },
+      {
+        "case": "short",
+        "metric": "wall_seconds",
+        "control_ms": 981.576021,
+        "candidate_ms": 981.170036,
+        "paired_ratios": [
+          1.0001499230969069,
+          0.994372063316751,
+          1.0002067603483153,
+          0.9947388209675512,
+          1.0049708150536776
+        ],
+        "geomean_ratio": 0.9988798780489186,
+        "ci95_log_student_t": [
+          0.993416196113639,
+          1.0043736096455655
+        ],
+        "independent_medians_ms": {
+          "control": [
+            981.0229579999999,
+            985.349927,
+            981.576021,
+            983.5609029999999,
+            976.704212
+          ],
+          "joint": [
+            981.170036,
+            979.80444,
+            981.778972,
+            978.386213,
+            981.559228
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.004963251847815764,
+          "joint": 0.0028372482830285595
+        }
+      },
+      {
+        "case": "long",
+        "metric": "ttft_seconds",
+        "control_ms": 122.38484900444746,
+        "candidate_ms": 122.66048503806815,
+        "paired_ratios": [
+          0.9996395100023545,
+          1.001686855689086,
+          0.998359193302784,
+          1.009599973217705,
+          0.9993608682982541
+        ],
+        "geomean_ratio": 1.0017209943148278,
+        "ci95_log_student_t": [
+          0.9960856495141189,
+          1.0073882210235212
+        ],
+        "independent_medians_ms": {
+          "control": [
+            122.33619898324832,
+            122.6085540256463,
+            122.8620779584162,
+            122.18127702362835,
+            122.38484900444746
+          ],
+          "joint": [
+            122.2920980071649,
+            122.81537696253508,
+            122.66048503806815,
+            123.35421401076019,
+            122.30662896763533
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.003899412042019934,
+          "joint": 0.005655684244822101
+        }
+      },
+      {
+        "case": "long",
+        "metric": "tpot_seconds",
+        "control_ms": 15.151964205812426,
+        "candidate_ms": 15.15108174533539,
+        "paired_ratios": [
+          1.0014716841815794,
+          0.9961116044864002,
+          0.999104407481369,
+          0.9990645678319496,
+          1.003650788091618
+        ],
+        "geomean_ratio": 0.9998773882612341,
+        "ci95_log_student_t": [
+          0.996359767011028,
+          1.0034074283782688
+        ],
+        "independent_medians_ms": {
+          "control": [
+            15.128816904810568,
+            15.180215650674192,
+            15.192266778155629,
+            15.151964205812426,
+            15.134662253937373
+          ],
+          "joint": [
+            15.15108174533539,
+            15.121188968242635,
+            15.178660697688066,
+            15.137790571085162,
+            15.189915698664706
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.0026598909419111028,
+          "joint": 0.002563114237125186
+        }
+      },
+      {
+        "case": "long",
+        "metric": "wall_seconds",
+        "control_ms": 1077.3941149999998,
+        "candidate_ms": 1076.700958,
+        "paired_ratios": [
+          1.0010973735689386,
+          0.9967384741075646,
+          0.9991572246929104,
+          0.9982873574398389,
+          1.001809005611656
+        ],
+        "geomean_ratio": 0.9994161795923302,
+        "ci95_log_student_t": [
+          0.9968547682664117,
+          1.0019841724466614
+        ],
+        "independent_medians_ms": {
+          "control": [
+            1075.52071,
+            1079.0415639999999,
+            1079.904682,
+            1076.810213,
+            1077.3941149999998
+          ],
+          "joint": [
+            1076.700958,
+            1075.522242,
+            1078.994565,
+            1074.9660219999998,
+            1079.343127
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.002330221564278867,
+          "joint": 0.0024539487778556524
+        }
+      },
+      {
+        "case": "batch4",
+        "metric": "ttft_seconds",
+        "control_ms": 116.45996951847337,
+        "candidate_ms": 108.90306849614717,
+        "paired_ratios": [
+          0.9319605737817728,
+          0.9264480127085932,
+          0.954849716459262,
+          0.9345600483099396,
+          0.9408263034203839
+        ],
+        "geomean_ratio": 0.9376787110681507,
+        "ci95_log_student_t": [
+          0.9243194879207398,
+          0.9512310155531669
+        ],
+        "independent_medians_ms": {
+          "control": [
+            116.45996951847337,
+            117.54903351538815,
+            115.50086899660528,
+            116.16803347715177,
+            116.68912699678913
+          ],
+          "joint": [
+            108.53610001504421,
+            108.90306849614717,
+            110.28597201220691,
+            108.56600297847763,
+            109.78420000174083
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.009351402043274781,
+          "joint": 0.01269848072378843
+        }
+      },
+      {
+        "case": "batch4",
+        "metric": "tpot_seconds",
+        "control_ms": 17.026581499348616,
+        "candidate_ms": 17.04341369045396,
+        "paired_ratios": [
+          1.0000646869587047,
+          1.0009885831225713,
+          0.999463706151113,
+          1.001322442845917,
+          1.0024557479139127
+        ],
+        "geomean_ratio": 1.0008584980262358,
+        "ci95_log_student_t": [
+          0.9994224671582043,
+          1.0022965922705889
+        ],
+        "independent_medians_ms": {
+          "control": [
+            17.02509905509133,
+            17.026581499348616,
+            17.16684926918427,
+            17.14088574572954,
+            16.992686126965083
+          ],
+          "joint": [
+            17.02620035697085,
+            17.04341369045396,
+            17.157642793516438,
+            17.163553587456665,
+            17.034415880473155
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.008238163946240107,
+          "joint": 0.007049051274862661
+        }
+      },
+      {
+        "case": "batch4",
+        "metric": "wall_seconds",
+        "control_ms": 1188.1671115,
+        "candidate_ms": 1183.0930605,
+        "paired_ratios": [
+          0.9927732016842983,
+          0.9943163434328391,
+          0.9952466962882079,
+          0.9967119073889632,
+          0.9965564510462248
+        ],
+        "geomean_ratio": 0.995119837558282,
+        "ci95_log_student_t": [
+          0.9930841698479478,
+          0.9971596780700291
+        ],
+        "independent_medians_ms": {
+          "control": [
+            1187.9124924999999,
+            1188.6650645000002,
+            1188.9879845,
+            1188.1671115,
+            1187.181177
+          ],
+          "joint": [
+            1179.3276885,
+            1181.9091005,
+            1183.3363635,
+            1184.260308,
+            1183.0930605
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.0008297944712130079,
+          "joint": 0.0031826507362057166
+        }
+      },
+      {
+        "case": "hot_long",
+        "metric": "ttft_seconds",
+        "control_ms": 44.60643604397774,
+        "candidate_ms": 44.84621103620157,
+        "paired_ratios": [
+          1.012093771978408,
+          1.0058739893302864,
+          0.9989154697940504,
+          1.0608647913229416,
+          1.007373649743576
+        ],
+        "geomean_ratio": 1.0167840814729454,
+        "ci95_log_student_t": [
+          0.9867041366996401,
+          1.0477810215682641
+        ],
+        "independent_medians_ms": {
+          "control": [
+            44.31033198488876,
+            44.962626008782536,
+            44.60643604397774,
+            41.640904964879155,
+            44.84413901809603
+          ],
+          "joint": [
+            44.84621103620157,
+            45.22673599421978,
+            44.558059016708285,
+            44.17536995606497,
+            45.1748039922677
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.06648213446541318,
+          "joint": 0.01495870140723965
+        }
+      },
+      {
+        "case": "hot_long",
+        "metric": "tpot_seconds",
+        "control_ms": 15.710631999859794,
+        "candidate_ms": 15.735856841303526,
+        "paired_ratios": [
+          1.0009241752858666,
+          0.9968232320854612,
+          1.0017251506861804,
+          1.0027276067907676,
+          1.0002753625952443
+        ],
+        "geomean_ratio": 1.0004930828413625,
+        "ci95_log_student_t": [
+          0.9977033295520462,
+          1.003290636769591
+        ],
+        "independent_medians_ms": {
+          "control": [
+            15.72234917428374,
+            15.710631999859794,
+            15.730211031734058,
+            15.693052365104595,
+            15.672550730717678
+          ],
+          "joint": [
+            15.73687938082638,
+            15.660722968205514,
+            15.757348016089214,
+            15.735856841303526,
+            15.676866364960986
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.0024239170736388704,
+          "joint": 0.004774692211281462
+        }
+      },
+      {
+        "case": "hot_long",
+        "metric": "wall_seconds",
+        "control_ms": 1033.426615,
+        "candidate_ms": 1033.067319,
+        "paired_ratios": [
+          0.9996523255790155,
+          0.9981825150839039,
+          0.9975930082345412,
+          1.0040600553142278,
+          1.0000676084383031
+        ],
+        "geomean_ratio": 0.9999085391902323,
+        "ci95_log_student_t": [
+          0.9967714719669042,
+          1.003055479479795
+        ],
+        "independent_medians_ms": {
+          "control": [
+            1033.426615,
+            1033.488082,
+            1036.848167,
+            1030.37143,
+            1031.4688780000001
+          ],
+          "joint": [
+            1033.067319,
+            1031.609733,
+            1034.352482,
+            1034.554795,
+            1031.538614
+          ]
+        },
+        "max_drift_from_arm_median": {
+          "control": 0.0033108804731143415,
+          "joint": 0.0014797728781892339
+        }
+      }
+    ],
+    "plan_sha256": "5c40bb315858d8206e177f2ce5b310f88eb78b1e9e8826265fb1c41c6d6a493e",
+    "canonical_input_sha256": "855ee860b55e546ea92890deff76dcb995d410c8b4d089f8ff6e5c76f174b464",
+    "raw_input_sha256": "2d88b924fa4ae3e83a6763e0c2eca986791808cf21ed0e0fcbafbe26b05e6a15",
+    "full_goal_done": false,
+    "gates": {
+      "primary_gain": true,
+      "secondary_no_regression": true,
+      "drift": false,
+      "drift_failures": [
+        {
+          "case": "short",
+          "metric": "ttft_seconds",
+          "arm": "control",
+          "drift": 0.050265357978030334,
+          "limit": 0.05
+        },
+        {
+          "case": "hot_long",
+          "metric": "ttft_seconds",
+          "arm": "control",
+          "drift": 0.06648213446541318,
+          "limit": 0.05
+        }
+      ],
+      "output_equality": true,
+      "qualified_default": false,
+      "production_admission": false,
+      "reason": "Original 5% drift gate failed in control short and hot_long TTFT; all samples retained, no optional rerun"
+    }
+  },
+  "serving_plan": {
+    "inputs_sha256": "2d88b924fa4ae3e83a6763e0c2eca986791808cf21ed0e0fcbafbe26b05e6a15",
+    "tuning_sha256": "e30df0ba84000717921fcb92b6ae766ab0646a17de61444401dba487fa936795",
+    "tokens": 64,
+    "mtp": 0,
+    "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+    "max_model_len": 65536,
+    "max_num_seqs": 16,
+    "prefix_cache": true,
+    "autotune": false,
+    "memory_gib": 24,
+    "background_pids": [
+      1160
+    ],
+    "harness_source": {
+      "revision": "ad41a774d60b16b52b156e0957ce2c7c384f40ab",
+      "path": "/home/r/benchmarks/inference.rs/serving-start-barrier-2026-10-14/source",
+      "sha256": "a54aeeb07a5922cccda8cd9602b1a537cda99958fc4324f42af5cfe28625d11c"
+    },
+    "classification": "Five predeclared native control versus default grouped-prefill native paired processes; original complete vLLM goals unchanged",
+    "paired_units": 5,
+    "orders": [
+      [
+        "control",
+        "joint"
+      ],
+      [
+        "joint",
+        "control"
+      ],
+      [
+        "control",
+        "joint"
+      ],
+      [
+        "joint",
+        "control"
+      ],
+      [
+        "control",
+        "joint"
+      ]
+    ],
+    "repeats": 3,
+    "native_source": "/home/r/benchmarks/inference.rs/grouped-prefill-first-principles-2026-10-15/source",
+    "scope": "Same four frozen cases/64outputs/equal actual prefix reuse. Default slot-backed node-major prefills for eligible short task groups. No execution profiling during timing.",
+    "primary": "batch4 TTFT, selected from before-change profile of repeated serial short prefills; 95% paired log Student t",
+    "secondary": "all other caseTTFT and allTPOT/wall; original <=5% drift and <=1.05 regression confidence bounds",
+    "stopping": "Exactly five independent paired units; all recorded, no optional sample dropping; task/output/state failures stop dependent measurements",
+    "qualified_default": "Requires full native output equality, actual grouped route proved separately, confidently improved batch4 TTFT, original drift/secondary gates; full vLLM/quality goal still open",
+    "confidence": 0.95,
+    "max_regression_ratio": 1.05,
+    "arms": {
+      "control": {
+        "executable": "/home/r/benchmarks/inference.rs/oxide-attention-fp8-convert-2026-10-15/integration-build-v1/infer",
+        "binary_sha256": "858430984892a402f4f1d45992910f6bf721a0aff7d1544844573f88bc26d500",
+        "source": {
+          "revision": "156e8e6dbbef7bedc5bb6ff64e523bf40611fd33",
+          "runtime_revision": "866198584010dbcb99d7e9ab9ea913d48d4c681d",
+          "production_main": false,
+          "dirty": false
+        }
+      },
+      "joint": {
+        "executable": "/home/r/benchmarks/inference.rs/grouped-prefill-first-principles-2026-10-15/integration-build-v4/infer",
+        "binary_sha256": "f22b844862c26059c470d51ce060773975c3bd581e922acc234a1fcbd80225e0",
+        "source": {
+          "parent": "156e8e6dbbef7bedc5bb6ff64e523bf40611fd33",
+          "production_main": false,
+          "dirty": true,
+          "runtime_diff_sha256": "edc715140f4b1400ed1af2dddac97ecb2b3a27ab84e3bfa75ed8118d562d8925",
+          "source_freeze_sha256": "cc24723650701b17d51134c2032489a2c727fb3e4fd78ff097d81ec8a5c730f9"
+        }
+      }
+    },
+    "declared_max_drift": 0.05,
+    "created_unix": 1792027842.2906156
+  },
+  "runtime_source_changed_after_timing": [
+    "crates/backend/cuda/tests/unit/resident_quant_reuse_model.rs",
+    "crates/backend/cuda/src/loading/mod.rs",
+    "crates/backend/cuda/src/resident/slot_batch.rs",
+    "crates/backend/cuda/src/resident/grouped_prefill.rs"
+  ],
+  "post_timing_changes": "Move existing slot storage allocation into a helper, name measured hidden dimension, expand test-only state coverage; executor routing, capture order, kernels, arithmetic unchanged. Final source is not the exact measured snapshot.",
+  "slot_state_gate": {
+    "passed": true,
+    "cases": [
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 3,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 5,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 6,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 7,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 9,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 10,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 11,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 12,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 13,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 14,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 128,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 15,
+        "prefill_requests": 4,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 3,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 5,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 6,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 7,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 9,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 10,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 11,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 12,
+        "prefill_requests": 2,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 13,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 14,
+        "prefill_requests": 3,
+        "slot_prefill_bits": true
+      },
+      {
+        "capacity": 8192,
+        "decode_steps": 8,
+        "full_F32_and_FP8_KV_bits": true,
+        "inactive_slots_unchanged": true,
+        "mask": 15,
+        "prefill_requests": 4,
+        "slot_prefill_bits": true
+      }
+    ],
+    "slot_subsets_per_capacity": 11,
+    "full_F32_and_FP8_state_bytes": true,
+    "pooled_decode_steps_per_subset": 8,
+    "inactive_slots_unchanged": true,
+    "whole_model_27B": true,
+    "binary_sha256": "1b0322dc3cf6b3a648b104f6d2e6bd214c3618d3bda99efba33bf05ada6d72b0"
+  },
+  "same_address_prefill_gate": {
+    "cases": [
+      {
+        "requests": 2,
+        "baseline_ms": 48.139846581330936,
+        "candidate_ms": 43.59471929179336,
+        "speedup": 1.1042570628676882,
+        "ci95": [
+          1.1036362606875139,
+          1.1048782142529048
+        ],
+        "original_drift": {
+          "baseline": 0.0008122191432935466,
+          "candidate": 0.0008810855157213027
+        },
+        "useful": true,
+        "drift_pass": true
+      },
+      {
+        "requests": 3,
+        "baseline_ms": 72.27020671998737,
+        "candidate_ms": 62.89436188761696,
+        "speedup": 1.1493704579915727,
+        "ci95": [
+          1.1485682656799778,
+          1.150173210576792
+        ],
+        "original_drift": {
+          "baseline": 0.0013393122793763368,
+          "candidate": 0.0007951027560395563
+        },
+        "useful": true,
+        "drift_pass": true
+      },
+      {
+        "requests": 4,
+        "baseline_ms": 96.4308126072154,
+        "candidate_ms": 82.65157278525955,
+        "speedup": 1.1665763783912437,
+        "ci95": [
+          1.1637319838758025,
+          1.169427725177716
+        ],
+        "original_drift": {
+          "baseline": 0.001701995648026533,
+          "candidate": 0.0017993671826221913
+        },
+        "useful": true,
+        "drift_pass": true
+      }
+    ],
+    "complete_model_and_private_bits_passed": true,
+    "same_addresses": true,
+    "same_graph_replays": true,
+    "peak_own_gpu_process_mib": 25820.0,
+    "qualified_for_backend_implementation": true,
+    "production_admission": false,
+    "full_goal_qualified": false
+  },
+  "production_admission": false,
+  "full_goal_done": false,
+  "quality_256_new_candidate": "not rerun after formal serving drift gate failed",
+  "vllm_comparison_new_candidate": "not run; no new vLLM gap claim",
+  "raw_evidence_directory": "/home/r/benchmarks/inference.rs/grouped-prefill-first-principles-2026-10-15",
+  "all_raw_samples_retained": true,
+  "automatic_grouped_route": {
+    "completed_streams": 28,
+    "token_differences": [],
+    "actual_grouped_prefill_steps": 4,
+    "grouped_step_sizes": [
+      3,
+      3,
+      3,
+      3
+    ],
+    "grouped_steps": [
+      {
+        "accepted_tokens": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "draft_pool_width": null,
+        "execution_wall_us": 80966,
+        "host_phases_us": {
+          "grouped_prefill": 63977,
+          "selected_step": 14915
+        },
+        "pool_disabled": false,
+        "pool_width": 4,
+        "slots_after": [
+          null,
+          0,
+          1,
+          2
+        ],
+        "successful": true,
+        "tasks": [
+          {
+            "capacity": 116,
+            "input_tokens": 1,
+            "kind": "decode",
+            "position": 52,
+            "request": 12,
+            "slot_before": null,
+            "state": 97
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 9,
+            "slot_before": null,
+            "state": 99
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 10,
+            "slot_before": null,
+            "state": 100
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 11,
+            "slot_before": null,
+            "state": 98
+          }
+        ]
+      },
+      {
+        "accepted_tokens": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "draft_pool_width": null,
+        "execution_wall_us": 79817,
+        "host_phases_us": {
+          "grouped_prefill": 62807,
+          "selected_step": 14911
+        },
+        "pool_disabled": false,
+        "pool_width": 4,
+        "slots_after": [
+          null,
+          2,
+          1,
+          0
+        ],
+        "successful": true,
+        "tasks": [
+          {
+            "capacity": 116,
+            "input_tokens": 1,
+            "kind": "decode",
+            "position": 52,
+            "request": 14,
+            "slot_before": null,
+            "state": 117
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 13,
+            "slot_before": null,
+            "state": 118
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 15,
+            "slot_before": null,
+            "state": 120
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 16,
+            "slot_before": null,
+            "state": 119
+          }
+        ]
+      },
+      {
+        "accepted_tokens": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "draft_pool_width": null,
+        "execution_wall_us": 79698,
+        "host_phases_us": {
+          "grouped_prefill": 62698,
+          "selected_step": 14897
+        },
+        "pool_disabled": false,
+        "pool_width": 4,
+        "slots_after": [
+          null,
+          0,
+          1,
+          2
+        ],
+        "successful": true,
+        "tasks": [
+          {
+            "capacity": 116,
+            "input_tokens": 1,
+            "kind": "decode",
+            "position": 52,
+            "request": 17,
+            "slot_before": null,
+            "state": 137
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 18,
+            "slot_before": null,
+            "state": 138
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 19,
+            "slot_before": null,
+            "state": 140
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 20,
+            "slot_before": null,
+            "state": 139
+          }
+        ]
+      },
+      {
+        "accepted_tokens": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "draft_pool_width": null,
+        "execution_wall_us": 79768,
+        "host_phases_us": {
+          "grouped_prefill": 62760,
+          "selected_step": 14907
+        },
+        "pool_disabled": false,
+        "pool_width": 4,
+        "slots_after": [
+          null,
+          2,
+          1,
+          0
+        ],
+        "successful": true,
+        "tasks": [
+          {
+            "capacity": 116,
+            "input_tokens": 1,
+            "kind": "decode",
+            "position": 52,
+            "request": 21,
+            "slot_before": null,
+            "state": 157
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 22,
+            "slot_before": null,
+            "state": 160
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 23,
+            "slot_before": null,
+            "state": 158
+          },
+          {
+            "capacity": 116,
+            "input_tokens": 52,
+            "kind": "prefill",
+            "position": 0,
+            "request": 24,
+            "slot_before": null,
+            "state": 159
+          }
+        ]
+      }
+    ],
+    "capture_unavailable": false,
+    "hot_reuse": [
+      3584.0,
+      3584.0,
+      3584.0
+    ],
+    "binary_sha256": "f22b844862c26059c470d51ce060773975c3bd581e922acc234a1fcbd80225e0",
+    "full_goal_qualified": false,
+    "scope": "Instrumented route/outputs; no speed confidence qualification"
+  },
+  "final_checks": [
+    {
+      "label": "inventory",
+      "returncode": 0,
+      "started": 1792029189.5979846,
+      "finished": 1792029189.6889095
+    },
+    {
+      "label": "tools",
+      "returncode": 0,
+      "started": 1792029189.688958,
+      "finished": 1792029194.3716156
+    },
+    {
+      "label": "ordinary-cuda",
+      "returncode": 0,
+      "started": 1792029194.3718688,
+      "finished": 1792029194.4079034
+    },
+    {
+      "label": "layout",
+      "returncode": 0,
+      "started": 1792029194.4079626,
+      "finished": 1792029194.472304
+    },
+    {
+      "label": "policy",
+      "returncode": 0,
+      "started": 1792029194.472369,
+      "finished": 1792029194.7534852
+    },
+    {
+      "label": "workspaces",
+      "returncode": 0,
+      "started": 1792029194.7535543,
+      "finished": 1792029194.7830234
+    }
+  ],
+  "ordinary_cuda_test_result": {
+    "passed": 78,
+    "ignored": 107,
+    "failed": 0
+  },
+  "inventory": {
+    "entries": 632,
+    "src_test_bodies": 0,
+    "increase": 2
+  },
+  "final_cuda_clippy": "--locked --release -p infer-backend-cuda --features cuda --all-targets -- -D warnings: passed",
+  "final_Rust_sources_match_tested_binary": true
+}

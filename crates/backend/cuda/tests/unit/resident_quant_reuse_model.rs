@@ -31,7 +31,7 @@ pub(super) fn outputs(actual: &BatchOutput, expected: &BatchOutput) {
     }
 }
 
-fn states(
+pub(super) fn states(
     device: &CudaDevice,
     actual: &States,
     expected: &States,

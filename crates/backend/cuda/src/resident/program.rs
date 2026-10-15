@@ -407,6 +407,45 @@ impl DeviceProgram {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(super) const fn grouped_test_builder<'a>(
+        &'a mut self,
+        graph: &'a DataflowGraph,
+        weights: &'a ProgramWeights,
+        width: usize,
+    ) -> super::batch::BatchBuilder<'a> {
+        super::batch::BatchBuilder {
+            device: &self.device,
+            graph,
+            weights,
+            nvfp4: &mut self.nvfp4,
+            delegated: Some(&mut self.delegated),
+            attention: &mut self.attention,
+            states: &mut self.states,
+            fp8_states: &mut self.fp8_states,
+            external: &self.external,
+            lane_external: &mut self.lane_external,
+            lane_fusion: &mut self.lane_fusion,
+            tables: std::slice::from_ref(&self.table),
+            capacity: self.capacity,
+            width,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn grouped_test_advance(&mut self, count: usize, position: usize) -> Result<()> {
+        let lag = self.batch_state_lag()?;
+        if position.saturating_sub(lag) != self.next_position {
+            return Err(Error::invalid("grouped prompt state position"));
+        }
+        self.next_position = position
+            .checked_add(count)
+            .ok_or_else(|| Error::invalid("grouped position overflow"))?
+            .saturating_sub(lag);
+        self.last_batch = None;
+        Ok(())
+    }
+
     /// # Errors
     /// Rejects unsupported graph shapes, storage budgets or CUDA capture failures.
     pub fn new(
@@ -1168,7 +1207,10 @@ fn attention_only(graph: &DataflowGraph) -> bool {
 ///
 /// cuBLAS chooses workspace and algorithm the first time it sees a configuration, and a capturing
 /// stream rejects that host-side work, so the warmup has to happen here.
-fn warm_delegated(delegated: &mut crate::device::cublaslt::Support, weights: &ProgramWeights) {
+pub(super) fn warm_delegated(
+    delegated: &mut crate::device::cublaslt::Support,
+    weights: &ProgramWeights,
+) {
     if !delegated.is_enabled() {
         return;
     }

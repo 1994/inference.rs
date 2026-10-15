@@ -123,6 +123,20 @@ impl CudaBackend {
         self.ensure_slot_pool(&eligible);
         let mut index = 0;
         while index < tasks.len() {
+            if self.prefill_eligible(&tasks[index]) {
+                let mut end = index + 1;
+                while end < tasks.len() && self.prefill_eligible(&tasks[end]) {
+                    end += 1;
+                }
+                let grouped = self.execute_prefill_segment(tasks, index..end, &mut outputs)?;
+                for fallback in index..end {
+                    if !grouped.contains(&fallback) {
+                        self.run_serial(tasks, fallback, &mut outputs, snapshots)?;
+                    }
+                }
+                index = end;
+                continue;
+            }
             if !eligible[index] {
                 self.run_serial(tasks, index, &mut outputs, snapshots)?;
                 index += 1;
@@ -139,6 +153,73 @@ impl CudaBackend {
             .into_iter()
             .map(|output| output.ok_or_else(|| Error::invariant("CUDA task output missing")))
             .collect()
+    }
+
+    fn prefill_eligible(&self, task: &ExecutionTask) -> bool {
+        let Some(pool) = self.slots.as_ref().filter(|p| p.has_prefill()) else {
+            return false;
+        };
+        let Some(state) = self.states.get(&task.state) else {
+            return false;
+        };
+        matches!(task.tokens, ExecutionInput::Prefill { .. })
+            && state.history.is_empty()
+            && state.slot.is_none()
+            && state.speculation.is_none()
+            && state.readout == OutputReadout::Logits
+            && task.tokens.readout() == OutputReadout::Logits
+            && state.capacity >= crate::constants::MID_PREFILL_LANES
+            && state.capacity <= pool.capacity()
+            && task.tokens.delta(0).is_ok_and(|tokens| {
+                (2..=crate::constants::MID_PREFILL_LANES).contains(&tokens.len())
+            })
+    }
+
+    fn execute_prefill_segment(
+        &mut self,
+        tasks: &[ExecutionTask],
+        segment: std::ops::Range<usize>,
+        outputs: &mut [Option<TaskOutput>],
+    ) -> Result<Vec<usize>> {
+        if segment.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let pool = self
+            .slots
+            .as_mut()
+            .ok_or_else(|| Error::invariant("prefill slot pool"))?;
+        let mut participants = Vec::new();
+        for index in segment {
+            let Some(slot) = pool.take_free() else {
+                break;
+            };
+            participants.push((index, slot));
+        }
+        if participants.len() < 2 {
+            for (_, slot) in participants {
+                pool.release(slot);
+            }
+            return Ok(Vec::new());
+        }
+        let result = prefill_slot_replay(
+            pool,
+            &mut self.states,
+            self.loaded.device(),
+            tasks,
+            &participants,
+            outputs,
+        );
+        if let Err(error) = result {
+            for (index, slot) in participants {
+                if let Some(state) = self.states.get_mut(&tasks[index].state) {
+                    state.poisoned = true;
+                    state.slot = None;
+                }
+                pool.release(slot);
+            }
+            return Err(error);
+        }
+        Ok(participants.into_iter().map(|(index, _)| index).collect())
     }
 
     /// A task rides the slot graph when it is a decode at the sequence cursor, the
@@ -469,6 +550,58 @@ impl CudaBackend {
             .ok_or_else(|| Error::invariant("CUDA completion missing"))?
             .map(Some)
     }
+}
+
+fn prefill_slot_replay(
+    pool: &mut SlotPool,
+    states: &mut BTreeMap<StateId, Sequence>,
+    device: &crate::device::CudaDevice,
+    tasks: &[ExecutionTask],
+    participants: &[(usize, usize)],
+    outputs: &mut [Option<TaskOutput>],
+) -> Result<()> {
+    let mut inputs = Vec::with_capacity(participants.len());
+    for &(index, slot) in participants {
+        let state = states
+            .get_mut(&tasks[index].state)
+            .ok_or_else(|| Error::invariant("prefill state"))?;
+        state.program.reset()?;
+        pool.bind_prefill(
+            slot,
+            state.program.states(),
+            state.program.fp8_states(),
+            device,
+        )?;
+        state.slot = Some(SlotLease {
+            slot,
+            position: 0,
+            batched: true,
+        });
+        inputs.push((slot, tasks[index].tokens.delta(0)?));
+    }
+    let rows = super::profiling::phase("grouped_prefill", || pool.run_prefill(device, &inputs))?;
+    if rows.len() != participants.len() {
+        return Err(Error::invariant("grouped prefill output count"));
+    }
+    for ((_, logits), &(index, _)) in rows.into_iter().zip(participants) {
+        let state = states
+            .get_mut(&tasks[index].state)
+            .ok_or_else(|| Error::invariant("prefill commit state"))?;
+        tasks[index].tokens.commit(&mut state.history)?;
+        if let Some(lease) = &mut state.slot {
+            lease.position = state.history.len();
+        }
+        outputs[index] = Some(TaskOutput {
+            request: tasks[index].request,
+            output: ModelOutput {
+                next_token: None,
+                logits,
+                hidden: Vec::new(),
+                tokens: Vec::new(),
+            },
+        });
+    }
+    Ok(())
 }
 
 /// Bind newly assigned sequences into their slots, replay one decode step for every

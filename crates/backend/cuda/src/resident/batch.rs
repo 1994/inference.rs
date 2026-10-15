@@ -515,7 +515,7 @@ impl BatchBuilder<'_> {
         })
     }
 
-    fn allocate_prompt_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
+    pub(super) fn allocate_prompt_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
         let mut partials = BTreeMap::new();
         for node in &self.graph.nodes {
             if node.op != TensorOp::Linear
@@ -670,7 +670,7 @@ impl BatchBuilder<'_> {
         result.map_err(device_error)
     }
 
-    fn record_prompt_node(
+    pub(super) fn record_prompt_node(
         &mut self,
         scope: &Scope,
         node: &TensorNode,
@@ -769,7 +769,7 @@ impl BatchBuilder<'_> {
         Ok(())
     }
 
-    fn skip_quant(
+    pub(super) fn skip_quant(
         &mut self,
         plan: &super::nvfp4_gemm::QuantPairPlan,
         index: usize,
@@ -1011,7 +1011,7 @@ impl BatchGraph {
             .map_err(device_error)
     }
 
-    fn update_metadata(
+    pub(super) fn update_metadata(
         graph: &CudaGraph<()>,
         metadata: &mut [Tensor<i32>],
         width: usize,
@@ -1441,3 +1441,7 @@ fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Resul
         usize::try_from(device.profile()?.arena_budget_bytes()).map_err(device_error)?,
     )
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_grouped_prefill.rs"]
+pub mod grouped_tests;

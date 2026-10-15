@@ -19,6 +19,9 @@ use infer_ir::{DataflowGraph, StateKind, TensorStorage};
 const EXTERNAL_UPLOAD_RING: usize = crate::constants::MAX_VERIFICATION_WIDTH + 1;
 
 /// Per-lane external hidden rows and their pinned upload rings.
+/// Independently allocated state families and identity tables for all slots.
+type SlotStorage = (Vec<States>, Vec<Fp8Caches>, Vec<Tensor<i32>>);
+
 type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
 
 /// How one state family moves into a slot at bind time: a token-row prefix of a
@@ -100,6 +103,7 @@ impl SlotLedger {
 }
 
 pub struct SlotPool {
+    prefill: Option<super::grouped_prefill::SlotPrefill>,
     // Exactly one of the two graphs exists: plain decode without a draft, pooled
     // speculation with one. Declared first so the graphs drop before the state sets and
     // arena buffers their kernels reference.
@@ -161,31 +165,8 @@ impl SlotPool {
             ));
         }
         let plan = copy_plan(graph, weights)?;
-        let budget = device
-            .memory_info()?
-            .0
-            .saturating_sub(device.profile()?.device_headroom_bytes());
-        let mut states = Vec::with_capacity(width);
-        let mut fp8 = Vec::with_capacity(width);
-        let mut tables = Vec::with_capacity(width);
-        let mut bytes = 0_u64;
-        for _ in 0..width {
-            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
-            let slot_fp8 = super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
-            bytes = bytes
-                .checked_add(state_bytes(&slot_states, &slot_fp8))
-                .ok_or_else(|| Error::invalid("slot pool budget overflow"))?;
-            if bytes > budget {
-                return Err(Error::new(
-                    infer_core::ErrorCode::Capacity,
-                    "slot decode pool exceeds available device memory minus headroom",
-                ));
-            }
-            states.push(slot_states);
-            fp8.push(slot_fp8);
-            // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
-            tables.push(super::metadata::identity_table(device, capacity)?);
-        }
+        let (mut states, mut fp8, tables) =
+            Self::allocate_slots(device, graph, weights, width, capacity)?;
         let external = api::zeros::<f32>(&[hidden])
             .sync_on(&device.stream)
             .map_err(device_error)?;
@@ -227,7 +208,22 @@ impl SlotPool {
                 (Some(builder.build_slots(&mut states, &mut fp8)?), None)
             }
         };
+        let prefill = Self::capture_prefill(
+            device,
+            graph,
+            weights,
+            super::grouped_prefill::Bindings {
+                states: &mut states,
+                fp8: &mut fp8,
+                tables: &tables,
+                external: &external,
+                capacity,
+            },
+            hidden,
+            verify,
+        );
         Ok(Self {
+            prefill,
             decode,
             verify: verify_graph,
             states,
@@ -247,6 +243,65 @@ impl SlotPool {
             pinned_cursor: vec![0; lanes],
             _lane_fusion: lane_fusion,
         })
+    }
+
+    fn allocate_slots(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        width: usize,
+        capacity: usize,
+    ) -> Result<SlotStorage> {
+        let budget = device
+            .memory_info()?
+            .0
+            .saturating_sub(device.profile()?.device_headroom_bytes());
+        let mut states = Vec::with_capacity(width);
+        let mut fp8 = Vec::with_capacity(width);
+        let mut tables = Vec::with_capacity(width);
+        let mut bytes = 0_u64;
+        for _ in 0..width {
+            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
+            let slot_fp8 = super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
+            bytes = bytes
+                .checked_add(state_bytes(&slot_states, &slot_fp8))
+                .ok_or_else(|| Error::invalid("slot pool budget overflow"))?;
+            if bytes > budget {
+                return Err(Error::new(
+                    infer_core::ErrorCode::Capacity,
+                    "slot decode pool exceeds available device memory minus headroom",
+                ));
+            }
+            states.push(slot_states);
+            fp8.push(slot_fp8);
+            // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
+            tables.push(super::metadata::identity_table(device, capacity)?);
+        }
+        Ok((states, fp8, tables))
+    }
+
+    fn capture_prefill(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        b: super::grouped_prefill::Bindings<'_>,
+        hidden: usize,
+        verify: usize,
+    ) -> Option<super::grouped_prefill::SlotPrefill> {
+        if verify >= 2
+            || hidden != super::grouped_prefill::MEASURED_HIDDEN
+            || weights.fusion.is_some()
+            || device.profile().ok()?.architecture != "sm_120"
+        {
+            return None;
+        }
+        match super::grouped_prefill::SlotPrefill::new(device, graph, weights, b, hidden) {
+            Ok(prefill) => Some(prefill),
+            Err(error) => {
+                tracing::warn!(target:"infer::capture",%error,"grouped prefill capture unavailable");
+                None
+            }
+        }
     }
 
     /// Per-lane external hidden rows plus, for an external-hidden pool, their pinned
@@ -383,7 +438,33 @@ impl SlotPool {
         rows: usize,
         device: &CudaDevice,
     ) -> Result<()> {
-        if slot >= self.width() || rows > self.capacity {
+        self.bind_covered(slot, source, source_fp8, (rows, rows), device)
+    }
+    pub(crate) fn bind_prefill(
+        &mut self,
+        slot: usize,
+        source: &States,
+        source_fp8: &Fp8Caches,
+        device: &CudaDevice,
+    ) -> Result<()> {
+        self.bind_covered(
+            slot,
+            source,
+            source_fp8,
+            (0, crate::constants::MID_PREFILL_LANES),
+            device,
+        )
+    }
+    fn bind_covered(
+        &mut self,
+        slot: usize,
+        source: &States,
+        source_fp8: &Fp8Caches,
+        coverage: (usize, usize),
+        device: &CudaDevice,
+    ) -> Result<()> {
+        let (rows, covered) = coverage;
+        if slot >= self.width() || rows > self.capacity || covered > self.capacity {
             return Err(Error::invalid("slot bind index or prefix length"));
         }
         // Step 1 of the KV refactor: the kernels resolve KV positions through this table, so it
@@ -406,7 +487,7 @@ impl SlotPool {
                         .ok_or_else(|| Error::invariant("slot states"))?,
                     source,
                     *id,
-                    rows,
+                    covered,
                     self.capacity,
                     device,
                 )?,
@@ -416,7 +497,7 @@ impl SlotPool {
                         .ok_or_else(|| Error::invariant("slot fp8 caches"))?,
                     source_fp8,
                     *id,
-                    rows,
+                    covered,
                     self.capacity,
                     device,
                 )?,
@@ -436,6 +517,39 @@ impl SlotPool {
             (None, None) => return Err(Error::invariant("slot pool graph")),
         }
         Ok(())
+    }
+
+    pub(crate) const fn has_prefill(&self) -> bool {
+        self.prefill.is_some()
+    }
+
+    pub(crate) fn run_prefill(
+        &mut self,
+        device: &CudaDevice,
+        inputs: &[(usize, &[u32])],
+    ) -> Result<BatchOutput> {
+        if self.decode.is_none()
+            || inputs
+                .iter()
+                .any(|(slot, _)| self.cursors().get(*slot) != Some(&0))
+        {
+            return Err(Error::invalid(
+                "grouped prefill requires fresh decode slots",
+            ));
+        }
+        let rows = self
+            .prefill
+            .as_mut()
+            .ok_or_else(|| Error::unsupported("grouped prefill unavailable"))?
+            .run(device, inputs)?;
+        let graph = self
+            .decode
+            .as_mut()
+            .ok_or_else(|| Error::invariant("prefill decode graph"))?;
+        for (slot, tokens) in inputs {
+            graph.set_cursor(*slot, tokens.len())?;
+        }
+        Ok(rows)
     }
 
     /// Replay one decode step for the active lanes; see [`SlotDecodeGraph::run_lanes`].

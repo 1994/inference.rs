@@ -562,3 +562,11 @@ mod oxide_attention_tests;
 #[cfg(all(test, feature = "cuda"))]
 #[path = "../../tests/unit/resident_recurrent_oxide_model.rs"]
 mod oxide_gdn_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_grouped_prefill.rs"]
+mod grouped_prefill_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_grouped_prefill_slots.rs"]
+mod grouped_prefill_slot_tests;

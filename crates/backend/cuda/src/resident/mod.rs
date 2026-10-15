@@ -57,3 +57,8 @@ pub(crate) mod pool_gemv;
 
 #[cfg(test)]
 pub(crate) use small_gemm::kernels as small_gemm_kernels;
+
+#[cfg(test)]
+pub(crate) use batch::grouped_tests::Grouped as GroupedPrefillTest;
+
+mod grouped_prefill;
