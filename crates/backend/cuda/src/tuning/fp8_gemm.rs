@@ -26,6 +26,12 @@ use std::{
 pub(crate) mod probe_inputs;
 
 const CONTRACT: &str = "fp8-channel-exact-v1:row-pad-pow2:maxabs/448:floor1e-12:clip448:e4m3-rne:mma-k128-f32:lt-scalar32f-scales1:fastaccum0:col-tn:raw*xs*ws:rn-ftz0:align256:workspace0:four-fixtures:exact-native-or-verified-lt-optin:search-ab-confirm-ba";
+const AUTO_CONTRACT: &str = "fp8-channel-auto-lt-prefill-v2:unchanged-quantizer:original-e4m3:scalar32f-scales1:fastaccum0:first-heuristic:workspace0:raw*xs*ws:four-full-bitwise-fixtures:cold-warm-ab-ba";
+
+const fn vendor_scope(rows: usize) -> bool {
+    rows > crate::constants::QUANT_GEMM_TILE[0]
+}
+
 const ROW_TILES: [usize; 2] = [
     crate::constants::QUANT_GEMM_TILE[0],
     crate::constants::PROMPT_GEMM_TILE_ROWS,
@@ -107,6 +113,8 @@ impl Choice {
             Self::Native(config) => config,
             Self::Lt(config) => {
                 if support.record_config(scope, config, q, weight, output, xs, ws)? {
+                    #[cfg(test)]
+                    crate::loading::fp8_vendor_model_tests::selected();
                     return Ok(());
                 }
                 // An arena alias with a different alignment must fall back before any Lt node.
@@ -229,7 +237,10 @@ impl Entry {
             && self.selected.valid()
             && (!matches!(self.selected, Choice::Lt(_)) || self.key.vendor_candidates)
             && !self.key.kernel_fingerprint.is_empty()
-            && self.key.contract == CONTRACT
+            && (self.key.contract == CONTRACT
+                || (self.key.vendor_candidates
+                    && vendor_scope(self.key.m)
+                    && self.key.contract == AUTO_CONTRACT))
             && self.confirmation.reverse
             && self.confirmation.choice == self.selected
             && times_valid(&self.confirmation.cold)
@@ -804,7 +815,7 @@ fn candidates(
     if vendor_candidates && let ProjectionWeight::Fp8(w, _) = weight {
         if permits(session, shape) {
             match support.prepare_candidates(&base.codes, w, &base.output) {
-                Ok(configs) => choices.extend(configs.into_iter().map(Choice::Lt)),
+                Ok(configs) => choices.extend(configs.into_iter().take(1).map(Choice::Lt)),
                 Err(error) => {
                     tracing::warn!(target:"infer::tuning",?shape,%error,"FP8 Lt candidates unavailable: native candidates remain");
                 }
@@ -1032,14 +1043,22 @@ fn resolve(
     let Some(kernel_fingerprint) = fingerprint(device, shape, session)? else {
         return Ok(baseline);
     };
+    let library = support.library_identity();
+    let vendor_candidates =
+        vendor_autotune_enabled() && vendor_scope(shape[0]) && library.is_some();
     let key = Key {
         hardware: serde_json::to_string(device.profile()?).map_err(device_error)?,
         driver_api: CudaDevice::driver_version()?,
         driver_build: driver_build(),
         kernel_fingerprint,
-        library: support.library_identity(),
-        contract: CONTRACT.into(),
-        vendor_candidates: vendor_autotune_enabled(),
+        library: if vendor_candidates { library } else { None },
+        contract: if vendor_candidates {
+            AUTO_CONTRACT
+        } else {
+            CONTRACT
+        }
+        .into(),
+        vendor_candidates,
         m: shape[0],
         n: shape[1],
         k: shape[2],
@@ -1093,15 +1112,15 @@ fn resolve(
         .insert(key.clone(), choice);
     cached_gate(device, support, weight, &key, choice, session)
 }
-/// Lt's reduction order lacks a full model qualification. Only internal tests may search it;
-/// production automatically tunes the qualified native geometry candidates.
+/// Precise zero-workspace Lt is an automatic prefill candidate. Every weight still passes
+/// the existing full-output exact gates and both memory-mode confirmations before capture.
 #[cfg(not(test))]
 pub(crate) const fn vendor_autotune_enabled() -> bool {
-    false
+    true
 }
 #[cfg(test)]
 pub(crate) fn vendor_autotune_enabled() -> bool {
-    std::env::var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
+    !crate::loading::fp8_vendor_model_tests::native_baseline()
 }
 
 /// Resolve every loaded channel weight before its graph capture; failures affect only this weight.

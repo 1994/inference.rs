@@ -297,3 +297,25 @@ fn fp8_native_candidates_and_lt_exact_gate_cover_tails_and_weight_owners() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn auto_lt_prefill_scope_and_cache_contract_preserve_native_decode() {
+    for rows in [1, 4, 12, 16] {
+        assert!(!vendor_scope(rows));
+    }
+    for rows in [17, 64, 256] {
+        assert!(vendor_scope(rows));
+    }
+    let old = entry();
+    assert!(old.valid());
+    let mut automatic = old.clone();
+    automatic.key.vendor_candidates = true;
+    automatic.key.contract = AUTO_CONTRACT.into();
+    assert!(automatic.valid());
+    assert_ne!(automatic.key, old.key);
+    automatic.key.vendor_candidates = false;
+    assert!(!automatic.valid());
+    automatic.key.vendor_candidates = true;
+    automatic.key.m = 4;
+    assert!(!automatic.valid());
+}
