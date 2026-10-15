@@ -14,7 +14,7 @@ mod capture_rope;
 mod capture_state;
 mod fp8_cache;
 pub(crate) mod fp8_gemm;
-mod kernels;
+pub(crate) mod kernels;
 mod linear_batch;
 mod metadata;
 pub(crate) mod nvfp4_gemm;

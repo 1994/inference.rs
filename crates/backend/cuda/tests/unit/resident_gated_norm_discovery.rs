@@ -135,32 +135,34 @@ fn cost(
 }
 
 thread_local! {
-    static MODEL_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MODEL_BASELINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static MODEL_SITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
-pub fn model_options(dimension: usize, gated: bool, rows: usize) -> CompileOptions {
-    if MODEL_CANDIDATE.with(std::cell::Cell::get)
-        && dimension == 128
-        && gated
-        && [3072, 12288].contains(&rows)
-    {
-        MODEL_SITES.with(|sites| sites.set(sites.get() + 1));
-        CompileOptions::default().occupancy(4)
-    } else {
-        CompileOptions::default()
+pub fn model_options(
+    dimension: usize,
+    gated: bool,
+    rows: usize,
+    prepared: CompileOptions,
+) -> CompileOptions {
+    if MODEL_BASELINE.with(std::cell::Cell::get) {
+        return CompileOptions::default();
     }
+    if dimension == 128 && gated && [3072, 12288].contains(&rows) && prepared.occupancy.is_some() {
+        MODEL_SITES.with(|n| n.set(n.get() + 1));
+    }
+    prepared
 }
 pub fn model_sites() -> usize {
     MODEL_SITES.with(std::cell::Cell::get)
 }
-pub fn with_model_candidate<T>(run: impl FnOnce() -> T) -> T {
+pub fn with_model_baseline<T>(run: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
-            MODEL_CANDIDATE.with(|c| c.set(self.0));
+            MODEL_BASELINE.with(|n| n.set(self.0));
         }
     }
-    let _restore = Restore(MODEL_CANDIDATE.with(|c| c.replace(true)));
+    let _restore = Restore(MODEL_BASELINE.with(|n| n.replace(true)));
     MODEL_SITES.with(|n| n.set(0));
     run()
 }

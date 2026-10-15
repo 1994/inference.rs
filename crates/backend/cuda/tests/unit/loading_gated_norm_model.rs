@@ -24,8 +24,8 @@ fn gated_norm_occupancy_preserves_full_model_bits() -> Result<()> {
     for width in [64, 256] {
         loaded.weights.prefill_width = width;
         loaded.weights.narrow_prefill_width = 0;
-        let mut control = loaded.sequence(1024)?;
-        let mut tuned = candidate::with_model_candidate(|| loaded.sequence(1024))?;
+        let mut control = candidate::with_model_baseline(|| loaded.sequence(1024))?;
+        let mut tuned = loaded.sequence(1024)?;
         assert!(
             candidate::model_sites() > 0,
             "candidate must change real captured norms"

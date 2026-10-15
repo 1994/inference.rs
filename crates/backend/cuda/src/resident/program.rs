@@ -481,6 +481,7 @@ impl DeviceProgram {
         super::nvfp4_gemm::Workspace,
         crate::device::cublaslt::Support,
     )> {
+        crate::tuning::gated_norm::prepare(device, graph, weights, geometry.prompts);
         let nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights, geometry)?;
         let mut delegated = crate::device::cublaslt::Support::new(device);
         warm_delegated(&mut delegated, weights);

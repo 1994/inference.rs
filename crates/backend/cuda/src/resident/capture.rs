@@ -405,6 +405,13 @@ impl Capture<'_> {
         let g = self.input(node.inputs[usize::from(gated)])?;
         let gate = g.view(&[heads, dimension])?;
         let weight = self.input(node.inputs[if gated { 2 } else { 1 }])?;
+        let options = if gated {
+            crate::tuning::gated_norm::options(output.device_id(), dimension, heads, epsilon)
+        } else {
+            cutile::tile_kernel::CompileOptions::default()
+        };
+        #[cfg(test)]
+        let options = super::gated_norm_discovery::model_options(dimension, gated, heads, options);
         let kernel = aux::norm(
             (&mut output).partition([1, dimension.next_power_of_two()]),
             &input,
@@ -417,11 +424,8 @@ impl Capture<'_> {
             dimension.to_string(),
             dimension.next_power_of_two().to_string(),
             i32::from(gated).to_string(),
-        ]);
-        #[cfg(test)]
-        let kernel = kernel.compile_options(super::gated_norm_discovery::model_options(
-            dimension, gated, heads,
-        ));
+        ])
+        .compile_options(options);
         self.scope.record(kernel)?;
         Ok(output)
     }

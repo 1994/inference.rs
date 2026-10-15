@@ -58,6 +58,7 @@ const MODEL_SEARCH_BUDGET: Duration = Duration::from_secs(30);
 pub struct ResidentTuningSession {
     started: OnceLock<Instant>,
     greedy_started: OnceLock<Instant>,
+    norm_started: OnceLock<Instant>,
     recurrent_started: OnceLock<Instant>,
     attention_started: OnceLock<Instant>,
     budget: Duration,
@@ -68,6 +69,7 @@ impl Default for ResidentTuningSession {
         Self {
             started: OnceLock::new(),
             greedy_started: OnceLock::new(),
+            norm_started: OnceLock::new(),
             recurrent_started: OnceLock::new(),
             attention_started: OnceLock::new(),
             budget: MODEL_SEARCH_BUDGET,
@@ -89,6 +91,11 @@ impl ResidentTuningSession {
     /// Prefill attention has its own finite allowance across all model programs.
     pub(crate) fn permits_attention_search(&self) -> bool {
         self.attention_started.get_or_init(Instant::now).elapsed() < self.budget
+    }
+
+    /// Normalization uses its own finite allowance across this model.
+    pub(crate) fn permits_norm_search(&self) -> bool {
+        self.norm_started.get_or_init(Instant::now).elapsed() < self.budget
     }
 
     pub(crate) fn permits_search(&self) -> bool {
