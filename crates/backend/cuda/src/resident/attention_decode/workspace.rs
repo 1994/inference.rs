@@ -18,6 +18,8 @@ struct Buffers {
 }
 
 pub struct Workspace {
+    oxide_available: bool,
+    pub(in crate::resident) oxide: Option<super::super::attention_oxide::Support>,
     #[cfg(test)]
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
@@ -83,6 +85,8 @@ impl Workspace {
         Ok(Self {
             #[cfg(test)]
             taps: taps::Taps::default(),
+            oxide_available: super::super::attention_oxide::Support::eligible(device, graph)?,
+            oxide: None,
             buffers,
             prefill: BTreeMap::new(),
         })
@@ -98,7 +102,7 @@ impl Workspace {
         let enabled = crate::tuning::attention::enabled();
         #[cfg(test)]
         let enabled = enabled || taps::forced_choice().is_some();
-        if !enabled {
+        if !enabled && !self.oxide_available {
             self.prefill.retain(|(_, width), _| *width != lanes);
             return;
         }
@@ -128,17 +132,49 @@ impl Workspace {
                 window: window.unwrap_or(0),
             };
             let choice = *choices.entry(shape).or_insert_with(|| {
-                crate::tuning::attention::select(
-                    device,
-                    shape,
-                    weights.autotune,
-                    &weights.resident_tuning,
-                )
+                if self.oxide_available {
+                    crate::tuning::attention::exact::select(
+                        device,
+                        shape,
+                        weights.autotune,
+                        &weights.resident_tuning,
+                    )
+                } else {
+                    crate::tuning::attention::select(
+                        device,
+                        shape,
+                        weights.autotune,
+                        &weights.resident_tuning,
+                    )
+                }
             });
             #[cfg(test)]
             let choice = taps::forced_choice().unwrap_or(choice);
             self.prefill.insert((node.outputs[0], lanes), choice);
         }
+        if self.oxide.is_none()
+            && self
+                .prefill
+                .values()
+                .any(|choice| *choice == crate::tuning::attention::Choice::RustSimt)
+        {
+            match super::super::attention_oxide::Support::load(device) {
+                Ok(Some(module)) => self.oxide = Some(module),
+                result => {
+                    tracing::warn!(target:"infer::tuning",error=?result.err(),"Rust attention module unavailable: cuTile fallback");
+                    self.oxide_available = false;
+                    for choice in self.prefill.values_mut() {
+                        if *choice == crate::tuning::attention::Choice::RustSimt {
+                            *choice = crate::tuning::attention::Choice::Simt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn prefill_uses_oxide(&self, output: TensorId, lanes: usize) -> bool {
+        self.prefill.get(&(output, lanes)) == Some(&crate::tuning::attention::Choice::RustSimt)
     }
 
     pub(crate) fn prefill_query_tile(

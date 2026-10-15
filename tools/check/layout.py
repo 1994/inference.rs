@@ -10,6 +10,12 @@ GROUPS = {"foundation", "backend", "model", "engine", "diagnostics", "service", 
 # Development tools live outside the responsibility groups: they are members so they share the
 # workspace's lock, versions and lints, but they are not part of the product crate layout.
 TOOL_MEMBERS = {"tools/bench/cpu"}
+# Device-only artifact builders pin a separate nightly CUDA backend and Git SDK.
+# They are reviewed by workspaces.py and never enter the stable host resolution graph.
+DEVICE_BUILD_MEMBERS = {
+    "crates/backend/cuda/kernels/oxide-attention",
+    "crates/backend/cuda/kernels/oxide-gdn",
+}
 SERVICE = {"infer-frontdoor", "infer-agent", "infer-cli"}
 BACKENDS = {
     "infer-backend-metal",
@@ -93,7 +99,8 @@ def check_crates():
     require(members >= TOOL_MEMBERS, f"Unregistered tool members: {sorted(TOOL_MEMBERS - members)}")
     found = {str(path.parent.relative_to(ROOT)) for path in (ROOT / "crates").rglob("Cargo.toml")}
     product = members - TOOL_MEMBERS
-    require(found == product, f"Unregistered or missing crates: {sorted(found ^ product)}")
+    expected = product | DEVICE_BUILD_MEMBERS
+    require(found == expected, f"Unregistered or missing crates: {sorted(found ^ expected)}")
     for member in sorted(product):
         directory = ROOT / member
         parts = Path(member).parts

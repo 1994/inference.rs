@@ -267,11 +267,11 @@ fn record_delta(
             .record(
                 scope,
                 [
-                    &qkv,
-                    &beta,
-                    &alpha,
-                    &decay.view(&[value_heads])?,
-                    &bias.view(&[value_heads])?,
+                    arena.get(node.inputs[0]).map_err(error)?,
+                    arena.get(node.inputs[1]).map_err(error)?,
+                    arena.get(node.inputs[2]).map_err(error)?,
+                    decay,
+                    bias,
                 ],
                 [state, scratch],
                 metadata,

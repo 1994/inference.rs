@@ -1,5 +1,5 @@
 //! Per-token/head F32 normalization and gating shared across independent state columns.
-use super::{ORDERED_DIM, ORDERED_WIDTHS, kernels};
+use super::{ORDERED_DIM, ORDERED_WIDTHS, kernels, oxide};
 use crate::{
     device::{CudaDevice, device_error},
     resident::ProgramWeights,
@@ -17,6 +17,7 @@ pub(super) struct Inputs {
     normalized: Tensor<f32>,
     betas: Tensor<f32>,
     decays: Tensor<f32>,
+    rust: Option<oxide::Support>,
 }
 
 fn geometries(graph: &DataflowGraph, weights: &ProgramWeights, lanes: usize) -> BTreeSet<Geometry> {
@@ -54,7 +55,16 @@ pub(super) fn allocate(
 ) -> Result<Buffers> {
     geometries(graph, weights, lanes)
         .into_iter()
-        .map(|shape| Ok((shape, Inputs::new(device, shape, lanes)?)))
+        .map(|shape| {
+            let mut inputs = Inputs::new(device, shape, lanes)?;
+            inputs.rust = oxide::Support::select(
+                device,
+                [shape.0, shape.1, shape.2, lanes],
+                weights.autotune,
+                &weights.resident_tuning,
+            )?;
+            Ok((shape, inputs))
+        })
         .collect()
 }
 
@@ -83,6 +93,7 @@ pub(super) fn required_bytes(
 impl Inputs {
     pub(super) fn new(device: &CudaDevice, (kh, vh, dim): Geometry, lanes: usize) -> Result<Self> {
         Ok(Self {
+            rust: None,
             normalized: api::zeros::<f32>(&[lanes, 2 * kh, dim])
                 .sync_on(&device.stream)
                 .map_err(device_error)?,
@@ -98,28 +109,48 @@ impl Inputs {
     pub(super) fn record(
         &mut self,
         scope: &Scope,
-        [qkv, beta, alpha, a_log, bias]: [&TensorView<'_, f32>; INPUT_BINDINGS],
+        [qkv_storage, beta, alpha, a_log, bias]: [&Tensor<f32>; INPUT_BINDINGS],
         [state, output]: [&mut Tensor<f32>; 2],
         metadata: &Tensor<i32>,
         (kh, vh, dim, lanes, block): (usize, usize, usize, usize, usize),
     ) -> std::result::Result<(), DeviceError> {
+        let qkv = qkv_storage.view(&[lanes, 2 * kh + vh, dim])?;
+        let beta = beta.view(&[lanes, vh])?;
+        let alpha = alpha.view(&[lanes, vh])?;
+        let a_log = a_log.view(&[vh])?;
+        let bias = bias.view(&[vh])?;
         scope.record(
-            kernels::normalize_shared((&mut self.normalized).partition([1, 1, dim]), qkv)
+            kernels::normalize_shared((&mut self.normalized).partition([1, 1, dim]), &qkv)
                 .generics(vec![kh.to_string(), dim.to_string()]),
         )?;
         scope.record(kernels::gates_shared(
             (&mut self.betas).partition([1, 1]),
             (&mut self.decays).partition([1, 1]),
-            beta,
-            alpha,
-            a_log,
-            bias,
+            &beta,
+            &alpha,
+            &a_log,
+            &bias,
         ))?;
+        if let Some(rust) = &self.rust {
+            return rust.record(
+                scope,
+                oxide::Bindings {
+                    state,
+                    output,
+                    qkv: qkv_storage,
+                    normalized: &self.normalized,
+                    beta: &self.betas,
+                    decay: &self.decays,
+                    metadata,
+                },
+                lanes,
+            );
+        }
         scope.record(
             kernels::delta_precomputed(
                 state.partition([1, dim, block]),
                 output.partition([1, lanes, block]),
-                qkv,
+                &qkv,
                 &self.normalized,
                 &self.betas,
                 &self.decays,

@@ -20,8 +20,8 @@ struct Operands {
     values: Tensor<f8e4m3fn>,
     output: Tensor<f32>,
 }
-fn output_shape(s: Shape, choice: Choice) -> [usize; 2] {
-    if choice == Choice::Simt {
+const fn output_shape(s: Shape, choice: Choice) -> [usize; 2] {
+    if choice.query_tile().is_none() {
         [s.lanes * s.heads, s.dim]
     } else {
         [s.lanes, s.heads * s.dim]
@@ -126,6 +126,7 @@ impl Operands {
         scope: &Scope,
         f: &Fixture,
         choice: Choice,
+        oxide: Option<&crate::resident::attention_oxide::Support>,
     ) -> std::result::Result<(), DeviceError> {
         let s = f.shape;
         scope.record(
@@ -142,7 +143,29 @@ impl Operands {
             .generics(Self::append_generics(s, f.capacity)),
         )?;
         let window = i32::try_from(f.window).map_err(|e| DeviceError::Internal(e.to_string()))?;
-        if let Some(qt) = choice.query_tile() {
+        if choice == Choice::RustSimt {
+            let supported = oxide
+                .ok_or_else(|| DeviceError::Internal("Rust attention module missing".into()))?
+                .record(
+                    scope,
+                    crate::resident::attention_oxide::Bindings {
+                        output: &mut self.output,
+                        query: &self.query,
+                        keys: &self.keys,
+                        values: &self.values,
+                        metadata: &self.metadata,
+                        table: &self.table,
+                    },
+                    (s.heads, s.kv_heads, s.dim, s.lanes, f.capacity),
+                    window,
+                    [KEY_SCALE, VALUE_SCALE],
+                )?;
+            if !supported {
+                return Err(DeviceError::Internal(
+                    "Rust attention geometry unsupported".into(),
+                ));
+            }
+        } else if let Some(qt) = choice.query_tile() {
             let scale = 1.0
                 / f32::from(
                     u16::try_from(s.dim).map_err(|e| DeviceError::Internal(e.to_string()))?,
@@ -239,15 +262,49 @@ impl Operands {
 pub(super) struct Captured {
     pub graph: CudaGraph<()>,
     operands: Operands,
+    _oxide: Option<crate::resident::attention_oxide::Support>,
 }
 impl Captured {
     pub fn new(device: &CudaDevice, fixture: &Fixture, choice: Choice) -> Result<Self> {
+        let oxide = if choice == Choice::RustSimt {
+            crate::resident::attention_oxide::Support::load(device)?
+        } else {
+            None
+        };
         let mut operands = Operands::new(device, fixture, choice)?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
-            operands.record(scope, fixture, choice)
+            operands.record(scope, fixture, choice, oxide.as_ref())
         })
         .map_err(device_error)?;
-        Ok(Self { graph, operands })
+        Ok(Self {
+            graph,
+            operands,
+            _oxide: oxide,
+        })
+    }
+    pub fn exact_match(&self, device: &CudaDevice, baseline: &Self) -> Result<usize> {
+        baseline
+            .graph
+            .launch()
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        self.graph
+            .launch()
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        let actual = device.read_borrowed(&self.operands.output)?;
+        let expected = device.read_borrowed(&baseline.operands.output)?;
+        if actual.len() != expected.len()
+            || actual
+                .iter()
+                .zip(&expected)
+                .any(|(a, b)| !a.is_finite() || !b.is_finite() || a.to_bits() != b.to_bits())
+        {
+            return Err(Error::invariant(
+                "Rust attention original output bits mismatch",
+            ));
+        }
+        Ok(actual.len())
     }
     pub fn verify(&self, device: &CudaDevice, f: &Fixture) -> Result<f64> {
         self.graph
@@ -333,4 +390,56 @@ pub(super) fn fingerprint(device: &CudaDevice, shape: Shape) -> Result<String> {
         .map_err(|_| Error::invariant("attention identity poisoned"))?
         .insert(key, value.clone());
     Ok(value)
+}
+
+pub(super) fn native_fingerprint(device: &CudaDevice, shape: Shape) -> Result<String> {
+    use cutile::cutile_compiler::{cuda_tile_runtime_utils as compiler, hints::CompileOptions};
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::BTreeMap,
+        sync::{Mutex, OnceLock},
+    };
+    type Cache = Mutex<BTreeMap<(Shape, String), String>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let context = serde_json::to_string(&(
+        device.profile()?.architecture.as_str(),
+        compiler::tileiras_fingerprint(),
+        compiler::bytecode_override(),
+        format!("{:?}", CompileOptions::default()),
+        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        crate::resident::attention_oxide::artifact_identity(),
+    ))
+    .map_err(device_error)?;
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let memo_key = (shape, context);
+    if let Some(identity) = cache
+        .lock()
+        .map_err(|_| Error::invariant("exact attention identity cache poisoned"))?
+        .get(&memo_key)
+    {
+        return Ok(identity.clone());
+    }
+    let identities =
+        Operands::meta(device, shape, Choice::Simt)?.identities(device, shape, Choice::Simt)?;
+    if identities.iter().any(String::is_empty) {
+        return Err(Error::invalid("incomplete native attention identity"));
+    }
+    let payload = serde_json::to_vec(&(
+        identities,
+        device.profile()?.architecture.as_str(),
+        compiler::tileiras_fingerprint(),
+        compiler::bytecode_override(),
+        format!("{:?}", CompileOptions::default()),
+        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        crate::resident::attention_oxide::artifact_identity(),
+    ))
+    .map_err(device_error)?;
+    let identity = format!("{:x}", Sha256::digest(payload));
+    cache
+        .lock()
+        .map_err(|_| Error::invariant("exact attention identity cache poisoned"))?
+        .insert(memo_key, identity.clone());
+    Ok(identity)
 }

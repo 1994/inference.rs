@@ -138,6 +138,10 @@ def check_exceptions():
                         ROOT / "crates/backend/cuda/src/mlp/pdl_consumers.rs",
                         ROOT / "crates/backend/cuda/src/resident/arena.rs",
                         ROOT / "crates/backend/cuda/src/resident/profile.rs",
+                        # Explicit PTX launch boundaries: checked extents, owning device stream,
+                        # Function/Module retention and input/output resource leases.
+                        ROOT / "crates/backend/cuda/src/resident/attention_oxide.rs",
+                        ROOT / "crates/backend/cuda/src/resident/recurrent_prefill/oxide.rs",
                         ROOT / "crates/backend/cuda/src/resident/batch.rs",
                         ROOT / "crates/backend/cuda/src/resident/slot_verify.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",

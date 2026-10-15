@@ -26,18 +26,18 @@ fn chunk_delta_matches_independent_recurrence() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-struct ReferenceFixture {
-    qkv: Vec<f32>,
-    beta: Vec<f32>,
-    alpha: Vec<f32>,
-    a_log: Vec<f32>,
-    bias: Vec<f32>,
-    initial: Vec<f32>,
-    expected: Vec<f64>,
-    outputs: Vec<f64>,
+pub(super) struct ReferenceFixture {
+    pub(super) qkv: Vec<f32>,
+    pub(super) beta: Vec<f32>,
+    pub(super) alpha: Vec<f32>,
+    pub(super) a_log: Vec<f32>,
+    pub(super) bias: Vec<f32>,
+    pub(super) initial: Vec<f32>,
+    pub(super) expected: Vec<f64>,
+    pub(super) outputs: Vec<f64>,
 }
 
-fn reference_fixture(
+pub(super) fn reference_fixture(
     (kh, vh, dim, lanes): (usize, usize, usize, usize),
     count: usize,
     offset: i32,
@@ -803,13 +803,7 @@ fn check_ordered_fixture(
     let graph = CudaGraph::scope(&device.stream, |scope| {
         prepared.record(
             scope,
-            [
-                &qkv_c.view(&[lanes, 2 * kh + vh, dim])?,
-                &beta_c.view(&[lanes, vh])?,
-                &alpha_c.view(&[lanes, vh])?,
-                &a_log.view(&[vh])?,
-                &bias.view(&[vh])?,
-            ],
+            [&qkv_c, &beta_c, &alpha_c, &a_log, &bias],
             [&mut state, &mut output],
             &metadata,
             (kh, vh, dim, lanes, block),

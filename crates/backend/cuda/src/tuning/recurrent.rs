@@ -1,5 +1,6 @@
 //! F32-state WY column partition search; no device name controls a kernel or tile.
 mod capture;
+pub mod exact;
 mod reference;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,

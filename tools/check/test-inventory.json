@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 171
+      "tests": 181
     },
     "frontdoor": {
       "benches": 0,
@@ -153,6 +153,8 @@
   },
   "ignored_reasons": {
     "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run": 1,
+    "requires CUDA and safe-run; exact full-output/KV and cold/warm AB/BA tuning": 1,
+    "requires CUDA and safe-run; gated complete GDN pipeline paired timing": 1,
     "requires CUDA hardware and a real FP8 channel checkpoint; root runs release serially": 1,
     "requires CUDA hardware and a writable tuning cache; run under safe-run": 1,
     "requires CUDA hardware; actual captured prompt graph widths": 1,
@@ -179,11 +181,15 @@
     "requires CUDA, release, safe-run; validates actual probe input bits and temporary ownership": 1,
     "requires CUDA/checkpoint/failing52token inputs/safe-run; GPUselected versus full logits/crosscapacity join": 1,
     "requires CUDA/checkpoint/frozen511tokens/safe-run; actual parallel quantization and complete state equivalence": 1,
+    "requires CUDA/checkpoint/frozen511tokens/safe-run; complete model output and state equivalence": 2,
     "requires CUDA/checkpoint/frozen511tokens/safe-run; original private versus default pool full-model bits": 1,
     "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic": 1,
     "requires CUDA/checkpoint/safe-run; actual pool inactive/reactivate/rebind full states": 1,
     "requires CUDA/checkpoint/safe-run; all96 real small weights, original private GEMV bits": 1,
+    "requires CUDA/safe-run; actual automatic tuning, full proofs and persisted cache": 1,
     "requires CUDA/safe-run; exact finite row max and quantizer cost": 1,
+    "requires CUDA/safe-run; full original F32 state/output and independent F64": 1,
+    "requires CUDA/safe-run; graph operand lifetime and cross-stream access contract": 1,
     "requires CUDA; complete FP8/F64/bitwise gate; safe-run --test-threads 1": 1,
     "requires CUDA; exact ordered recurrence at captured prompt widths": 1,
     "requires CUDA; full F64/cache numerical gate and hardware AB/BA tuning": 1,
@@ -321,6 +327,16 @@
     },
     {
       "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_oxide_attention.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_recurrent_oxide_model.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/nvfp4.rs",
       "mount": "../tests/unit/nvfp4.rs"
     },
@@ -448,6 +464,11 @@
       "crate": "cuda",
       "file": "src/resident/recurrent_prefill.rs",
       "mount": "../../tests/unit/resident_recurrent_prefill_model_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/recurrent_prefill.rs",
+      "mount": "../../tests/unit/resident_recurrent_oxide.rs"
     },
     {
       "crate": "cuda",
@@ -881,11 +902,11 @@
     }
   ],
   "totals": {
-    "all": 618,
+    "all": 628,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 618
+    "tests": 628
   }
 }

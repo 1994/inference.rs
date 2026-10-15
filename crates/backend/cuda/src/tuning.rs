@@ -272,6 +272,11 @@ pub struct TilingTable {
     /// Prefill query sharing with independent F64 and complete graph measurements.
     #[serde(default)]
     pub resident_attention: Vec<attention::Entry>,
+    /// Exact Rust SIMT alternatives with hardware and artifact scoped evidence.
+    #[serde(default)]
+    pub resident_exact_attention: Vec<attention::exact::Entry>,
+    #[serde(default)]
+    pub resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
 
 /// Read both the current per-device table and the former top-level `device`/`entries` format.
@@ -293,6 +298,10 @@ struct StoredTilingTable {
     resident_recurrent: Vec<recurrent::Entry>,
     #[serde(default)]
     resident_attention: Vec<attention::Entry>,
+    #[serde(default)]
+    resident_exact_attention: Vec<attention::exact::Entry>,
+    #[serde(default)]
+    resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
 
 impl From<StoredTilingTable> for TilingTable {
@@ -319,6 +328,8 @@ impl From<StoredTilingTable> for TilingTable {
             greedy: stored.greedy,
             resident_recurrent: stored.resident_recurrent,
             resident_attention: stored.resident_attention,
+            resident_exact_attention: stored.resident_exact_attention,
+            resident_exact_recurrent: stored.resident_exact_recurrent,
         }
     }
 }
