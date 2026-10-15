@@ -23,6 +23,9 @@ def main():
         raise ValueError("CUDA source differs from provenance")
     if digest(embedded) != provenance["ptx_sha256"]:
         raise ValueError("Embedded PTX differs from provenance")
+    canonical = ROOT.parent / "oxide-attention" / "attention-sm120.ptx"
+    if digest(canonical) != provenance["canonical_attention_ptx_sha256"]:
+        raise ValueError("Canonical PTX reference differs from provenance")
     text = embedded.read_text()
     if ".target sm_120" not in text or text.count(".visible .entry attention_fp8_256(") != 1:
         raise ValueError("Unexpected target or entry")

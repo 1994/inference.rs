@@ -26,6 +26,8 @@ rust_checks() {
     # CUDA builds belong to the package matrix; device checks to check-cuda.
     # Every registered golden records what produced it, so it can be regenerated rather than trusted.
     python3 tools/check/golden-provenance.py
+    # Embedded device artifacts are checked on CPU-only CI as well as CUDA hosts.
+    python3 crates/backend/cuda/kernels/shared-attention/verify-artifact.py
     # Each workspace boundary states the dependency or toolchain isolation it exists for.
     python3 tools/check/workspaces.py
     # A signed baseline's numbers have to follow from the evidence it froze, not merely hash to it.
