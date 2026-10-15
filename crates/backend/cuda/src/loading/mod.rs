@@ -566,3 +566,7 @@ mod oxide_gdn_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_gated_norm_model.rs"]
 mod gated_norm_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_fp8_vendor_model.rs"]
+pub(crate) mod fp8_vendor_model_tests;

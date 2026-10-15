@@ -320,6 +320,15 @@ impl Workspace {
                     continue;
                 }
                 let choice = if self.vendor_diagnostic {
+                    if !vendor_diagnostic_shape(
+                        rows,
+                        i32::try_from(outputs).map_err(device_error)?,
+                        columns,
+                    ) {
+                        self.fp8_strategies
+                            .insert(key, crate::tuning::fp8_gemm::Choice::baseline(rows));
+                        continue;
+                    }
                     let q = &self
                         .fp8
                         .get(&(rows, columns, 1))
@@ -490,10 +499,13 @@ impl Workspace {
                         super::super::fp8_quant_reduction::record(scope, q, qs, input, columns)?;
                     }
                     if self.vendor_diagnostic
+                        && vendor_diagnostic_shape(rows, w.shape()[0], columns)
                         && self
                             .vendor_fp8
                             .record(scope, &*q, w, output, &*qs, channel_scale)?
                     {
+                        #[cfg(test)]
+                        crate::loading::fp8_vendor_model_tests::recorded();
                         return Ok(());
                     }
                     let outputs = usize::try_from(output.shape()[1]).map_err(error)?;
@@ -581,4 +593,14 @@ const fn vendor_diagnostic_enabled() -> bool {
 #[cfg(test)]
 fn vendor_diagnostic_enabled() -> bool {
     std::env::var("INFER_CUDA_VENDOR_FP8").is_ok_and(|value| value == "1" || value == "true")
+        || crate::loading::fp8_vendor_model_tests::enabled()
+}
+
+#[cfg(not(test))]
+const fn vendor_diagnostic_shape(_rows: usize, _outputs: i32, _columns: usize) -> bool {
+    true
+}
+#[cfg(test)]
+fn vendor_diagnostic_shape(rows: usize, outputs: i32, columns: usize) -> bool {
+    crate::loading::fp8_vendor_model_tests::eligible(rows, outputs, columns)
 }
