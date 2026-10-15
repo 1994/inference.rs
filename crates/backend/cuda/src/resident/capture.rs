@@ -405,21 +405,24 @@ impl Capture<'_> {
         let g = self.input(node.inputs[usize::from(gated)])?;
         let gate = g.view(&[heads, dimension])?;
         let weight = self.input(node.inputs[if gated { 2 } else { 1 }])?;
-        self.scope.record(
-            aux::norm(
-                (&mut output).partition([1, dimension.next_power_of_two()]),
-                &input,
-                &weight,
-                &gate,
-                epsilon,
-                offset,
-            )
-            .generics(vec![
-                dimension.to_string(),
-                dimension.next_power_of_two().to_string(),
-                i32::from(gated).to_string(),
-            ]),
-        )?;
+        let kernel = aux::norm(
+            (&mut output).partition([1, dimension.next_power_of_two()]),
+            &input,
+            &weight,
+            &gate,
+            epsilon,
+            offset,
+        )
+        .generics(vec![
+            dimension.to_string(),
+            dimension.next_power_of_two().to_string(),
+            i32::from(gated).to_string(),
+        ]);
+        #[cfg(test)]
+        let kernel = kernel.compile_options(super::gated_norm_discovery::model_options(
+            dimension, gated, heads,
+        ));
+        self.scope.record(kernel)?;
         Ok(output)
     }
 }

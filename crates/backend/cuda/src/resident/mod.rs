@@ -57,3 +57,7 @@ pub(crate) mod pool_gemv;
 
 #[cfg(test)]
 pub(crate) use small_gemm::kernels as small_gemm_kernels;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_gated_norm_discovery.rs"]
+pub(crate) mod gated_norm_discovery;
