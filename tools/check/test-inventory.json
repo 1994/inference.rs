@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 183
+      "tests": 193
     },
     "frontdoor": {
       "benches": 0,
@@ -152,6 +152,7 @@
     "target_os = \"macos\"": 1
   },
   "ignored_reasons": {
+    "real MTP2 checkpoint, CUDA, frozen table/tokens and protected serial runner required": 1,
     "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run": 1,
     "requires CUDA and safe-run; exact full-output/KV and cold/warm AB/BA tuning": 1,
     "requires CUDA and safe-run; gated complete GDN pipeline paired timing": 1,
@@ -186,7 +187,10 @@
     "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic": 1,
     "requires CUDA/checkpoint/safe-run; actual pool inactive/reactivate/rebind full states": 1,
     "requires CUDA/checkpoint/safe-run; all96 real small weights, original private GEMV bits": 1,
+    "requires CUDA/checkpoint/safe-run; full states/logits/hidden before service timing": 1,
+    "requires CUDA/safe-run and a private frozen tuning table; seeds measured profile": 1,
     "requires CUDA/safe-run; actual automatic tuning, full proofs and persisted cache": 1,
+    "requires CUDA/safe-run; bit equality before same-address AB/BA cold/warm discovery": 1,
     "requires CUDA/safe-run; complete pipeline cold/warm AB/BA with pre/post bits": 1,
     "requires CUDA/safe-run; exact finite row max and quantizer cost": 1,
     "requires CUDA/safe-run; exhaustive codes and full bits/F64 before any timing": 1,
@@ -256,6 +260,11 @@
       "crate": "cuda",
       "file": "src/executor/mod.rs",
       "mount": "../../tests/unit/executor_mod.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/executor/mod.rs",
+      "mount": "../../tests/unit/resident_mtp_fusion_model.rs"
     },
     {
       "crate": "cuda",
@@ -339,6 +348,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_gated_norm_model.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/nvfp4.rs",
       "mount": "../tests/unit/nvfp4.rs"
     },
@@ -389,6 +403,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/resident/fusion_batch.rs",
+      "mount": "../../tests/unit/resident_fusion_batch.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/resident/greedy.rs",
       "mount": "../../tests/unit/resident_greedy.rs"
     },
@@ -396,6 +415,11 @@
       "crate": "cuda",
       "file": "src/resident/metadata.rs",
       "mount": "../../tests/unit/resident_metadata_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/mod.rs",
+      "mount": "../../tests/unit/resident_gated_norm_discovery.rs"
     },
     {
       "crate": "cuda",
@@ -436,6 +460,11 @@
       "crate": "cuda",
       "file": "src/resident/prefill_gemm.rs",
       "mount": "../../tests/unit/resident_prefill_gemm_bench_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/prefill_projection.rs",
+      "mount": "../../tests/unit/resident_prefill_projection.rs"
     },
     {
       "crate": "cuda",
@@ -531,6 +560,11 @@
       "crate": "cuda",
       "file": "src/tuning/fp8_gemm.rs",
       "mount": "../../tests/unit/fp8_gemm_tuning.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/tuning/gated_norm.rs",
+      "mount": "../../tests/unit/tuning_gated_norm.rs"
     },
     {
       "crate": "cuda",
@@ -924,11 +958,11 @@
     }
   ],
   "totals": {
-    "all": 630,
+    "all": 640,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 630
+    "tests": 640
   }
 }

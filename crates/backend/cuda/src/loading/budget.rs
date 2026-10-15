@@ -1,6 +1,9 @@
 //! Admission accounting for allocated tensor storage, plus driver graph headroom.
 use super::LoadedModel;
-use crate::resident::{ProgramGeometry, ProgramWeights};
+use crate::{
+    device::DeviceProfile,
+    resident::{ProgramGeometry, ProgramWeights},
+};
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, OutputReadout, StateKind, TensorOp, TensorStorage};
 
@@ -84,8 +87,9 @@ impl LoadedModel {
     ) -> Result<SequencePrice> {
         let hidden = self.model.hidden_size;
         let vocabulary = self.model.vocab_size;
+        let profile = self.device().profile()?;
         let mut price = SequencePrice {
-            fixed: self.device().profile()?.graph_headroom_bytes(),
+            fixed: profile.graph_headroom_bytes(),
             per_token: F32,
         };
         price = price.combine(program_price(
@@ -95,6 +99,7 @@ impl LoadedModel {
             vocabulary,
             readout,
             ProgramGeometry::new(&self.weights, private_verification),
+            profile,
         )?)?;
         if let Some(draft) = &self.draft {
             // Draft priming retains a prefill arena and always captures private verification.
@@ -105,6 +110,7 @@ impl LoadedModel {
                 vocabulary,
                 readout,
                 ProgramGeometry::new(&draft.weights, true),
+                profile,
             )?)?;
         }
         Ok(price)
@@ -159,6 +165,7 @@ fn program_price(
     vocabulary: usize,
     readout: OutputReadout,
     geometry: ProgramGeometry,
+    profile: &DeviceProfile,
 ) -> Result<SequencePrice> {
     let verify = geometry.verification as u64;
     let prompt = geometry.prompt_lanes() as u64;
@@ -179,6 +186,11 @@ fn program_price(
         bytes = add(
             bytes,
             crate::resident::recurrent_prefill::required_bytes(graph, weights, width)?,
+        )?;
+        // One owner per retained prompt graph, shared by hidden and final-logits replays.
+        bytes = add(
+            bytes,
+            crate::resident::fusion_batch::required_bytes(weights, width, profile),
         )?;
     }
     for spec in &graph.tensors {

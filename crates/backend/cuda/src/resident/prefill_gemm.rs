@@ -27,6 +27,24 @@ pub(crate) mod gemm {
         out.store(acc);
     }
 
+    /// N48 prompt projections use three exact N16 tiles without padded columns.
+    #[cutile::entry()]
+    fn dense_n16<const K: i32>(
+        out: &mut Tensor<f32, { [32, 16] }>,
+        input: &Tensor<f32, { [-1, K] }>,
+        weight: &Tensor<bf16, { [-1, K] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![32, 64]);
+        let wp = weight.partition(shape![16, 64]);
+        let mut acc: Tile<f32, { [32, 16] }> = constant(0.0f32, shape![32, 16]);
+        for k in 0i32..((K + 63) / 64) {
+            let x: Tile<bf16, { [32, 64] }> = convert_tile(xp.load([pid.0, k]));
+            acc = mmaf(x, wp.load([pid.1, k]).transpose(), acc);
+        }
+        out.store(acc);
+    }
+
     #[cutile::entry()]
     fn fp8<const K: i32>(
         out: &mut Tensor<f32, { [32, 64] }>,

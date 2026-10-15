@@ -14,6 +14,7 @@ mod capture_rope;
 mod capture_state;
 mod fp8_cache;
 pub(crate) mod fp8_gemm;
+pub(crate) mod fusion_batch;
 pub(crate) mod kernels;
 mod linear_batch;
 mod metadata;
@@ -61,3 +62,6 @@ pub(crate) use small_gemm::kernels as small_gemm_kernels;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_gated_norm_discovery.rs"]
 pub(crate) mod gated_norm_discovery;
+
+#[cfg(test)]
+pub(crate) use prefill_projection::{narrow_dense_captures, with_dense_reference};

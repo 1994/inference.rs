@@ -872,6 +872,36 @@ impl DeviceProgram {
         self.nvfp4.quant_reuse_totals()
     }
 
+    /// Actual retained FC owners; capture counters alone cannot prove route selection.
+    #[cfg(test)]
+    pub(crate) fn test_fusion_batch_scratch_bytes(&self) -> usize {
+        [
+            self.batch.as_ref(),
+            self.prompt_batch.as_ref(),
+            self.prompt_narrow.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(super::batch::BatchGraph::test_fusion_scratch_bytes)
+        .sum()
+    }
+
+    /// Read just-replayed prompt hidden rows immediately after `prime_batch`, without replay.
+    #[cfg(test)]
+    pub(crate) fn test_retained_prompt_hidden(
+        &self,
+        position: usize,
+        rows: usize,
+    ) -> Result<Vec<Vec<f32>>> {
+        let batch = if self.prefers_narrow_prompt(rows) {
+            self.prompt_narrow.as_ref()
+        } else {
+            self.prompt_batch.as_ref()
+        }
+        .ok_or_else(|| Error::invariant("test prompt graph"))?;
+        batch.test_retained_prompt_hidden(&self.device, position, rows)
+    }
+
     /// Whether a chunk of `lanes` tokens replays on the narrow prompt graph.
     ///
     /// Both captured prompt graphs are fixed width, so the narrow one is preferred whenever the

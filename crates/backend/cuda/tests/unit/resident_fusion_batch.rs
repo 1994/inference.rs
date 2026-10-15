@@ -1,0 +1,53 @@
+use super::*;
+
+#[test]
+fn capability_limits_scratch_to_validated_layout() -> Result<()> {
+    let tiling = LinearTiling::new(TILE[1], DEPTH)?;
+    assert_eq!(
+        layout_bytes("sm_120", ROWS, Some(&WEIGHT_SHAPE), tiling),
+        SCRATCH_BYTES
+    );
+    assert_eq!(
+        Some(SCRATCH_BYTES),
+        u64::try_from(ROWS * COLUMNS * size_of::<f32>()).ok()
+    );
+    for width in [1, 3, 4, 32, 64, 256] {
+        assert_eq!(
+            layout_bytes("sm_120", width, Some(&WEIGHT_SHAPE), tiling),
+            0
+        );
+    }
+    for architecture in ["sm_100", "sm_121", ""] {
+        assert_eq!(
+            layout_bytes(architecture, ROWS, Some(&WEIGHT_SHAPE), tiling),
+            0
+        );
+    }
+    assert_eq!(layout_bytes("sm_120", ROWS, None, tiling), 0);
+    assert_eq!(layout_bytes("sm_120", ROWS, Some(&[5120, 5120]), tiling), 0);
+    for alternative in [
+        LinearTiling::new(8, DEPTH)?,
+        LinearTiling::new(TILE[1], 128)?,
+    ] {
+        assert_eq!(
+            layout_bytes("sm_120", ROWS, Some(&WEIGHT_SHAPE), alternative),
+            0
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn row_reference_is_nested_and_unwind_safe() {
+    assert!(!DISABLED.get());
+    with_row_reference(|| {
+        assert!(DISABLED.get());
+        with_row_reference(|| assert!(DISABLED.get()));
+        assert!(DISABLED.get());
+    });
+    assert!(!DISABLED.get());
+    let unwind =
+        std::panic::catch_unwind(|| with_row_reference(|| std::panic::resume_unwind(Box::new(()))));
+    assert!(unwind.is_err());
+    assert!(!DISABLED.get());
+}
