@@ -115,6 +115,7 @@ impl<B: BackendProvider> Worker<B> {
             let snapshot = Arc::get_mut(&mut pool[index])
                 .ok_or_else(|| Error::invariant("snapshot reader acquired unpublished slot"))?;
             snapshot.free_bytes = self.backend.free_state_bytes()?;
+            snapshot.state_capacity_bytes = self.backend.state_capacity_bytes()?;
             snapshot.kv = self.backend.kv_cache();
             snapshot.growth.clear();
             for state in self.states.iter() {
@@ -132,6 +133,7 @@ impl<B: BackendProvider> Worker<B> {
                         snapshot.error.clone_from(&published.error);
                     }
                     let changed = published.free_bytes != pool[index].free_bytes
+                        || published.state_capacity_bytes != pool[index].state_capacity_bytes
                         || published.growth != pool[index].growth
                         || published
                             .kv

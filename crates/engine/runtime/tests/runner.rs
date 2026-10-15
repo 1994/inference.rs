@@ -1,3 +1,5 @@
+#[path = "unit/runner_bytes_capacity.rs"]
+mod bytes_capacity;
 #[path = "unit/runner_capacity_progress.rs"]
 mod capacity_progress;
 #[path = "unit/runner_maintenance.rs"]
@@ -29,6 +31,7 @@ struct ReserveGate {
     entered: mpsc::Sender<()>,
     owned: Arc<AtomicUsize>,
     reservation_limit: Arc<AtomicUsize>,
+    byte_capacity: Arc<AtomicUsize>,
     reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
@@ -79,6 +82,26 @@ impl BackendProvider for ReserveGate {
         }
         Ok(())
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        match self.byte_capacity.load(Ordering::Acquire) {
+            usize::MAX => Ok(None),
+            bytes => u64::try_from(bytes)
+                .map(Some)
+                .map_err(|e| Error::invalid(e.to_string())),
+        }
+    }
+    fn free_state_bytes(&self) -> Result<Option<u64>> {
+        Ok(self.state_capacity_bytes()?.map(|bytes| {
+            bytes.saturating_sub(
+                u64::try_from(self.owned.load(Ordering::Acquire))
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(1024),
+            )
+        }))
+    }
+    fn state_reservation_bytes_for(&self, _: usize, _: OutputReadout) -> Result<Option<u64>> {
+        Ok(self.state_capacity_bytes()?.map(|_| 1024))
+    }
     fn reset_state(&mut self, state: StateId) -> Result<()> {
         self.inner.reset_state(state)
     }
@@ -122,6 +145,7 @@ struct Fixture {
     entered: mpsc::Receiver<()>,
     owned: Arc<AtomicUsize>,
     reservation_limit: Arc<AtomicUsize>,
+    byte_capacity: Arc<AtomicUsize>,
     reservation_attempts: Arc<AtomicUsize>,
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
@@ -145,6 +169,7 @@ impl Fixture {
         let (entered, start) = mpsc::channel();
         let owned = Arc::new(AtomicUsize::new(0));
         let reservation_limit = Arc::new(AtomicUsize::new(usize::MAX));
+        let byte_capacity = Arc::new(AtomicUsize::new(usize::MAX));
         let reservation_attempts = Arc::new(AtomicUsize::new(0));
         let observed_work = Arc::new(AtomicUsize::new(0));
         let observed_sampling = Arc::new(AtomicUsize::new(0));
@@ -156,6 +181,7 @@ impl Fixture {
             entered,
             owned: owned.clone(),
             reservation_limit: reservation_limit.clone(),
+            byte_capacity: byte_capacity.clone(),
             reservation_attempts: reservation_attempts.clone(),
             observed_work: observed_work.clone(),
             observed_sampling: observed_sampling.clone(),
@@ -186,6 +212,7 @@ impl Fixture {
             entered: start,
             owned,
             reservation_limit,
+            byte_capacity,
             reservation_attempts,
             observed_work,
             observed_sampling,

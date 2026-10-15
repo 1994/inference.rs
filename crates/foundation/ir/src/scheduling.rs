@@ -238,6 +238,9 @@ pub struct AdmissionInput<'a> {
     pub tenant_pages: usize,
     pub free_pages: usize,
     pub free_bytes: Option<u64>,
+    /// Single-reservation byte budget when an adapter owns queued reservation intent.
+    /// Physical allocation still uses current free bytes after earlier leases finish.
+    pub state_capacity_bytes: Option<u64>,
     pub now_us: u64,
     pub target_us: Option<u64>,
     pub predicted_latency_us: u64,

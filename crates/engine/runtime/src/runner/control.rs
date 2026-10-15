@@ -130,6 +130,13 @@ where
             "threaded prefix reuse requires a resource command",
         ))
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        let snapshot = self.shared.snapshot()?;
+        if let Some(error) = &snapshot.error {
+            return Err(error.clone());
+        }
+        Ok(snapshot.state_capacity_bytes)
+    }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         let snapshot = self.shared.snapshot()?;
         if let Some(error) = &snapshot.error {

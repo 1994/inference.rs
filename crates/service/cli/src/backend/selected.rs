@@ -288,6 +288,9 @@ impl BackendProvider for SelectedBackend {
     ) -> Result<Option<u64>> {
         forward!(self, state_reservation_bytes_for, capacity, readout)
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        forward!(self, state_capacity_bytes)
+    }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         forward!(self, free_state_bytes)
     }

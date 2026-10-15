@@ -56,6 +56,9 @@ impl BackendProvider for CudaBackend {
         self.reservation_budget(capacity, readout, private)
             .map(Some)
     }
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        Ok(Some(self.budget))
+    }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         self.available().map(Some)
     }

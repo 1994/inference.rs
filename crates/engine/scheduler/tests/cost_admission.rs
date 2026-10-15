@@ -132,6 +132,7 @@ const fn admission() -> AdmissionInput<'static> {
         tenant_pages: 0,
         free_pages: 4,
         free_bytes: Some(4096),
+        state_capacity_bytes: None,
         now_us: 10,
         target_us: Some(100),
         predicted_latency_us: 20,
@@ -252,4 +253,22 @@ fn long_context_admission_uses_resources_and_explicit_tenant_quotas() {
         .unwrap();
         assert_eq!(policy.check(&input).unwrap().rejection, Some(expected));
     }
+}
+
+#[test]
+fn queued_byte_admission_distinguishes_occupied_from_insufficient_capacity() {
+    let policy = ResourceAdmission::new(AdmissionConfig::default()).unwrap();
+    let mut input = admission();
+    input.free_bytes = Some(0);
+    assert_eq!(
+        policy.check(&input).unwrap().rejection,
+        Some(AdmissionReason::StateBytes)
+    );
+    input.state_capacity_bytes = Some(1024);
+    assert!(policy.check(&input).unwrap().rejection.is_none());
+    input.required_bytes = Some(1025);
+    assert_eq!(
+        policy.check(&input).unwrap().rejection,
+        Some(AdmissionReason::StateBytes)
+    );
 }

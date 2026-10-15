@@ -88,7 +88,8 @@ impl AdmissionPolicy for ResourceAdmission {
             limits.into_iter().find(|(_, r, a)| r > a)
         {
             reject(reason, required, available);
-        } else if let (Some(required), Some(available)) = (i.required_bytes, i.free_bytes)
+        } else if let (Some(required), Some(available)) =
+            (i.required_bytes, i.state_capacity_bytes.or(i.free_bytes))
             && required > available
         {
             reject(

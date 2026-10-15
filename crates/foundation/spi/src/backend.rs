@@ -105,6 +105,15 @@ pub trait BackendProvider {
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         Ok(None)
     }
+    /// State-byte budget for a single queued reservation, independent of live leases.
+    /// The runtime uses this only when the adapter owns deferred reservation intent.
+    /// Returning None keeps admission bounded by current free bytes.
+    /// Actual reservation must still check live physical capacity.
+    /// # Errors
+    /// Returns backend errors while reading the configured state budget.
+    fn state_capacity_bytes(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         None
     }

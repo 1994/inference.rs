@@ -106,6 +106,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             tenant_pages: pages,
             free_pages: self.state.free_pages(),
             free_bytes: self.backend.free_state_bytes()?,
+            state_capacity_bytes: if self.backend.tracks_reservation_intent() {
+                self.backend.state_capacity_bytes()?
+            } else {
+                None
+            },
             now_us: self.now_us,
             target_us: target.map(|t| t.0),
             predicted_latency_us: target.map_or(complete, |t| t.1),
