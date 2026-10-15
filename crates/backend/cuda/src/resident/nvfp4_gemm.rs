@@ -257,3 +257,11 @@ mod vendor_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_quant_reuse.rs"]
 mod quant_reuse_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_nvfp4_quant_discovery.rs"]
+pub mod quant_discovery;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_nvfp4_quant_pipeline.rs"]
+mod quant_pipeline;

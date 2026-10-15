@@ -3,6 +3,7 @@ pub mod attention;
 pub mod fp8_gemm;
 pub mod gated_norm;
 pub mod greedy;
+pub mod nvfp4_quant;
 pub mod recurrent;
 pub mod resident_gemm;
 
@@ -270,6 +271,9 @@ pub struct TilingTable {
     /// Native gated norm compiler occupancy with full-output bitwise evidence.
     #[serde(default)]
     pub resident_gated_norm: Vec<gated_norm::NormEntry>,
+    /// Native activation quantizer occupancy, preserving every FP4 code and E4M3 scale.
+    #[serde(default)]
+    pub resident_nvfp4_quant: Vec<nvfp4_quant::QuantEntry>,
     /// F32-state recurrent column decisions with independent F64 and paired evidence.
     #[serde(default)]
     pub resident_recurrent: Vec<recurrent::Entry>,
@@ -300,6 +304,8 @@ struct StoredTilingTable {
     greedy: Vec<greedy::Entry>,
     #[serde(default)]
     resident_gated_norm: Vec<gated_norm::NormEntry>,
+    #[serde(default)]
+    resident_nvfp4_quant: Vec<nvfp4_quant::QuantEntry>,
     #[serde(default)]
     resident_recurrent: Vec<recurrent::Entry>,
     #[serde(default)]
@@ -333,6 +339,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_fp8_gemm: stored.resident_fp8_gemm,
             greedy: stored.greedy,
             resident_gated_norm: stored.resident_gated_norm,
+            resident_nvfp4_quant: stored.resident_nvfp4_quant,
             resident_recurrent: stored.resident_recurrent,
             resident_attention: stored.resident_attention,
             resident_exact_attention: stored.resident_exact_attention,

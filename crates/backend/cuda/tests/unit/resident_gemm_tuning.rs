@@ -145,6 +145,7 @@ fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices()
         started: OnceLock::new(),
         greedy_started: OnceLock::new(),
         norm_started: OnceLock::new(),
+        quant_started: OnceLock::new(),
         recurrent_started: OnceLock::new(),
         attention_started: OnceLock::new(),
         budget: Duration::ZERO,
@@ -154,6 +155,8 @@ fn autotune_disabled_never_requests_measurement_but_keeps_valid_cached_choices()
     assert!(fresh.permits_search());
     assert!(!expired.permits_norm_search());
     assert!(fresh.permits_norm_search());
+    assert!(!expired.permits_quant_search());
+    assert!(fresh.permits_quant_search());
     assert_eq!(
         ProgramGeometry::from_flags(3, 256, 64, false, false).widths(),
         vec![1, 64]

@@ -125,7 +125,7 @@ impl Pair {
     }
 }
 
-fn fixture_weights() -> ProgramWeights {
+pub(super) fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
@@ -437,7 +437,7 @@ fn pointer<T: DType>(tensor: &Tensor<T>) -> u64 {
     tensor.device_pointer().cu_deviceptr()
 }
 
-fn projection_pointers(weights: &ProgramWeights) -> serde_json::Value {
+pub(super) fn projection_pointers(weights: &ProgramWeights) -> serde_json::Value {
     serde_json::json!(
         weights
             .projections
@@ -498,7 +498,7 @@ struct QuantizationReference {
     scales: Vec<u32>,
 }
 
-fn decode_fp8(code: u8) -> f32 {
+pub(super) fn decode_fp8(code: u8) -> f32 {
     let magnitude = code & 127;
     let exponent = magnitude >> 3;
     let mantissa = f32::from(magnitude & 7);
@@ -510,7 +510,7 @@ fn decode_fp8(code: u8) -> f32 {
     if code & 128 == 0 { value } else { -value }
 }
 
-fn nearest(value: f32, table: &[f32]) -> TestResult<u8> {
+pub(super) fn nearest(value: f32, table: &[f32]) -> TestResult<u8> {
     let next = table.partition_point(|candidate| *candidate < value);
     let index = if next == 0 {
         0
@@ -604,7 +604,7 @@ fn check_quantization(snapshot: &Snapshot, reference: &QuantizationReference) ->
     Ok(())
 }
 
-fn check_outputs(expected: &[f32], actual: &[f32], projection: &str) -> TestResult {
+pub(super) fn check_outputs(expected: &[f32], actual: &[f32], projection: &str) -> TestResult {
     if expected.len() != actual.len() {
         return Err("pair output extent changed".into());
     }

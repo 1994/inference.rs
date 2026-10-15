@@ -21,12 +21,15 @@ type Fp8Key = (usize, usize, usize);
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
+    #[cfg(test)]
+    quant_occupancy: i32,
     quant_reuse: CaptureQuantReuse,
     strategies: BTreeMap<
         (crate::tuning::resident_gemm::WeightKey, usize, usize, usize),
         crate::tuning::resident_gemm::GemmConfig,
     >,
     buffers: BTreeMap<(usize, usize), Quantized>,
+    quant_strategies: BTreeMap<(usize, usize), i32>,
     fp8_strategies: BTreeMap<
         (crate::tuning::fp8_gemm::WeightKey, usize, usize, usize),
         crate::tuning::fp8_gemm::Choice,
@@ -42,6 +45,10 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    #[cfg(test)]
+    pub(crate) const fn set_quant_occupancy(&mut self, value: i32) {
+        self.quant_occupancy = value;
+    }
     /// Start a fresh graph-local permission epoch; no device memory is changed.
     pub(crate) const fn begin_quant_capture(&mut self) {
         self.quant_reuse.begin();
@@ -148,9 +155,12 @@ impl Workspace {
         widths: &[usize],
     ) -> Result<Self> {
         let mut workspace = Self {
+            #[cfg(test)]
+            quant_occupancy: -1,
             quant_reuse: CaptureQuantReuse::default(),
             strategies: BTreeMap::new(),
             buffers: BTreeMap::new(),
+            quant_strategies: BTreeMap::new(),
             fp8: BTreeMap::new(),
             fp8_strategies: BTreeMap::new(),
             vendor_fp8: vendor_fp8::Support::new_with(
@@ -234,6 +244,16 @@ impl Workspace {
                 if rows == 0 || self.buffers.contains_key(&(rows, columns)) {
                     continue;
                 }
+                self.quant_strategies.insert(
+                    (rows, columns),
+                    crate::tuning::nvfp4_quant::select(
+                        device,
+                        rows,
+                        columns,
+                        weights.autotune,
+                        &weights.resident_tuning,
+                    ),
+                );
                 self.buffers.insert(
                     (rows, columns),
                     (
@@ -367,6 +387,20 @@ impl Workspace {
         };
         let rows = output.size()
             / usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+        let occupancy = self
+            .quant_strategies
+            .get(&(rows, columns))
+            .copied()
+            .unwrap_or(0);
+        #[cfg(test)]
+        let occupancy = if self.quant_occupancy >= 0 {
+            self.quant_occupancy
+        } else {
+            occupancy
+        };
+        #[cfg(test)]
+        let occupancy = super::quant_discovery::model_occupancy(occupancy);
+        let options = crate::tuning::nvfp4_quant::compile_options(occupancy);
         let (q, qs) = self
             .buffers
             .get_mut(&(rows, columns))
@@ -381,7 +415,7 @@ impl Workspace {
             (&*q, &*qs),
         );
         let (reuse, ticket) = self.quant_reuse.prepare(key);
-        let mut record = || {
+        let record = || {
             if !reuse {
                 scope.record(
                     kernels::quantize(
@@ -390,7 +424,8 @@ impl Workspace {
                         input,
                         scale,
                     )
-                    .generics(vec![columns.to_string()]),
+                    .generics(vec![columns.to_string()])
+                    .compile_options(options),
                 )?;
             }
             let outputs =

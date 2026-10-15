@@ -59,6 +59,7 @@ pub struct ResidentTuningSession {
     started: OnceLock<Instant>,
     greedy_started: OnceLock<Instant>,
     norm_started: OnceLock<Instant>,
+    quant_started: OnceLock<Instant>,
     recurrent_started: OnceLock<Instant>,
     attention_started: OnceLock<Instant>,
     budget: Duration,
@@ -70,6 +71,7 @@ impl Default for ResidentTuningSession {
             started: OnceLock::new(),
             greedy_started: OnceLock::new(),
             norm_started: OnceLock::new(),
+            quant_started: OnceLock::new(),
             recurrent_started: OnceLock::new(),
             attention_started: OnceLock::new(),
             budget: MODEL_SEARCH_BUDGET,
@@ -96,6 +98,11 @@ impl ResidentTuningSession {
     /// Normalization uses its own finite allowance across this model.
     pub(crate) fn permits_norm_search(&self) -> bool {
         self.norm_started.get_or_init(Instant::now).elapsed() < self.budget
+    }
+
+    /// Activation quantization has a separate finite search allowance per loaded model.
+    pub(crate) fn permits_quant_search(&self) -> bool {
+        self.quant_started.get_or_init(Instant::now).elapsed() < self.budget
     }
 
     pub(crate) fn permits_search(&self) -> bool {
