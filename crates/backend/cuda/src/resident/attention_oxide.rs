@@ -73,6 +73,22 @@ impl Support {
         }))
     }
 
+    #[cfg(test)]
+    pub(crate) fn load_test_ptx(device: &CudaDevice, ptx: &str) -> Result<Self> {
+        let module = device
+            .stream
+            .device()
+            .load_module_from_ptx_src(ptx)
+            .map_err(device_error)?;
+        Ok(Self {
+            function: Arc::new(
+                module
+                    .load_function("attention_fp8_256")
+                    .map_err(device_error)?,
+            ),
+            stream: device.stream.cu_stream() as usize,
+        })
+    }
     #[expect(
         unsafe_code,
         reason = "graph-owned tensors with checked contiguous extents are marshalled into the pinned Rust kernel"
