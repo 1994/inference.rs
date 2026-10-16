@@ -27,3 +27,9 @@ pub mod vision;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 pub mod executor;
 pub mod registry;
+
+// Fixtures that two different module trees both need. Gated exactly like the modules that use it,
+// so it is neither dead code nor built where CUDA does not compile.
+#[cfg(all(test, target_os = "linux", feature = "cuda"))]
+#[path = "../tests/unit/test_support.rs"]
+pub(crate) mod test_support;

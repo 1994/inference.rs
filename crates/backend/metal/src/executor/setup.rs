@@ -3,7 +3,6 @@ use super::{MetalBackend, loading};
 use infer_core::{Error, ErrorCode, Result};
 
 impl MetalBackend {
-    ///
     /// # Errors
     /// Returns a capacity or backend error if fresh execution state cannot be allocated.
     pub fn fresh(&self) -> Result<Self> {

@@ -35,6 +35,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
             start: clock_started,
             stopping: false,
             stop_replies: Vec::with_capacity(STOP_WAITER_CAPACITY),
+            scratch: Vec::new(),
         }
     }
     pub(super) fn run(mut self) {

@@ -7,7 +7,6 @@ use infer_spi::{AdmissionPolicy, BackendProvider, CostModelProvider, WorkloadPro
 use infer_workloads::NativeWorkloads;
 
 impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
-    ///
     /// # Errors
     /// Returns a validation, backend, or invariant error for incompatible checkpoint identities, providers, programs, or state ownership.
     pub fn restore(
@@ -17,7 +16,6 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
     ) -> Result<Self> {
         Self::restore_with_workloads(backend, registry, snapshot, NativeWorkloads)
     }
-    ///
     /// # Errors
     /// Returns a validation, backend, or invariant error if the checkpoint or workload provider is incompatible.
     pub fn restore_with_workloads(
@@ -32,7 +30,6 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
         )?;
         Self::restore_with_cost_model(backend, registry, snapshot, workloads, costs)
     }
-    ///
     /// # Errors
     /// Returns a validation, backend, or invariant error if the checkpoint, workload provider, or calibration is incompatible.
     pub fn restore_with_cost_model(
@@ -45,7 +42,6 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
         let admission = ResourceAdmission::new(snapshot.config.admission.clone())?;
         Self::restore_with_planning(backend, registry, snapshot, workloads, costs, admission)
     }
-    ///
     /// # Errors
     /// Returns a validation, backend, or invariant error if checkpoint state or planning-provider identities are incompatible.
     pub fn restore_with_planning(

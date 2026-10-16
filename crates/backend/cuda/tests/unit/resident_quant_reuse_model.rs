@@ -1,15 +1,11 @@
 //! Same-weight whole-model gate for adjacent shared-input projection quantization reuse.
+use super::support::states;
 use super::{LoadOptions, LoadedModel};
 use crate::{
     device::CudaDevice,
     resident::{BatchOutput, DeviceProgram, nvfp4_gemm::with_quant_reuse_disabled},
 };
-use cuda_core::f8e4m3fn;
-use cutile::prelude::Tensor;
-use infer_core::{Error, ModelId, Result, TensorId};
-use std::collections::BTreeMap;
-type States = BTreeMap<TensorId, Vec<Tensor<f32>>>;
-type Fp8Caches = BTreeMap<TensorId, (Tensor<f8e4m3fn>, Tensor<f8e4m3fn>)>;
+use infer_core::{Error, ModelId, Result};
 
 pub(super) fn bits(actual: &[f32], expected: &[f32], label: &str) {
     assert_eq!(actual.len(), expected.len(), "{label} length");
@@ -29,40 +25,6 @@ pub(super) fn outputs(actual: &BatchOutput, expected: &BatchOutput) {
         bits(&actual.0, &expected.0, "hidden");
         bits(&actual.1, &expected.1, "logits");
     }
-}
-
-fn states(
-    device: &CudaDevice,
-    actual: &States,
-    expected: &States,
-    actual_fp8: &Fp8Caches,
-    expected_fp8: &Fp8Caches,
-) -> Result<()> {
-    assert_eq!(actual.len(), expected.len());
-    assert_ne!(actual.len(), 0, "batch output is empty");
-    for (id, tensors) in actual {
-        let reference = &expected[id];
-        assert_eq!(tensors.len(), reference.len());
-        for (a, b) in tensors.iter().zip(reference) {
-            bits(
-                &device.read_borrowed(a)?,
-                &device.read_borrowed(b)?,
-                "F32 state",
-            );
-        }
-    }
-    assert_eq!(actual_fp8.len(), expected_fp8.len());
-    assert!(!actual_fp8.is_empty());
-    for (id, (keys, values)) in actual_fp8 {
-        let (ref_keys, ref_values) = &expected_fp8[id];
-        for (a, b) in [(keys, ref_keys), (values, ref_values)] {
-            let a = device.read_borrowed(a)?;
-            let b = device.read_borrowed(b)?;
-            assert_eq!(a.len(), b.len());
-            assert!(a.iter().zip(&b).all(|(a, b)| a.0 == b.0), "FP8 KV");
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn program_states(

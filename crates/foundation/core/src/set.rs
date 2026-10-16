@@ -43,7 +43,14 @@ impl<K: Eq + Hash> BoundedSet<K> {
 }
 impl<K: Eq + Hash + Ord + Clone> BoundedSet<K> {
     /// Control-only reclamation chooses a stable identity; dispatch never scans this set.
+    ///
+    /// `BoundedMap::iter` walks every bucket rather than only live entries, so the empty case is
+    /// rejected up front: callers poll this on an idle control loop, where a full bucket sweep per
+    /// poll would dominate the cost of finding nothing.
     pub fn pop_first(&mut self) -> Option<K> {
+        if self.is_empty() {
+            return None;
+        }
         let key = self.iter().min()?.clone();
         self.remove(&key);
         Some(key)

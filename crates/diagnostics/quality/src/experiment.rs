@@ -9,7 +9,6 @@ pub struct ExperimentVerdict {
     pub goodput_change: f64,
     pub reasons: Vec<String>,
 }
-///
 /// # Errors
 /// Returns an invalid-input error for an invalid regression threshold or incompatible benchmark fingerprints.
 #[expect(

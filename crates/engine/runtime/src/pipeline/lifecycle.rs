@@ -10,7 +10,6 @@ use infer_quality::RequestMeasurement;
 use infer_spi::{BackendProvider, SchedulingPolicy};
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
-    ///
     /// # Errors
     /// Returns a not-found error for an unknown request or a backend/state error if cancellation cleanup fails.
     pub fn cancel(&mut self, id: RequestId) -> Result<Vec<EngineOutput>> {

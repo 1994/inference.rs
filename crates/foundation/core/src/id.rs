@@ -87,7 +87,6 @@ impl Default for IdAllocator {
     }
 }
 impl IdAllocator {
-    ///
     /// # Errors
     /// Returns an invariant error if the next allocated identity could collide with a live identity.
     pub fn validate_after(&self, largest_live_id: u64) -> Result<()> {
@@ -115,7 +114,6 @@ impl IdAllocator {
         self.next = end;
         Ok(range)
     }
-    ///
     /// # Errors
     /// Returns an invariant error when the identity namespace is exhausted.
     pub fn allocate<I: StableId>(&mut self) -> Result<I> {

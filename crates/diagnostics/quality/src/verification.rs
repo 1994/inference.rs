@@ -9,7 +9,6 @@ pub struct VerificationReport {
     pub cosine: f64,
     pub passed: bool,
 }
-///
 /// # Errors
 /// Returns an invalid-input error for incompatible shapes, invalid tolerances, or non-finite values.
 #[expect(

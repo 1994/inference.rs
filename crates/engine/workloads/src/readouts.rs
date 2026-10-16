@@ -20,7 +20,6 @@ pub struct ProjectionWorkloads {
     identity: String,
 }
 impl ProjectionWorkloads {
-    ///
     /// # Errors
     /// Returns an I/O or invalid-input error for missing, malformed, unsupported, or oversized assets.
     pub fn open(root: impl AsRef<Path>, hidden: usize, vocab: usize) -> Result<Self> {
@@ -41,8 +40,11 @@ impl ProjectionWorkloads {
                 return Err(Error::invalid("unknown readout tensor"));
             }
             let tensor = file.read_f32(&name, READOUT_MAX_BYTES)?;
+            let tensor_bytes = (tensor.data.len() as u64)
+                .checked_mul(crate::constants::F32_BYTES_U64)
+                .ok_or_else(|| Error::invalid("readout size overflow"))?;
             bytes = bytes
-                .checked_add(tensor.data.len() as u64 * crate::constants::F32_BYTES_U64)
+                .checked_add(tensor_bytes)
                 .ok_or_else(|| Error::invalid("readout size overflow"))?;
             if bytes > READOUT_MAX_BYTES {
                 return Err(Error::invalid("readout package exceeds 64 MiB"));

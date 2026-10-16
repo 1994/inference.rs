@@ -63,7 +63,6 @@ impl<I: StableId, T> Arena<I, T> {
     pub fn index(&self, id: I) -> Option<usize> {
         self.decode(id)
     }
-    ///
     /// # Errors
     /// Returns an invariant error when the identity namespace is exhausted.
     pub fn insert(&mut self, value: T) -> Result<I> {

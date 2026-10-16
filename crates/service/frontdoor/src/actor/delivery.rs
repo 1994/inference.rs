@@ -44,14 +44,17 @@ impl<B: BackendProvider> RuntimeActor<B> {
         }
     }
     pub(super) fn reap_completed(&mut self) {
-        let completed: Vec<_> = self
-            .engine
-            .request_records()
-            .filter(|r| r.status.terminal())
-            .map(|r| r.request.id)
-            .collect();
-        for id in completed {
-            let _ = self.engine.take_completed(id);
+        let mut scratch = std::mem::take(&mut self.scratch);
+        scratch.clear();
+        scratch.extend(
+            self.engine
+                .request_records()
+                .filter(|r| r.status.terminal())
+                .map(|r| r.request.id),
+        );
+        for id in &scratch {
+            let _ = self.engine.take_completed(*id);
         }
+        self.scratch = scratch;
     }
 }

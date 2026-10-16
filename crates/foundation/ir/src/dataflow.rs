@@ -17,7 +17,6 @@ pub struct TensorSpec {
     pub storage: TensorStorage,
 }
 impl TensorSpec {
-    ///
     /// # Errors
     /// Returns an invalid-input error if multiplying the dimensions overflows.
     pub fn elements(&self) -> Result<usize> {
@@ -143,7 +142,6 @@ pub struct DataflowGraph {
     pub scratch_elements: usize,
 }
 impl DataflowGraph {
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {
@@ -201,7 +199,6 @@ impl DataflowGraph {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for an invalid graph or overflowing scratch-buffer requirements.
     pub fn plan_lifetimes(&mut self) -> Result<()> {

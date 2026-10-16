@@ -3,7 +3,7 @@ mod capture;
 pub mod exact;
 mod reference;
 use super::{
-    MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,
+    MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS, median,
     resident_gemm::ResidentTuningSession,
 };
 use crate::device::{CudaDevice, device_error};
@@ -121,22 +121,6 @@ fn supported([kh, vh, dim, lanes]: [usize; SHAPE_RANK]) -> bool {
         && lanes > 0
         && lanes <= MAX_LANES
         && lanes.is_multiple_of(CHUNK_ROWS)
-}
-fn median(values: &[f32]) -> f32 {
-    if values.is_empty() {
-        return f32::NAN;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f32::total_cmp);
-    let lo = (sorted.len() - 1) / 2;
-    let hi = sorted.len() / 2;
-    if lo == hi {
-        sorted[lo]
-    } else {
-        let lower = sorted[lo] / 2.0;
-        let upper = sorted[hi] / 2.0;
-        lower + upper
-    }
 }
 type Memo = Mutex<BTreeMap<Key, Entry>>;
 fn memo() -> &'static Memo {

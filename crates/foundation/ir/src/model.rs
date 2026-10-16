@@ -104,7 +104,6 @@ pub struct ModelIr {
     pub tied_embeddings: bool,
 }
 impl ModelIr {
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {

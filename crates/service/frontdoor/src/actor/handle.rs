@@ -85,7 +85,6 @@ impl RuntimeHandle {
         self.wake.unpark();
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invalid-input, capacity, or conflict error if the runtime rejects admission or its command channel is closed.
     pub async fn submit(
@@ -168,7 +167,6 @@ impl RuntimeHandle {
         self.reply(response).await??;
         Ok(receiver)
     }
-    ///
     /// # Errors
     /// Returns a not-found or conflict error if the request is unknown or the runtime channel is closed.
     pub async fn cancel(&self, request: RequestId) -> Result<()> {
@@ -181,7 +179,6 @@ impl RuntimeHandle {
         })?;
         self.reply(response).await?
     }
-    ///
     /// # Errors
     /// Returns a conflict error if the runtime channel is closed or inspection cannot be delivered.
     pub async fn inspect(&self) -> Result<RuntimeInspection> {
@@ -213,7 +210,6 @@ impl RuntimeHandle {
             .run_reserved(credit, None, move |_| snapshot.render())
             .await
     }
-    ///
     /// # Errors
     /// Returns a conflict error if the runtime channel is closed or shutdown cannot be acknowledged.
     pub async fn shutdown(&self) -> Result<()> {

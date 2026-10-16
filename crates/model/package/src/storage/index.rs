@@ -9,7 +9,6 @@ pub struct SafetensorsIndex {
     pub weight_map: BTreeMap<String, String>,
 }
 impl SafetensorsIndex {
-    ///
     /// # Errors
     /// Returns an invalid-input error for malformed or inconsistent package manifest data.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -36,7 +35,6 @@ impl SafetensorsIndex {
         index.declared_weight_bytes()?;
         Ok(index)
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error if the declared weight size overflows.
     pub fn weight_bytes(&self) -> Result<u64> {

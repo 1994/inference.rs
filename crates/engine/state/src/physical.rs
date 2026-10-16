@@ -14,7 +14,6 @@ pub struct PagedRows {
     pages: Vec<Arc<Vec<f32>>>,
 }
 impl PagedRows {
-    ///
     /// # Errors
     /// Returns an invalid-input error for zero or overflowing page dimensions.
     pub fn new(width: usize, page_rows: usize, capacity: usize) -> Result<Self> {
@@ -29,7 +28,6 @@ impl PagedRows {
             pages: vec![],
         })
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for incompatible or non-finite rows, or when all rows are occupied.
     pub fn push(&mut self, row: &[f32]) -> Result<()> {
@@ -49,7 +47,6 @@ impl PagedRows {
         self.rows += 1;
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for an uncommitted row.
     pub fn row(&self, row: usize) -> Result<&[f32]> {
@@ -70,7 +67,6 @@ impl PagedRows {
             .filter(|p| Arc::strong_count(p) > 1)
             .count()
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {

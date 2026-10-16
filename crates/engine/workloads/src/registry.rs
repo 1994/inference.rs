@@ -27,7 +27,6 @@ impl Default for WorkloadRegistry {
     }
 }
 impl WorkloadRegistry {
-    ///
     /// # Errors
     /// Returns an invalid-input or conflict error for incompatible provider metadata or duplicate registrations.
     pub fn register(

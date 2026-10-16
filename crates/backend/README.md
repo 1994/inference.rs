@@ -9,8 +9,7 @@ crates/backend/
   cuda/         # NVIDIA 生产目标；cuTile Rust 算子与量化参考
   metal/        # macOS GPU 执行器、MSL kernel 与受限 FFI
 crates/testing/cpu/
-  host/         # 仅测试：真实权重驱动的 CPU 正确性对照
-  reference/    # 仅测试：旧 fixture 对照
+  reference-ops/  # 标量参考算子：设备 kernel 的独立数值对照
 crates/foundation/ir/src/hardware/
   mod.rs        # 后端判别、共有能力与兼容性接口
   cuda.rs       # NVIDIA architecture / capabilities / requirements
@@ -19,10 +18,10 @@ crates/service/cli/src/backend/
   mod.rs        # 选择、provider 转发与 ticket 匹配
   cuda.rs
   metal.rs
-  testing.rs    # feature gate 下的 CPU adapter
+  selected.rs   # 编译期闭环的 provider 分发
 ```
 
-crate 名称（`infer-backend-host`、`infer-backend-reference`、`infer-backend-metal`、`infer-backend-cuda`）不因目录组织而改变。
+crate 名称（`infer-backend-cuda`、`infer-backend-metal`）不因目录组织而改变。
 
 ## 执行合约
 
@@ -40,4 +39,4 @@ crate 名称（`infer-backend-host`、`infer-backend-reference`、`infer-backend
 
 ## 依赖隔离
 
-默认生产依赖树不包含 `infer-backend-host` / `infer-backend-reference`，默认 workspace member 也排除 CPU testing crate。运行测试使用 `cargo test --workspace --features infer-cli/test-backends`，测试 CLI 仅通过 `--backend test-cpu` 显式进入。supported / auto_priority 始终为 CUDA/Metal；`auto` 无可用 GPU 时返回错误。
+生产依赖树只包含 CUDA 与 Metal 执行器：CPU 测试执行器（`infer-backend-host` / `infer-backend-reference`）、`test-backends` feature 与 `test-cpu` CLI 选项已全部删除。`crates/testing/cpu/reference-ops` 只提供标量参考算子，是 `infer-backend-cuda` 的 dev-dependency，不注册 backend、不进入生产依赖树。supported / auto_priority 始终为 CUDA/Metal；`auto` 无可用 GPU 时返回错误。

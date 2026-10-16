@@ -12,7 +12,6 @@ impl ProgressGuard {
     pub const fn valid_for(&self, limit: usize) -> bool {
         self.limit == limit && limit > 0
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
     pub fn new(limit: usize) -> Result<Self> {
@@ -24,7 +23,6 @@ impl ProgressGuard {
             empty_plans: 0,
         })
     }
-    ///
     /// # Errors
     /// Returns an invariant error if feasible work is repeatedly left unscheduled past the configured starvation limit.
     pub fn observe(&mut self, runnable: usize, feasible: bool, scheduled: bool) -> Result<()> {

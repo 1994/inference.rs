@@ -27,7 +27,6 @@ pub struct PrefixCache<V> {
     pub evictions: u64,
 }
 impl<V> PrefixCache<V> {
-    ///
     /// # Errors
     /// Returns an invalid-input error for an empty namespace, zero page size, or zero entry limit.
     pub fn new(binding: &[u8], block_size: usize, budget: u64, max_entries: usize) -> Result<Self> {
@@ -118,8 +117,20 @@ impl<V> PrefixCache<V> {
         maximum: usize,
         compatible: impl Fn(&V) -> bool,
     ) -> usize {
+        self.matched_prefix(tokens, maximum, compatible).0
+    }
+    /// Longest cached block-aligned prefix of `tokens` bounded by `maximum`, paired with the
+    /// chained key that addresses it. Returning the key keeps the SHA-256 chain single-pass:
+    /// callers such as [`Self::lookup_where`] would otherwise rehash the matched prefix.
+    fn matched_prefix(
+        &self,
+        tokens: &[u32],
+        maximum: usize,
+        compatible: impl Fn(&V) -> bool,
+    ) -> (usize, Hash) {
         let mut parent = self.root;
         let mut matched = 0;
+        let mut matched_key = self.root;
         for (i, block) in tokens.chunks_exact(self.block_size).enumerate() {
             let length = (i + 1) * self.block_size;
             if length > maximum {
@@ -137,9 +148,10 @@ impl<V> PrefixCache<V> {
                 .is_some_and(|e| e.tokens == tokens[..length] && compatible(&e.value))
             {
                 matched = length;
+                matched_key = parent;
             }
         }
-        matched
+        (matched, matched_key)
     }
     pub fn lookup(&mut self, tokens: &[u32], maximum: usize) -> Option<V>
     where
@@ -156,11 +168,10 @@ impl<V> PrefixCache<V> {
     where
         V: Clone,
     {
-        let length = self.matched_tokens_where(tokens, maximum, compatible);
+        let (length, key) = self.matched_prefix(tokens, maximum, compatible);
         if length == 0 {
             return None;
         }
-        let key = self.key(&tokens[..length]);
         let tick = self.tick();
         let e = self.entries.get_mut(&key)?;
         self.lru.remove(&(e.touched, key));
@@ -177,7 +188,6 @@ impl<V> PrefixCache<V> {
         self.evictions = self.evictions.saturating_add(1);
         Some(e.value)
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for empty or partial token blocks, or an invariant error if eviction metadata is inconsistent.
     pub fn insert(&mut self, tokens: Vec<u32>, value: V, bytes: u64) -> Result<Vec<V>> {

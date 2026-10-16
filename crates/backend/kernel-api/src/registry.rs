@@ -35,7 +35,6 @@ impl KernelRegistry {
     pub fn get(&self, id: KernelId) -> Option<&KernelRegistration> {
         self.kernels.get(&id)
     }
-    ///
     /// # Errors
     /// Returns an unsupported error if no registered kernel satisfies the operation, precision, backend, and workspace requirements.
     pub fn select(

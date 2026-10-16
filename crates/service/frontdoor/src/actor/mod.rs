@@ -90,6 +90,10 @@ struct RuntimeActor<B: BackendProvider> {
     clock_origin_us: u64,
     stopping: bool,
     stop_replies: Vec<oneshot::Sender<Result<()>>>,
+    /// Reused identity buffer for the drain passes. Reaping and cancellation both need a
+    /// `RequestId` list before mutating the engine, and both run on every actor iteration, so the
+    /// buffer is retained across iterations instead of reallocated per pass.
+    scratch: Vec<RequestId>,
 }
 impl Subscriber {
     fn flush(&mut self) -> bool {

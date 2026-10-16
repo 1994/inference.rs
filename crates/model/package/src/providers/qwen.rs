@@ -157,7 +157,6 @@ const fn default_sparse_step() -> usize {
 }
 pub struct QwenProvider;
 impl QwenProvider {
-    ///
     /// # Errors
     /// Returns an invalid-input or unsupported error for malformed configuration or an unsupported Qwen architecture.
     pub fn import_manifest(&self, id: ModelId, bytes: &[u8]) -> Result<ImportedModel> {
