@@ -285,6 +285,9 @@ pub struct TilingTable {
     /// FA4 BF16 profile, artifact and architecture scoped cluster search evidence.
     #[serde(default)]
     pub resident_mma_attention: Vec<attention::mma::Entry>,
+    /// F32-cache FA4 profile with full short-output and long-row F64 checks.
+    #[serde(default)]
+    pub resident_mma_f32_attention: Vec<attention::mma_f32::Entry>,
     #[serde(default)]
     pub resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
@@ -317,6 +320,8 @@ struct StoredTilingTable {
     #[serde(default)]
     resident_mma_attention: Vec<attention::mma::Entry>,
     #[serde(default)]
+    resident_mma_f32_attention: Vec<attention::mma_f32::Entry>,
+    #[serde(default)]
     resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
 
@@ -348,6 +353,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_exact_attention: stored.resident_exact_attention,
             resident_shared_attention: stored.resident_shared_attention,
             resident_mma_attention: stored.resident_mma_attention,
+            resident_mma_f32_attention: stored.resident_mma_f32_attention,
             resident_exact_recurrent: stored.resident_exact_recurrent,
         }
     }

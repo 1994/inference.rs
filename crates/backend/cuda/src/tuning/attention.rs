@@ -2,6 +2,7 @@
 mod capture;
 pub mod exact;
 pub mod mma;
+pub mod mma_f32;
 mod reference;
 pub mod shared;
 use super::{

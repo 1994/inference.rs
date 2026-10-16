@@ -138,11 +138,11 @@ impl Workspace {
             else {
                 continue;
             };
-            if !node
-                .states
-                .first()
-                .is_some_and(|id| weights.kv_scales.contains_key(id))
-            {
+            let Some(state) = node.states.first() else {
+                continue;
+            };
+            let fp8 = weights.kv_scales.contains_key(state);
+            if !fp8 && self.mma.is_none() {
                 continue;
             }
             let shape = crate::tuning::attention::Shape {
@@ -152,45 +152,16 @@ impl Workspace {
                 lanes,
                 window: window.unwrap_or(0),
             };
-            let choice = *choices.entry(shape).or_insert_with(|| {
-                let baseline = if self.oxide_available {
-                    let baseline = crate::tuning::attention::exact::select(
-                        device,
-                        shape,
-                        weights.autotune,
-                        &weights.resident_tuning,
-                    );
-                    crate::tuning::attention::shared::select(
-                        device,
-                        shape,
-                        weights.autotune,
-                        &weights.resident_tuning,
-                        baseline,
-                    )
-                } else if crate::tuning::attention::enabled() {
-                    crate::tuning::attention::select(
-                        device,
-                        shape,
-                        weights.autotune,
-                        &weights.resident_tuning,
-                    )
+            let choice = *choices.entry((shape, fp8)).or_insert_with(|| {
+                if fp8 {
+                    self.fp8_prefill_choice(device, shape, weights)
                 } else {
-                    crate::tuning::attention::Choice::Simt
-                };
-                #[cfg(test)]
-                if taps::forced_choice().is_some() {
-                    return baseline;
-                }
-                if self.mma.is_some() {
-                    crate::tuning::attention::mma::select(
+                    crate::tuning::attention::mma_f32::select(
                         device,
                         shape,
                         false,
                         &weights.resident_tuning,
-                        baseline,
                     )
-                } else {
-                    baseline
                 }
             });
             #[cfg(test)]
@@ -199,6 +170,53 @@ impl Workspace {
         }
         self.prepare_mma_modules(device);
         self.prepare_modules(device);
+    }
+
+    fn fp8_prefill_choice(
+        &self,
+        device: &CudaDevice,
+        shape: crate::tuning::attention::Shape,
+        weights: &super::super::ProgramWeights,
+    ) -> crate::tuning::attention::Choice {
+        let baseline = if self.oxide_available {
+            let baseline = crate::tuning::attention::exact::select(
+                device,
+                shape,
+                weights.autotune,
+                &weights.resident_tuning,
+            );
+            crate::tuning::attention::shared::select(
+                device,
+                shape,
+                weights.autotune,
+                &weights.resident_tuning,
+                baseline,
+            )
+        } else if crate::tuning::attention::enabled() {
+            crate::tuning::attention::select(
+                device,
+                shape,
+                weights.autotune,
+                &weights.resident_tuning,
+            )
+        } else {
+            crate::tuning::attention::Choice::Simt
+        };
+        #[cfg(test)]
+        if taps::forced_choice().is_some() {
+            return baseline;
+        }
+        if self.mma.is_some() {
+            crate::tuning::attention::mma::select(
+                device,
+                shape,
+                false,
+                &weights.resident_tuning,
+                baseline,
+            )
+        } else {
+            baseline
+        }
     }
 
     fn prepare_mma_modules(&mut self, device: &CudaDevice) {

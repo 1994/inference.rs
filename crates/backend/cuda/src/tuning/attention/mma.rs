@@ -34,7 +34,7 @@ pub struct Case {
     pub warm: Times,
 }
 impl Case {
-    fn accepted(&self) -> bool {
+    pub(super) fn accepted(&self) -> bool {
         let minimum = if self.history == 0 {
             1.0 / MAX_SHORT_REGRESSION
         } else {
@@ -56,7 +56,7 @@ pub struct Trial {
     pub reverse: Vec<Case>,
 }
 impl Trial {
-    fn score(&self) -> f32 {
+    pub(super) fn score(&self) -> f32 {
         self.forward
             .iter()
             .chain(&self.reverse)
@@ -64,10 +64,10 @@ impl Trial {
             .map(|c| c.cold.speedup().min(c.warm.speedup()))
             .fold(f32::INFINITY, f32::min)
     }
-    fn accepted(&self) -> bool {
+    pub(super) fn accepted(&self) -> bool {
         self.forward.iter().chain(&self.reverse).all(Case::accepted)
     }
-    fn valid(&self, shape: Shape) -> bool {
+    pub(super) fn valid(&self, shape: Shape) -> bool {
         let capacity = capacity(shape);
         let histories = histories(shape, capacity);
         self.fixtures == reference::FIXTURES
@@ -135,10 +135,10 @@ impl Entry {
                 }))
     }
 }
-fn capacity(shape: Shape) -> usize {
+pub(super) fn capacity(shape: Shape) -> usize {
     CAPACITY.max(shape.lanes.saturating_mul(2))
 }
-const fn histories(shape: Shape, capacity: usize) -> [usize; HISTORY_CASES] {
+pub(super) const fn histories(shape: Shape, capacity: usize) -> [usize; HISTORY_CASES] {
     [0, capacity / HISTORY_DIVISOR, capacity - shape.lanes]
 }
 type Memo = Mutex<BTreeMap<Key, Entry>>;
@@ -166,10 +166,7 @@ pub(crate) fn prepare(
             else {
                 continue;
             };
-            if node
-                .states
-                .first()
-                .is_some_and(|id| weights.kv_scales.contains_key(id))
+            if !node.states.is_empty()
                 && catalog::supported(
                     architecture,
                     query_heads,
@@ -179,18 +176,31 @@ pub(crate) fn prepare(
                     window.unwrap_or(0),
                 )
             {
-                shapes.insert(Shape {
-                    heads: query_heads,
-                    kv_heads,
-                    dim: head_dim,
-                    lanes,
-                    window: window.unwrap_or(0),
-                });
+                let fp8 = node
+                    .states
+                    .first()
+                    .is_some_and(|id| weights.kv_scales.contains_key(id));
+                shapes.insert((
+                    Shape {
+                        heads: query_heads,
+                        kv_heads,
+                        dim: head_dim,
+                        lanes,
+                        window: window.unwrap_or(0),
+                    },
+                    fp8,
+                ));
             }
         }
     }
     // Shape order prepares narrow graphs first, matching resident capture order.
-    for shape in shapes {
+    for (shape, fp8) in shapes {
+        if !fp8 {
+            if weights.fusion.is_some() {
+                super::mma_f32::select(device, shape, weights.autotune, &weights.resident_tuning);
+            }
+            continue;
+        }
         let baseline =
             super::exact::select(device, shape, weights.autotune, &weights.resident_tuning);
         let baseline = super::shared::select(
@@ -200,13 +210,17 @@ pub(crate) fn prepare(
             &weights.resident_tuning,
             baseline,
         );
-        select(
-            device,
-            shape,
-            weights.autotune,
-            &weights.resident_tuning,
-            baseline,
-        );
+        // Exact target tuning must finish before proposal search starts the shared
+        // wall-clock allowance. Only proposal programs may narrow precision.
+        if weights.fusion.is_some() {
+            select(
+                device,
+                shape,
+                weights.autotune,
+                &weights.resident_tuning,
+                baseline,
+            );
+        }
     }
     Ok(())
 }

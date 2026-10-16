@@ -14,11 +14,13 @@ use std::collections::BTreeMap;
 pub use workspace::{Workspace, eligible};
 
 const PTX: &str = include_str!("../../../kernels/fa4-attention/bridge.ptx");
+const F32_PTX: &str = include_str!("../../../kernels/fa4-attention-f32/bridge.ptx");
 const THREADS: u32 = 256;
 const RESIDENT_BLOCKS_PER_SM: u32 = 8;
 
 pub struct Support {
     prepare: Arc<Function>,
+    prepare_f32: Option<Arc<Function>>,
     finish: Arc<Function>,
     apis: BTreeMap<Variant, Arc<host::Api>>,
     scratch: workspace::Scratch,
@@ -45,6 +47,7 @@ impl Support {
         let sms = device.profile()?.multiprocessors;
         Ok(Self {
             prepare: Arc::new(module.load_function("prepare_fa4").map_err(device_error)?),
+            prepare_f32: None,
             finish: Arc::new(module.load_function("finish_fa4").map_err(device_error)?),
             apis: BTreeMap::new(),
             scratch: workspace::Scratch::new(device, capacity, lanes)?,
@@ -53,6 +56,21 @@ impl Support {
             capacity,
             lanes,
         })
+    }
+    pub fn prepare_float_cache(&mut self, device: &CudaDevice) -> Result<()> {
+        if self.prepare_f32.is_none() {
+            let module = device
+                .stream
+                .device()
+                .load_module_from_ptx_src(F32_PTX)
+                .map_err(device_error)?;
+            self.prepare_f32 = Some(Arc::new(
+                module
+                    .load_function("prepare_fa4_f32")
+                    .map_err(device_error)?,
+            ));
+        }
+        Ok(())
     }
     pub fn prepare_variant(&mut self, device: &CudaDevice, variant: Variant) -> Result<()> {
         if !Variant::candidates(&device.profile()?.architecture).contains(&variant) {
@@ -80,8 +98,11 @@ impl Support {
             usize::try_from(window).unwrap_or(usize::MAX),
         ) && lanes <= self.lanes
             && capacity == self.capacity
-            && E::DTYPE == cuda_core::f8e4m3fn::DTYPE
-            && size_of::<E>() == 1
+            && (E::DTYPE == cuda_core::f8e4m3fn::DTYPE && size_of::<E>() == 1
+                || E::DTYPE == f32::DTYPE
+                    && size_of::<E>() == size_of::<f32>()
+                    && self.prepare_f32.is_some()
+                    && scales.iter().all(|v| v.to_bits() == 1.0f32.to_bits()))
             && scales.iter().all(|v| v.is_finite() && *v > 0.0)
             && b.query.is_contiguous()
             && b.query.size() == lanes * HEADS * DIM
@@ -139,7 +160,14 @@ impl Support {
             used_q_pointer,
             _,
         ] = pointers;
-        let mut prepare = AsyncKernelLaunch::new(Arc::clone(&self.prepare));
+        let prepare_function = if E::DTYPE == f32::DTYPE {
+            self.prepare_f32
+                .as_ref()
+                .ok_or_else(|| super::capture::error("F32 cache preparation missing"))?
+        } else {
+            &self.prepare
+        };
+        let mut prepare = AsyncKernelLaunch::new(Arc::clone(prepare_function));
         for pointer in [
             b.query.device_pointer().cu_deviceptr(),
             b.keys.device_pointer().cu_deviceptr(),
@@ -215,5 +243,19 @@ pub fn artifact_identity() -> String {
             hash.update(variant.bytes());
         }
     }
+    format!("{:x}", hash.finalize())
+}
+
+pub fn f32_artifact_identity() -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(artifact_identity());
+    hash.update(F32_PTX);
+    hash.update(include_str!("mod.rs"));
+    hash.update(include_str!("recorded.rs"));
+    hash.update(include_str!("host.rs"));
+    hash.update(include_bytes!(
+        "../../../kernels/fa4-attention-f32/bridge.cu"
+    ));
     format!("{:x}", hash.finalize())
 }

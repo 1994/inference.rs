@@ -40,6 +40,11 @@ pub fn eligible(
     weights: &super::super::ProgramWeights,
     lanes: usize,
 ) -> bool {
+    // The BF16 target profile failed fixed task-quality confirmation. Only the
+    // MTP proposal program may use it; target verification keeps exact attention.
+    if weights.fusion.is_none() {
+        return false;
+    }
     graph.nodes.iter().any(|node| {
         let TensorOp::Attention {
             query_heads,
@@ -50,9 +55,7 @@ pub fn eligible(
         else {
             return false;
         };
-        node.states
-            .first()
-            .is_some_and(|id| weights.kv_scales.contains_key(id))
+        !node.states.is_empty()
             && catalog::supported(
                 architecture,
                 query_heads,
@@ -74,8 +77,16 @@ impl Workspace {
         if !eligible(&device.profile()?.architecture, graph, weights, lanes) {
             return Ok(None);
         }
-        Ok(Some(Self {
-            support: Support::load(device, capacity, lanes)?,
-        }))
+        let mut support = Support::load(device, capacity, lanes)?;
+        if graph.nodes.iter().any(|node| {
+            matches!(node.op, TensorOp::Attention { .. })
+                && node
+                    .states
+                    .first()
+                    .is_some_and(|id| !weights.kv_scales.contains_key(id))
+        }) {
+            support.prepare_float_cache(device)?;
+        }
+        Ok(Some(Self { support }))
     }
 }

@@ -1,9 +1,19 @@
 # Architecture-specific FA4 AOT prefill
 
-This candidate lowers FP8 paged KV and F32 queries to BF16, executes pinned FA4, then
-converts its BF16 output to F32. It is a separate numerical profile from canonical F32
-attention. Task acceptance is pending; the canonical exact and rejected tiled gates
-are unchanged. Serving imports no Python.
+The AOT cores consume BF16 Q/K/V, accumulate in F32 and produce BF16 output.
+The paged-cache bridges support FP8 and F32 source storage. Serving imports no Python.
+
+Automatic use is restricted to MTP proposal programs, identified by their existing
+fusion weights. Target attention retains its canonical exact path. The target BF16
+profile failed the fixed 1,024-question confirmation: 16 regressions against native,
+with a one-sided 95% upper bound of 2.364%, above the unchanged 2% gate. Matching
+aggregate accuracy (966/1,024) does not overturn that result. Rejected tiled attention
+remains disabled.
+
+Exact target choices are still prepared at model loading, before proposal search and
+the shared wall-clock tuning allowance can expire. Request capture only consumes
+completed FA4 choices. Proposal output preservation and service qualification are
+separate gates; no model acceptance is inferred from operator error alone.
 
 | Hardware target | Execution | Validation |
 | --- | --- | --- |
