@@ -1,0 +1,18 @@
+{
+  "target": "sm_120",
+  "compiler": "nvcc V13.4.92",
+  "language": "CUDA C++ device code;no host C++ runtime",
+  "arguments": [
+    "--ptx",
+    "-arch=compute_120",
+    "-O3",
+    "--fmad=false",
+    "--ftz=false",
+    "--prec-div=true",
+    "--prec-sqrt=true"
+  ],
+  "source_sha256": "916ae10919074d6c027d4c9f9ef5fc393c89c5a601d6d62fd9c57e116f221797",
+  "ptx_sha256": "b14eda8762b441ea83b670f6eb55582e2319c5335b65e0b7883673964dd20e80",
+  "canonical_attention_ptx_sha256": "e41ad095da73871ffafa0de0318219b3f1f690f444ccad318fcd83c3b0001e66",
+  "numeric_evidence": "/home/r/benchmarks/inference.rs/exact-shared-attention-2026-10-16/packed-stage-prototype-v1/run-v1/result.json"
+}

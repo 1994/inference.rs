@@ -86,7 +86,7 @@ fn memo() -> &'static Memo {
     static MEMO: OnceLock<Memo> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
+pub(super) fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
     let driver_build = std::fs::read_to_string("/proc/driver/nvidia/version")
         .ok()
         .and_then(|text| {

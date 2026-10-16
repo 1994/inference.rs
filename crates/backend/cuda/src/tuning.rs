@@ -279,6 +279,9 @@ pub struct TilingTable {
     /// Exact Rust SIMT alternatives with hardware and artifact scoped evidence.
     #[serde(default)]
     pub resident_exact_attention: Vec<attention::exact::Entry>,
+    /// Exact F32 shared KV with short-history regression and long-history paired evidence.
+    #[serde(default)]
+    pub resident_shared_attention: Vec<attention::shared::Entry>,
     #[serde(default)]
     pub resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
@@ -306,6 +309,8 @@ struct StoredTilingTable {
     resident_attention: Vec<attention::Entry>,
     #[serde(default)]
     resident_exact_attention: Vec<attention::exact::Entry>,
+    #[serde(default)]
+    resident_shared_attention: Vec<attention::shared::Entry>,
     #[serde(default)]
     resident_exact_recurrent: Vec<recurrent::exact::Entry>,
 }
@@ -336,6 +341,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_recurrent: stored.resident_recurrent,
             resident_attention: stored.resident_attention,
             resident_exact_attention: stored.resident_exact_attention,
+            resident_shared_attention: stored.resident_shared_attention,
             resident_exact_recurrent: stored.resident_exact_recurrent,
         }
     }
