@@ -23,6 +23,7 @@ pub struct Workspace {
     pub(in crate::resident) oxide: Option<super::super::attention_oxide::Support>,
     pub(in crate::resident) shared: Option<super::super::attention_oxide::Support>,
     vector: Option<super::super::attention_oxide::Support>,
+    combined: Option<super::super::attention_oxide::Support>,
     #[cfg(test)]
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
@@ -93,6 +94,7 @@ impl Workspace {
             oxide: None,
             shared: None,
             vector: None,
+            combined: None,
             buffers,
             prefill: BTreeMap::new(),
         })
@@ -211,6 +213,7 @@ impl Workspace {
             &weights.resident_tuning,
             baseline,
         );
+        let baseline = crate::tuning::attention::vector_combined::select(device, shape, baseline);
         #[cfg(test)]
         if taps::forced_choice().is_some() {
             return baseline;
@@ -262,6 +265,7 @@ impl Workspace {
         self.prepare_oxide_module(device);
         self.prepare_shared_module(device);
         self.prepare_vector_module(device);
+        self.prepare_combined_module(device);
     }
 
     fn prepare_oxide_module(&mut self, device: &CudaDevice) {
@@ -288,6 +292,7 @@ impl Workspace {
                     choice,
                     crate::tuning::attention::Choice::SharedKv
                         | crate::tuning::attention::Choice::VectorSharedKv
+                        | crate::tuning::attention::Choice::VectorSharedKvCombined
                 )
             })
         {
@@ -307,10 +312,13 @@ impl Workspace {
 
     fn prepare_vector_module(&mut self, device: &CudaDevice) {
         if self.vector.is_none()
-            && self
-                .prefill
-                .values()
-                .any(|choice| *choice == crate::tuning::attention::Choice::VectorSharedKv)
+            && self.prefill.values().any(|choice| {
+                matches!(
+                    choice,
+                    crate::tuning::attention::Choice::VectorSharedKv
+                        | crate::tuning::attention::Choice::VectorSharedKvCombined
+                )
+            })
         {
             match super::super::attention_oxide::Support::load_vector(device) {
                 Ok(Some(module)) => self.vector = Some(module),
@@ -323,6 +331,34 @@ impl Workspace {
                     };
                     for choice in self.prefill.values_mut() {
                         if *choice == crate::tuning::attention::Choice::VectorSharedKv {
+                            *choice = fallback;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn prepare_combined_module(&mut self, device: &CudaDevice) {
+        if self.combined.is_none()
+            && self
+                .prefill
+                .values()
+                .any(|choice| *choice == crate::tuning::attention::Choice::VectorSharedKvCombined)
+        {
+            match super::super::attention_oxide::Support::load_combined(device) {
+                Ok(Some(module)) => self.combined = Some(module),
+                result => {
+                    tracing::warn!(target:"infer::tuning",error=?result.err(),"vector combined module unavailable: qualified vector fallback");
+                    let fallback = if self.vector.is_some() {
+                        crate::tuning::attention::Choice::VectorSharedKv
+                    } else if self.shared.is_some() {
+                        crate::tuning::attention::Choice::SharedKv
+                    } else {
+                        crate::tuning::attention::Choice::RustSimt
+                    };
+                    for choice in self.prefill.values_mut() {
+                        if *choice == crate::tuning::attention::Choice::VectorSharedKvCombined {
                             *choice = fallback;
                         }
                     }
@@ -357,6 +393,9 @@ impl Workspace {
             Some(crate::tuning::attention::Choice::RustSimt) => self.oxide.as_ref(),
             Some(crate::tuning::attention::Choice::SharedKv) => self.shared.as_ref(),
             Some(crate::tuning::attention::Choice::VectorSharedKv) => self.vector.as_ref(),
+            Some(crate::tuning::attention::Choice::VectorSharedKvCombined) => {
+                self.combined.as_ref()
+            }
             _ => None,
         }
     }
