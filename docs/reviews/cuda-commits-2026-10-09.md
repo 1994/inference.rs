@@ -1,12 +1,12 @@
 # CUDA 近期提交代码审查
 
-审查日期：2026 年 10 月 9 日。源码基点：`7c79d99`。本文记录审查结论，三项问题在该基点仍待修复；后续工作见 [CUDA 优化方案](../plans/performance/cuda.md)。
+审查日期：2026 年 10 月 9 日。源码基点：`7c79d99`。本文保留该基点的审查结论与验证范围。三项问题已在 `46ed038`（2026-10-10）修正并进入 main；后续工作见 [CUDA 优化方案](../plans/performance/cuda.md)。
 
 ## 审查结论
 
 性能方向总体正确。按实际行数选择量化 GEMM tile、保持 prompt chunk 完整、选择最窄够用的 prompt 图，均针对固定图重放的实际浪费。256 行图限制在量化 recurrent 模型且受 arena 预算约束，也符合已有实验结果。应继续沿着形状分派、减少重放和完整资源预算推进。
 
-当前实现有一项 P1 和两项 P2：cuBLAS handle 的设备与 stream 归属不正确；FP8 workspace 缓存遗漏量化模式；投影对照在图外预热之前捕获 vendor GEMM。前两项影响特定配置下的正确性，第三项影响基准的冷启动可复现性。性能收益不能替代这些修正。
+当前实现有一项 P1 和两项 P2：cuBLAS handle 的设备与 stream 归属不正确；FP8 workspace 缓存遗漏量化模式；投影对照在图外预热之前捕获 vendor GEMM。前两项影响特定配置下的正确性，第三项影响基准的冷启动可复现性。性能收益不能替代这些修正。三项均已在 `46ed038` 修正；本节保留当时的严重程度与判断依据，设备回归按 CUDA 验收入口复核。
 
 BF16 cuBLAS 投影和量化模型的 chunked recurrent 继续保留显式实验开关。它们已有性能收益记录，同时存在 token 差异，chunked recurrent 还存在 short/hot_long 回退。NVFP4 cuBLASLt 只有隔离实验，尚未接入生产执行路径，不能将其微基准倍率写成服务收益。
 

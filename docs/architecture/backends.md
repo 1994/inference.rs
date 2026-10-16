@@ -29,7 +29,7 @@ CUDA capture、projection workspace 与新建序列报价共用 ProgramGeometry�
 
 cached shell 按 capacity/readout 与实际 take 路径匹配。转入 slot pool 会销毁私有 verification，但不会自动销毁原宽 prompt 图；复用报价保留旧 charge 的下界，并覆盖请求 private recapture 的新建报价。公共 state_reservation_bytes_for 与实际 reserve 使用同一算法，空闲 slot 不免除 prefill 私有程序的成本。
 
-图几何使用加载时由设备能力/tuning 得出的宽度，不按设备名称选择。报价是已知分配加 driver headroom 的保守上界，不能称作实测增量显存。实测收益与并发延迟取舍见[图几何准入实验](../research/cuda-pooled-admission-geometry-2026-10-12.md)。
+图几何使用加载时由设备能力/tuning 得出的宽度，不按设备名称选择。报价是已知分配加 driver headroom 的保守上界，不能称作实测增量显存。实测收益与并发延迟取舍见[图几何准入实验](../archive/research/cuda-pooled-admission-geometry-2026-10-12.md)。
 
 ## Metal 执行契约
 

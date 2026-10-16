@@ -5,7 +5,7 @@ native 记录到 24,576 次标量递推 kernel、110.17 ms；vLLM 的 FlashInfer
 384 次 kernel、7.93 ms。单请求 decode 的两类大矩阵 kernel 总时间接近。下一轮优先定位
 GDN 的串行依赖与状态流量，再处理 prefill attention；本轮没有修改生产算法或添加用户开关。
 
-机器可读结果见 [冻结汇总](artifacts/cuda-vllm-current-profile-2026-10-13.json)。
+机器可读结果见 [冻结汇总](../archive/research/artifacts/cuda-vllm-current-profile-2026-10-13.json)。
 这是诊断记录，不能作为同精度加速证明或五组独立配对验收。
 
 ## 测量条件与实际路径
@@ -167,7 +167,7 @@ F64 最大绝对误差为 `1.155110407e-6`，保留原 `2e-5` 门槛。
 测试额外检查返回数量、状态 ID/张量数量、长度和有限值；空 logits 单列计数，
 不把它们当成已验证的词表输出。
 
-[冻结数值汇总](artifacts/cuda-gdn-ordered-reduction-2026-10-14.json)记录二进制与实际
+[冻结数值汇总](../archive/research/artifacts/cuda-gdn-ordered-reduction-2026-10-14.json)记录二进制与实际
 生产 kernel/dispatch 源码哈希、原始日志哈希和 manifest。原始目录为
 `/home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/`；
 该目录沿用创建日期，后续结果没有覆盖旧试验。一次运行因新出现的桌面 RustDesk
@@ -227,7 +227,7 @@ token/head 预计算 F32 normalized Q/K 和门控，再由独立状态列读取�
 15.34 ms，作为第二优先级。
 
 命令、SHA、结果、失败记录见
-[分列实现与候选诊断证据](artifacts/cuda-gdn-value-column-split-2026-10-14.json)。
+[分列实现与候选诊断证据](../archive/research/artifacts/cuda-gdn-value-column-split-2026-10-14.json)。
 
 
 ## 10-14：沿 GDN 减少重复计算，集成共享输入与 16 列块
@@ -274,7 +274,7 @@ CUDA release 上重新验证 75 组 fixture，150 次 state/output 比较全部�
 准入仍不变；不宣称显式比较了 FP8 KV buffer。下一轮需要先验证量化候选的
 完整服务行为，处理已发现的 batch4 路由/流一致性差异，再决定准入。
 实现、源码与二进制 SHA、原始样本和全部失败索引见
-[共享输入实现与独立确认](artifacts/cuda-gdn-shared-inputs-2026-10-14.json)。
+[共享输入实现与独立确认](../archive/research/artifacts/cuda-gdn-shared-inputs-2026-10-14.json)。
 
 ## 10-14：集成共享输入后的实际模型 profile
 
@@ -305,7 +305,7 @@ BF16 KV 缩放值在 CPU 枚举所有 254 个有限 FP8 code 后，第三个 BF1
 此轮诊断四种 workload 均完成，外来 GPU 进程 guard 无违规，冻结 tuning
 cache 和二进制 hash 未变。此前旧候选的完整质量/服务结果不作为新候选验收。
 原始目录为 /home/r/benchmarks/inference.rs/gdn-scalar-chunk-lowering-2026-10-13/shared-inputs-current-profile-v1；
-[实际模型 profile 汇总](artifacts/cuda-gdn-shared-inputs-current-profile-2026-10-14.json)
+[实际模型 profile 汇总](../archive/research/artifacts/cuda-gdn-shared-inputs-current-profile-2026-10-14.json)
 记录准入 diff、编译身份、trace、警告及 CI 证据 hash。
 
 ## 2026-10-14：消除递推循环中的行边界检查
@@ -354,7 +354,7 @@ hidden、logits、verify 3/commit 1 回滚和 16 步继续 decode 均逐位一�
 后续重点仍是循环中的加载、布局转换和同步；当前 trace 与 SASS 尚不能证明
 哪种硬件资源决定这些开销，需要继续用可分离的实验验证。
 
-[行边界检查优化证据](artifacts/cuda-gdn-axis-bounds-2026-10-14.json)。
+[行边界检查优化证据](../archive/research/artifacts/cuda-gdn-axis-bounds-2026-10-14.json)。
 
 ## 2026-10-14：行检查优化的完整模型 profile
 
@@ -375,7 +375,7 @@ GDN 在该总和中的占比从 21.2% 变为 19.3%，减少的时间集中于目
 OS runtime events，全部保留。这里是一次带 profiler 的诊断，和独立隔离复测
 相互印证，不能作为配对 serving 收益或量化模型默认准入的结论。
 
-[完整模型 trace 与 CI 证据](artifacts/cuda-gdn-axis-bounds-current-profile-2026-10-14.json)
+[完整模型 trace 与 CI 证据](../archive/research/artifacts/cuda-gdn-axis-bounds-current-profile-2026-10-14.json)
 记录生产 kernel hash、诊断二进制及准入身份、原始 trace/hash 和全部警告。
 
 ## 2026-10-14：输入打包的失败结果
@@ -399,7 +399,7 @@ shared 从 30,988 变为 32,012 bytes。gate 单包保持 7 条同步，循环�
 剩余 head 检查放入循环 preheader。该假设尚未实现或测量，需特别防止短请求、
 全 padding 和部分计数路径回退。
 
-[失败实验与原始样本索引](artifacts/cuda-gdn-input-packing-rejected-2026-10-14.json)。
+[失败实验与原始样本索引](../archive/research/artifacts/cuda-gdn-input-packing-rejected-2026-10-14.json)。
 
 ## 2026-10-14：有效 token 循环与 head 检查前移
 
@@ -440,7 +440,7 @@ speedup 中位数至少 1.1249，未触发原 5% 回退门槛；所有进程中�
 
 这一修改替换已准入的默认 kernel，不增加分配、预算或用户算法开关；
 量化模型的默认准入仍受已有质量和 serving 门槛约束。
-[有效循环优化证据](artifacts/cuda-gdn-active-range-2026-10-14.json)。
+[有效循环优化证据](../archive/research/artifacts/cuda-gdn-active-range-2026-10-14.json)。
 
 ## 2026-10-14：有效循环优化的完整模型 profile
 
@@ -463,7 +463,7 @@ attention 从上一轮 15.027409 ms 变为 15.526432 ms，约上升 3.3%；
 四场景均完成，guard 无 GPU 干扰，protected profile 峰值 5.6 GiB、自身
 swap 为零。仍保留未采集 OS scheduling、部分 CUDA events 和部分 OS runtime
 events 三类警告。量化模型的默认准入仍未改动。
-[trace、编译身份与 CI 证据](artifacts/cuda-gdn-active-range-current-profile-2026-10-14.json)。
+[trace、编译身份与 CI 证据](../archive/research/artifacts/cuda-gdn-active-range-current-profile-2026-10-14.json)。
 
 后续量化 serving 的一项证据缺口已有源码定位：ExecutionTask 含 request 和
 state 两个 ID，现有 CUDA host profiler 只输出 state。记录已有 request ID
@@ -495,7 +495,7 @@ stream、request/state/slot/position 与原始 host 日志/hash 保留；默认�
 数值定位需按实际 52 token 场景，从相同 state/FP8 KV 和输入 token 比较
 直接 pooled 与 private 一步后迁入 pooled。已有小投影算术实验不得因路由关联
 重新启用：高精度 private MMA 和 pooled F32 实验均曾未通过原完整质量门槛。
-[请求与路由证据](artifacts/cuda-gdn-request-state-route-2026-10-14.json)。
+[请求与路由证据](../archive/research/artifacts/cuda-gdn-request-state-route-2026-10-14.json)。
 
 ## 2026-10-14：实际容量下复现 private/pooled 数值分歧
 
@@ -542,7 +542,7 @@ logits、全部 F32 state 与所有有效 FP8 KV 均逐位一致。保持该干�
 失败。这些源码、构建、失败与原始记录均保留；最终实验增加同容量控制，
 单独测量容量干预，没有将该失败重写为通过。最终三案例共 75 条数值事件，
 GPU guard 无干扰，protected 单元峰值 4.7 GiB、自身 swap 为零。
-[构建、逐位 census、逐 token 服务复现与失败记录](artifacts/cuda-gdn-route-arithmetic-census-2026-10-14.json)。
+[构建、逐位 census、逐 token 服务复现与失败记录](../archive/research/artifacts/cuda-gdn-route-arithmetic-census-2026-10-14.json)。
 
 ## 2026-10-14：统一小投影与实际 KV 长度的数值原型
 
@@ -575,7 +575,7 @@ F32 激活拆为两个 BF16 分量后分别执行 MMA；四行 F32 核保留 pri
 以及无 profiler 的独立配对 serving 和持续混合负载。动态分片仍保留最大
 grid 和 merge，功能通过本身不证明速度改善。全部版本、构建失败、原始
 事件、冻结输入/cache 与二进制身份保留。
-[实际长度原型的数值证据](artifacts/cuda-gdn-covered-kv-prototype-2026-10-14.json)。
+[实际长度原型的数值证据](../archive/research/artifacts/cuda-gdn-covered-kv-prototype-2026-10-14.json)。
 
 ## 2026-10-14：联合原型完整质量失败，转向保留原算术的小投影布局
 
@@ -615,7 +615,7 @@ checkpoint 投影逐位一致，再做冷/热缓存配对计时。实际 8 列�
 STACK 为零。这是静态生成代码，不是动态指令或 occupancy 测量。两种布局
 均不准入，也没有继续采集性能。下一步保留原 16×32 MMA tile，探索复用同一
 输入的 BF16 high/low 分解，消除重复转换而保持原 MMA 累加顺序。
-[完整拒绝记录与原始 profile 查询证据](artifacts/cuda-gdn-covered-kv-quality-rejection-2026-10-14.json)。
+[完整拒绝记录与原始 profile 查询证据](../archive/research/artifacts/cuda-gdn-covered-kv-quality-rejection-2026-10-14.json)。
 
 
 ## 2026-10-14：复用 BF16 分解保持逐位一致，但 serving 尚未准入
@@ -669,7 +669,7 @@ batch4 TPOT 进程中位数 18.93510→18.42998 ms；配对速度中位数 1.028
 96 列。原来两个 48 列输出各补齐到 64 列；保持 32 列 MMA tile 后，联合输出
 只需三个 block，减少一个 block 的补齐工作。必须同时计入输出拆分成本，
 先验证逐位一致，再验证完整模型和原服务/质量门槛。
-[逐位验证、微基准、dispatch 与完整服务失败记录](artifacts/cuda-gdn-bf16-prepared-2026-10-14.json)。
+[逐位验证、微基准、dispatch 与完整服务失败记录](../archive/research/artifacts/cuda-gdn-bf16-prepared-2026-10-14.json)。
 
 ## 2026-10-14：联合 beta/alpha 投影消除重复转换与补齐计算
 
@@ -745,8 +745,8 @@ unit0的batch4-repeat1-slot1、unit2的同输入和repeat2-slot1三条尚未匹�
 也没有用其他候选的256题结果替代本候选单请求/并发质量及持续混合负载。
 下一步应对上述实际请求关联state/slot/初始private与pooled历史，从相同输入
 和实际状态路径重放，区分布局数值、迁移和调度，避免未经定位继续更改算术。
-[完整数值、性能、失败与逐序列census](artifacts/cuda-gdn-bf16-joint-2026-10-14.json)；
-[可审阅实验补丁，未合入runtime](artifacts/cuda-gdn-bf16-joint-prototype-2026-10-14.patch)。
+[完整数值、性能、失败与逐序列census](../archive/research/artifacts/cuda-gdn-bf16-joint-2026-10-14.json)；
+[可审阅实验补丁，未合入runtime](../archive/research/artifacts/cuda-gdn-bf16-joint-prototype-2026-10-14.patch)。
 
 
 ## 2026-10-14：完整重放定位首次路由，兼容活动请求原型消除冻结场景差异
@@ -807,8 +807,8 @@ short的prefill执行中位数控制36.241、候选36.405ms，接近；客户端
 prefix reuse为1.145/1.569ms。各阶段中位数不可直接相加当总TTFT，原逐请求
 记录与闭合残差均保留。日志会改变调度，这些结果只支持下一步细分准入/准备
 过程，不能替代未插桩的5%回退和10%漂移门槛。main默认仍未切换。
-[受控重放、原型路由、完整服务失败和TTFT边界证据](artifacts/cuda-gdn-cohort-route-replay-2026-10-14.json)；
-[可审阅路由原型补丁，未合入runtime](artifacts/cuda-gdn-cohort-router-prototype-2026-10-14.patch)。
+[受控重放、原型路由、完整服务失败和TTFT边界证据](../archive/research/artifacts/cuda-gdn-cohort-route-replay-2026-10-14.json)；
+[可审阅路由原型补丁，未合入runtime](../archive/research/artifacts/cuda-gdn-cohort-router-prototype-2026-10-14.patch)。
 
 
 ## 2026-10-14：预算公式消除反复图规划，短请求 TTFT 降低但原路由门槛仍失败
@@ -855,8 +855,8 @@ GPU算术未变支持继续调查原路由对CPU时序的敏感性，不能把18
 历史证据仍保留。下一步在同一cohort路由下组合联合投影与预算公式，检查
 已测得的batch4 TPOT收益和短请求TTFT是否同时成立。完整256题单请求/
 并发native及固定vLLM质量、持续混合负载仍待验证。main默认runtime未切换。
-[CPU原始样本、精确对照与五组完整服务记录](artifacts/cuda-admission-affine-2026-10-14.json)；
-[可审阅预算公式原型补丁](artifacts/cuda-admission-affine-prototype-2026-10-14.patch)。
+[CPU原始样本、精确对照与五组完整服务记录](../archive/research/artifacts/cuda-admission-affine-2026-10-14.json)；
+[可审阅预算公式原型补丁](../archive/research/artifacts/cuda-admission-affine-prototype-2026-10-14.patch)。
 
 
 ## 2026-10-14：联合投影与预算化简共同生效，TTFT 回退消失，漂移门槛仍未通过
@@ -900,5 +900,5 @@ candidate及并发4尚未运行。512输出上限、MTP0、32768context、原输
 Clopper-Pearson退步门槛不变，收益不能抵消退步。完整质量和持续负载都未完成，
 main默认runtime未切换。最大long差距仍是原量化GDN逐token prefill，下一阶段
 继续减少其串行依赖和重复state访问；本轮不以host优化替代这条GPU主线。
-[完整模型、预算、构建身份与五组服务证据](artifacts/cuda-gdn-joint-affine-2026-10-14.json)；
-[可审阅组合原型补丁，未合入runtime](artifacts/cuda-gdn-joint-affine-prototype-2026-10-14.patch)。
+[完整模型、预算、构建身份与五组服务证据](../archive/research/artifacts/cuda-gdn-joint-affine-2026-10-14.json)；
+[可审阅组合原型补丁，未合入runtime](../archive/research/artifacts/cuda-gdn-joint-affine-prototype-2026-10-14.patch)。

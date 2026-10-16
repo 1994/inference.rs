@@ -111,7 +111,7 @@ role，现改为用 `gate.orientation(baseline, candidate)` 判定真实方向�
 | 池内计价（占槽请求不再二次预留） | ✅ 默认（对交付 profile 尚不生效） | matrix 16/16、27 单测、4 GPU 测试 | `9421a8c` 等 |
 | **P1+P2：CUDA 实现 `kv_cache()` 与 `state_page_growth()`**（本方案的 SPI 闭环） | ✅ 默认路径（池存在时上报；池缺席回退 None，行为与之前一致） | 官方 matrix 16/16、**28/28 请求流 token 逐位一致**（`artifacts/kv-paging-p1p2-20261011/`，run-id `kv-before`/`kv-after`）；runtime readback `kv_cache` 由 `null` → 真实块报（32 token/块 × 1024 块 × 1 MiB）；clippy/单测/GPU 测试全绿（含 release `attention_decode` 2/2）。明细见实验记录 §15 | `87ca6d0`（2026-10-11） |
 | Chunk recurrent 内部候选（诊断 loader） | 生产 CLI 无算法开关 | 历史局部 TTFT −15.7%/−20.1%/−14.6%/−16.0%；未获默认完整验收 | §12.20 |
-| CUDA 内部 tiled attention 候选（仅测试程序） | 内部比较 SIMT/QT16/QT32；生产不开放算法开关 | 六项补偿通过真实 F64；256 题原任务质量失败，生产保持 SIMT | [2026-10-13 记录](../../research/cuda-attention-query-sharing-2026-10-13.md) |
+| CUDA 内部 tiled attention 候选（仅测试程序） | 内部比较 SIMT/QT16/QT32；生产不开放算法开关 | 六项补偿通过真实 F64；256 题原任务质量失败，生产保持 SIMT | [2026-10-13 记录](../../archive/research/cuda-attention-query-sharing-2026-10-13.md) |
 
 ## 四、硬边界账目（决定了并发上限）
 
