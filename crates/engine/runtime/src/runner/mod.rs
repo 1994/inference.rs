@@ -96,9 +96,11 @@ impl Drop for ControlCredit {
 }
 impl Shared {
     fn notify(&self) {
-        if let Ok(wake) = self.wake.lock()
-            && let Some(wake) = &*wake
-        {
+        // Clone the waker out and release the lock before invoking it. The callback is opaque, so
+        // waking under the lock would serialize every notify behind it and deadlock any waker that
+        // re-entered `notify`/`set_waker`.
+        let wake = self.wake.lock().ok().and_then(|wake| wake.clone());
+        if let Some(wake) = wake {
             wake();
         }
     }

@@ -95,16 +95,19 @@ impl<B: BackendProvider> RuntimeActor<B> {
         Ok(())
     }
     pub(super) fn cancel_closed_streams(&mut self, generated: &mut Vec<EngineOutput>) {
-        let cancel: Vec<_> = self
-            .subscribers
-            .iter()
-            .filter(|(_, s)| s.terminal.is_none() && (self.stopping || s.channel.is_closed()))
-            .map(|(id, _)| *id)
-            .collect();
-        for id in cancel {
-            if let Ok(events) = self.engine.cancel(id) {
+        let mut scratch = std::mem::take(&mut self.scratch);
+        scratch.clear();
+        scratch.extend(
+            self.subscribers
+                .iter()
+                .filter(|(_, s)| s.terminal.is_none() && (self.stopping || s.channel.is_closed()))
+                .map(|(id, _)| *id),
+        );
+        for id in &scratch {
+            if let Ok(events) = self.engine.cancel(*id) {
                 generated.extend(events);
             }
         }
+        self.scratch = scratch;
     }
 }

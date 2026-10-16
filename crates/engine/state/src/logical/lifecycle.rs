@@ -3,7 +3,6 @@ use super::SequenceStateManager;
 use infer_core::{Error, ErrorCode, Result, StateId, StatePageId};
 
 impl SequenceStateManager {
-    ///
     /// # Errors
     /// Returns a not-found error for unknown sequence state.
     pub fn reset(&mut self, id: StateId) -> Result<()> {
@@ -22,7 +21,6 @@ impl SequenceStateManager {
             .pages = pages;
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns a not-found error for unknown state or an invariant error for a non-monotonic or unallocated commit cursor.
     pub fn commit(&mut self, id: StateId, tokens: usize) -> Result<()> {
@@ -52,7 +50,6 @@ impl SequenceStateManager {
             }
         }
     }
-    ///
     /// # Errors
     /// Returns a not-found or invariant error for unknown identities or inconsistent ownership.
     pub fn release(&mut self, id: StateId) -> Result<()> {

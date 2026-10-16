@@ -65,7 +65,6 @@ pub trait BackendProvider {
     fn execution_profile(&self) -> Option<infer_ir::ExecutionProfileInspection> {
         None
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or capacity error if the reservation size overflows or the state layout is unsupported.
     /// Cold compiled complete physical layout. Opaque compatibility drivers return None.
@@ -99,7 +98,6 @@ pub trait BackendProvider {
     ) -> Result<Option<u64>> {
         self.state_reservation_bytes(capacity)
     }
-    ///
     /// # Errors
     /// Returns a backend or invariant error if the physical allocator cannot report its available capacity.
     fn free_state_bytes(&self) -> Result<Option<u64>> {
@@ -117,7 +115,6 @@ pub trait BackendProvider {
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         None
     }
-    ///
     /// # Errors
     /// Returns a not-found or invariant error for unknown state or an invalid physical page table.
     fn state_page_growth(&self, _state: StateId) -> Result<Option<PageGrowth>> {
@@ -163,7 +160,6 @@ pub trait BackendProvider {
     fn completion_timing(&self, _ticket: &Self::Ticket) -> Option<ExecutionTiming> {
         None
     }
-    ///
     /// # Errors
     /// Returns an unsupported or invalid-input error for incompatible backend, model, precision, kernels, or memory requirements.
     fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()>;
@@ -172,7 +168,6 @@ pub trait BackendProvider {
     /// Rejects a model different from the one loaded by this backend.
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph>;
 
-    ///
     /// # Errors
     /// Returns an invalid-input, conflict, or capacity error for duplicate state or insufficient device storage.
     fn reserve_state(&mut self, _state: StateId, _capacity_tokens: usize) -> Result<()> {
@@ -189,31 +184,26 @@ pub trait BackendProvider {
     ) -> Result<()> {
         self.reserve_state(state, capacity)
     }
-    ///
     /// # Errors
     /// Returns a not-found or backend error if the sequence cannot be reset.
     fn reset_state(&mut self, _state: StateId) -> Result<()> {
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns a not-found, invariant, or backend error if owned state cannot be released.
     fn release_state(&mut self, _state: StateId) -> Result<()> {
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns a conflict error while execution is in flight or a backend/serialization error during capture.
     fn capture_execution_state(&self) -> Result<Option<Vec<u8>>> {
         Ok(None)
     }
-    ///
     /// # Errors
     /// Returns an invariant error if sequence identities, cursors, or physical page leases disagree with runtime ownership.
     fn validate_state_ownership(&self, _states: &[(StateId, usize, usize)]) -> Result<()> {
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns a conflict, unsupported, invalid-input, or backend error if execution state cannot be validated and restored.
     fn restore_execution_state(&mut self, state: Option<&[u8]>) -> Result<()> {
@@ -222,7 +212,6 @@ pub trait BackendProvider {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns a validation, capacity, or backend error if tasks cannot be enqueued for the supplied program and step.
     /// An error must leave no device work in flight. Once device work is submitted,

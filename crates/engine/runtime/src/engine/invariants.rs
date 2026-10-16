@@ -22,7 +22,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         );
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invariant error for inconsistent identities, ownership, capacity, or execution cursors.
     pub fn check_invariants(&self) -> Result<()> {

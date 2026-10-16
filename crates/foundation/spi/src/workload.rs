@@ -10,7 +10,6 @@ pub trait WorkloadProvider {
         std::any::type_name::<Self>()
     }
     fn supports(&self, workload: &Workload) -> bool;
-    ///
     /// # Errors
     /// Returns an invalid-input or unsupported error if the request, model, or backend cannot produce a valid plan.
     fn plan(
@@ -19,7 +18,6 @@ pub trait WorkloadProvider {
         model: &ModelIr,
         program: infer_core::ProgramId,
     ) -> Result<WorkloadPlan>;
-    ///
     /// # Errors
     /// Returns an invalid-input or unsupported error if outputs are incomplete, incompatible, or cannot be mapped to the requested workload.
     fn postprocess(

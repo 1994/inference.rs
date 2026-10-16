@@ -84,7 +84,6 @@ pub struct CanonicalRequest {
     pub extensions: BTreeMap<String, Vec<u8>>,
 }
 impl CanonicalRequest {
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {

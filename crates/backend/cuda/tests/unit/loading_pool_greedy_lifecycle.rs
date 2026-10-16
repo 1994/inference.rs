@@ -1,63 +1,11 @@
+use super::support::{agreement, differences, seed_prefix};
 use super::{LoadOptions, LoadedModel};
 use crate::{
     device::CudaDevice,
     resident::{DeviceProgram, slot_batch::SlotPool},
 };
 use infer_core::{Error, ModelId, Result};
-use serde_json::{Value, json};
-
-fn agreement(left: &[f32], right: &[f32], field: &str) -> Value {
-    assert_eq!(left.len(), right.len(), "{field}");
-    assert!(!left.is_empty(), "{field}");
-    assert!(left.iter().chain(right).all(|x| x.is_finite()), "{field}");
-    let mut different = 0usize;
-    let mut maximum = 0.0_f64;
-    let mut first = None;
-    for (index, (&left, &right)) in left.iter().zip(right).enumerate() {
-        maximum = maximum.max((f64::from(left) - f64::from(right)).abs());
-        if left.to_bits() != right.to_bits() {
-            different += 1;
-            first.get_or_insert_with(|| json!({"element":index,"left":left,"right":right,"left_bits":left.to_bits(),"right_bits":right.to_bits()}));
-        }
-    }
-    json!({"field":field,"elements":left.len(),"different":different,"maximum_absolute":maximum,"first":first})
-}
-fn differences(value: &Value) -> usize {
-    usize::try_from(value["different"].as_u64().expect("diagnostic count"))
-        .expect("count fits usize")
-}
-fn seed_prefix(
-    loaded: &LoadedModel,
-    aligned: &DeviceProgram,
-    original: &mut DeviceProgram,
-) -> Result<()> {
-    // Seed every program with the same prefix before isolating decode arithmetic.
-    // Copy into captured allocations without changing their addresses or F32/FP8 storage.
-    for (id, source) in aligned.states() {
-        let target = original
-            .states_mut()
-            .get_mut(id)
-            .ok_or_else(|| Error::invariant("control state"))?;
-        assert_eq!(target.len(), source.len());
-        for (target, source) in target.iter_mut().zip(source) {
-            assert_eq!(target.size(), source.size());
-            loaded.device().copy_d2d(target, source, source.size())?;
-        }
-    }
-    for (id, (keys, values)) in aligned.fp8_states() {
-        let (target_keys, target_values) = original
-            .fp8_states_mut()
-            .get_mut(id)
-            .ok_or_else(|| Error::invariant("control FP8 cache"))?;
-        for (target, source) in [(target_keys, keys), (target_values, values)] {
-            assert_eq!(target.size(), source.size());
-            loaded.device().copy_d2d(target, source, source.size())?;
-        }
-    }
-    loaded.device().drain()?;
-    original.set_position(aligned.position());
-    Ok(())
-}
+use serde_json::json;
 
 fn greedy(logits: &[f32]) -> Result<u32> {
     assert_ne!(logits.len(), 0);

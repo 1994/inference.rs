@@ -3,7 +3,6 @@ use super::{RuntimeHandle, logging::log_request, router, router_with_text};
 use axum::middleware::from_fn;
 use infer_core::{Error, ErrorCode, Result};
 
-///
 /// # Errors
 /// Returns an I/O error if the HTTP server fails.
 pub async fn serve(
@@ -16,7 +15,6 @@ pub async fn serve(
         .await
         .map_err(|e| Error::new(ErrorCode::Backend, e.to_string()))
 }
-///
 /// # Errors
 /// Returns an I/O error if the HTTP server fails.
 pub async fn serve_with_text(

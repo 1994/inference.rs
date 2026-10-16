@@ -38,7 +38,6 @@ pub struct BenchmarkReport {
     pub p95_e2e_us: u64,
     pub p99_e2e_us: u64,
 }
-///
 /// # Errors
 /// Returns an invalid-input error for empty samples, invalid elapsed time, or inconsistent request measurements.
 #[expect(

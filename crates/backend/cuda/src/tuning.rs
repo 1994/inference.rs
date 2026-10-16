@@ -52,6 +52,26 @@ const MIN_REPS: usize = 10;
 /// Measurement wall clocks and repetition bounds.
 const MAX_REPS: usize = 30;
 
+/// Median of paired timing samples, or NaN when there are none.
+///
+/// Every tuning search reports a median through this one implementation so a speedup cannot depend
+/// on which module computed it. The halve-then-add form keeps the midpoint of two large samples
+/// from overflowing the way `(lo + hi) / 2` would.
+fn median(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return f32::NAN;
+    }
+    let mut ordered = samples.to_vec();
+    ordered.sort_by(f32::total_cmp);
+    let lo = (ordered.len() - 1) / 2;
+    let hi = ordered.len() / 2;
+    if lo == hi {
+        ordered[lo]
+    } else {
+        ordered[lo] / 2.0 + ordered[hi] / 2.0
+    }
+}
+
 #[derive(Serialize)]
 pub struct ProjectionTrial {
     pub key: String,

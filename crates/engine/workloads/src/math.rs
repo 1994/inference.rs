@@ -2,7 +2,6 @@
 use infer_core::{Error, Result};
 use infer_ir::Pooling;
 
-///
 /// # Errors
 /// Returns an invalid-input error for empty, inconsistent, or non-finite hidden rows.
 #[expect(
@@ -32,7 +31,6 @@ pub fn pool(hidden: &[Vec<f32>], pooling: Pooling) -> Result<Vec<f32>> {
         .map(|i| (hidden.iter().map(|v| f64::from(v[i])).sum::<f64>() / hidden.len() as f64) as f32)
         .collect())
 }
-///
 /// # Errors
 /// Returns an invalid-input error for empty or non-finite logits, invalid temperature, or a non-finite normalization sum.
 #[expect(

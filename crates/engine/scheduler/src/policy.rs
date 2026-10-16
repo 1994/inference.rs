@@ -16,7 +16,6 @@ mod packing;
 pub use packing::PackingWorkspace;
 #[derive(Debug, Clone, Default)]
 pub struct CostAwarePolicy;
-///
 /// # Errors
 /// Returns an invalid-input error for zero or inconsistent scheduler limits and invalid urgency budgets.
 pub fn validate_scheduler(c: &SchedulerConfig) -> Result<()> {

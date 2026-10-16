@@ -91,7 +91,6 @@ pub struct TensorHeader {
     pub data_offsets: [u64; 2],
 }
 impl TensorHeader {
-    ///
     /// # Errors
     /// Returns an invalid-input error if multiplying the dimensions overflows.
     pub fn elements(&self) -> Result<usize> {
@@ -111,7 +110,6 @@ pub struct HostTensor {
     pub data: Vec<f32>,
 }
 impl HostTensor {
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {
@@ -208,7 +206,6 @@ impl SafetensorsFile {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an I/O or invalid-input error for missing, malformed, unsupported, or oversized assets.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -308,7 +305,6 @@ impl SafetensorsFile {
             data_start,
         })
     }
-    ///
     /// # Errors
     /// Returns an I/O, not-found, unsupported, or capacity error if the tensor cannot be read and converted within the byte budget.
     pub fn read_f32(&mut self, name: &str, budget_bytes: u64) -> Result<HostTensor> {
@@ -323,7 +319,6 @@ impl SafetensorsFile {
             data,
         })
     }
-    ///
     /// # Errors
     /// Returns an I/O, invalid-input, unsupported, or capacity error for invalid rows, tensor formats, or an insufficient byte budget.
     pub fn read_row_f32(&mut self, name: &str, row: usize, budget_bytes: u64) -> Result<Vec<f32>> {
@@ -501,8 +496,11 @@ pub fn write_safetensors(
     let mut offset = 0u64;
     for (name, tensor) in tensors {
         tensor.validate()?;
+        let bytes = (tensor.data.len() as u64)
+            .checked_mul(crate::constants::F32_BYTES_U64)
+            .ok_or_else(|| Error::invalid("tensor export overflow"))?;
         let end = offset
-            .checked_add(tensor.data.len() as u64 * crate::constants::F32_BYTES_U64)
+            .checked_add(bytes)
             .ok_or_else(|| Error::invalid("tensor export overflow"))?;
         entries.insert(
             name,

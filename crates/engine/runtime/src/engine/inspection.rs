@@ -38,7 +38,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub fn workload_identity(&self) -> &str {
         self.workloads.identity()
     }
-    ///
     /// # Errors
     /// Returns an unsupported error if the installed workload provider cannot be forked.
     pub fn fork_workloads(&self) -> Result<Box<dyn WorkloadProvider + Send + Sync>> {
@@ -135,7 +134,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             },
         }
     }
-    ///
     /// # Errors
     /// Returns a not-found error for an unknown or retired request identity.
     pub fn request(&self, id: RequestId) -> Result<&RequestRecord> {
@@ -144,7 +142,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .get(id)
             .ok_or_else(|| Error::new(ErrorCode::NotFound, "unknown request"))
     }
-    ///
     /// # Errors
     /// Returns a not-found error for an unknown request or a serialization error for invalid inspection data.
     pub fn explain(&self, id: RequestId) -> Result<serde_json::Value> {

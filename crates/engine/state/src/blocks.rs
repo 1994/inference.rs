@@ -26,7 +26,6 @@ pub struct BlockPool {
     validation_epoch: u64,
 }
 impl BlockPool {
-    ///
     /// # Errors
     /// Returns an invalid-input error if the block count exceeds the device ABI.
     pub fn new(blocks: usize) -> Result<Self> {
@@ -65,7 +64,6 @@ impl BlockPool {
     pub fn reference_count(&self, index: u32) -> Option<usize> {
         self.slots.get(index as usize).map(|slot| slot.references)
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for a stale, out-of-range, or unowned block lease.
     pub fn references(&self, lease: BlockLease) -> Result<usize> {
@@ -81,7 +79,6 @@ impl BlockPool {
         }
         Ok(s.references)
     }
-    ///
     /// # Errors
     /// Returns a capacity error for insufficient free blocks, or an invariant error for exhausted generations.
     pub fn allocate(&mut self, count: usize) -> Result<Vec<BlockLease>> {
@@ -149,7 +146,6 @@ impl BlockPool {
         self.allocations = self.allocations.saturating_add(1);
         Ok(lease)
     }
-    ///
     /// # Errors
     /// Returns an invariant error for stale leases, duplicate ownership, or overflowing reference counts.
     pub fn retain(&mut self, leases: &[BlockLease]) -> Result<()> {
@@ -164,7 +160,6 @@ impl BlockPool {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invariant error for stale leases or reference-count underflow.
     pub fn release(&mut self, leases: &[BlockLease]) -> Result<()> {
@@ -182,7 +177,6 @@ impl BlockPool {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error for an invalid page size or table, or a capacity error if a shared tail cannot be copied.
     pub fn writable_tail(
@@ -228,7 +222,6 @@ impl BlockPool {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invariant error if lease generations or recorded reference counts disagree with the supplied owners.
     pub fn check_owners<'a>(&self, owners: impl Iterator<Item = &'a [BlockLease]>) -> Result<()> {

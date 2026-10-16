@@ -6,7 +6,6 @@ pub struct ResourceAdmission {
     pub config: AdmissionConfig,
 }
 impl ResourceAdmission {
-    ///
     /// # Errors
     /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
     pub fn new(config: AdmissionConfig) -> Result<Self> {

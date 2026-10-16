@@ -7,7 +7,6 @@ pub struct SubmissionSlots {
     cursor: usize,
 }
 impl SubmissionSlots {
-    ///
     /// # Errors
     /// Returns an invalid-input error for a zero ring capacity or a capacity exceeding the device ABI.
     pub fn new(capacity: usize) -> Result<Self> {
@@ -19,7 +18,6 @@ impl SubmissionSlots {
             cursor: 0,
         })
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or capacity error for duplicate step identities or an exhausted metadata ring.
     pub fn acquire(&mut self, step: StepId) -> Result<u32> {
@@ -41,7 +39,6 @@ impl SubmissionSlots {
             "all metadata slots are in flight",
         ))
     }
-    ///
     /// # Errors
     /// Returns a not-found or invariant error for unknown identities or inconsistent ownership.
     pub fn release(&mut self, slot: u32, step: StepId) -> Result<()> {

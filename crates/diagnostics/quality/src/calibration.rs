@@ -14,7 +14,6 @@ pub struct CalibrationReport {
     pub ece: f64,
     pub accuracy: f64,
 }
-///
 /// # Errors
 /// Returns an invalid-input error for empty or mismatched datasets, invalid labels, probabilities, or bin counts.
 #[expect(

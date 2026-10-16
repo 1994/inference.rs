@@ -17,9 +17,9 @@ struct Shared {
 }
 impl Shared {
     fn notify(&self) {
-        if let Ok(wake) = self.wake.lock()
-            && let Some(wake) = &*wake
-        {
+        // Release the lock before invoking the opaque waker; see `runner::Shared::notify`.
+        let wake = self.wake.lock().ok().and_then(|wake| wake.clone());
+        if let Some(wake) = wake {
             wake();
         }
     }

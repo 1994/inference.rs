@@ -133,7 +133,6 @@ fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 impl TextAssets {
-    ///
     /// # Errors
     /// Returns an I/O or invalid-input error for missing, malformed, unsupported, or oversized assets.
     pub fn open(root: impl AsRef<Path>, max_tokens: usize) -> Result<Self> {
@@ -245,7 +244,6 @@ impl TextAssets {
             pending: Vec::new(),
         }
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or capacity error if tokenization fails or the token limit is exceeded.
     pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>> {
@@ -265,7 +263,6 @@ impl TextAssets {
         }
         Ok(tokens)
     }
-    ///
     /// # Errors
     /// Returns an invalid-input error if token IDs cannot be decoded.
     pub fn decode(&self, tokens: &[u32], skip_special: bool) -> Result<String> {
@@ -279,7 +276,6 @@ impl TextAssets {
             .decode(tokens, skip_special)
             .map_err(|e| Error::invalid(e.to_string()))
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or unsupported error for invalid messages, template errors, or exhausted template fuel.
     pub fn render_chat(&self, messages: &[ChatMessage], options: &ChatOptions) -> Result<String> {
@@ -354,7 +350,6 @@ impl TextAssets {
         }
         Ok(rendered)
     }
-    ///
     /// # Errors
     /// Returns a template, tokenization, or capacity error if chat rendering or encoding fails.
     pub fn encode_chat(&self, messages: &[ChatMessage], options: &ChatOptions) -> Result<Vec<u32>> {

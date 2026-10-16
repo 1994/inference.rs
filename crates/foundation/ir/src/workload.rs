@@ -70,7 +70,6 @@ impl Workload {
             Self::Extension { .. } => return None,
         })
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {

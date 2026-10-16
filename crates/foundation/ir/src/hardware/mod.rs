@@ -62,7 +62,6 @@ impl DeviceCapabilities {
     pub const fn backend_kind(&self) -> BackendKind {
         self.backend.kind()
     }
-    ///
     /// # Errors
     /// Returns an unsupported error if backend, architecture, features, precision, or memory requirements are unavailable.
     pub fn require(&self, required: &CapabilityRequirements) -> Result<()> {

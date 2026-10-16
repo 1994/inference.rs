@@ -4,7 +4,7 @@ pub mod exact;
 mod reference;
 pub mod shared;
 use super::{
-    MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,
+    MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS, median,
     resident_gemm::ResidentTuningSession,
 };
 use crate::device::{CudaDevice, device_error};
@@ -146,20 +146,6 @@ impl Entry {
                         .search
                         .iter()
                         .any(|t| t.choice == self.selected && t.confirmed()))
-    }
-}
-fn median(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return f32::NAN;
-    }
-    let mut ordered = samples.to_vec();
-    ordered.sort_by(f32::total_cmp);
-    let lo = (ordered.len() - 1) / 2;
-    let hi = ordered.len() / 2;
-    if lo == hi {
-        ordered[lo]
-    } else {
-        ordered[lo] / 2.0 + ordered[hi] / 2.0
     }
 }
 type Memo = Mutex<BTreeMap<Key, Entry>>;

@@ -58,7 +58,6 @@ pub trait SchedulingPolicy {
     fn identity(&self) -> &str {
         std::any::type_name::<Self>()
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or unsupported error if the request, model, or backend cannot produce a valid plan.
     fn plan(
@@ -69,7 +68,6 @@ pub trait SchedulingPolicy {
         decision: infer_core::DecisionId,
         step: StepId,
     ) -> Result<SchedulingDecision>;
-    ///
     /// # Errors
     /// Returns a planning or cost-estimation error for incompatible work or resources.
     fn plan_with_cost(
@@ -88,7 +86,6 @@ pub trait AdmissionPolicy {
     fn identity(&self) -> &str {
         std::any::type_name::<Self>()
     }
-    ///
     /// # Errors
     /// Returns an invalid-input or estimation error if admission inputs cannot be evaluated.
     fn check(&self, input: &AdmissionInput<'_>) -> Result<AdmissionDecision>;
