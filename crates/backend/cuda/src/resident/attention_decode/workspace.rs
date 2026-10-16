@@ -19,6 +19,7 @@ struct Buffers {
 
 pub struct Workspace {
     oxide_available: bool,
+    mma: Option<super::super::attention_mma::Workspace>,
     pub(in crate::resident) oxide: Option<super::super::attention_oxide::Support>,
     pub(in crate::resident) shared: Option<super::super::attention_oxide::Support>,
     #[cfg(test)]
@@ -87,11 +88,29 @@ impl Workspace {
             #[cfg(test)]
             taps: taps::Taps::default(),
             oxide_available: super::super::attention_oxide::Support::eligible(device, graph)?,
+            mma: None,
             oxide: None,
             shared: None,
             buffers,
             prefill: BTreeMap::new(),
         })
+    }
+
+    pub(crate) fn prepare_mma(
+        &mut self,
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &super::super::ProgramWeights,
+        capacity: usize,
+        lanes: usize,
+    ) -> Result<()> {
+        #[cfg(test)]
+        if super::super::attention_oxide::disabled() {
+            return Ok(());
+        }
+        self.mma =
+            super::super::attention_mma::Workspace::new(device, graph, weights, capacity, lanes)?;
+        Ok(())
     }
 
     pub(crate) fn prepare_prefill(
@@ -104,7 +123,7 @@ impl Workspace {
         let enabled = crate::tuning::attention::enabled();
         #[cfg(test)]
         let enabled = enabled || taps::forced_choice().is_some();
-        if !enabled && !self.oxide_available {
+        if !enabled && !self.oxide_available && self.mma.is_none() {
             self.prefill.retain(|(_, width), _| *width != lanes);
             return;
         }
@@ -134,7 +153,7 @@ impl Workspace {
                 window: window.unwrap_or(0),
             };
             let choice = *choices.entry(shape).or_insert_with(|| {
-                if self.oxide_available {
+                let baseline = if self.oxide_available {
                     let baseline = crate::tuning::attention::exact::select(
                         device,
                         shape,
@@ -155,13 +174,59 @@ impl Workspace {
                         weights.autotune,
                         &weights.resident_tuning,
                     )
+                };
+                #[cfg(test)]
+                if taps::forced_choice().is_some() {
+                    return baseline;
+                }
+                if self.mma.is_some() {
+                    crate::tuning::attention::mma::select(
+                        device,
+                        shape,
+                        false,
+                        &weights.resident_tuning,
+                        baseline,
+                    )
+                } else {
+                    baseline
                 }
             });
             #[cfg(test)]
             let choice = taps::forced_choice().unwrap_or(choice);
             self.prefill.insert((node.outputs[0], lanes), choice);
         }
+        self.prepare_mma_modules(device);
         self.prepare_modules(device);
+    }
+
+    fn prepare_mma_modules(&mut self, device: &CudaDevice) {
+        if let Some(mma) = self.mma.as_mut() {
+            let variants = self
+                .prefill
+                .values()
+                .filter_map(|choice| {
+                    if let crate::tuning::attention::Choice::Mma { variant } = choice {
+                        Some(*variant)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            for variant in variants {
+                if let Err(error) = mma.support.prepare_variant(device, variant) {
+                    tracing::warn!(target:"infer::tuning",%error,?variant,"MMA launch module unavailable: canonical fallback");
+                    for choice in self.prefill.values_mut() {
+                        if *choice == (crate::tuning::attention::Choice::Mma { variant }) {
+                            *choice = if self.oxide_available {
+                                crate::tuning::attention::Choice::RustSimt
+                            } else {
+                                crate::tuning::attention::Choice::Simt
+                            };
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn prepare_modules(&mut self, device: &CudaDevice) {
@@ -196,6 +261,23 @@ impl Workspace {
                     }
                 }
             }
+        }
+    }
+
+    pub(crate) fn prefill_mma(
+        &mut self,
+        output: TensorId,
+        lanes: usize,
+    ) -> Option<(
+        &mut super::super::attention_mma::Support,
+        super::super::attention_mma::catalog::Variant,
+    )> {
+        if let crate::tuning::attention::Choice::Mma { variant } =
+            *self.prefill.get(&(output, lanes))?
+        {
+            Some((&mut self.mma.as_mut()?.support, variant))
+        } else {
+            None
         }
     }
 

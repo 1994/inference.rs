@@ -1,0 +1,56 @@
+{
+  "completed": true,
+  "GPU_execution": false,
+  "started_unix": 1792135422.4341314,
+  "architecture": "sm_103a",
+  "candidate": "sm103a-1cta",
+  "source_official_commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "on_hardware_validated": false,
+  "quality_accepted": false,
+  "limits": {
+    "path": "/user.slice/user-1000.slice/user@1000.service/app.slice/inference-benchmark-1719915.service",
+    "memory_max": 53687091200,
+    "pids_max": 256,
+    "host_available_bytes": 53425172480,
+    "memory_swap_max": 0,
+    "memory_oom_group": 1
+  },
+  "config": {
+    "tile": [
+      128,
+      128
+    ],
+    "threads": "official-kernel",
+    "cluster": [
+      1,
+      1,
+      1
+    ],
+    "pack_gqa": true,
+    "features": [
+      "tcgen05",
+      "TMEM",
+      "TMA"
+    ]
+  },
+  "attention.ptx": {
+    "sha256": "94c3059f809ea6c5378aed4fd63c02517de3e25f7bc8db820c8ede2e7864cb1b",
+    "bytes": 255373
+  },
+  "attention.cubin": {
+    "sha256": "0be0592374e827650117fcc301ba65e8384cbd4155c4b8ce1b4d61860a799a2d",
+    "bytes": 116992
+  },
+  "kernel_symbols": [
+    "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__tensorptrbf16gmemalign16o6div6425641256614411536i64div8_tensor000odiv32256411110120_tensor000o256d_0"
+  ],
+  "PTX_features": {
+    "warp_MMA": false,
+    "WGMMA": false,
+    "TMA": true,
+    "tcgen05": true,
+    "TMEM": true,
+    "two_CTA": false
+  },
+  "finished_unix": 1792135425.365359
+}

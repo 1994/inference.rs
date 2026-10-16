@@ -141,6 +141,11 @@ def check_exceptions():
                         # Explicit PTX launch boundaries: checked extents, owning device stream,
                         # Function/Module retention and input/output resource leases.
                         ROOT / "crates/backend/cuda/src/resident/attention_oxide.rs",
+                        # AOT boundary: embedded hash-verified ABI, checked tensor extents,
+                        # exact owning stream and retained libraries/modules/scratch.
+                        ROOT / "crates/backend/cuda/src/resident/attention_mma/host.rs",
+                        ROOT / "crates/backend/cuda/src/resident/attention_mma/mod.rs",
+                        ROOT / "crates/backend/cuda/src/resident/attention_mma/recorded.rs",
                         ROOT / "crates/backend/cuda/src/resident/recurrent_prefill/oxide.rs",
                         # Conversion measurement: fixed buffers and access leases;
                         # synchronize on the owning stream before releasing storage.

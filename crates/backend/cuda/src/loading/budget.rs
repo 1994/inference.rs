@@ -172,6 +172,23 @@ fn program_price(
     let mut bytes = 0;
     let mut per_token = 0;
     bytes = add(bytes, attention_scratch(graph)?)?;
+    let max_prompt = geometry.prompts.into_iter().max().unwrap_or(0);
+    if crate::resident::attention_mma::eligible(&profile.architecture, graph, weights, max_prompt) {
+        let fixed = crate::resident::attention_mma::catalog::workspace_bytes(0, max_prompt)?;
+        bytes = add(
+            bytes,
+            u64::try_from(fixed).map_err(|_| Error::invalid("MMA scratch budget"))?,
+        )?;
+        // One BF16 K/V pair shared across every attention layer, not one pair per layer.
+        let token = crate::resident::attention_mma::catalog::KV_HEADS
+            * crate::resident::attention_mma::catalog::DIM
+            * 2
+            * size_of::<cutile::half::bf16>();
+        per_token = add(
+            per_token,
+            u64::try_from(token).map_err(|_| Error::invalid("MMA token budget"))?,
+        )?;
+    }
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
     bytes = add(

@@ -1,6 +1,7 @@
 //! Device-scoped query sharing search; complete attention graphs retain the FP8 KV contract.
 mod capture;
 pub mod exact;
+pub mod mma;
 mod reference;
 pub mod shared;
 use super::{
@@ -51,12 +52,17 @@ pub enum Choice {
     Simt,
     RustSimt,
     SharedKv,
-    Tiled { query_tile: usize },
+    Mma {
+        variant: crate::resident::attention_mma::catalog::Variant,
+    },
+    Tiled {
+        query_tile: usize,
+    },
 }
 impl Choice {
     pub(crate) const fn query_tile(self) -> Option<usize> {
         match self {
-            Self::Simt | Self::RustSimt | Self::SharedKv => None,
+            Self::Simt | Self::RustSimt | Self::SharedKv | Self::Mma { .. } => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }

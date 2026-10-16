@@ -229,6 +229,10 @@ thread_local! {
     static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[cfg(test)]
+pub fn disabled() -> bool {
+    DISABLED.get()
+}
+#[cfg(test)]
 pub fn captures() -> usize {
     CAPTURES.get()
 }

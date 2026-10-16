@@ -4,6 +4,7 @@ mod batch;
 pub use batch::BatchOutput;
 mod attention;
 mod attention_decode;
+pub(crate) mod attention_mma;
 pub(crate) mod attention_oxide;
 pub(crate) mod attention_prefill;
 mod batch_projection;
