@@ -25,12 +25,27 @@ P0 优先消除正确性和测量阻塞；P1 交付工程、服务与公共协�
 | P1 · D1 | [DFlash2 package、模型模块与独立参考](speculation/dflash2.md) | 配置/权重检查、参考制品和资源估算可先做；独立设备模块另排窗口，共同接线等 I1 契约稳定 | 架构/词表/层抽头/窗口兼容性清楚，BF16/完整 head 的 draft 图与 selector 对照独立参考；完整资源报价可解释 | **部分**：配置/权重/几何/融合/卷积/selector/token/mask/报价已完成；arena 与图报价、tokenizer 逐 token 对照缺制品或设备 |
 | P2 · R1 | [Target Record/Fold 状态重放](speculation/state-replay.md) | I1 的共同 verifier/提交契约稳定；迁移后 MTP 参考已验收 | Delta/Conv 接受前缀状态直接对照通过，serial/pooled 共用；容量、Fold 成本和完整周期有证据 | **部分**：两组 golden 与 Rust 参考已完成；设备对照与 Fold 成本需要窗口 |
 | P2 · D2 | [DFlash2 接入](speculation/dflash2.md)与[请求/轮次选择](speculation/composition.md) | D1、I1，以及目标设备可兑现的回滚和草稿资源能力；本轮小显存接入需 R1 与草稿预算一起解决 | 线性 greedy、拒绝后状态、池化与切换通过；实际启用算法、追赶成本和回退可见；两个 provider 分别有有效对照 | 未开始：前置 D1、I1 未满足 |
-| P2 · C1 | [按 profile 选择 CUDA/服务优化](performance/cuda.md) | 对应 B3 baseline 与阶段计时可用；涉及草稿时还需该 provider 已验收 | 每次只改变一个可归因策略，完整服务矩阵有收益，尾延迟/显存/数值通过；可早于 D2 做普通 decode 优化 | **部分**：精确 GPU token readout 与[pooled 图几何准入](../archive/research/cuda-pooled-admission-geometry-2026-10-12.md)各通过五组 native 服务配对；后者批量完成时间下降 37.8%，保留 TTFT/TPOT 取舍；最新 vLLM 跨引擎矩阵及后续 profile 优化待验收 |
+| P2 · C1 | [按 profile 选择 CUDA/服务优化](performance/cuda.md) | 对应 B3 baseline 与阶段计时可用；涉及草稿时还需该 provider 已验收 | 每次只改变一个可归因策略，完整服务矩阵有收益，尾延迟/显存/数值通过；可早于 D2 做普通 decode 优化 | **部分**：精确 GPU token readout 与[pooled 图几何准入](../archive/research/cuda-pooled-admission-geometry-2026-10-12.md)各通过五组 native 服务配对；后者批量完成时间下降 37.8%，保留 TTFT/TPOT 取舍；最新 vLLM 跨引擎矩阵及后续 profile 优化待验收；2026 年 10 月 17 日：PR #10 已合并，vector 五组 native 20 项门通过；当前主线转为 attention，原 vLLM 质量和稳定长矩阵未验收，见下方 C1 子任务 |
 | P3 · X1 | [MTP 与 DFlash2 同轮组合](speculation/composition.md) | D2 的单 provider 和切换路径稳定，组合模型条件及资源报价明确 | 优于同负载下最佳单 provider，使用相同回滚策略；不能只与关闭推测比较 | 未开始：前置为 D2 单 provider 验收 |
 
 B3 不等待全部 E2 或完整 Agent 能力完成。先用经过修正的固定制品和当前实际配置建立基线；S1 或后续策略改变共同约束时，按基线合同创建新 profile 和交接结果。I1 不必等待整套 CI、打包和不相关 crate 的目录整理，但其涉及的测试、feature、构建合同必须已经稳定。共享 IR 的测试 feature 删除需要相关消费者一并迁移，不能只在某个局部构建中隐藏旧分叉。
 
 R1 与草稿量化解决不同的显存开销。D1 先建立 BF16/完整 head 参考，再按目标设备报价决定是否需要草稿量化或 shortlist；不能把这两项排到 D2 之后才发现无法准入，也不能因此改变 target 精度。大显存设备上的 snapshot 正确性参考，不代替目标设备的容量与性能验收。
+
+## CUDA 长上下文任务交接
+
+截至 2026 年 10 月 17 日，PR #10 已合并；vector 候选 32K TTFT 五组配对降低 8.41%，四请求整组吞吐提高 7.97%，相对父版本的 20 项门通过。该结果不代表新的跨引擎基线通过。已验证事实、失败方案、证据路径和详细验收见 [CUDA 长上下文性能结论与任务交接](../research/cuda-vllm-performance-handoff-2026-10-17.md)。
+
+| 编号 | 可独立执行的任务 | 启动条件与交接 | 当前状态 |
+|---|---|---|---|
+| C1Q | 模式一致性与发布质量 | 原题目、scorer、预算及失败保持；定位通用数值或状态差异，按原合同验收冻结二进制 | 原严格门失败；同模式 256 题仅完成归因，最新 vector 尚无完整 1,024 题验收 |
+| C1A | Target attention 完整成本 | 新 profile/NCU/真实输入已具备；量可削减成本后，一个候选依次数值、算子、自动 tuning、服务、质量验收 | 当前主线；attention 占 71.8%；单独 K 写入冲突候选原门否决，不重测 |
+| C1M | 真实显存与多会话驻留 | 先编译运行已准备的 LoadedModel 分项采集，再决定 arena、工作区或页级复用 | 当前实际分项尚未采集；旧 allocation、槽数不能承诺 32K 驻留数 |
+| C1V | 稳定 vLLM 长矩阵 | 固定制品与实际配置，解释旧 C4 波动后冻结新匹配矩阵，保留全部样本与独立复算 | 约 6.04 倍只是两轮 32K C1 诊断数据相除，稳定 C4 跨引擎倍率未验收 |
+| C1H | H/B 实机验收 | 设备到位后逐架构验 ABI、数值、资源、自动选择/回退及完整服务 | 六个 AOT 离线变体已核验；用户当前无 H/B 机器，性能待实机 |
+| C1D | 分支验收与合并 | 对应质量、服务、CI 和持久证据齐备，形成可 review PR 并处理反馈 | PR #10 已完成；后续分支未合入，原 vLLM 质量失败保持未完成 |
+
+C1Q、C1A、C1M 的 CPU 审计可独立拆解；同一设备的构建与 GPU 测量使用原锁串行。C1A/C1M 局部结果不代替 C1Q 或 C1V，C1D 不继承 PR #10 的个别合并批准。已落地的量化复用、设备 greedy、旧池回收不重复立项，也不依据旧 GDN 画像覆盖当前测量顺序。
 
 ## 当前可以同时推进的工作
 
