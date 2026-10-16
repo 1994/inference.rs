@@ -4,7 +4,7 @@
 
 整体排期与任务状态见 [路线图](../README.md) 的 B1、C1；状态重放与 DFlash2 分别由 R1、D2 交接。本文维护本项设计与验收。
 
-2026 年 10 月 17 日的[长上下文性能交接](../../research/cuda-vllm-performance-handoff-2026-10-17.md)补充当前代码与实测边界：PR #10 已合并，后续 vector 分支通过 native 五组性能门；最新 32K profile 的 attention 占 71.8%，GDN 占 3.8%。当前执行顺序与独立验收按路线图 C1Q、C1A、C1M、C1V、C1H、C1D；下文 recurrent 回滚和推测组合继续作为各自前置满足后的设计储备。
+2026 年 10 月 17 日的[长上下文性能交接](../../research/cuda-vllm-performance-handoff-2026-10-17.md)补充当前代码与实测边界：PR #10 已合并，后续 vector 分支通过 native 五组性能门；最新 32K profile 的 attention 占 71.8%，GDN 占 3.8%。当前执行顺序与独立验收按路线图 C1Q、C1A、C1M、C1V、C1H、C1D；下文 recurrent 回滚和推测组合继续作为各自前置满足后的设计储备。具体追平阶段、候选与验收门见 [vLLM 长上下文性能追平实施方案](vllm-parity.md)。
 
 CUDA 后续工作分为两条线：一条修正测量与资源管理，降低推测解码的状态和传输成本；另一条继续按真实形状优化投影与 prompt 图。先维持现有 MTP 的正确性和并发性能，再让 DFlash2 通过显存准入，最后比较组合算法与最佳单算法。
 
