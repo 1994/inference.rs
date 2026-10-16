@@ -57,6 +57,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [Infernix 性能调研](research/infernix-performance.md) | 参考机制、精度变化与收益估算 |
 | [CUDA Serving 历史记录](research/cuda-serving-baseline.md) | 既有服务矩阵与瓶颈调查；不作为当前已验收基线 |
 | [CUDA 性能实验记录](research/cuda-performance-experiments.md) | 历史 A/B、失败实验与测量条件 |
+| [CUDA 长上下文性能结论与任务交接](research/cuda-vllm-performance-handoff-2026-10-17.md) | 已合并 PR #10、五组正式收益、当前 attention 瓶颈、失败方案、质量边界与可拆任务 |
 | [vLLM main 执行路径调查](research/vllm-main-execution-paths-2026-10-12.md) | 最新源码与已安装版的边界；GDN、MTP、projection 和资源准入差距 |
 | [最新 vLLM main 服务对照](research/vllm-main-serving-comparison-2026-10-12.md) | 官方 3fe917ab 构建与五组诊断、后台资格和热复用差异；未达到性能目标 |
 | [当前 GPU 执行路径](research/cuda-current-gpu-paths-2026-10-12.md) | 官方 main 更新、预热后 GDN/MTP 轨迹、小投影逐位反例与采集完整性边界 |
