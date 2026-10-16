@@ -8,15 +8,15 @@
 #include <cuda_runtime.h>
 #include <math.h>
 
-__device__ __forceinline__ float widen(unsigned char x) {
-    const unsigned sign=(unsigned(x)&128u)<<24u;
-    const unsigned exponent=(unsigned(x)&127u)>>3u;
-    const unsigned mantissa=unsigned(x)&7u;
-    if(exponent==0u) {
-        float magnitude=float(mantissa)*(1.0f/512.0f);
-        return sign==0u?magnitude:-magnitude;
-    }
-    return __uint_as_float(sign|((exponent+120u)<<23u)|(mantissa<<20u));
+// Preserve all 256 existing FP8 code meanings, including reserved +/-480.
+__device__ __forceinline__ unsigned widen_pair(unsigned short raw) {
+    union { __half2_raw half; unsigned bits; } packed;
+    packed.half=__nv_cvt_fp8x2_to_halfraw2(raw,__NV_E4M3);
+    if((raw&0x7fu)==0x7fu)
+        packed.bits=(packed.bits&0xffff0000u)|0x5f80u|((unsigned(raw)&0x80u)<<8u);
+    if((raw&0x7f00u)==0x7f00u)
+        packed.bits=(packed.bits&0x0000ffffu)|0x5f800000u|((unsigned(raw)&0x8000u)<<16u);
+    return packed.bits;
 }
 // Preserve the pinned Rust/PTX exponential, including its explicit range reduction.
 // Using expf or __expf here would change the numerical contract independently of layout.
@@ -47,7 +47,7 @@ extern "C" __global__ __launch_bounds__(384,2) void attention_fp8_256(
     const int* __restrict__ metadata,
     const int* __restrict__ table,
     float* __restrict__ output,unsigned capacity,int window,float key_scale,float value_scale) {
-    __shared__ __half shared_keys[32*256],shared_values[32*256];
+    __shared__ __align__(4) __half shared_keys[32*256],shared_values[32*256];
     __shared__ float scores[12][32],probabilities[12][32],state[12][3];
     const unsigned full=0xffffffffu;
     const int tid=int(threadIdx.x),lane=tid&31,warp=tid>>5;
@@ -69,9 +69,12 @@ extern "C" __global__ __launch_bounds__(384,2) void attention_fp8_256(
     const int end_block=tile<count && last_position>=0?last_position/32:-1;
     for(int block=first_start/32;block<=end_block;++block) {
         const size_t cache=(size_t(kv_head)*capacity+size_t(table[block])*32u)*256u;
-        for(int index=tid;index<32*256;index+=384) {
-            shared_keys[key_swizzle(index)]=__float2half_rn(widen(keys[cache+index]));
-            shared_values[index]=__float2half_rn(widen(values[cache+index]));
+        for(int pair=tid;pair<32*128;pair+=384) {
+            const int index=pair*2;
+            const unsigned short k=reinterpret_cast<const unsigned short*>(keys+cache)[pair];
+            const unsigned short v=reinterpret_cast<const unsigned short*>(values+cache)[pair];
+            reinterpret_cast<unsigned*>(shared_keys)[key_swizzle(index)/2]=widen_pair(k);
+            reinterpret_cast<unsigned*>(shared_values)[pair]=widen_pair(v);
         }
         __syncthreads();
         if(active && block>=start/32 && block<=position/32) {
