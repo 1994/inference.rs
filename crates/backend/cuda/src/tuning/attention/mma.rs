@@ -210,6 +210,13 @@ pub(crate) fn prepare(
             &weights.resident_tuning,
             baseline,
         );
+        let baseline = super::vector::select(
+            device,
+            shape,
+            weights.autotune,
+            &weights.resident_tuning,
+            baseline,
+        );
         // Exact target tuning must finish before proposal search starts the shared
         // wall-clock allowance. Only proposal programs may narrow precision.
         if weights.fusion.is_some() {
@@ -263,9 +270,10 @@ fn resolve(
     key.fingerprint = format!(
         "{:x}",
         Sha256::digest(format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}",
             key.fingerprint,
             crate::resident::attention_oxide::shared_identity(),
+            crate::resident::attention_oxide::vector_identity(),
             attention_mma::artifact_identity(),
             serde_json::to_string(&baseline).map_err(crate::device::device_error)?
         ))

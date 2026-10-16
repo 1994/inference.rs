@@ -28,6 +28,7 @@ rust_checks() {
     python3 tools/check/golden-provenance.py
     # Embedded device artifacts are checked on CPU-only CI as well as CUDA hosts.
     python3 crates/backend/cuda/kernels/shared-attention/verify-artifact.py
+python3 crates/backend/cuda/kernels/vector-attention/verify-artifact.py
     # The AOT host ABI targets Linux; readelf checks its CUDA runtime dependencies there.
     if [ "$(uname -s)" = Linux ]; then
         python3 crates/backend/cuda/kernels/fa4-attention/verify-artifact.py

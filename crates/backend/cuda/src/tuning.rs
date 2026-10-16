@@ -282,6 +282,9 @@ pub struct TilingTable {
     /// Exact F32 shared KV with short-history regression and long-history paired evidence.
     #[serde(default)]
     pub resident_shared_attention: Vec<attention::shared::Entry>,
+    /// Exact vectorized shared-key refinement of the qualified shared kernel.
+    #[serde(default)]
+    pub resident_vector_shared_attention: Vec<attention::vector::Entry>,
     /// FA4 BF16 profile, artifact and architecture scoped cluster search evidence.
     #[serde(default)]
     pub resident_mma_attention: Vec<attention::mma::Entry>,
@@ -318,6 +321,8 @@ struct StoredTilingTable {
     #[serde(default)]
     resident_shared_attention: Vec<attention::shared::Entry>,
     #[serde(default)]
+    resident_vector_shared_attention: Vec<attention::vector::Entry>,
+    #[serde(default)]
     resident_mma_attention: Vec<attention::mma::Entry>,
     #[serde(default)]
     resident_mma_f32_attention: Vec<attention::mma_f32::Entry>,
@@ -352,6 +357,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_attention: stored.resident_attention,
             resident_exact_attention: stored.resident_exact_attention,
             resident_shared_attention: stored.resident_shared_attention,
+            resident_vector_shared_attention: stored.resident_vector_shared_attention,
             resident_mma_attention: stored.resident_mma_attention,
             resident_mma_f32_attention: stored.resident_mma_f32_attention,
             resident_exact_recurrent: stored.resident_exact_recurrent,

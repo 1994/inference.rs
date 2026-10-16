@@ -12,6 +12,7 @@ use cutile::{
 use infer_core::Result;
 use infer_ir::{DataflowGraph, TensorOp};
 mod shared;
+mod vector;
 
 const PTX: &str = include_str!("../../kernels/oxide-attention/attention-sm120.ptx");
 const HEADS: usize = 24;
@@ -76,6 +77,10 @@ impl Support {
             threads: THREADS,
             rows_per_cta: 1,
         }))
+    }
+
+    pub fn load_vector(device: &CudaDevice) -> Result<Option<Self>> {
+        vector::load(device)
     }
 
     pub fn load_shared(device: &CudaDevice) -> Result<Option<Self>> {
@@ -271,4 +276,8 @@ mod resources_tests;
 
 pub fn shared_identity() -> &'static str {
     shared::artifact_identity()
+}
+
+pub fn vector_identity() -> &'static str {
+    vector::artifact_identity()
 }

@@ -167,7 +167,7 @@ impl Operands {
                     "MMA fixture geometry unsupported".into(),
                 ));
             }
-        } else if matches!(choice, Choice::RustSimt | Choice::SharedKv) {
+        } else if choice.uses_oxide() {
             let supported = oxide
                 .ok_or_else(|| DeviceError::Internal("Rust attention module missing".into()))?
                 .record(
@@ -293,6 +293,8 @@ impl Captured {
     pub fn new(device: &CudaDevice, fixture: &Fixture, choice: Choice) -> Result<Self> {
         let oxide = if choice == Choice::SharedKv {
             crate::resident::attention_oxide::Support::load_shared(device)?
+        } else if choice == Choice::VectorSharedKv {
+            crate::resident::attention_oxide::Support::load_vector(device)?
         } else if choice == Choice::RustSimt {
             crate::resident::attention_oxide::Support::load(device)?
         } else {
