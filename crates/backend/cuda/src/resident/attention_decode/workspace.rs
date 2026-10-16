@@ -167,13 +167,15 @@ impl Workspace {
                         &weights.resident_tuning,
                         baseline,
                     )
-                } else {
+                } else if crate::tuning::attention::enabled() {
                     crate::tuning::attention::select(
                         device,
                         shape,
                         weights.autotune,
                         &weights.resident_tuning,
                     )
+                } else {
+                    crate::tuning::attention::Choice::Simt
                 };
                 #[cfg(test)]
                 if taps::forced_choice().is_some() {
