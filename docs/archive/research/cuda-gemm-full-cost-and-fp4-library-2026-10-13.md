@@ -344,5 +344,5 @@ M64 全部未通过完整门槛。只适合通过实际硬件/shape 测量选择
 执行 Python 源码 SHA256 `ab48157ceca924cfff48d01b3730b43b2837550730d758954d89a273ea248578`。
 纠错结果 SHA256 `aaac544fe9d3151914284c5136ac65fa9bf025a19372759a475200257328efa9`；
 全算法执行 SHA256 `32a725dce895ea4370cdbbb6d956ad9b031dcaad95b34e094250438da8999629`。
-后续工作沿用[性能基线与 vLLM 对齐方案](../plans/performance/baseline.md)，
+后续工作沿用[性能基线与 vLLM 对齐方案](../../plans/performance/baseline.md)，
 并保留[并行 WY 完整质量失败](cuda-parallel-wy-quality-and-decode-cost-2026-10-13.md)的限制。

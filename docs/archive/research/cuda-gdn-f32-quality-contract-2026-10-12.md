@@ -64,7 +64,7 @@ native activation 规则保持 F32，vLLM 使用其 BF16 activation 路径，两
 标准答案按明确的 `#### number` 行用 Decimal 精确比较，达到长度上限而没有答案仍计错并单列。
 
 预先声明的任务回归容差为 2 个百分点，单侧置信水平 95%。
-[评分工具](../../tools/bench/score-task-quality.py)从原始文本独立复算，
+[评分工具](../../../tools/bench/score-task-quality.py)从原始文本独立复算，
 同时报告短/长提示正确率、格式缺失、长度上限、回归与新增答对的题号。
 这是固定算术任务子集，不能外推为全部能力通过。三个 arm 均完整运行 256 题，独立工具复算如下：
 

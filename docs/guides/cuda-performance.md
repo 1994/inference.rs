@@ -85,7 +85,9 @@ finite/bitwise 验收。验收记录关联仍存活的权重 owner，不靠形�
 默认原生 NVFP4 搜索现有 row/column tile 及 plain/prefetch main loop，保留 K 步长、block scale
 和量化算术；原生 FP8 搜索同一 K 累积顺序的 tile。选择由实测决定，原先按 SM wave 阈值放大
 NVFP4 列 tile 的策略已删除。设备能力、合法布局、对齐、workspace 和容量/显存上限仍是硬约束，
-不能通过测量绕过。Attention、图宽度和 GEMV/GEMM crossover 尚未全部纳入这个 chooser。
+不能通过测量绕过。原生 gated norm 的编译器 occupancy 也按同一实测择优流程选择，其算子、完整模型
+与 native 服务验收见[占用率调优证据](../archive/research/artifacts/cuda-gated-norm-occupancy-2026-10-15.json)。
+Attention、图宽度和 GEMV/GEMM crossover 尚未全部纳入这个 chooser。
 
 搜索按固定 AB 顺序成对测量，独立确认按 BA 反序成对测量，并使用新的 capture。两轮分别覆盖
 冷 L2 和暖 L2，非 baseline 配置在四组比较中都至少优于保守配置 2%。原始 samples、两臂名称、
@@ -123,7 +125,7 @@ bash tools/bench/safe-run.sh --memory-gib 8 cargo test --locked --release \
 
 改变 GDN 运算顺序的候选保持 F32 状态，先通过独立数值参考，再用完整模型生成结果验收任务质量。
 共同实验条件沿用 [性能基线方案](../plans/performance/baseline.md)，本次单步定位和 WY 数值范围见
-[F32 GDN 验收记录](../research/cuda-gdn-f32-quality-contract-2026-10-12.md)。
+[F32 GDN 验收记录](../archive/research/cuda-gdn-f32-quality-contract-2026-10-12.md)。
 
 `tools/bench/score-task-quality.py` 接收预先固定、含标准答案与输入 token 的 suite，以及两份完整报告：
 
@@ -143,8 +145,7 @@ profile 与模型/设备身份；缺题、重排或手填分数与文本不符�
 这项判定适用于声明的算术任务子集与生成预算。它独立于 kernel 数值、构建身份和服务性能门禁；
 `quality_accepted` 不证明全面模型能力或性能目标已达到。`tools/check/gate.sh` 自动收集其反例与统计参考测试。
 
-
 宽提示图的调参覆盖与完整模型质量须分别核验。同一调参入口的窄图通过，不能证明新宽图列分块
 也通过；关闭 autotune 的冻结缓存没有某形状条目时，会使用保守配置。最新
-[长提示调参覆盖与独立准备记录](../research/cuda-wide-prefill-tuning-2026-10-13.md)
+[长提示调参覆盖与独立准备记录](../archive/research/cuda-wide-prefill-tuning-2026-10-13.md)
 保留完整缓存的计时收益、未通过的质量回归，以及 GEMM/GDN 拆分控制。

@@ -97,7 +97,7 @@ GPU cost 尚以独立 prototype 筛选，不替代完整模型质量。
 ## 推测验证的完整周期成本筛选
 
 增加独立 scalar checkpoint twin：保持参考 packed Delta 的算术，同时写 live state 和
-每个验证位置的完整 snapshot，模拟本项目 [checkpoint twin](../../crates/backend/cuda/src/resident/recurrent_checkpoint.rs)
+每个验证位置的完整 snapshot，模拟本项目 [checkpoint twin](../../../crates/backend/cuda/src/resident/recurrent_checkpoint.rs)
 的两次写回。新增 writer 先通过原 F64 `2e-5` 输出/state 检查。它是 Triton 参考实现，
 不是 Rust backend 的实际测量，不能把算子时延直接当成 native 绝对成本。
 
@@ -128,8 +128,8 @@ writer/launch/runner 身份见 `spec-cost-preparation.json`，每次样本与原
 
 ## 接入本项目需要的状态契约
 
-[单步 Delta](../../crates/backend/cuda/src/resident/recurrent.rs)每 token 写回完整 state；
-[pooled checkpoint twin](../../crates/backend/cuda/src/resident/recurrent_checkpoint.rs)还将每个
+[单步 Delta](../../../crates/backend/cuda/src/resident/recurrent.rs)每 token 写回完整 state；
+[pooled checkpoint twin](../../../crates/backend/cuda/src/resident/recurrent_checkpoint.rs)还将每个
 验证位置写入完整 snapshot。Replay 适合首先替换这部分数据表达，复用已有稳定三角 WY
 处理窗口内校正向量；不能用 Mamba 的 V/K 缓存公式直接替换 GDN。
 
@@ -139,7 +139,7 @@ writer/launch/runner 身份见 `spec-cost-preparation.json`，每次样本与原
    flush 只能归纳此前已提交历史，不能覆盖仍可能回滚的 draft；跨边界要提前留够下轮验证空间。
 3. convolution、KV、hidden 与 draft 状态仍有各自提交/回滚契约。仅正确恢复 GDN 不代表整个模型
    回滚正确。算法策略应由 workloads 控制，CUDA 管理 buffers/graph/设备提交。
-4. [prefix snapshot](../../crates/backend/cuda/src/executor/prefix_state.rs)当前按完整 state 捕获。
+4. [prefix snapshot](../../../crates/backend/cuda/src/executor/prefix_state.rs)当前按完整 state 捕获。
    RAM/GPU prefix、外部 checkpoint 和迁移边界需先 materialize，或采用显式携带窗口的新格式。
    不能只复制滞后的 checkpoint 后设置最新 position；图必须在对应资源之前销毁。
 5. 首先直接对比 Rust baseline、replay standard、replay verify，分别测非 flush/flush/完整周期，

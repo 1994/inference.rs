@@ -4,7 +4,7 @@
 
 当前差距涉及 GDN 的计算方式、推测解码的数据流和资源准入；单独改 GEMM tile 无法覆盖这些成本。扩大 prefill 图宽度已降低长提示首 token 延迟，但最近一次有效反向配对没有复现 batch4 收益，热前缀也退化，当前候选不适合整体合并。
 
-本文是源码调查与诊断实验，正式对照和验收沿用[性能基线方案](../plans/performance/baseline.md)。下文区分最新 main 的源码、已安装发行版的实测和 native 候选，避免把源码更新当成性能更新。
+本文是源码调查与诊断实验，正式对照和验收沿用[性能基线方案](../../plans/performance/baseline.md)。下文区分最新 main 的源码、已安装发行版的实测和 native 候选，避免把源码更新当成性能更新。
 
 ## 版本与实测边界
 
@@ -42,7 +42,7 @@ p1 的 28 个输出与 main 完全相同，实际热复用也相同。p0 曾测�
 
 ## 1. 长 prefill 的 GDN 需要减少状态工作量
 
-native 的[workspace 选择](../../crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs)在量化权重且未 opt-in 时保持逐 token 的 Delta 实现。每层状态有 `48 × 128 × 128` 个 F32，即 3,145,728 字节；511 token、48 层、每 token 一次完整状态读写的逻辑工作量估算为 154,316,832,768 字节。该数值不等于实测 DRAM 流量，未扣缓存，也未计 QKV、临时结果和其他算子。
+native 的[workspace 选择](../../../crates/backend/cuda/src/resident/recurrent_prefill/workspace.rs)在量化权重且未 opt-in 时保持逐 token 的 Delta 实现。每层状态有 `48 × 128 × 128` 个 F32，即 3,145,728 字节；511 token、48 层、每 token 一次完整状态读写的逻辑工作量估算为 154,316,832,768 字节。该数值不等于实测 DRAM 流量，未扣缓存，也未计 QKV、临时结果和其他算子。
 
 单纯把多 token 放进一个 kernel、在寄存器内串行推进 state，仍保留逐 token 递推的主要算术依赖。旧逐节点 profile 的 target Delta 合计约 115 ms；target prefill 从 64 扩到 256 后，Linear 160→84 ms，Delta 115→115 ms。这个不同日期的诊断不是当前服务延迟的精确分解，但解释了扩大 GEMM 图宽度为何无法覆盖剩余差距。
 
@@ -69,7 +69,7 @@ FlashInfer 一侧 10 次预热、100 个计时样本，用 CUDA graph replay。T
 
 ## 2. 推测解码应让候选、采样和 hidden 留在设备上
 
-native 的[readback](../../crates/backend/cuda/src/device/readback.rs)在 graph 后同步复制到 pinned host，再构造 CPU Vec；[候选与接受](../../crates/backend/cuda/src/executor/execution.rs)、[批量验证](../../crates/backend/cuda/src/resident/slot_verify.rs)读取完整 logits 与 hidden，CPU sampler 选择 token，后续 draft 再上传 hidden。
+native 的[readback](../../../crates/backend/cuda/src/device/readback.rs)在 graph 后同步复制到 pinned host，再构造 CPU Vec；[候选与接受](../../../crates/backend/cuda/src/executor/execution.rs)、[批量验证](../../../crates/backend/cuda/src/resident/slot_verify.rs)读取完整 logits 与 hidden，CPU sampler 选择 token，后续 draft 再上传 hidden。
 
 MTP2 的一轮若读取 target 三行和 draft 两行，每行 `(248320 + 5120) × 4` 字节，仅 logits/hidden D2H 就是 5,068,800 字节/请求，尚未计 catch-up 和其他传输。差距不只来自这些字节，还涉及每个依赖点的 stream 同步、CPU 全词表扫描、分配与 hidden H2D。现在没有双端完整 decode profile，不能给这些因素分摊百分比。
 

@@ -25,8 +25,8 @@ bindgen 找不到 C 标准头时，将实际主机 include 路径传给 `BINDGEN
 
 ## 自动 tile 选择
 
-自动调优目前覆盖标量 GEMV、驻留 NVFP4 GEMM 和按通道缩放的驻留 FP8 GEMM。设备能力与
-dtype、布局、对齐、workspace 和显存预算先限定合法候选，再用实测择优；不按 GPU 型号或模型名分派。
+自动调优目前覆盖标量 GEMV、驻留 NVFP4 GEMM、按通道缩放的驻留 FP8 GEMM 和原生 gated norm
+的编译器 occupancy。设备能力与 dtype、布局、对齐、workspace 和显存预算先限定合法候选，再用实测择优；不按 GPU 型号或模型名分派。
 Attention 拆分、图宽度和 GEMV/GEMM crossover 等策略尚未全部接入同一调优表。
 
 机器本地缓存默认是 `~/.cache/infer-cuda/tuning.json`，遵循 `XDG_CACHE_HOME`，可用
