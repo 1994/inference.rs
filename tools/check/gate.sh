@@ -21,9 +21,10 @@ rust_checks() {
     cargo clippy --locked -p infer-cli --no-default-features --all-targets -- -D warnings
     cargo clippy --locked -p infer-ir --no-default-features --all-targets -- -D warnings
     cargo clippy --locked --all-targets -- -D warnings
-    # Hosted CI has no CUDA Toolkit. Excluding the CUDA package alone is not
+    # Hosted CI has no CUDA Toolkit for this job. Excluding the CUDA package alone is not
     # enough: --all-features also enables it through infer-cli/cuda.
-    # CUDA builds belong to the package matrix; device checks to check-cuda.
+    # CUDA builds belong to the package matrix, header-only checks to check-cuda-hosted and
+    # device checks to check-cuda.
     # Every registered golden records what produced it, so it can be regenerated rather than trusted.
     python3 tools/check/golden-provenance.py
     # Embedded device artifacts are checked on CPU-only CI as well as CUDA hosts.
@@ -83,14 +84,46 @@ security_checks() {
     fi
 }
 
-cuda_checks() {
+# bindgen cannot find the host C standard headers by itself, and the path is host-specific.
+# `package.py::native_env` performs the same discovery for packaging; the gate repeats it in shell
+# so `make test-cuda-hosted` also works from a plain developer shell, not only through packaging.
+cuda_bindgen_env() {
+    include=$(gcc -print-file-name=include 2>/dev/null || true)
+    if [ -n "$include" ] && [ -f "$include/stddef.h" ]; then
+        case "${BINDGEN_EXTRA_CLANG_ARGS:-}" in
+            *"$include"*) ;;
+            *)
+                BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-isystem $include"
+                export BINDGEN_EXTRA_CLANG_ARGS
+                ;;
+        esac
+    fi
+}
+
+# Headless CUDA half. Needs the Toolkit headers and libclang to compile, but never opens a device,
+# so it runs on a hosted runner. This is the only check that compiles the cuda-gated `#[cfg(test)]`
+# modules: without it a test-only break stays invisible to every other gate.
+cuda_hosted_checks() {
+    cuda_bindgen_env
     cargo clippy --locked -p infer-backend-cuda --features cuda --all-targets -- -D warnings
-    # Device acceptance, so it runs the release profile the baseline contract requires and reports
-    # what it collected. The suite branches on `cfg!(debug_assertions)` where the two differ.
+    # Release profile the baseline contract requires, reporting what it collected. The suite
+    # branches on `cfg!(debug_assertions)` where the two differ.
     python3 tools/check/test-report.py --entry cuda -- \
         cargo test --locked --release -p infer-backend-cuda --features cuda
     RUSTDOCFLAGS="-D warnings" cargo doc --locked -p infer-backend-cuda --features cuda --no-deps
+    # Compile the device example without running it: the kernels need a GPU on the next step.
+    cargo build --locked --release -p infer-backend-cuda --features cuda --example cuda-kernels
+}
+
+# Device acceptance. Requires a driver plus a `tileiras` that supports the installed device.
+cuda_device_checks() {
+    cuda_bindgen_env
     cargo run --locked --release -p infer-backend-cuda --features cuda --example cuda-kernels
+}
+
+cuda_checks() {
+    cuda_hosted_checks
+    cuda_device_checks
 }
 
 metal_checks() {
@@ -141,10 +174,11 @@ case "${1:-all}" in
     security) security_checks ;;
     metal) metal_checks ;;
     cuda) cuda_checks ;;
+    cuda-hosted) cuda_hosted_checks ;;
     cpu) cpu_checks ;;
     msrv) msrv_checks ;;
     linux) linux_checks ;;
     linux-numa) linux_numa_checks ;;
     attention) bash tools/bench/safe-run.sh --memory-gib 16 bash tools/bench/attention.sh ;;
-    *) echo "usage: $0 [all|rust|test|tools|security|metal|cuda|cpu|msrv|linux|linux-numa|attention]" >&2; exit 2 ;;
+    *) echo "usage: $0 [all|rust|test|tools|security|metal|cuda|cuda-hosted|cpu|msrv|linux|linux-numa|attention]" >&2; exit 2 ;;
 esac

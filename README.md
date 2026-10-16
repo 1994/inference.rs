@@ -104,11 +104,12 @@ The server exposes native HTTP/SSE routes and a subset of the OpenAI API. See th
 ## Testing and packaging
 
 ```sh
-make check-rust       # Lint, tests, Rustdoc, CPU allocation checks, and golden verification
-make check-tools      # Python lint and GitHub Actions validation
-make check-cuda       # CUDA device checks; requires the Toolkit and a GPU
-make check-metal      # Metal device checks; requires macOS and a GPU
-make check-attention  # Numerical and performance comparison against Candle
+make check-rust        # Lint, tests, Rustdoc, CPU allocation checks, and golden verification
+make check-tools       # Python lint and GitHub Actions validation
+make test-cuda-hosted  # CUDA compile, lint and CPU-side tests; requires the Toolkit, not a GPU
+make check-cuda        # CUDA device checks; requires the Toolkit and a GPU
+make check-metal       # Metal device checks; requires macOS and a GPU
+make check-attention   # Numerical and performance comparison against Candle
 ```
 
 Build platform packages with Zig and `cargo-zigbuild`:
