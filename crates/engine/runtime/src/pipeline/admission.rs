@@ -408,7 +408,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 Ok(None) => Ok(Some(crate::resource::PendingResource {
                     ticket: Some(ticket),
                     phase: crate::resource::ResourcePhase::Reserve,
-                    retry_epoch: None,
+                    retry_epoch: Some(self.resource_epoch),
                     started: self.now_us,
                 })),
             });

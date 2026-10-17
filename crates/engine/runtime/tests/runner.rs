@@ -17,7 +17,7 @@ use infer_ir::{
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig, runner::ThreadedBackend};
 
-use infer_spi::{BackendProvider, ResourceCommand, ResourceReply};
+use infer_spi::{BackendProvider, ResourceCommand, ResourceReply, ResourceTicket};
 use std::{
     sync::Arc, sync::atomic::AtomicBool, sync::atomic::AtomicUsize, sync::atomic::Ordering,
     sync::mpsc, time::Duration, time::Instant,
@@ -758,4 +758,169 @@ fn inline_busy_reservation_defers_instead_of_failing_admission() -> Result<()> {
     }
     engine.check_invariants()?;
     Ok(())
+}
+
+/// A direct backend that withholds the busy rejection of the second reservation until the
+/// scene releases it. This makes the ordering explicit: execution progress happens while the
+/// rejection is still in flight, so the engine can observe the rejection only at the later epoch.
+struct DelayedBusyReservation {
+    inner: ProtocolBackend,
+    attempts: Arc<AtomicUsize>,
+    states: std::collections::BTreeSet<StateId>,
+    owned: usize,
+    poll_gate: bool,
+    held: Option<infer_spi::ResourceResponder>,
+}
+impl DelayedBusyReservation {
+    fn new(ir: &ModelIr) -> Result<Self> {
+        Ok(Self {
+            inner: ProtocolBackend::new(16, 8, ir)?,
+            attempts: Arc::new(AtomicUsize::new(0)),
+            states: std::collections::BTreeSet::new(),
+            owned: 0,
+            poll_gate: true,
+            held: None,
+        })
+    }
+    fn release_capacity(&mut self) -> Result<()> {
+        self.held
+            .take()
+            .ok_or_else(|| Error::invariant("no held capacity rejection"))?
+            .send(Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                "resident budget busy",
+            )))
+            .map_err(|_| Error::invariant("capacity rejection receiver disappeared"))?;
+        Ok(())
+    }
+}
+impl BackendProvider for DelayedBusyReservation {
+    type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
+    fn identity(&self) -> &str {
+        self.inner.identity()
+    }
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.inner.capabilities()
+    }
+    fn tracks_reservation_intent(&self) -> bool {
+        true
+    }
+    fn validate_program(&self, model: &ModelIr, program: &ExecutionProgram) -> Result<()> {
+        self.inner.validate_program(model, program)
+    }
+    fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
+        self.inner.execution_graph(model)
+    }
+    fn begin_resource(&mut self, command: ResourceCommand) -> Result<ResourceTicket> {
+        if matches!(command, ResourceCommand::Reserve { .. }) {
+            let attempt = self.attempts.fetch_add(1, Ordering::AcqRel) + 1;
+            if attempt == 2 {
+                let (ticket, reply) = ResourceTicket::channel();
+                self.held = Some(reply);
+                return Ok(ticket);
+            }
+        }
+        let (ticket, reply) = ResourceTicket::channel();
+        let result = infer_spi::execute_resource(self, command);
+        let _ = reply.send(result);
+        Ok(ticket)
+    }
+    fn reserve_state_for(
+        &mut self,
+        state: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<()> {
+        if self.owned > 0 {
+            return Err(Error::new(
+                infer_core::ErrorCode::Capacity,
+                "resident budget busy",
+            ));
+        }
+        self.inner.reserve_state_for(state, capacity, readout)?;
+        self.states.insert(state);
+        self.owned += 1;
+        Ok(())
+    }
+    fn release_state(&mut self, state: StateId) -> Result<()> {
+        // A rejected reservation never created backend state; cancellation still
+        // releases the host state that was reserved for it.
+        if self.states.remove(&state) {
+            self.inner.release_state(state)?;
+            self.owned = self.owned.saturating_sub(1);
+        }
+        Ok(())
+    }
+    fn submit(
+        &mut self,
+        program: &ExecutionProgram,
+        step: &StepPlan,
+        tasks: Vec<ExecutionTask>,
+    ) -> Result<Self::Ticket> {
+        self.inner.submit(program, step, tasks)
+    }
+    fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
+        if self.poll_gate {
+            self.inner.poll(ticket)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[test]
+fn busy_rejection_observed_after_execution_progress_is_retried_once() -> Result<()> {
+    let ir = support::model(ModelId::ONE);
+    let backend = DelayedBusyReservation::new(&ir)?;
+    let attempts = backend.attempts.clone();
+    let mut registry = KernelRegistry::default();
+    registry.register(&support::DeclaredKernels)?;
+    let mut engine = Engine::new(
+        backend,
+        ir,
+        PrecisionPlan::f32(),
+        &registry,
+        RuntimeConfig {
+            max_num_seqs: 1,
+            ..RuntimeConfig::default()
+        },
+    )?;
+    let mut first = request(1)?;
+    first.workload = serde_json::from_value(serde_json::json!({
+        "Generate": {"max_new_tokens":120}
+    }))
+    .map_err(|e| Error::invalid(e.to_string()))?;
+    engine.submit(first)?;
+    engine.submit(request(2)?)?;
+    assert_eq!(attempts.load(Ordering::Acquire), 2);
+    let limit = Instant::now() + Duration::from_secs(3);
+    // Complete one execution step while request 2's busy rejection is held in flight.
+    let generated = engine.request(infer_core::RequestId::ONE)?.generated.len();
+    while engine.request(infer_core::RequestId::ONE)?.generated.len() == generated {
+        engine.tick(engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    let before = attempts.load(Ordering::Acquire);
+    // No further execution progress may arrive after this point.
+    engine.backend_mut().poll_gate = false;
+    engine.backend_mut().release_capacity()?;
+    // The rejected attempt started before that progress, so it must probe once more.
+    while attempts.load(Ordering::Acquire) == before {
+        engine.tick(engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    assert!(
+        engine
+            .request(infer_core::RequestId::new(2)?)?
+            .completed
+            .is_none()
+    );
+    engine.backend_mut().poll_gate = true;
+    engine.cancel(infer_core::RequestId::ONE)?;
+    engine.cancel(infer_core::RequestId::new(2)?)?;
+    while !engine.is_idle() {
+        engine.tick(engine.now_us() + 1)?;
+        deadline(limit)?;
+    }
+    engine.check_invariants()
 }
