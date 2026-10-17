@@ -112,11 +112,6 @@ impl Workspace {
 }
 
 /// Returns false before recording when this embedding is outside the validated capability.
-#[expect(
-    unsafe_code,
-    reason = "Audited gather row views: the gathered owner lives in the workspace for the \
-              capture, each lane is disjoint, and same-stream replay serializes access"
-)]
 pub(super) fn record(
     builder: &mut BatchBuilder<'_>,
     scope: &Scope,
@@ -167,7 +162,7 @@ pub(super) fn record(
         .ok_or_else(|| error("fusion batch gather"))?;
     scope.record(
         super::attention::attention::embedding_batch(
-            (&mut gathered).partition([1, 256]),
+            (&mut gathered).partition([1, crate::constants::AUX_KERNEL_TILE]),
             embedding_weight,
             metadata_batch,
         )
@@ -177,9 +172,9 @@ pub(super) fn record(
         ]),
     )?;
     for (lane, meta) in metadata.iter().enumerate().take(ROWS) {
-        // SAFETY: `gathered` stays alive in this frame while the view is used, and each
-        // lane addresses a disjoint row.
-        let embedding = unsafe { super::arena::row_view(&gathered, ROWS, lane) }.map_err(error)?;
+        // The owned row tensor keeps the gather allocation anchored until it is put back;
+        // `row_tensor` bounds the lane inside the slot and the return re-anchors ownership.
+        let (embedding, owner) = super::arena::row_tensor(gathered, ROWS, lane).map_err(error)?;
         let normalized = Capture {
             scope,
             arena: &mut *arena,
@@ -196,6 +191,8 @@ pub(super) fn record(
             mode: CaptureMode::Row(lane),
         }
         .fusion_norm(HIDDEN, &embedding)?;
+        gathered =
+            Arc::try_unwrap(owner).map_err(|_| error("fusion batch gather still aliased"))?;
         workspace.copy_row(scope, lane, &normalized)?;
         builder.lane_fusion[lane]
             .as_mut()
