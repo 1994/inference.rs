@@ -21,6 +21,7 @@ fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
             served_model_name: None,
             upload_staging_mib: None,
             num_speculative_tokens: 0,
+            attention_profile: crate::backend::CudaAttentionProfile::Canonical,
             gpu_memory_utilization: 0.0,
             autotune: false,
             // The exact per-token kernel; this fixture checks the Metal reservation, not prefill.

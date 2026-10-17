@@ -74,7 +74,13 @@ pub(super) struct BatchGraph {
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
     /// Owner of the batched metadata rows when the prompt graph uses one allocation.
-    _metadata_owner: Option<Tensor<i32>>,
+    metadata_owner: Option<Tensor<i32>>,
+    /// Host staging for one prompt chunk's metadata; the device copy is ordered before replay.
+    ///
+    /// This must stay a pageable `Vec`: `copy_host_slice` stages pageable host memory before
+    /// returning, so the next chunk can overwrite it without draining the stream. Do not switch
+    /// to a pinned ring without an explicit completion barrier before the next reuse.
+    metadata_upload: Vec<i32>,
     prefill_info: Option<Tensor<i32>>,
     /// Per-lane `(t, h, w)` rotary coordinates for prompt chunks; absent below prefill width 32.
     prefill_rotary: Option<Tensor<i32>>,
@@ -439,7 +445,8 @@ impl BatchBuilder<'_> {
             prefill_info: None,
             prefill_rotary: None,
             metadata,
-            _metadata_owner: None,
+            metadata_owner: None,
+            metadata_upload: Vec::new(),
             hidden,
             logits,
             width,
@@ -541,7 +548,8 @@ impl BatchBuilder<'_> {
             prefill_info: Some(prefill_info),
             prefill_rotary,
             metadata,
-            _metadata_owner: Some(metadata_owner),
+            metadata_owner: Some(metadata_owner),
+            metadata_upload: Vec::new(),
             hidden,
             logits,
             width: self.width,
@@ -782,13 +790,25 @@ impl BatchBuilder<'_> {
         {
             return Ok(());
         }
-        let mut no_fusion = None;
         if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
             return Ok(());
         }
         if self.record_prompt_dynamic(scope, node, arena, prefill_info, prefill_rotary)? {
             return Ok(());
         }
+        self.record_prompt_dispatch(scope, node, arena, metadata, partials)
+    }
+
+    /// Record the width-32 dispatch for a node whose special prefill cases did not apply.
+    fn record_prompt_dispatch(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: &[Tensor<i32>],
+        partials: &mut BTreeMap<usize, Tensor<f32>>,
+    ) -> std::result::Result<(), DeviceError> {
+        let mut no_fusion = None;
         match dispatch32(node, self.weights) {
             Dispatch32::Linear => {
                 super::prefill_projection::record(
@@ -1156,34 +1176,18 @@ impl BatchGraph {
         self.state_offset
     }
 
-    /// Rebind one lane's external hidden source in the prompt graph.
-    /// # Errors
-    /// Returns a CUDA error if the graph update fails.
-    pub fn bind_lane_external(
-        &self,
-        slot: &mut Tensor<f32>,
-        uploaded: &Arc<Tensor<f32>>,
-    ) -> Result<()> {
-        self.prefill
-            .update(api::memcpy(slot, uploaded))
-            .map_err(device_error)
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Launch fields are independent scalars; bundling them would hide the metadata contract"
-    )]
-    fn update_metadata(
-        graph: &CudaGraph<()>,
-        metadata: &mut [Tensor<i32>],
+    /// One lane's metadata tuple, with the same inactive-tail and capacity contract as the
+    /// per-lane updater. Both the scalar and the batched staging paths consume this function.
+    fn metadata_rows(
         width: usize,
         capacity: usize,
         tokens: &[u32],
         position: usize,
         state_offset: i32,
         overrides: PromptOverrides<'_>,
-    ) -> Result<()> {
-        for (lane, metadata) in metadata.iter_mut().enumerate().take(width) {
+    ) -> Result<Vec<[i32; crate::constants::METADATA_FIELDS]>> {
+        let mut rows = Vec::with_capacity(width);
+        for lane in 0..width {
             let token = tokens.get(lane).copied().unwrap_or(0);
             let pos = i32::try_from(position + lane).map_err(device_error)?;
             let state_pos = if width >= crate::constants::PREFILL_LANES && lane >= tokens.len() {
@@ -1205,18 +1209,62 @@ impl BatchGraph {
                     ),
                 ));
             }
-            super::metadata::update(
-                graph,
-                metadata,
-                [
-                    pos,
-                    i32::try_from(token).map_err(device_error)?,
-                    state_pos,
-                    i32::from(overrides.lanes.get(lane).copied().unwrap_or(false)),
-                ],
-            )?;
+            rows.push([
+                pos,
+                i32::try_from(token).map_err(device_error)?,
+                state_pos,
+                i32::from(overrides.lanes.get(lane).copied().unwrap_or(false)),
+            ]);
+        }
+        Ok(rows)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Launch fields are independent scalars; bundling them would hide the metadata contract"
+    )]
+    fn update_metadata(
+        graph: &CudaGraph<()>,
+        metadata: &mut [Tensor<i32>],
+        width: usize,
+        capacity: usize,
+        tokens: &[u32],
+        position: usize,
+        state_offset: i32,
+        overrides: PromptOverrides<'_>,
+    ) -> Result<()> {
+        let rows = Self::metadata_rows(width, capacity, tokens, position, state_offset, overrides)?;
+        for (metadata, values) in metadata.iter_mut().take(width).zip(rows) {
+            super::metadata::update(graph, metadata, values)?;
         }
         Ok(())
+    }
+
+    /// Stage all prompt lanes' metadata in one host-to-device copy instead of one tiny
+    /// `graph.update` kernel per lane. The rows stay in the same owner the captured graph
+    /// already points at, so only the transfer granularity changes.
+    fn update_metadata_batch(
+        &mut self,
+        device: &CudaDevice,
+        tokens: &[u32],
+        position: usize,
+        overrides: PromptOverrides<'_>,
+    ) -> Result<()> {
+        let owner = self
+            .metadata_owner
+            .as_mut()
+            .ok_or_else(|| Error::invariant("batched metadata owner"))?;
+        stage_metadata_batch(
+            device,
+            owner,
+            &mut self.metadata_upload,
+            self.width,
+            self.capacity,
+            tokens,
+            position,
+            self.state_offset,
+            overrides,
+        )
     }
 
     fn validate_prompt_positions(&self, count: usize, position: usize) -> Result<()> {
@@ -1252,6 +1300,12 @@ impl BatchGraph {
     ) -> Result<BatchOutput> {
         self.validate_prompt_positions(tokens.len(), position)?;
         self.update_prompt_rotary(device, tokens.len(), position, overrides.rotary)?;
+        // Stage batched metadata before taking the graph borrow; the owner is a disjoint
+        // field and the copy is ordered on the same stream as the later replay.
+        let staged_metadata = self.metadata_owner.is_some();
+        if staged_metadata {
+            self.update_metadata_batch(device, tokens, position, overrides)?;
+        }
         let graph = match prefill {
             Some(false) => {
                 #[cfg(test)]
@@ -1268,16 +1322,18 @@ impl BatchGraph {
             Some(true) => &self.prefill_last,
             None => return Err(Error::invalid("prompt-only batch cannot verify")),
         };
-        Self::update_metadata(
-            graph,
-            &mut self.metadata,
-            self.width,
-            self.capacity,
-            tokens,
-            position,
-            self.state_offset,
-            overrides,
-        )?;
+        if !staged_metadata {
+            Self::update_metadata(
+                graph,
+                &mut self.metadata,
+                self.width,
+                self.capacity,
+                tokens,
+                position,
+                self.state_offset,
+                overrides,
+            )?;
+        }
         super::metadata::update(
             graph,
             self.prefill_info
@@ -1447,6 +1503,36 @@ impl BatchGraph {
             .sync_on(&device.stream)
             .map_err(device_error)
     }
+}
+
+/// Stage one prompt chunk's batched metadata rows into their existing owner.
+///
+/// The transfer deliberately has no drain or readback: `metadata_upload` is pageable, and
+/// `copy_host_slice` stages a pageable source before returning, so the next chunk may reuse
+/// the same host buffer on the same stream. A pinned source would need a completion barrier
+/// here before `upload` could be overwritten.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The staging contract names each launch scalar explicitly instead of hiding them"
+)]
+fn stage_metadata_batch(
+    device: &CudaDevice,
+    owner: &mut Tensor<i32>,
+    upload: &mut Vec<i32>,
+    width: usize,
+    capacity: usize,
+    tokens: &[u32],
+    position: usize,
+    state_offset: i32,
+    overrides: PromptOverrides<'_>,
+) -> Result<()> {
+    let rows =
+        BatchGraph::metadata_rows(width, capacity, tokens, position, state_offset, overrides)?;
+    upload.clear();
+    for row in rows {
+        upload.extend_from_slice(&row);
+    }
+    device.copy_host_slice(owner, upload)
 }
 
 /// One active lane of a slot decode replay: slot index, token, `RoPE` position, state position.
@@ -1782,3 +1868,7 @@ fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Resul
 #[cfg(test)]
 #[path = "../../tests/unit/resident_batch_ba_pair.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_metadata_batch.rs"]
+mod metadata_batch_tests;

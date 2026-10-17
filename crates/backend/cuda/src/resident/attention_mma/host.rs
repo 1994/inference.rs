@@ -35,8 +35,7 @@ pub struct Api {
     _library: libloading::Library,
     _runtime: libloading::Library,
 }
-fn cache_file(variant: Variant) -> Result<PathBuf> {
-    let bytes = variant.bytes();
+fn cache_file(name: &str, bytes: &[u8]) -> Result<PathBuf> {
     let directory = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".cache")))
@@ -44,7 +43,7 @@ fn cache_file(variant: Variant) -> Result<PathBuf> {
         .join("inference.rs/fa4");
     fs::create_dir_all(&directory).map_err(device_error)?;
     let digest = format!("{:x}", Sha256::digest(bytes));
-    let path = directory.join(format!("{}-{digest}.so", variant.name()));
+    let path = directory.join(format!("{name}-{digest}.so"));
     if !path.exists() {
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -73,7 +72,7 @@ fn cache_file(variant: Variant) -> Result<PathBuf> {
     unsafe_code,
     reason = "loads only embedded hash-verified AOT host code and resolves its fixed C ABI while both libraries remain owned"
 )]
-fn open(variant: Variant) -> Result<Api> {
+fn open(name: &str, bytes: &'static [u8]) -> Result<Api> {
     let runtime = ["libcudart.so.13", "/opt/cuda/lib64/libcudart.so.13"]
         .into_iter()
         .find_map(|name| {
@@ -81,7 +80,7 @@ fn open(variant: Variant) -> Result<Api> {
             unsafe { libloading::Library::new(name).ok() }
         })
         .ok_or_else(|| Error::invalid("CUDA 13 runtime unavailable for AOT attention"))?;
-    let path = cache_file(variant)?;
+    let path = cache_file(name, bytes)?;
     // SAFETY: cache_file verified the complete embedded artifact before loading it.
     let library = unsafe { libloading::Library::new(path) }.map_err(device_error)?;
     // SAFETY: the generated library exports this fixed initializer ABI; its owner is retained.
@@ -99,22 +98,27 @@ fn open(variant: Variant) -> Result<Api> {
     })
 }
 impl Api {
-    pub fn load(variant: Variant, device: i32) -> Result<Arc<Self>> {
-        static CACHE: OnceLock<Mutex<BTreeMap<Variant, Arc<Api>>>> = OnceLock::new();
+    /// Load one named, embedded AOT artifact. The name scopes the on-disk cache so an FP16
+    /// artifact can never reuse a BF16 library path even if its bytes were ever identical.
+    pub fn load_artifact(name: &str, bytes: &'static [u8], device: i32) -> Result<Arc<Self>> {
+        static CACHE: OnceLock<Mutex<BTreeMap<String, Arc<Api>>>> = OnceLock::new();
         let mut cache = CACHE
             .get_or_init(|| Mutex::new(BTreeMap::new()))
             .lock()
             .map_err(|_| Error::invariant("MMA host cache poisoned"))?;
-        let api = if let Some(api) = cache.get(&variant) {
+        let api = if let Some(api) = cache.get(name) {
             Arc::clone(api)
         } else {
-            let api = Arc::new(open(variant)?);
-            cache.insert(variant, Arc::clone(&api));
+            let api = Arc::new(open(name, bytes)?);
+            cache.insert(name.to_owned(), Arc::clone(&api));
             api
         };
         drop(cache);
         api.initialize_device(device)?;
         Ok(api)
+    }
+    pub fn load(variant: Variant, device: i32) -> Result<Arc<Self>> {
+        Self::load_artifact(variant.name(), variant.bytes(), device)
     }
     #[expect(
         unsafe_code,

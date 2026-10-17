@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "profile": "fa4-f16-qkv:f32-acc:f16-output:gpu-seqlen-v1",
+  "upstream_commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "cutlass_dsl": "4.8.0",
+  "cuda_compiler": "13.4.92",
+  "host_platform": "linux-x86_64",
+  "host_ABI": 1,
+  "runtime_python": false,
+  "runtime_dependencies": [
+    "libcudart.so.13",
+    "libcuda.so.1",
+    "libstdc++.so.6",
+    "libm.so.6",
+    "libgcc_s.so.1",
+    "libc.so.6"
+  ],
+  "entries": [
+    {
+      "name": "sm120",
+      "architecture": "sm_120",
+      "profile": "fp16-inputs-f32-accumulator-fp16-output",
+      "dtype": "Float16",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [64, 64],
+        "threads": 128,
+        "cluster": [1, 1, 1],
+        "pack_gqa": true,
+        "features": ["warp-MMA", "cp.async"]
+      },
+      "features": {
+        "warp_MMA": true,
+        "f16_mma": true,
+        "bf16_mma": false,
+        "WGMMA": false,
+        "TMA": false,
+        "tcgen05": false,
+        "TMEM": false,
+        "two_CTA": false
+      },
+      "files": {
+        "bridge.cu": "6e129e490eb4f7917d1ea698720a7b8b13b4b603c879b47eb8bcbe23cf174c26",
+        "bridge.ptx": "caf06f30ccfbcb1f4aab808ae3922e9aa0c9fd8038558cc6c0dad6bcecc9baad",
+        "sm120/attention.so": "1cd25cc4f1514066c463aa0de44c7a1877e4966034d2a0637baf301fbfc1c91a"
+      },
+      "attention_ptx_sha256": "05c0786195978fb76dbf8ee4b0ca1bcbaec04c2c6ff81b543549619ab9ceea8d",
+      "attention_cubin_sha256": "fbf42b66627618f0f87e93cc1da0c6f7f5c7deada8d2267b5bf3a035e60b5fab",
+      "on_hardware_validated": true,
+      "task_quality_accepted": false,
+      "operator_probe": {
+        "report": "staging/fp16-fa4-probe-20261018/logs/run-1-envbug/probe-report.md",
+        "report_sha256": "8dce99c9fa2ed8d2f52c3f9806dfa4db5af30f8ac10c70228cfe0a7332d04426",
+        "cases": 20,
+        "scope": "plain FP16 operator and dynamic CUDA Graph replay on RTX 5090; fixed task quality pending"
+      }
+    }
+  ]
+}

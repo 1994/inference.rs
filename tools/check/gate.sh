@@ -35,6 +35,7 @@ python3 crates/backend/cuda/kernels/vector-attention-combined/verify-artifact.py
     if [ "$(uname -s)" = Linux ]; then
         python3 crates/backend/cuda/kernels/fa4-attention/verify-artifact.py
         python3 crates/backend/cuda/kernels/fa4-attention-f32/verify-artifact.py
+        python3 crates/backend/cuda/kernels/fa4-attention-f16/verify-artifact.py
     fi
     # Each workspace boundary states the dependency or toolchain isolation it exists for.
     python3 tools/check/workspaces.py

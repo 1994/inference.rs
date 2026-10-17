@@ -51,6 +51,26 @@ fn entry() -> Entry {
     }
 }
 #[test]
+fn bf16_profile_has_its_own_tuning_identity() {
+    // The BF16 FA4 choice reuses its independent schema/table section, never the canonical
+    // FP8-KV cache. A canonical entry therefore cannot satisfy this profile.
+    assert_ne!(SCHEMA, crate::tuning::attention::SCHEMA);
+    assert!(SCHEMA.contains("fa4-bf16"));
+    assert!(crate::tuning::attention::SCHEMA.contains("prefill-fp8-kv"));
+    assert!(catalog::PROFILE.contains("fa4-bf16-qkv"));
+    // FP16 has its own schema and artifact identity; a BF16 entry can never satisfy it.
+    assert_ne!(attention_mma::f16::SCHEMA, SCHEMA);
+    assert!(attention_mma::f16::SCHEMA.contains("fa4-f16"));
+    assert_ne!(
+        attention_mma::f16::artifact_identity(),
+        attention_mma::artifact_identity()
+    );
+    let mut entry = entry();
+    entry.key.schema = crate::tuning::attention::SCHEMA.into();
+    assert!(!entry.valid());
+}
+
+#[test]
 fn cluster_selection_requires_complete_independent_profile_evidence() {
     assert!(entry().valid());
     let mut e = entry();

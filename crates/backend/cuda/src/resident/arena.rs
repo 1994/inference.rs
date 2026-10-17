@@ -236,6 +236,88 @@ pub(super) unsafe fn row_view<T: DType>(
     })
 }
 
+/// `DeviceAllocation` view of one batched lane that also owns the slot storage.
+///
+/// Unlike [`RowAllocation`], this row carries a shared handle to the whole slot, so it
+/// stays valid after the caller drops or replaces its own tensor handle.
+struct OwnedRowAllocation<T: DType> {
+    storage: Arc<Tensor<T>>,
+    pointer: CUdeviceptr,
+    bytes: usize,
+}
+
+#[expect(
+    unsafe_code,
+    reason = "Audited owned row alias: `storage` keeps the slot allocation alive, the lane \
+              is extent-checked against it, and only one stream orders row accesses"
+)]
+// SAFETY: getters are stable for the token's lifetime; `pointer`/`bytes` describe a
+// row range verified against the slot's own extent at construction in `batch_rows`.
+unsafe impl<T: DType> DeviceAllocation for OwnedRowAllocation<T> {
+    fn device_ptr(&self) -> CUdeviceptr {
+        self.pointer
+    }
+
+    fn len_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn device_id(&self) -> usize {
+        self.storage.device_id()
+    }
+}
+
+/// Own every disjoint lane of a batched tensor as a row view.
+///
+/// Each returned row holds a shared handle to the slot's storage, so dropping the caller's
+/// tensor handle does not invalidate the row. Lanes are non-overlapping and remain exclusive
+/// outputs; one device stream serializes uploads and graph replays that reference them.
+///
+/// # Errors
+/// Rejects malformed batched slots, zero lanes and offset overflows.
+#[expect(
+    unsafe_code,
+    reason = "Audited batched ownership: every row holds the slot's storage and is bounded by \
+              the slot extent; lanes are disjoint and one stream serializes access"
+)]
+pub(super) fn batch_rows<T: DType>(owner: &Tensor<T>, lanes: usize) -> Result<Vec<Tensor<T>>> {
+    if lanes == 0 {
+        return Err(Error::invalid("batched activation lanes"));
+    }
+    if !owner.size().is_multiple_of(lanes) {
+        return Err(Error::invalid("activation slot is not batched"));
+    }
+    let size = owner.size() / lanes;
+    let bytes = size
+        .checked_mul(size_of::<T>())
+        .ok_or_else(|| Error::invalid("activation row extent"))?;
+    // SAFETY: the shared alias is kept by every row, so the slot storage outlives all of
+    // them; `batch_rows` never writes through the alias and row uses stay on one stream.
+    let storage = unsafe { owner.into_shared_alias() };
+    (0..lanes)
+        .map(|lane| {
+            let offset = lane
+                .checked_mul(bytes)
+                .ok_or_else(|| Error::invalid("activation row offset overflow"))?;
+            let allocation = OwnedRowAllocation {
+                storage: Arc::clone(&storage),
+                pointer: owner.device_pointer().cu_deviceptr()
+                    + u64::try_from(offset).map_err(device_error)?,
+                bytes,
+            };
+            // SAFETY: `allocation` owns the slot storage, and this lane lies fully inside
+            // the slot by construction. Disjoint row writes are serialized on one stream.
+            Ok(unsafe {
+                Tensor::from_foreign(
+                    Arc::new(allocation),
+                    vec![i32::try_from(size).map_err(device_error)?],
+                    vec![1],
+                )
+            })
+        })
+        .collect()
+}
+
 /// Owned tensor covering row `lane` of a taken batched slot; dropping it frees
 /// nothing. The returned Arc restores the slot once every row tensor is dropped.
 /// # Errors

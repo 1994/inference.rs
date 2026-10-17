@@ -60,6 +60,10 @@ pub struct ExecutionProfileInspection {
     pub automatic_prefill: bool,
     /// Activation arena budget the prompt width was validated against.
     pub arena_budget_bytes: u64,
+    /// Numerical attention profile selected at load. Backends without a selectable profile
+    /// leave this empty.
+    #[serde(default)]
+    pub attention_profile: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvCacheInspection {

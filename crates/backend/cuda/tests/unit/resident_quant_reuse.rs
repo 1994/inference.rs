@@ -133,6 +133,7 @@ fn fixture_weights() -> ProgramWeights {
         batch_width: 4,
         prefill_width: 256,
         narrow_prefill_width: 64,
+        attention_profile: crate::AttentionProfile::Canonical,
         chunked_recurrent: false,
         fusion: None,
         projections: BTreeMap::new(),

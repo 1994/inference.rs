@@ -1,5 +1,16 @@
 use super::*;
 #[test]
+fn attention_profile_defaults_to_canonical() {
+    let options = LoadOptions::default();
+    assert_eq!(
+        options.attention_profile,
+        crate::AttentionProfile::Canonical
+    );
+    assert!(!options.attention_profile.is_bf16());
+    assert!(!options.attention_profile.is_fp16());
+    assert!(!options.attention_profile.is_target_mma());
+}
+#[test]
 fn mtp_depth_controls_the_actual_verification_width() -> Result<()> {
     for depth in [1, 2, 4, 8] {
         let mut options = LoadOptions {

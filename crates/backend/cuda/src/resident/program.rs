@@ -83,6 +83,9 @@ pub struct ProgramWeights {
     pub kv_scales: BTreeMap<TensorId, [f32; 2]>,
     pub tiling: BTreeMap<TensorId, LinearTiling>,
     pub fusion: Option<FusionWeights>,
+    /// Target prefill attention numerical profile, resolved once at load. The draft proposal
+    /// program keeps its existing BF16 behavior regardless of this selection.
+    pub attention_profile: crate::AttentionProfile,
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
     pub input_scales: BTreeMap<TensorId, f32>,
     pub fp8_inputs: std::collections::BTreeSet<TensorId>,
@@ -167,7 +170,10 @@ pub struct DeviceProgram {
     states: super::batch::States,
     fp8_states: super::fp8_cache::Fp8Caches,
     lane_external: Vec<Tensor<f32>>,
-    lane_uploads: Vec<Arc<Tensor<f32>>>,
+    // Mutable upload handle for one contiguous external hidden per prompt lane. Every row in
+    // `lane_external` keeps the backing storage alive, so this handle is only the transfer
+    // target and is written before the prompt replay on the device stream.
+    lane_external_owner: Tensor<f32>,
     // Fusion workspaces are referenced by the captured graphs and never touched afterwards.
     lane_fusion: Vec<Option<FusionWorkspace>>,
     reset_graph: CudaGraph<()>,
@@ -263,13 +269,15 @@ fn retained_tensor_bytes(
     activations + state_bytes + packed_bytes + recurrent * verify as u64
 }
 
-/// Per-lane external hidden buffers paired with their fusion workspaces.
-type LaneFusion = (Vec<Tensor<f32>>, Vec<Option<FusionWorkspace>>);
+/// One contiguous external-hidden owner, its per-lane row views and fusion workspaces.
+type LaneFusion = (Tensor<f32>, Vec<Tensor<f32>>, Vec<Option<FusionWorkspace>>);
 
-/// Per-lane external hidden buffers and fusion workspaces for batched captures.
+/// Per-lane external hidden row views and fusion workspaces for batched captures.
 ///
-/// A fused program consumes one external hidden per lane; the batch capture owns a buffer and
-/// a workspace per lane so batched draft priming no longer replays the prompt token by token.
+/// A fused program consumes one external hidden per lane. One contiguous owner makes a
+/// prompt chunk one host transfer; the captured graphs keep pointing at the same disjoint
+/// rows, so draft priming no longer uploads and rebinds one buffer per token. Each row
+/// holds the backing storage itself, so the owner handle is free to remain the upload target.
 fn allocate_lane_fusion(
     device: &CudaDevice,
     hidden: usize,
@@ -277,17 +285,18 @@ fn allocate_lane_fusion(
 ) -> Result<LaneFusion> {
     let width = weights.prefill_width.max(weights.batch_width).max(1);
     let enabled = weights.fusion.is_some();
-    let mut external = Vec::new();
-    let mut fusion = Vec::new();
+    let elements = width
+        .checked_mul(hidden)
+        .ok_or_else(|| Error::invalid("external hidden size overflow"))?;
+    let owner = api::zeros::<f32>(&[elements])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let external = super::arena::batch_rows(&owner, width)?;
+    let mut fusion = Vec::with_capacity(width);
     for _ in 0..width {
-        external.push(
-            api::zeros::<f32>(&[hidden])
-                .sync_on(&device.stream)
-                .map_err(device_error)?,
-        );
         fusion.push(FusionWorkspace::allocate(device, hidden, enabled)?);
     }
-    Ok((external, fusion))
+    Ok((owner, external, fusion))
 }
 
 /// Activation arena budget for this device, as a host `usize`.
@@ -514,7 +523,8 @@ impl DeviceProgram {
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
         let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
-        let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
+        let (lane_external_owner, mut lane_external, mut lane_fusion) =
+            allocate_lane_fusion(device, hidden, weights)?;
         let mut builder = super::batch::BatchBuilder {
             device,
             graph,
@@ -567,7 +577,7 @@ impl DeviceProgram {
             metadata,
             external,
             lane_external,
-            lane_uploads: Vec::new(),
+            lane_external_owner,
             states,
             fp8_states,
             lane_fusion,
@@ -950,7 +960,16 @@ impl DeviceProgram {
         if externals.len() != lanes {
             return Err(Error::invalid("prompt externals"));
         }
-        self.lane_uploads.clear();
+        // The prompt graphs captured row views that share this owner's storage. One contiguous
+        // transfer replaces 128 allocations, host-to-device copies, stream syncs and per-lane
+        // graph rebinds per chunk; row order and draft state order are unchanged. `&mut self`
+        // excludes concurrent uploads/replays, and the copy stays on the device stream ahead of
+        // the prompt replay, so the shared owner obeys the same exclusivity contract as before.
+        self.device
+            .copy_host_slice(&mut self.lane_external_owner, externals)?;
+        // The source slice is only borrowed for this call. Drain the same stream before
+        // returning so no pageable host range can outlive its backing allocation.
+        self.device.drain()?;
         let narrow_fits = self.prefers_narrow_prompt(tokens.len());
         let batch = if narrow_fits {
             self.prompt_narrow.take()
@@ -958,14 +977,6 @@ impl DeviceProgram {
             self.prompt_batch.take()
         }
         .ok_or_else(|| Error::invariant("prompt batch graph"))?;
-        for lane in 0..tokens.len() {
-            let slice = externals
-                .get(lane * hidden..(lane + 1) * hidden)
-                .ok_or_else(|| Error::invalid("prompt externals"))?;
-            let uploaded = self.device.upload(slice.to_vec(), &[hidden])?;
-            batch.bind_lane_external(&mut self.lane_external[lane], &uploaded)?;
-            self.lane_uploads.push(uploaded);
-        }
         if narrow_fits {
             self.prompt_narrow = Some(batch);
         } else {

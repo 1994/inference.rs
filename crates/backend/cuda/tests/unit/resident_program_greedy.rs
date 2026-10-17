@@ -22,6 +22,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: crate::AttentionProfile::Canonical,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: Some(FusionWeights {

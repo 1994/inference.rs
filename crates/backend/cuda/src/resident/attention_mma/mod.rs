@@ -1,6 +1,7 @@
 //! AOT FA4 prefill: GPU page gathering, architecture-specific MMA, then F32 readout.
-//! This BF16 profile is distinct from the canonical F32 exact attention profile.
+//! The BF16 and SM120-FP16 profiles are distinct from the canonical F32 exact attention profile.
 pub mod catalog;
+pub mod f16;
 mod host;
 mod recorded;
 mod workspace;
@@ -12,17 +13,27 @@ use cutile::{cuda_async::launch::AsyncKernelLaunch, prelude::*};
 use infer_core::Result;
 use std::collections::BTreeMap;
 pub use workspace::{Workspace, eligible};
+#[cfg(test)]
+pub use workspace::{eligible_with_role, node_eligible};
 
 const PTX: &str = include_str!("../../../kernels/fa4-attention/bridge.ptx");
 const F32_PTX: &str = include_str!("../../../kernels/fa4-attention-f32/bridge.ptx");
 const THREADS: u32 = 256;
 const RESIDENT_BLOCKS_PER_SM: u32 = 8;
 
+/// Arithmetic of one AOT attention support instance. The draft program stays on BF16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arithmetic {
+    Bf16,
+    F16,
+}
 pub struct Support {
+    arithmetic: Arithmetic,
     prepare: Arc<Function>,
     prepare_f32: Option<Arc<Function>>,
     finish: Arc<Function>,
     apis: BTreeMap<Variant, Arc<host::Api>>,
+    f16_api: Option<Arc<host::Api>>,
     scratch: workspace::Scratch,
     stream: usize,
     grid: u32,
@@ -30,7 +41,12 @@ pub struct Support {
     lanes: usize,
 }
 impl Support {
-    pub fn load(device: &CudaDevice, capacity: usize, lanes: usize) -> Result<Self> {
+    pub fn load(
+        device: &CudaDevice,
+        capacity: usize,
+        lanes: usize,
+        arithmetic: Arithmetic,
+    ) -> Result<Self> {
         if capacity == 0
             || !capacity.is_multiple_of(crate::constants::KV_BLOCK_TOKENS)
             || i32::try_from(capacity).is_err()
@@ -38,19 +54,30 @@ impl Support {
         {
             return Err(infer_core::Error::invalid("MMA scratch dimensions"));
         }
+        if arithmetic == Arithmetic::F16 && device.profile()?.architecture != f16::ARCHITECTURE {
+            return Err(infer_core::Error::invalid(
+                "FP16 target attention artifact is only validated for SM120",
+            ));
+        }
         catalog::workspace_bytes(capacity, lanes)?;
+        let (ptx, prepare_name, finish_name) = match arithmetic {
+            Arithmetic::Bf16 => (PTX, "prepare_fa4", "finish_fa4"),
+            Arithmetic::F16 => (f16::PTX, "prepare_fa4_f16", "finish_fa4_f16"),
+        };
         let module = device
             .stream
             .device()
-            .load_module_from_ptx_src(PTX)
+            .load_module_from_ptx_src(ptx)
             .map_err(device_error)?;
         let sms = device.profile()?.multiprocessors;
         Ok(Self {
-            prepare: Arc::new(module.load_function("prepare_fa4").map_err(device_error)?),
+            arithmetic,
+            prepare: Arc::new(module.load_function(prepare_name).map_err(device_error)?),
             prepare_f32: None,
-            finish: Arc::new(module.load_function("finish_fa4").map_err(device_error)?),
+            finish: Arc::new(module.load_function(finish_name).map_err(device_error)?),
             apis: BTreeMap::new(),
-            scratch: workspace::Scratch::new(device, capacity, lanes)?,
+            f16_api: None,
+            scratch: workspace::Scratch::new(device, capacity, lanes, arithmetic)?,
             stream: device.stream.cu_stream() as usize,
             grid: sms.saturating_mul(RESIDENT_BLOCKS_PER_SM).max(1),
             capacity,
@@ -58,6 +85,11 @@ impl Support {
         })
     }
     pub fn prepare_float_cache(&mut self, device: &CudaDevice) -> Result<()> {
+        if self.arithmetic != Arithmetic::Bf16 {
+            return Err(infer_core::Error::invalid(
+                "FP16 target attention has no F32-cache bridge",
+            ));
+        }
         if self.prepare_f32.is_none() {
             let module = device
                 .stream
@@ -73,22 +105,30 @@ impl Support {
         Ok(())
     }
     pub fn prepare_variant(&mut self, device: &CudaDevice, variant: Variant) -> Result<()> {
+        let ordinal = i32::try_from(device.stream.device().ordinal()).map_err(device_error)?;
+        if self.arithmetic == Arithmetic::F16 {
+            if variant != Variant::Sm120 || device.profile()?.architecture != f16::ARCHITECTURE {
+                return Err(infer_core::Error::invalid(
+                    "FP16 attention variant architecture mismatch",
+                ));
+            }
+            self.f16_api = Some(host::Api::load_artifact(f16::VARIANT, f16::SO, ordinal)?);
+            return Ok(());
+        }
         if !Variant::candidates(&device.profile()?.architecture).contains(&variant) {
             return Err(infer_core::Error::invalid(
                 "MMA variant architecture mismatch",
             ));
         }
-        let ordinal = i32::try_from(device.stream.device().ordinal()).map_err(device_error)?;
         self.apis
             .insert(variant, host::Api::load(variant, ordinal)?);
         Ok(())
     }
-    fn accepts<E: DType>(
+    fn operands_valid<E: DType>(
         &self,
         b: &Bindings<'_, E>,
         (heads, kv_heads, dim, lanes, capacity): (usize, usize, usize, usize, usize),
         window: i32,
-        scales: [f32; 2],
     ) -> std::result::Result<bool, DeviceError> {
         Ok(catalog::geometry(
             heads,
@@ -98,12 +138,6 @@ impl Support {
             usize::try_from(window).unwrap_or(usize::MAX),
         ) && lanes <= self.lanes
             && capacity == self.capacity
-            && (E::DTYPE == cuda_core::f8e4m3fn::DTYPE && size_of::<E>() == 1
-                || E::DTYPE == f32::DTYPE
-                    && size_of::<E>() == size_of::<f32>()
-                    && self.prepare_f32.is_some()
-                    && scales.iter().all(|v| v.to_bits() == 1.0f32.to_bits()))
-            && scales.iter().all(|v| v.is_finite() && *v > 0.0)
             && b.query.is_contiguous()
             && b.query.size() == lanes * HEADS * DIM
             && b.keys.is_contiguous()
@@ -122,6 +156,27 @@ impl Support {
             && b.table.is_contiguous()
             && b.table.size() >= capacity / crate::constants::KV_BLOCK_TOKENS)
     }
+    fn accepts<E: DType>(
+        &self,
+        b: &Bindings<'_, E>,
+        shape: (usize, usize, usize, usize, usize),
+        window: i32,
+        scales: [f32; 2],
+    ) -> std::result::Result<bool, DeviceError> {
+        let bridge = match self.arithmetic {
+            Arithmetic::Bf16 => {
+                (E::DTYPE == cuda_core::f8e4m3fn::DTYPE && size_of::<E>() == 1)
+                    || (E::DTYPE == f32::DTYPE
+                        && size_of::<E>() == size_of::<f32>()
+                        && self.prepare_f32.is_some()
+                        && scales.iter().all(|v| v.to_bits() == 1.0f32.to_bits()))
+            }
+            Arithmetic::F16 => E::DTYPE == cuda_core::f8e4m3fn::DTYPE && size_of::<E>() == 1,
+        };
+        Ok(bridge
+            && scales.iter().all(|v| v.is_finite() && *v > 0.0)
+            && self.operands_valid(b, shape, window)?)
+    }
     #[expect(
         unsafe_code,
         reason = "checked contiguous graph-owned operands are marshalled into the embedded bridge; recorded execution retains all owners"
@@ -139,19 +194,16 @@ impl Support {
         if !self.accepts(&b, shape, window, scales)? {
             return Ok(false);
         }
-        let api = self
-            .apis
-            .get(&variant)
-            .ok_or_else(|| super::capture::error("MMA variant not prepared before capture"))?;
-        let ptr = |tensor: &Tensor<cutile::half::bf16>| tensor.device_pointer().cu_deviceptr();
-        let pointers = [
-            ptr(&self.scratch.query),
-            ptr(&self.scratch.keys),
-            ptr(&self.scratch.values),
-            ptr(&self.scratch.output),
-            self.scratch.used.device_pointer().cu_deviceptr(),
-            self.scratch.used.device_pointer().cu_deviceptr() + size_of::<i32>() as u64,
-        ];
+        let api = match self.arithmetic {
+            Arithmetic::Bf16 => self
+                .apis
+                .get(&variant)
+                .ok_or_else(|| super::capture::error("MMA variant not prepared before capture"))?,
+            Arithmetic::F16 => self.f16_api.as_ref().ok_or_else(|| {
+                super::capture::error("FP16 MMA artifact not prepared before capture")
+            })?,
+        };
+        let pointers = self.scratch.pointers();
         let [
             q_pointer,
             k_pointer,
@@ -160,7 +212,9 @@ impl Support {
             used_q_pointer,
             _,
         ] = pointers;
-        let prepare_function = if E::DTYPE == f32::DTYPE {
+        let prepare_function = if self.arithmetic == Arithmetic::F16 {
+            &self.prepare
+        } else if E::DTYPE == f32::DTYPE {
             self.prepare_f32
                 .as_ref()
                 .ok_or_else(|| super::capture::error("F32 cache preparation missing"))?
@@ -215,6 +269,17 @@ impl Support {
             block_dim: (THREADS, 1, 1),
             shared_mem_bytes: 0,
         });
+        if self.arithmetic == Arithmetic::F16 {
+            tracing::info!(
+                target: "infer::attention",
+                attention_profile = "fp16",
+                profile = f16::PROFILE,
+                variant = f16::VARIANT,
+                lanes,
+                capacity,
+                "MMA F16 attention recorded"
+            );
+        }
         scope.record(recorded::Recorded {
             prepare,
             finish,

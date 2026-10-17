@@ -21,7 +21,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 pub(super) const MAX_ERROR: f64 = 0.01;
-const SCHEMA: &str = "fa4-bf16:full-f64-operator-sanity1e-2:original-append:history0-8k-32k:cluster-search:cold-warm-ab-ba-v1";
+pub(crate) const SCHEMA: &str = "fa4-bf16:full-f64-operator-sanity1e-2:original-append:history0-8k-32k:cluster-search:cold-warm-ab-ba-v1";
 const SHA256_HEX_LEN: usize = 64;
 const HISTORY_CASES: usize = 3;
 const HISTORY_DIVISOR: usize = 4;
@@ -154,8 +154,19 @@ pub(crate) fn prepare(
     weights: &crate::resident::ProgramWeights,
 ) -> Result<()> {
     let architecture = &device.profile()?.architecture;
+    // A target FP16 program never consults the BF16 target search. The draft program and the
+    // explicit BF16 profile keep the existing BF16 behavior.
+    let target_f16 = weights.attention_profile.is_fp16() && weights.fusion.is_none();
+    tracing::info!(
+        target: "infer::tuning",
+        attention_profile = weights.attention_profile.name(),
+        draft = weights.fusion.is_some(),
+        schema = if target_f16 { attention_mma::f16::SCHEMA } else { SCHEMA },
+        "attention numerical profile"
+    );
     let mut shapes = std::collections::BTreeSet::new();
     for lanes in weights.prompt_widths() {
+        let mma_eligible = attention_mma::eligible(architecture, graph, weights, lanes);
         for node in &graph.nodes {
             let infer_ir::TensorOp::Attention {
                 query_heads,
@@ -180,6 +191,16 @@ pub(crate) fn prepare(
                     .states
                     .first()
                     .is_some_and(|id| weights.kv_scales.contains_key(id));
+                let f16_eligible = target_f16
+                    && fp8
+                    && attention_mma::f16::supported(
+                        architecture,
+                        query_heads,
+                        kv_heads,
+                        head_dim,
+                        lanes,
+                        window.unwrap_or(0),
+                    );
                 shapes.insert((
                     Shape {
                         heads: query_heads,
@@ -189,12 +210,14 @@ pub(crate) fn prepare(
                         window: window.unwrap_or(0),
                     },
                     fp8,
+                    mma_eligible && !target_f16,
+                    f16_eligible,
                 ));
             }
         }
     }
     // Shape order prepares narrow graphs first, matching resident capture order.
-    for (shape, fp8) in shapes {
+    for (shape, fp8, mma_eligible, f16_eligible) in shapes {
         if !fp8 {
             if weights.fusion.is_some() {
                 super::mma_f32::select(device, shape, weights.autotune, &weights.resident_tuning);
@@ -219,8 +242,12 @@ pub(crate) fn prepare(
         );
         let baseline = super::vector_combined::select(device, shape, baseline);
         // Exact target tuning must finish before proposal search starts the shared
-        // wall-clock allowance. Only proposal programs may narrow precision.
-        if weights.fusion.is_some() {
+        // wall-clock allowance. Only the shared eligibility decision may narrow precision.
+        if f16_eligible {
+            if let Err(error) = attention_mma::f16::select(device, shape) {
+                tracing::warn!(target:"infer::tuning",?shape,%error,"FP16 target attention unavailable: canonical fallback");
+            }
+        } else if mma_eligible {
             select(
                 device,
                 shape,

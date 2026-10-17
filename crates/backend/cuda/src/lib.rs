@@ -1,4 +1,6 @@
 //! Native CUDA execution with GPU kernels authored in Rust through cuTile.
+mod attention_profile;
+pub use attention_profile::AttentionProfile;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 pub mod attention;
 #[cfg(all(target_os = "linux", feature = "cuda"))]

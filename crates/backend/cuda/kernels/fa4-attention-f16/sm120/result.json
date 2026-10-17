@@ -1,0 +1,57 @@
+{
+  "completed": true,
+  "GPU_execution": false,
+  "started_unix": 1792272053.412954,
+  "architecture": "sm_120",
+  "candidate": "sm120-f16",
+  "dtype": "Float16",
+  "profile": "fp16-inputs-f32-accumulator-fp16-output",
+  "source_official_commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "on_hardware_validated": false,
+  "quality_accepted": false,
+  "quack_version": "0.6.5",
+  "tvm_ffi_path": "/home/r/.cache/uv/archive-v0/QpqjzQElftJl2IpA/tvm_ffi/__init__.py",
+  "sdk_site": "/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/first-principles/vllm-main-3fe917ab-runtime-v1/site",
+  "quack_path": "/home/r/.cache/uv/archive-v0/QJ_SYGhyCsnpCtHY",
+  "tvm_ffi_site": "/home/r/.cache/uv/archive-v0/QpqjzQElftJl2IpA",
+  "config": {
+    "tile": [
+      64,
+      64
+    ],
+    "threads": 128,
+    "cluster": [
+      1,
+      1,
+      1
+    ],
+    "pack_gqa": true,
+    "features": [
+      "warp-MMA",
+      "cp.async"
+    ]
+  },
+  "attention.ptx": {
+    "sha256": "05c0786195978fb76dbf8ee4b0ca1bcbaec04c2c6ff81b543549619ab9ceea8d",
+    "bytes": 272940
+  },
+  "attention.cubin": {
+    "sha256": "fbf42b66627618f0f87e93cc1da0c6f7f5c7deada8d2267b5bf3a035e60b5fab",
+    "bytes": 163280
+  },
+  "kernel_symbols": [
+    "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16o6div6425641256614411536i64div8_tensorptrf16gmemalign16odiv322564110241256i_0"
+  ],
+  "PTX_features": {
+    "warp_MMA": true,
+    "f16_mma": true,
+    "bf16_mma": false,
+    "WGMMA": false,
+    "TMA": false,
+    "tcgen05": false,
+    "TMEM": false,
+    "two_CTA": false
+  },
+  "sdk_version": "4.8.0",
+  "finished_unix": 1792272056.6923218
+}

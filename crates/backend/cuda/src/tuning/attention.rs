@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-const SCHEMA: &str = "prefill-fp8-kv:precise-bf16-products6:f32-accum:original-append:gqa:query-causal-bound:qt16-32:f64-full1e-4:tail-history-window-permuted:ab-ba-v2";
+pub(crate) const SCHEMA: &str = "prefill-fp8-kv:precise-bf16-products6:f32-accum:original-append:gqa:query-causal-bound:qt16-32:f64-full1e-4:tail-history-window-permuted:ab-ba-v2";
 const QUERY_TILES: [usize; 2] = [16, 32];
 const MAX_ERROR: f64 = 1e-4;
 const VALIDATED_DIM: usize = 256;
@@ -60,6 +60,8 @@ pub enum Choice {
     Mma {
         variant: crate::resident::attention_mma::catalog::Variant,
     },
+    /// Validated SM120 plain-FP16 target prefill; never selected by the draft path.
+    MmaF16,
     Tiled {
         query_tile: usize,
     },
@@ -72,7 +74,8 @@ impl Choice {
             | Self::SharedKv
             | Self::VectorSharedKv
             | Self::VectorSharedKvCombined
-            | Self::Mma { .. } => None,
+            | Self::Mma { .. }
+            | Self::MmaF16 => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }

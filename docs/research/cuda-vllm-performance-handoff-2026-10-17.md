@@ -9,7 +9,7 @@
 | 项目 | 固定身份与范围 |
 |---|---|
 | 已合并主干 | [PR #10](https://github.com/1994/inference.rs/pull/10)，merge 92578d138c8d064442a75bbab0e1645b0da828e3；CI 10/10、原 20 项性能门、1,024 题对原主干完整输出逐 token 一致 |
-| 后续优化分支 | codex/fa4-architecture-prefill；性能代码基点 b43c51d517af6fbbee734f0529e5cbd87500b801，包含 FA4 架构接入、MTP proposal 和 VectorSharedKv；尚未合入 main |
+| 后续优化分支 | codex/fa4-architecture-prefill；性能代码基点 b43c51d517af6fbbee734f0529e5cbd87500b801，包含 FA4 架构接入、MTP proposal 和 VectorSharedKv。交接当日（2026-10-17）尚未合入 main；2026-10-18 已由 merge `e86e05b` 合入 main，本行保留交接时点并注明该后续状态 |
 | 测量代码映射 | b43c51d 仅合并 main 历史，整个 tree 与 bcc742b35308d9adf279cdbf2ed5860cd378ce79 相同，没有借历史合并重测 |
 | 已测 release | SHA256 730c2348f1948f769f498bdee5c6d674660d80a8f19321f5ebacd598a3f159d8；冻结构建 build-vector-shared-integration-v2/result.json |
 
