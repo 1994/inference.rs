@@ -96,6 +96,7 @@ pub struct Selection {
     pub upload_staging_mib: Option<usize>,
     pub num_speculative_tokens: usize,
     /// Target attention numerical profile, experimental for `bf16`.
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
     pub attention_profile: CudaAttentionProfile,
     pub gpu_memory_utilization: f64,
     /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
