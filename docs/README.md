@@ -58,6 +58,7 @@ Agent 接入、tool parser、文本流式、max length 和实用配置的缺口�
 | [CUDA Serving 历史记录](research/cuda-serving-baseline.md) | 既有服务矩阵与瓶颈调查；不作为当前已验收基线 |
 | [CUDA 性能实验记录](research/cuda-performance-experiments.md) | 历史 A/B、失败实验与测量条件 |
 | [当前默认路径与 vLLM 的性能画像](research/cuda-vllm-current-profile-2026-10-13.md) | 同输入 trace、GDN 与 attention 差距、逐轮优化与失败候选 |
+| [CUDA 长上下文性能结论与任务交接](research/cuda-vllm-performance-handoff-2026-10-17.md) | 已合并 PR #10、五组正式收益、当前 attention 瓶颈、失败方案、质量边界与可拆任务 |
 
 2026-10-09 至 10-14 的逐轮调查、实验记录和证据工件已移入[历史归档](archive/README.md)。归档保留源码基点、测量条件与失败结论供复核，不代表当前状态，也不进入日常排期。
 
