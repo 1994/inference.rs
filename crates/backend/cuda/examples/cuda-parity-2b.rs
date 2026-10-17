@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use infer_backend_cuda::{loading::LoadedModel, vision};
     use infer_core::{Error, ModelId};
     use infer_ir::Modality;
-    use infer_models::{TextAssets, place_visual_embeddings, prepare};
+    use infer_models::{TextAssets, prepare};
 
     let (root, reference_path) = paths()?;
     cutile::jit_cache::enable_default()?;
@@ -51,27 +51,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let encoded = vision.encode(loaded.device(), image)?;
     let (vision_abs, vision_rel) = compare_media(&encoded, &reference.vision);
-    let placements =
-        place_visual_embeddings(&prepared, &imported, &Modality::Image, &[encoded], hidden)?;
+    let encodings = [encoded];
     let mut program = loaded.sequence(4096)?;
-    let logits = vision::prefill(
+    let prefilled = vision::prefill(
         &mut program,
         &imported,
-        &prepared.tokens,
-        &placements,
+        &prepared,
+        &Modality::Image,
+        &encodings,
         hidden,
         0,
     )?;
-    let (max_abs, theirs) = compare_logits(&logits, &reference.logits);
-    let mine = vision::argmax(&logits)?;
+    let (max_abs, theirs) = compare_logits(&prefilled.logits, &reference.logits);
+    let mine = vision::argmax(&prefilled.logits)?;
 
     // 4. Greedy continuation.
-    let generated = vision::generate(
+    let generated = vision::decode(
         &mut program,
-        &imported,
-        &prepared.tokens,
-        &placements,
-        hidden,
+        prepared.tokens.len(),
+        &prefilled,
         reference.generated.len(),
         &[],
     )?;
@@ -92,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "prompt_tokens": prepared.tokens.len(),
             "reference_prompt_tokens": reference.ids.len(),
             "tokens_match": tokens_match,
-            "media_tokens": placements.len(),
+            "media_tokens": prepared.spans.iter().map(std::ops::Range::len).sum::<usize>(),
             "first_token": mine,
             "reference_first_token": theirs,
             "vision_max_abs": vision_abs,
@@ -132,6 +130,8 @@ fn device_of(
 #[cfg(target_os = "linux")]
 fn load_options() -> infer_backend_cuda::loading::LoadOptions {
     infer_backend_cuda::loading::LoadOptions {
+        // Fused prompt chunks: the media prefill must exercise the path the engine uses.
+        prefill_width: 0,
         autotune: false,
         ..infer_backend_cuda::loading::LoadOptions::default()
     }

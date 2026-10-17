@@ -14,6 +14,7 @@ pub use program::{
     patch_embed, patch_width, project, project_with, tower,
 };
 pub use session::{
-    argmax, generate, media_positions, placeholder_tokens, prefill, require_placements,
+    MediaPrefill, argmax, decode, generate, media_positions, placeholder_tokens, prefill,
+    require_placements,
 };
 pub use weights::{VisionWeights, matrix};

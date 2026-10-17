@@ -45,6 +45,7 @@ fn fixture_at(
         &[16, out_columns],
     )?;
     let weights = ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),

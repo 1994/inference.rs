@@ -4,21 +4,22 @@ mod constants;
 mod input;
 mod providers;
 mod storage;
-pub use input::{image, mrope, prompt, vision};
+pub use input::{image, mrope, prompt, video, vision};
 mod workload;
 /// Canonical provider import result, re-exported for package consumers.
 pub use infer_spi::ImportedModel;
 pub use input::image::{ImageProcessor, PreprocessedImage, RgbImage};
 pub use input::prompt::{
-    ExpandedPrompt, PreparedPrompt, PromptImage, RawImage, VisualPlacement, expand_placeholders,
-    image_token_counts, place_visual_embeddings, placeholders, prepare, require_encoder,
-    visual_tokens,
+    ExpandedPrompt, MediaLayout, MediaSpan, PreparedPrompt, PromptImage, RawImage, VisualPlacement,
+    expand_placeholders, image_token_counts, media_layout, place_visual_embeddings, placeholders,
+    prepare, prepare_video, require_encoder, visual_tokens,
 };
 pub use input::text::{ChatMessage, ChatOptions, TextAssets, TextStreamDecoder};
 pub use input::tool::{
     OutputStreamParser, ParsedOutput, ParsedToolCall, StreamEvent, ToolCall, ToolDialect, assemble,
     parse as parse_model_output, parse_with as parse_model_output_with,
 };
+pub use input::video::{PreprocessedVideo, RawVideo, VideoProcessor};
 pub use providers::dflash2::{
     ARCHITECTURE as DFLASH2_ARCHITECTURE, DFlash2Config, DFlash2DraftConfig, DraftGeometry,
     DraftQuote, check_declared_architecture,

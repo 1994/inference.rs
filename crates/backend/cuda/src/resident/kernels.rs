@@ -133,6 +133,49 @@ pub(crate) mod aux {
             out.store(value);
         }
     }
+    /// Three-axis `RoPE` for a prompt chunk: one `(t, h, w)` triple per lane.
+    #[cutile::entry()]
+    fn prefill_mrope<const D: i32, const HALF: i32, const HEADS: i32>(
+        out: &mut Tensor<f32, { [1, HALF] }>,
+        x: &Tensor<f32, { [-1, D] }>,
+        frequencies: &Tensor<f32, { [HALF] }>,
+        axes: &Tensor<i32, { [HALF] }>,
+        rotary: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = x.partition(shape![1, HALF]);
+        let value = xp.load([pid.0, pid.1]);
+        if pid.1 < 2 {
+            let lane: i32 = pid.0 / HEADS;
+            let base = lane * 3;
+            let positions = rotary.partition(shape![1]);
+            let temporal: Tile<f32, { [1] }> = convert_tile(positions.load([base]));
+            let height: Tile<f32, { [1] }> = convert_tile(positions.load([base + 1i32]));
+            let width: Tile<f32, { [1] }> = convert_tile(positions.load([base + 2i32]));
+            let selected_axis: Tile<i32, { [HALF] }> = axes.partition(shape![HALF]).load([0i32]);
+            let position = select(
+                eq_tile(selected_axis, 1i32.broadcast(shape![HALF])),
+                height.broadcast(shape![HALF]),
+                temporal.broadcast(shape![HALF]),
+            );
+            let position = select(
+                eq_tile(selected_axis, 2i32.broadcast(shape![HALF])),
+                width.broadcast(shape![HALF]),
+                position,
+            );
+            let angles = frequencies.partition(shape![HALF]).load([0i32]) * position;
+            let c = cos(angles).reshape(shape![1, HALF]);
+            let s = sin(angles).reshape(shape![1, HALF]);
+            let other = xp.load([pid.0, 1i32 - pid.1]);
+            if pid.1 == 0 {
+                out.store(value * c - other * s);
+            } else {
+                out.store(value * c + other * s);
+            }
+        } else {
+            out.store(value);
+        }
+    }
     /// Three-axis `RoPE` with a provider-built frequency-to-axis map.
     #[cutile::entry()]
     fn mrope<const D: i32, const HALF: i32>(

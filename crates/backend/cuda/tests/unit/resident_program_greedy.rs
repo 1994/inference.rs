@@ -15,6 +15,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .map(|i| bf16::from_f32(f32::from(i16::try_from(i * 13 % 29).unwrap() - 14) / 32.0))
         .collect();
     Ok(ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,

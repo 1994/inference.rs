@@ -93,6 +93,8 @@ pub struct ProgramWeights {
     pub embeddings: BTreeMap<TensorId, Arc<Tensor<bf16>>>,
     pub rope_axes: BTreeMap<infer_core::OpId, Arc<Tensor<i32>>>,
     pub rope_frequencies: BTreeMap<infer_core::OpId, Arc<Tensor<f32>>>,
+    /// Whether the model's `RoPE` carries three-axis (`t`, `h`, `w`) positions.
+    pub mrope: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -837,6 +839,11 @@ impl DeviceProgram {
         &mut self.fp8_states
     }
 
+    /// Device that owns this program's state and graphs.
+    pub(crate) const fn device(&self) -> &CudaDevice {
+        &self.device
+    }
+
     #[must_use]
     pub fn prefill_width(&self) -> usize {
         let widest = self
@@ -1020,6 +1027,88 @@ impl DeviceProgram {
         let end = position
             .checked_add(tokens.len())
             .ok_or_else(|| Error::invalid("prefill position overflow"))?;
+        self.next_position = end.saturating_sub(lag);
+        self.last_batch = None;
+        Ok(output)
+    }
+
+    /// Ingest one prompt chunk whose media lanes carry precomputed embeddings.
+    ///
+    /// Row copies and the replay share the device stream, so the chunk runs once instead of one
+    /// decode step per media token. The wide prompt graph is used deliberately: the narrow graph
+    /// would split media chunks at its own fixed width.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The chunk names its media tensor, row map, width, rotary table and readout explicitly"
+    )]
+    pub(crate) fn prefill_media_chunk(
+        &mut self,
+        tokens: &[u32],
+        position: usize,
+        media: &Tensor<f32>,
+        rows: &[(usize, usize)],
+        hidden: usize,
+        rotary: Option<&[[usize; infer_models::mrope::ROTARY_AXES]]>,
+        read_logits: bool,
+    ) -> Result<super::BatchOutput> {
+        let width = self.prefill_width();
+        if (self.prompt_batch.is_none() && self.batch.is_none())
+            || tokens.is_empty()
+            || tokens.len() > width
+            || position
+                .checked_add(tokens.len())
+                .is_none_or(|end| end > self.capacity)
+            || tokens
+                .iter()
+                .any(|t| usize::try_from(*t).map_or(true, |n| n >= self.vocabulary))
+        {
+            return Err(Error::invalid("media prefill tokens, width or capacity"));
+        }
+        if rotary.is_some_and(|rotary| rotary.len() != tokens.len()) {
+            return Err(Error::invalid("media prefill rotary width"));
+        }
+        let lag = self.batch_state_lag()?;
+        if position == 0 {
+            self.reset()?;
+        }
+        if position.saturating_sub(lag) != self.next_position {
+            return Err(Error::invalid("media prefill state position"));
+        }
+        let mut overrides = vec![false; tokens.len()];
+        for &(lane, row) in rows {
+            if lane >= tokens.len() || overrides[lane] {
+                return Err(Error::invalid("media prefill lane"));
+            }
+            let offset = row
+                .checked_mul(hidden)
+                .ok_or_else(|| Error::invalid("media row offset overflow"))?;
+            let slot = self
+                .lane_external
+                .get_mut(lane)
+                .ok_or_else(|| Error::invalid("media prefill lane"))?;
+            if slot.size() != hidden {
+                return Err(Error::invalid("media external width"));
+            }
+            self.device.copy_d2d_at(slot, media, 0, offset, hidden)?;
+            overrides[lane] = true;
+        }
+        let prompt = self
+            .prompt_batch
+            .as_mut()
+            .ok_or_else(|| Error::invariant("media prefill requires a prompt graph"))?;
+        let output = prompt.run_media(
+            &self.device,
+            tokens,
+            position,
+            read_logits,
+            super::batch::PromptOverrides {
+                lanes: &overrides,
+                rotary,
+            },
+        )?;
+        let end = position
+            .checked_add(tokens.len())
+            .ok_or_else(|| Error::invalid("media prefill position overflow"))?;
         self.next_position = end.saturating_sub(lag);
         self.last_batch = None;
         Ok(output)

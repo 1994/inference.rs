@@ -4,4 +4,5 @@ pub mod mrope;
 pub mod prompt;
 pub mod text;
 pub mod tool;
+pub mod video;
 pub mod vision;
