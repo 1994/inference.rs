@@ -56,6 +56,8 @@ pub(super) struct BatchGraph {
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
+    /// Owner of the batched metadata rows when the prompt graph uses one allocation.
+    _metadata_owner: Option<Tensor<i32>>,
     prefill_info: Option<Tensor<i32>>,
     hidden: Vec<Arc<Tensor<f32>>>,
     logits: Vec<Arc<Tensor<f32>>>,
@@ -417,6 +419,7 @@ impl BatchBuilder<'_> {
             _fusion: None,
             prefill_info: None,
             metadata,
+            _metadata_owner: None,
             hidden,
             logits,
             width,
@@ -444,14 +447,7 @@ impl BatchBuilder<'_> {
             self.width,
             usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
         )?;
-        let mut metadata = Vec::with_capacity(self.width);
-        for _ in 0..self.width {
-            metadata.push(
-                api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            );
-        }
+        let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
@@ -468,6 +464,7 @@ impl BatchBuilder<'_> {
         let prefill = self.capture32(
             &mut arena,
             &metadata,
+            &metadata_owner,
             &prefill_info,
             PromptReadout::Hidden,
             profile.as_mut(),
@@ -476,6 +473,7 @@ impl BatchBuilder<'_> {
         let prefill_last = self.capture32(
             &mut arena,
             &metadata,
+            &metadata_owner,
             &prefill_info,
             PromptReadout::Logits,
             profile.as_mut(),
@@ -486,6 +484,7 @@ impl BatchBuilder<'_> {
             Some(self.capture32(
                 &mut arena,
                 &metadata,
+                &metadata_owner,
                 &prefill_info,
                 PromptReadout::StateOnly,
                 None,
@@ -511,6 +510,7 @@ impl BatchBuilder<'_> {
             _fusion: fusion,
             prefill_info: Some(prefill_info),
             metadata,
+            _metadata_owner: Some(metadata_owner),
             hidden,
             logits,
             width: self.width,
@@ -630,6 +630,7 @@ impl BatchBuilder<'_> {
         &mut self,
         arena: &mut ActivationArena,
         metadata: &[Tensor<i32>],
+        metadata_batch: &Tensor<i32>,
         prefill_info: &Tensor<i32>,
         readout: PromptReadout,
         profile: Option<&mut profile::PrefillProfile>,
@@ -698,7 +699,7 @@ impl BatchBuilder<'_> {
                     scope,
                     node,
                     arena,
-                    (metadata, prefill_info),
+                    (metadata, metadata_batch, prefill_info),
                     (partials, recurrent, fusion),
                 )?;
             }
@@ -716,17 +717,25 @@ impl BatchBuilder<'_> {
         scope: &Scope,
         node: &TensorNode,
         arena: &mut ActivationArena,
-        metadata: (&[Tensor<i32>], &Tensor<i32>),
+        metadata: (&[Tensor<i32>], &Tensor<i32>, &Tensor<i32>),
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
             &mut super::recurrent_prefill::Workspace,
             &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> std::result::Result<(), DeviceError> {
-        let (metadata, prefill_info) = metadata;
+        let (metadata, metadata_batch, prefill_info) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         if let Some(workspace) = fusion.as_mut()
-            && super::fusion_batch::record(self, scope, node, arena, metadata, workspace)?
+            && super::fusion_batch::record(
+                self,
+                scope,
+                node,
+                arena,
+                metadata,
+                metadata_batch,
+                workspace,
+            )?
         {
             return Ok(());
         }
@@ -1558,6 +1567,30 @@ fn gdn_ba_projection(node: &TensorNode, weights: &ProgramWeights) -> bool {
         Some(ProjectionWeight::Dense(weight))
             if weight.shape() == super::prefill_projection::GDN_BA_SHAPE
     )
+}
+
+/// One allocation for every prompt lane's metadata, with a non-owning row view per lane.
+/// The batched embedding gather reads token ids from this contiguous owner.
+#[expect(
+    unsafe_code,
+    reason = "Audited metadata lane views: the owner is returned and stored with the rows, \
+              each view addresses a disjoint lane, and graphs retain the owner"
+)]
+fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, Vec<Tensor<i32>>)> {
+    let fields = crate::constants::METADATA_FIELDS;
+    let elements = width
+        .checked_mul(fields)
+        .ok_or_else(|| Error::invalid("metadata size overflow"))?;
+    let owner = api::zeros::<i32>(&[elements])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let mut rows = Vec::with_capacity(width);
+    for lane in 0..width {
+        // SAFETY: `owner` is returned to the caller and stored beside `rows` for the
+        // whole graph lifetime; each view addresses one disjoint metadata row.
+        rows.push(unsafe { super::arena::row_view(&owner, width, lane)? });
+    }
+    Ok((owner, rows))
 }
 
 fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> {

@@ -19,7 +19,7 @@ const COLUMNS: usize = HIDDEN * 2;
 const WEIGHT_SHAPE: [i32; 2] = [5120, 10240];
 const TILE: [usize; 2] = [4, 16];
 const DEPTH: usize = 256;
-const SCRATCH_BYTES: u64 = 5 * 1024 * 1024;
+const SCRATCH_BYTES: u64 = (5 * 1024 * 1024) + (ROWS as u64 * HIDDEN as u64 * 4);
 
 fn layout_bytes(
     architecture: &str,
@@ -61,6 +61,8 @@ pub fn required_bytes(weights: &ProgramWeights, width: usize, profile: &DevicePr
 
 pub(super) struct Workspace {
     input: Option<Tensor<f32>>,
+    /// Batched embedding rows for one prompt chunk; one gather kernel fills all lanes.
+    gathered: Option<Tensor<f32>>,
 }
 impl Workspace {
     pub(super) fn allocate(
@@ -77,12 +79,18 @@ impl Workspace {
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
+            gathered: Some(
+                api::zeros::<f32>(&[ROWS, HIDDEN])
+                    .sync_on(&device.stream)
+                    .map_err(device_error)?,
+            ),
         }))
     }
 
     #[cfg(test)]
     pub(super) fn bytes(&self) -> usize {
         self.input.as_ref().map_or(0, Tensor::num_bytes)
+            + self.gathered.as_ref().map_or(0, Tensor::num_bytes)
     }
 
     fn copy_row(
@@ -104,12 +112,18 @@ impl Workspace {
 }
 
 /// Returns false before recording when this embedding is outside the validated capability.
+#[expect(
+    unsafe_code,
+    reason = "Audited gather row views: the gathered owner lives in the workspace for the \
+              capture, each lane is disjoint, and same-stream replay serializes access"
+)]
 pub(super) fn record(
     builder: &mut BatchBuilder<'_>,
     scope: &Scope,
     node: &TensorNode,
     arena: &mut ActivationArena,
     metadata: &[Tensor<i32>],
+    metadata_batch: &Tensor<i32>,
     workspace: &mut Workspace,
 ) -> std::result::Result<bool, DeviceError> {
     #[cfg(test)]
@@ -135,7 +149,37 @@ pub(super) fn record(
         .map(|&dim| usize::try_from(dim).map_err(error))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut output = output.reshape(&[ROWS, HIDDEN])?;
+    let Some(super::program::FusionWeights {
+        projection: ProjectionWeight::Dense(weight),
+        ..
+    }) = &builder.weights.fusion
+    else {
+        return Err(error("fusion batch dense capability"));
+    };
+    let embedding_weight = builder
+        .weights
+        .embeddings
+        .get(&node.inputs[0])
+        .ok_or_else(|| error("fusion batch embedding"))?;
+    let mut gathered = workspace
+        .gathered
+        .take()
+        .ok_or_else(|| error("fusion batch gather"))?;
+    scope.record(
+        super::attention::attention::embedding_batch(
+            (&mut gathered).partition([1, 256]),
+            embedding_weight,
+            metadata_batch,
+        )
+        .generics(vec![
+            HIDDEN.to_string(),
+            crate::constants::METADATA_FIELDS.to_string(),
+        ]),
+    )?;
     for (lane, meta) in metadata.iter().enumerate().take(ROWS) {
+        // SAFETY: `gathered` stays alive in this frame while the view is used, and each
+        // lane addresses a disjoint row.
+        let embedding = unsafe { super::arena::row_view(&gathered, ROWS, lane) }.map_err(error)?;
         let normalized = Capture {
             scope,
             arena: &mut *arena,
@@ -151,20 +195,14 @@ pub(super) fn record(
             fusion: &mut builder.lane_fusion[lane],
             mode: CaptureMode::Row(lane),
         }
-        .fusion_input(node, HIDDEN)?;
+        .fusion_norm(HIDDEN, &embedding)?;
         workspace.copy_row(scope, lane, &normalized)?;
         builder.lane_fusion[lane]
             .as_mut()
             .ok_or_else(|| error("fusion row owner"))?
             .normalized = Some(normalized);
     }
-    let Some(super::program::FusionWeights {
-        projection: ProjectionWeight::Dense(weight),
-        ..
-    }) = &builder.weights.fusion
-    else {
-        return Err(error("fusion batch dense capability"));
-    };
+    workspace.gathered = Some(gathered);
     scope.record(
         super::linear_batch::batched::dense(
             (&mut output).partition(TILE),
@@ -214,3 +252,10 @@ pub fn with_row_reference<T>(run: impl FnOnce() -> T) -> T {
 #[cfg(test)]
 #[path = "../../tests/unit/resident_fusion_batch.rs"]
 mod tests;
+
+/// Captured nodes per fused chunk after the batched gather: one gather, one projection,
+/// and one norm + one memcpy per lane. The IR graph node count is unchanged.
+#[cfg(test)]
+pub(super) const fn captured_nodes(width: usize) -> usize {
+    2 + 2 * width
+}

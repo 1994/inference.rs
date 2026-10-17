@@ -186,6 +186,56 @@ unsafe impl DeviceAllocation for RowAllocation {
     }
 }
 
+/// Borrow one lane of a batched tensor without taking ownership of the slot.
+///
+/// Used where the owner already outlives the capture (metadata rows and the batched
+/// fusion gather). The caller must keep `slot` alive for every use of the view and
+/// must not use two views of the same lane as concurrent mutable outputs.
+///
+/// # Safety
+/// The returned tensor aliases `slot`'s device memory; its lifetime is not tracked.
+#[expect(
+    unsafe_code,
+    reason = "Audited lane view: the owner is retained by the caller for the graph lifetime, \
+              the lane extent is checked against the slot, and same-stream replay serializes access"
+)]
+pub(crate) unsafe fn row_view<T: DType>(
+    slot: &Tensor<T>,
+    lanes: usize,
+    lane: usize,
+) -> Result<Tensor<T>> {
+    if lanes == 0 || !slot.size().is_multiple_of(lanes) {
+        return Err(Error::invalid("activation slot is not batched"));
+    }
+    let size = slot.size() / lanes;
+    if lane >= lanes {
+        return Err(Error::invalid("activation lane out of bounds"));
+    }
+    let stride = size_of::<T>();
+    let offset = lane
+        .checked_mul(size)
+        .and_then(|row| row.checked_mul(stride))
+        .ok_or_else(|| Error::invalid("activation row offset overflow"))?;
+    let total = slot.num_bytes();
+    let allocation = RowAllocation {
+        pointer: slot.device_pointer().cu_deviceptr()
+            + u64::try_from(offset).map_err(device_error)?,
+        bytes: total
+            .checked_sub(offset)
+            .ok_or_else(|| Error::invalid("activation row extent"))?,
+        device: slot.device_id(),
+    };
+    // SAFETY: the owner is retained by the caller; the row lies fully inside the slot by
+    // construction, and the caller serializes disjoint lane access on one stream.
+    Ok(unsafe {
+        Tensor::from_foreign(
+            Arc::new(allocation),
+            vec![i32::try_from(size).map_err(device_error)?],
+            vec![1],
+        )
+    })
+}
+
 /// Owned tensor covering row `lane` of a taken batched slot; dropping it frees
 /// nothing. The returned Arc restores the slot once every row tensor is dropped.
 /// # Errors
