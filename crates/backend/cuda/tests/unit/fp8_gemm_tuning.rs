@@ -297,3 +297,32 @@ fn fp8_native_candidates_and_lt_exact_gate_cover_tails_and_weight_owners() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn fp8_row_tile_128_is_accepted_and_enumerated_after_the_contract_bump() {
+    // `Key::contract` is part of the persisted FP8 table key: bumping it is what
+    // forces a stored 64-wide selection to be re-searched with the 128 row tile.
+    assert!(CONTRACT.contains("fp8-channel-exact-v2"));
+    assert!(CONTRACT.contains(":tile-m128"));
+    for tile_n in COLUMN_TILES {
+        assert!(
+            NativeConfig {
+                tile_m: 128,
+                tile_n
+            }
+            .valid()
+        );
+    }
+    let mut choices = Vec::new();
+    for tile_m in ROW_TILES {
+        for tile_n in COLUMN_TILES {
+            choices.push(Choice::Native(NativeConfig { tile_m, tile_n }));
+        }
+    }
+    assert!(choices.iter().any(|choice| {
+        matches!(choice, Choice::Native(config)
+            if config.tile_m == 128
+                && config.tile_n == crate::constants::QUANT_GEMM_TILE[1])
+    }));
+    assert!(!choices.is_empty());
+}
