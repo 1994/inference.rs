@@ -96,9 +96,8 @@ fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result
     changed.kernel_schema.push_str("-changed");
     variants.push(changed);
     let mut changed = original.clone();
-    changed.kernel_schema = changed
-        .kernel_schema
-        .replace("-v2:search-ab:confirm-ba", "-v1");
+    assert!(changed.kernel_schema.contains("nvfp4-v3"));
+    changed.kernel_schema = changed.kernel_schema.replace("nvfp4-v3", "nvfp4-v1");
     variants.push(changed);
     let mut changed = original.clone();
     changed.activation_mode = "different-scale-mode".into();
