@@ -2,7 +2,7 @@
 
 把 draft 的整份 logits 回读和 CPU greedy 扫描迁到 GPU，能稳定节省约 1.6%–2.0% 的单请求 TPOT；它不能覆盖当前与 vLLM 的主要差距。batch4 TPOT 的配对中位数退化 2.97%，区间跨过改善和退化，候选不满足默认启用条件，尚未合入 main。
 
-共同测量规则见[性能基线方案](../plans/performance/baseline.md)，较大的执行差距见[vLLM main 调查](vllm-main-execution-paths-2026-10-12.md)。本实验没有更新 native 基线，也没有测量最新 vLLM main。
+共同测量规则见[性能基线方案](../../plans/performance/baseline.md)，较大的执行差距见[vLLM main 调查](vllm-main-execution-paths-2026-10-12.md)。本实验没有更新 native 基线，也没有测量最新 vLLM main。
 
 ## 候选与验证范围
 

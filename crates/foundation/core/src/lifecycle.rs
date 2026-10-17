@@ -30,7 +30,6 @@ impl RequestStatus {
     pub const fn terminal(&self) -> bool {
         matches!(self, Self::Finished(_))
     }
-    ///
     /// # Errors
     /// Returns an invariant error for an illegal request lifecycle transition.
     pub fn transition(&mut self, next: Self) -> Result<()> {

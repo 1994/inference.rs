@@ -1,10 +1,12 @@
 use super::*;
+use crate::test_support::fixture_graph;
 use infer_core::{OpId, TensorId};
 use infer_ir::{DType, TensorNode, TensorSpec};
 use std::collections::BTreeMap;
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -120,63 +122,12 @@ fn kv_block_bytes_counts_attention_states_in_storage_bytes() -> Result<()> {
     Ok(())
 }
 
-fn activation_graph(width: usize) -> Result<DataflowGraph> {
-    let embedding = TensorId::ONE;
-    let hidden = TensorId::new(2)?;
-    let logits = TensorId::new(3)?;
-    Ok(DataflowGraph {
-        tensors: vec![
-            TensorSpec {
-                id: embedding,
-                shape: vec![width, width],
-                dtype: DType::Bf16,
-                storage: TensorStorage::Weight {
-                    slot: "embedding".into(),
-                },
-            },
-            TensorSpec {
-                id: hidden,
-                shape: vec![width],
-                dtype: DType::F32,
-                storage: TensorStorage::Activation,
-            },
-            TensorSpec {
-                id: logits,
-                shape: vec![width],
-                dtype: DType::F32,
-                storage: TensorStorage::Activation,
-            },
-        ],
-        nodes: vec![
-            TensorNode {
-                id: OpId::ONE,
-                layer: None,
-                op: TensorOp::Embedding,
-                inputs: vec![embedding],
-                outputs: vec![hidden],
-                states: vec![],
-            },
-            TensorNode {
-                id: OpId::new(2)?,
-                layer: None,
-                op: TensorOp::Add,
-                inputs: vec![hidden, hidden],
-                outputs: vec![logits],
-                states: vec![],
-            },
-        ],
-        hidden: Some(hidden),
-        logits: Some(logits),
-        ..Default::default()
-    })
-}
-
 #[test]
 fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Result<()> {
     let mut weights = fixture_weights();
     weights.prefill_width = 256;
     weights.narrow_prefill_width = 64;
-    let graph = activation_graph(48)?;
+    let graph = fixture_graph(48)?;
     let quote = |private| {
         program_price(
             &graph,
@@ -206,7 +157,7 @@ fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Re
 fn pooled_admission_keeps_verification_required_by_prompt_fallback() -> Result<()> {
     let mut weights = fixture_weights();
     weights.prefill_width = 3;
-    let graph = activation_graph(48)?;
+    let graph = fixture_graph(48)?;
     let quote = |private| {
         program_price(
             &graph,
@@ -252,7 +203,7 @@ fn affine_admission_rejects_both_product_and_total_overflow() {
 #[test]
 fn affine_admission_counts_fp8_and_f32_kv_and_full_history() -> Result<()> {
     let mut weights = fixture_weights();
-    let graph = activation_graph(48)?;
+    let graph = fixture_graph(48)?;
     let mut with_kv = graph.clone();
     for (id, columns) in [(4, 128), (5, 256)] {
         with_kv.tensors.push(TensorSpec {

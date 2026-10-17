@@ -10,7 +10,6 @@ use infer_ir::StateKind;
 const MIN_REQUEST_CAPACITY: usize = 256;
 
 impl SequenceStateManager {
-    ///
     /// # Errors
     /// Returns an invalid-input error for a zero state capacity or page size.
     pub fn new(total_pages: usize, block_size: usize) -> Result<Self> {
@@ -95,7 +94,6 @@ impl SequenceStateManager {
         self.owners.insert(owner, id)?;
         Ok(id)
     }
-    ///
     /// # Errors
     /// Returns a not-found, invalid-input, or capacity error for unknown state, growth past its capacity, or insufficient logical pages.
     pub fn ensure_tokens(&mut self, id: StateId, tokens: usize) -> Result<()> {
@@ -158,7 +156,6 @@ impl SequenceStateManager {
         self.ids = ids;
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an invalid-input, conflict, or capacity error for an invalid owner, reservation, or exhausted storage.
     pub fn reserve(

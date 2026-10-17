@@ -89,6 +89,7 @@ fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights
         .flat_map(|v| vec![bf16::from_f32(v); d])
         .collect();
     Ok(ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),

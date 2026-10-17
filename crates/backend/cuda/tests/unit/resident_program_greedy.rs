@@ -1,60 +1,10 @@
 use super::*;
+use crate::test_support::fixture_graph;
 use crate::{mlp::ProjectionWeight, resident::FusionWeights};
 use cutile::half::bf16;
-use infer_core::{OpId, TensorId};
-use infer_ir::{DType, DataflowGraph, Sampling, TensorNode, TensorOp, TensorSpec, TensorStorage};
+use infer_core::TensorId;
+use infer_ir::Sampling;
 use std::collections::{BTreeMap, BTreeSet};
-
-fn fixture_graph(width: usize) -> Result<DataflowGraph> {
-    let embedding = TensorId::ONE;
-    let hidden = TensorId::new(2)?;
-    let logits = TensorId::new(3)?;
-    Ok(DataflowGraph {
-        tensors: vec![
-            TensorSpec {
-                id: embedding,
-                shape: vec![width, width],
-                dtype: DType::Bf16,
-                storage: TensorStorage::Weight {
-                    slot: "embedding".into(),
-                },
-            },
-            TensorSpec {
-                id: hidden,
-                shape: vec![width],
-                dtype: DType::F32,
-                storage: TensorStorage::Activation,
-            },
-            TensorSpec {
-                id: logits,
-                shape: vec![width],
-                dtype: DType::F32,
-                storage: TensorStorage::Activation,
-            },
-        ],
-        nodes: vec![
-            TensorNode {
-                id: OpId::ONE,
-                layer: None,
-                op: TensorOp::Embedding,
-                inputs: vec![embedding],
-                outputs: vec![hidden],
-                states: vec![],
-            },
-            TensorNode {
-                id: OpId::new(2)?,
-                layer: None,
-                op: TensorOp::Add,
-                inputs: vec![hidden, hidden],
-                outputs: vec![logits],
-                states: vec![],
-            },
-        ],
-        hidden: Some(hidden),
-        logits: Some(logits),
-        ..Default::default()
-    })
-}
 
 fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> {
     let embedding = TensorId::ONE;
@@ -65,6 +15,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .map(|i| bf16::from_f32(f32::from(i16::try_from(i * 13 % 29).unwrap() - 14) / 32.0))
         .collect();
     Ok(ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,

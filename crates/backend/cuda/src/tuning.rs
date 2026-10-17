@@ -52,6 +52,26 @@ const MIN_REPS: usize = 10;
 /// Measurement wall clocks and repetition bounds.
 const MAX_REPS: usize = 30;
 
+/// Median of paired timing samples, or NaN when there are none.
+///
+/// Every tuning search reports a median through this one implementation so a speedup cannot depend
+/// on which module computed it. The halve-then-add form keeps the midpoint of two large samples
+/// from overflowing the way `(lo + hi) / 2` would.
+fn median(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return f32::NAN;
+    }
+    let mut ordered = samples.to_vec();
+    ordered.sort_by(f32::total_cmp);
+    let lo = (ordered.len() - 1) / 2;
+    let hi = ordered.len() / 2;
+    if lo == hi {
+        ordered[lo]
+    } else {
+        ordered[lo] / 2.0 + ordered[hi] / 2.0
+    }
+}
+
 #[derive(Serialize)]
 pub struct ProjectionTrial {
     pub key: String,
@@ -285,6 +305,9 @@ pub struct TilingTable {
     /// Exact vectorized shared-key refinement of the qualified shared kernel.
     #[serde(default)]
     pub resident_vector_shared_attention: Vec<attention::vector::Entry>,
+    /// Bit-exact combined vector key/consumer refinement of the qualified vector kernel.
+    #[serde(default)]
+    pub resident_vector_combined_attention: Vec<attention::vector_combined::Entry>,
     /// FA4 BF16 profile, artifact and architecture scoped cluster search evidence.
     #[serde(default)]
     pub resident_mma_attention: Vec<attention::mma::Entry>,
@@ -323,6 +346,8 @@ struct StoredTilingTable {
     #[serde(default)]
     resident_vector_shared_attention: Vec<attention::vector::Entry>,
     #[serde(default)]
+    resident_vector_combined_attention: Vec<attention::vector_combined::Entry>,
+    #[serde(default)]
     resident_mma_attention: Vec<attention::mma::Entry>,
     #[serde(default)]
     resident_mma_f32_attention: Vec<attention::mma_f32::Entry>,
@@ -358,6 +383,7 @@ impl From<StoredTilingTable> for TilingTable {
             resident_exact_attention: stored.resident_exact_attention,
             resident_shared_attention: stored.resident_shared_attention,
             resident_vector_shared_attention: stored.resident_vector_shared_attention,
+            resident_vector_combined_attention: stored.resident_vector_combined_attention,
             resident_mma_attention: stored.resident_mma_attention,
             resident_mma_f32_attention: stored.resident_mma_f32_attention,
             resident_exact_recurrent: stored.resident_exact_recurrent,

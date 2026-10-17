@@ -77,7 +77,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         snapshot.cost_state = self.costs.capture_state()?;
         Ok(snapshot)
     }
-    ///
     /// # Errors
     /// Returns a serialization error if recorded replay actions cannot be encoded and decoded.
     pub fn journal(&self) -> Result<Vec<ReplayAction>> {
@@ -89,7 +88,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         }
         Ok(self.actions.iter().cloned().collect())
     }
-    ///
     /// # Errors
     /// Returns validation, planning, backend, or invariant errors if an action cannot be applied to this engine.
     pub fn replay(&mut self, actions: &[ReplayAction]) -> Result<()> {

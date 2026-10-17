@@ -9,7 +9,6 @@ use infer_kernel_api::KernelRegistry;
 /// Byte width of one scratch element; dataflow tensors are always `DType::F32`.
 const F32_BYTES: u64 = 4;
 
-///
 /// # Errors
 /// Returns an invalid-input or unsupported error for an invalid model graph or unsupported model operations.
 pub fn lower(
@@ -62,7 +61,6 @@ fn operation_ir(
     })
 }
 
-///
 /// # Errors
 /// Returns an invalid-input, unsupported, or capacity error if the graph cannot be lowered to compatible kernels within the workspace budget.
 pub fn compile(

@@ -74,7 +74,6 @@ pub fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-///
 /// # Errors
 /// Returns an invalid-input or I/O error for a path that is invalid, inaccessible, or escapes the package root.
 pub fn package_path(root: &Path, name: &str) -> Result<PathBuf> {
@@ -133,7 +132,6 @@ impl ModelPackage {
         }
         Ok(())
     }
-    ///
     /// # Errors
     /// Returns an I/O or invalid-input error for missing, malformed, unsupported, or oversized assets.
     pub fn open(root: impl AsRef<Path>, id: ModelId) -> Result<Self> {
@@ -316,8 +314,11 @@ fn bind_weights(
         weights_bytes = weights_bytes
             .checked_add(header.byte_len())
             .ok_or_else(|| Error::invalid("package size overflow"))?;
+        let host = (spec.elements()? as u64)
+            .checked_mul(crate::constants::F32_BYTES_U64)
+            .ok_or_else(|| Error::invalid("host size overflow"))?;
         host_bytes = host_bytes
-            .checked_add(spec.elements()? as u64 * crate::constants::F32_BYTES_U64)
+            .checked_add(host)
             .ok_or_else(|| Error::invalid("host size overflow"))?;
         used.insert(source.clone());
         bindings.push(WeightBinding {

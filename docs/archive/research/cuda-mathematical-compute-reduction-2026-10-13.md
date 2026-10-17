@@ -32,7 +32,7 @@ norm 和 cache 操作；prefill 和 decode 的有效行数也不同。
 
 ## 1. 按真正需要的行裁剪终端计算
 
-[decoder recipe](../../crates/model/recipes/src/decoder.rs)中，最后一层的 KV 在 attention
+[decoder recipe](../../../crates/model/recipes/src/decoder.rs)中，最后一层的 KV 在 attention
 处更新；MLP 位于它之后。普通 MTP=0、无需 Full hidden 的 prefill 只消费最后一行 logits。
 因此可从输出需求反向传播：最后层保留全部有效行的 K/V 投影、RoPE 和 KV 写入，
 只计算最后行的 Q/gate、attention readout、O projection、MLP、最终 norm 和词表输出。
@@ -48,7 +48,7 @@ norm 和 cache 操作；prefill 和 decode 的有效行数也不同。
 还可能省掉该 attention 层的非最后 query readout，但不省全部 K/V 工作；
 这是数学预算，没有按比例预测 TTFT。
 
-[之前单行 logits 实验](cuda-performance-experiments.md#167-单行-logits-的服务对照吞吐与首-token-中位数出现权衡)
+[之前单行 logits 实验](../../research/cuda-performance-experiments.md#167-单行-logits-的服务对照吞吐与首-token-中位数出现权衡)
 已有正确性证据，却出现服务中位数回退并撤回；同批数据还显示驻留/排队和整组吞吐变化。
 新的实验必须先保持旧 arena/admission，仅改变需要执行的行，单独对照计算效果，
 随后再评估存储收缩。单行 dispatch 必须和原有效行保持同一量化与累加口径，不能直接用
@@ -59,8 +59,8 @@ norm 和 cache 操作；prefill 和 decode 的有效行数也不同。
 298,844,160 MAC。仍完整执行最后 attention 的 Q/readout，不把它与 KV append 分离，
 也不改变最终 chunk 的行数。两个对照程序保留相同 arena 和额外图，避免 admission 干扰。
 
-[内部规划器](../../crates/backend/cuda/src/resident/prefill_demand.rs)仅编译进 CUDA 单元测试，
-没有生产环境变量或 CLI 开关。[完整模型检查](../../crates/backend/cuda/tests/unit/resident_prefill_demand_model.rs)
+[内部规划器](../../../crates/backend/cuda/src/resident/prefill_demand.rs)仅编译进 CUDA 单元测试，
+没有生产环境变量或 CLI 开关。[完整模型检查](../../../crates/backend/cuda/tests/unit/resident_prefill_demand_model.rs)
 在默认 scalar recurrent、MTP=0、冻结权重/tokens/tuning 下，对宽度 64/256 和长度
 51/64/255/256/511 比较全部 F32 状态、FP8 KV、完整最终 logits、每个长度后 8 步完整
 hidden/logits 与 greedy 选择；均逐位一致，hidden readout 的完整图回退也通过。

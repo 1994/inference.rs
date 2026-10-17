@@ -156,6 +156,10 @@ impl<B: BackendProvider> Worker<B> {
         }
     }
     fn collect_abandoned(&mut self) {
+        // The snapshot is republished once for the whole drain. Rebuilding it per retired state
+        // is O(retired x tracked states) of backend growth queries for a view no reader can
+        // observe between iterations, because this owner is the only writer of `states`.
+        let mut drained = false;
         for _ in 0..ABANDONED_DRAIN_BATCH {
             let Some(state) = self
                 .shared
@@ -166,6 +170,7 @@ impl<B: BackendProvider> Worker<B> {
             else {
                 break;
             };
+            drained = true;
             let result = if self.states.contains(&state) {
                 self.backend.release_state(state)
             } else {
@@ -186,6 +191,8 @@ impl<B: BackendProvider> Worker<B> {
                     }
                 }
             }
+        }
+        if drained {
             self.refresh();
         }
     }

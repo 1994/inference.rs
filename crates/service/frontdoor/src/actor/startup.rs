@@ -15,7 +15,6 @@ const COMMAND_CHANNEL_CAPACITY: usize = 256;
 const CONTROL_CHANNEL_CAPACITY: usize = 64;
 
 impl RuntimeHandle {
-    ///
     /// # Errors
     /// Returns a backend/state error if stale completions cannot be drained or an I/O error if the runtime thread cannot start.
     pub fn start<B: BackendProvider + Send + 'static>(engine: Engine<B>) -> Result<Self>

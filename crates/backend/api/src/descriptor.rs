@@ -28,7 +28,6 @@ pub struct SubmissionDescriptor {
     pub work: [WorkDescriptor; MAX_SUBMISSION_BATCH],
 }
 impl SubmissionDescriptor {
-    ///
     /// # Errors
     /// Returns an invalid-input error if token counts or descriptor fields exceed the device ABI ranges.
     pub fn from_plan(plan: &StepPlan, metadata_slot: u32) -> Result<Self> {

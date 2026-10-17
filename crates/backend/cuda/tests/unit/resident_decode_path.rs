@@ -1,5 +1,6 @@
 //! Full checkpoint census of private/pooled arithmetic with a common forced trajectory.
 //! Original GEMV is a diagnostic control; the experimental private lowering must match pool.
+use super::support::{agreement, differences, seed_prefix, state_census_slot};
 use super::{LoadOptions, LoadedModel};
 use crate::{
     device::CudaDevice,
@@ -11,26 +12,6 @@ use crate::{
 use infer_core::{Error, ModelId, Result};
 use serde_json::{Value, json};
 
-fn agreement(left: &[f32], right: &[f32], field: &str) -> Value {
-    assert_eq!(left.len(), right.len(), "{field}");
-    assert!(!left.is_empty(), "{field}");
-    assert!(left.iter().chain(right).all(|x| x.is_finite()), "{field}");
-    let mut different = 0usize;
-    let mut maximum = 0.0_f64;
-    let mut first = None;
-    for (index, (&left, &right)) in left.iter().zip(right).enumerate() {
-        maximum = maximum.max((f64::from(left) - f64::from(right)).abs());
-        if left.to_bits() != right.to_bits() {
-            different += 1;
-            first.get_or_insert_with(|| json!({"element":index,"left":left,"right":right,"left_bits":left.to_bits(),"right_bits":right.to_bits()}));
-        }
-    }
-    json!({"field":field,"elements":left.len(),"different":different,"maximum_absolute":maximum,"first":first})
-}
-fn differences(value: &Value) -> usize {
-    usize::try_from(value["different"].as_u64().expect("diagnostic count"))
-        .expect("count fits usize")
-}
 fn state_census(
     loaded: &LoadedModel,
     program: &DeviceProgram,
@@ -38,87 +19,6 @@ fn state_census(
 ) -> Result<(usize, Vec<Value>)> {
     state_census_slot(loaded, program, pool, 0)
 }
-fn state_census_slot(
-    loaded: &LoadedModel,
-    program: &DeviceProgram,
-    pool: &SlotPool,
-    slot: usize,
-) -> Result<(usize, Vec<Value>)> {
-    let (state, fp8) = pool.test_states(slot);
-    assert_eq!(program.states().len(), state.len());
-    let mut changed = 0;
-    let mut details = Vec::new();
-    for (id, tensors) in program.states() {
-        let reference = &state[id];
-        assert_eq!(tensors.len(), reference.len());
-        let spec = loaded
-            .graph
-            .tensors
-            .iter()
-            .find(|s| s.id == *id)
-            .ok_or_else(|| Error::invariant("state spec"))?;
-        for (part, (left, right)) in tensors.iter().zip(reference).enumerate() {
-            let count = agreement(
-                &loaded.device().read_borrowed(left)?,
-                &loaded.device().read_borrowed(right)?,
-                &format!("{id:?} {:?} part={part}", spec.storage),
-            );
-            changed += differences(&count);
-            if differences(&count) > 0 {
-                details.push(count);
-            }
-        }
-    }
-    assert_eq!(program.fp8_states().len(), fp8.len());
-    for (id, (keys, values)) in program.fp8_states() {
-        let (rkeys, rvalues) = &fp8[id];
-        for (field, left, right) in [("keys", keys, rkeys), ("values", values, rvalues)] {
-            let a = loaded.device().read_borrowed(left)?;
-            let b = loaded.device().read_borrowed(right)?;
-            assert_eq!(a.len(), b.len());
-            assert!(a.iter().chain(&b).all(|x| x.0 & 127 != 127));
-            let different = a.iter().zip(&b).filter(|(a, b)| a.0 != b.0).count();
-            changed += different;
-            if different > 0 {
-                details.push(json!({"field":format!("{id:?} {field}"),"elements":a.len(),"different":different}));
-            }
-        }
-    }
-    Ok((changed, details))
-}
-fn seed_prefix(
-    loaded: &LoadedModel,
-    aligned: &DeviceProgram,
-    original: &mut DeviceProgram,
-) -> Result<()> {
-    // Seed every program with the same prefix before isolating decode arithmetic.
-    // Copy into captured allocations without changing their addresses or F32/FP8 storage.
-    for (id, source) in aligned.states() {
-        let target = original
-            .states_mut()
-            .get_mut(id)
-            .ok_or_else(|| Error::invariant("control state"))?;
-        assert_eq!(target.len(), source.len());
-        for (target, source) in target.iter_mut().zip(source) {
-            assert_eq!(target.size(), source.size());
-            loaded.device().copy_d2d(target, source, source.size())?;
-        }
-    }
-    for (id, (keys, values)) in aligned.fp8_states() {
-        let (target_keys, target_values) = original
-            .fp8_states_mut()
-            .get_mut(id)
-            .ok_or_else(|| Error::invariant("control FP8 cache"))?;
-        for (target, source) in [(target_keys, keys), (target_values, values)] {
-            assert_eq!(target.size(), source.size());
-            loaded.device().copy_d2d(target, source, source.size())?;
-        }
-    }
-    loaded.device().drain()?;
-    original.set_position(aligned.position());
-    Ok(())
-}
-
 fn common_prefix(
     loaded: &LoadedModel,
     original: &mut DeviceProgram,

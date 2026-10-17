@@ -127,6 +127,7 @@ impl Pair {
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         batch_width: 4,

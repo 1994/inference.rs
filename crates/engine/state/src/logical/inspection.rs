@@ -17,7 +17,6 @@ impl SequenceStateManager {
     pub const fn free_pages(&self) -> usize {
         self.total_pages.saturating_sub(self.pages.len())
     }
-    ///
     /// # Errors
     /// Returns a not-found error for an unknown sequence identity.
     pub fn get(&self, id: StateId) -> Result<&SequenceState> {
@@ -39,7 +38,6 @@ impl SequenceStateManager {
             references: self.pages.values().map(|p| p.references).sum(),
         }
     }
-    ///
     /// # Errors
     /// Returns an invariant error for inconsistent identities, ownership, capacity, or execution cursors.
     pub fn check_invariants(&self) -> Result<()> {

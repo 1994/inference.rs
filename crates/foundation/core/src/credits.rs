@@ -134,9 +134,16 @@ impl Drop for CreditLease {
             self.slot.retired.store(true, Ordering::Release);
         }
         self.slot.leased.store(false, Ordering::Release);
-        if let Ok(wake) = self.slot.budget.wake.lock()
-            && let Some(wake) = &*wake
-        {
+        // Clone the waker out and release the lock before invoking it: the callback is opaque, so
+        // calling it under the shared budget lock would serialize every lease release behind it.
+        let wake = self
+            .slot
+            .budget
+            .wake
+            .lock()
+            .ok()
+            .and_then(|wake| wake.clone());
+        if let Some(wake) = wake {
             wake();
         }
     }

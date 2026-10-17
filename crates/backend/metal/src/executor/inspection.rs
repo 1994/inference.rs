@@ -56,7 +56,6 @@ impl MetalBackend {
     pub fn drain_layer_probes(&mut self) -> Vec<LayerProbe> {
         self.probes.drain(..).collect()
     }
-    ///
     /// # Errors
     /// Returns a conflict error while work is in flight, or a capacity error if the probe budget is insufficient.
     pub fn enable_layer_probes(&mut self, bytes: u64) -> Result<()> {

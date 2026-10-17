@@ -23,7 +23,6 @@ pub struct MemoryEstimate {
     pub device_bytes: u64,
     pub fits: bool,
 }
-///
 /// # Errors
 /// Returns an invalid-input or unsupported error for invalid model dimensions, unsupported state layouts, or size overflow.
 pub fn memory_estimate(

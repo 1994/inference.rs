@@ -109,6 +109,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
+        mrope: false,
     }
 }
 
@@ -291,6 +292,7 @@ fn draft_weights(
         embeddings: BTreeMap::new(),
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
+        mrope: false,
     };
     for tensor in &graph.tensors {
         let TensorStorage::Weight { slot } = &tensor.storage else {
@@ -426,6 +428,7 @@ fn add_rope(
     weights: &mut ProgramWeights,
     position: &infer_ir::PositionSpec,
 ) -> Result<()> {
+    weights.mrope = !position.multimodal_sections.is_empty();
     for node in &graph.nodes {
         if let TensorOp::Rope {
             rotary_dim, theta, ..

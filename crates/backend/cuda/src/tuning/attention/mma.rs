@@ -217,6 +217,7 @@ pub(crate) fn prepare(
             &weights.resident_tuning,
             baseline,
         );
+        let baseline = super::vector_combined::select(device, shape, baseline);
         // Exact target tuning must finish before proposal search starts the shared
         // wall-clock allowance. Only proposal programs may narrow precision.
         if weights.fusion.is_some() {

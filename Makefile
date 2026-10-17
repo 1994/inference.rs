@@ -21,7 +21,8 @@ help:
 	@echo '  make accept PACKAGE_FILE=... MODEL=... GOLDEN=...'
 	@echo '  DIST_DIR=artifacts/packages overrides the artifact directory.'
 	@echo 'Quality gates: check, check-rust, check-tools, check-security,'
-	@echo '  test-cuda, test-metal, bench (aliases: check-cuda, check-metal, check-cpu),'
+	@echo '  test-cuda, test-cuda-hosted (CUDA compile/lint/tests, no GPU), test-metal, bench'
+	@echo '  (aliases: check-cuda, check-metal, check-cpu),'
 	@echo '  check-attention, check-msrv, check-linux, check-linux-numa, check-package'
 
 # `test` is the repository's own test entries. The packaging pipeline's host suite is
@@ -56,12 +57,16 @@ accept:
 
 # Device and tool entries use the documented verbs; the check-* names remain as aliases while the
 # rest of the tree migrates.
-.PHONY: check test-cuda test-metal bench check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa check-package
+.PHONY: check test-cuda test-cuda-hosted test-metal bench check-rust check-tools check-security check-metal check-cuda check-attention check-msrv check-cpu check-linux check-linux-numa check-package
 check:
 	./tools/check/gate.sh all
 
 test-cuda:
 	./tools/check/gate.sh cuda
+
+# Header-only CUDA half: compiles, lints and tests the cuda-gated modules without a device.
+test-cuda-hosted:
+	./tools/check/gate.sh cuda-hosted
 
 test-metal:
 	./tools/check/gate.sh metal

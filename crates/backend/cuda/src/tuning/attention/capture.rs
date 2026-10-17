@@ -295,6 +295,8 @@ impl Captured {
             crate::resident::attention_oxide::Support::load_shared(device)?
         } else if choice == Choice::VectorSharedKv {
             crate::resident::attention_oxide::Support::load_vector(device)?
+        } else if choice == Choice::VectorSharedKvCombined {
+            crate::resident::attention_oxide::Support::load_combined(device)?
         } else if choice == Choice::RustSimt {
             crate::resident::attention_oxide::Support::load(device)?
         } else {

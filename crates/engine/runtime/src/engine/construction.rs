@@ -14,7 +14,6 @@ use std::{collections::BTreeSet, collections::VecDeque};
 const MAX_TRACKED_PARENTS: usize = 8192;
 
 impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
-    ///
     /// # Errors
     /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
     pub fn new(
@@ -29,7 +28,6 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
 }
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
-    ///
     /// # Errors
     /// Returns a validation, unsupported, or capacity error if configuration, model compilation, or backend initialization fails.
     pub fn with_policy(
@@ -132,7 +130,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             observations,
         })
     }
-    ///
     /// # Errors
     /// Returns a conflict error if provider installation is attempted after requests or replay actions have been recorded.
     pub fn with_workloads(

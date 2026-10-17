@@ -19,7 +19,7 @@ use std::{
 };
 
 /// Bump when quantization, arithmetic or the paired measurement protocol changes.
-const KERNEL_SCHEMA: &str = "cutile0.4-nvfp4-v2:search-ab:confirm-ba:block16-e4m3:quant512:mma-k256:f32:full-output:alpha1/(wg*xs)";
+const KERNEL_SCHEMA: &str = "cutile0.4-nvfp4-v3:search-ab:confirm-ba:block16-e4m3:quant512:mma-k256:f32:full-output:alpha1/(wg*xs):tile-m128";
 const ACTIVATION_MODE: &str = "nvfp4-w4a4-block16";
 /// Resident projection geometry is (activation rows, output columns, reduction columns).
 const GEMM_RANK: usize = 3;
@@ -27,9 +27,10 @@ const GEMM_RANK: usize = 3;
 const MEDIAN_INTERPOLATION: f32 = 0.5;
 
 /// Supported row-tile variants of the existing native scaled MMA kernels.
-const TILE_M_SEARCH: [usize; 2] = [
+const TILE_M_SEARCH: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
     crate::constants::PROMPT_GEMM_TILE_ROWS,
+    128,
 ];
 /// Supported output-column tile variants; the first is the conservative baseline.
 const TILE_N_SEARCH: [usize; 2] = [

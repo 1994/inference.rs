@@ -34,7 +34,6 @@ impl CostModelProvider for FallbackCosts {
         Ok(Some(summary.fallback))
     }
 }
-///
 /// # Errors
 /// Returns an invalid-input error for invalid queries, mixed programs or backends, or overflowing aggregate costs. An empty batch has zero cost.
 pub fn aggregate(work: &[CostQuery]) -> Result<CostEstimate> {
@@ -164,7 +163,6 @@ pub struct CalibratedCosts {
     profiles: BoundedMap<Shape, Profile>,
 }
 impl CalibratedCosts {
-    ///
     /// # Errors
     /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
     pub fn new(binding: String, config: CostModelConfig) -> Result<Self> {

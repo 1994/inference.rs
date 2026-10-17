@@ -9,7 +9,6 @@ pub struct ProviderMetadata {
     pub spi_version: u32,
 }
 impl ProviderMetadata {
-    ///
     /// # Errors
     /// Returns an unsupported error for a different SPI version or an invalid-input error for an empty provider name.
     pub fn validate(&self) -> Result<()> {

@@ -25,8 +25,7 @@
 | `crates/service/frontdoor` | `infer-frontdoor` | 输入准备、单所有者 actor、HTTP/SSE 与交付 |
 | `crates/service/agent` | `infer-agent` | 诊断工具、证据查询、实验与建议 |
 | `crates/service/cli` | `infer-cli` | 参数解析、命令分发、backend 选择与运行支持 |
-| `crates/testing/cpu/host` | `infer-backend-host` | feature gate 下由真实权重驱动的 CPU 正确性对照 |
-| `crates/testing/cpu/reference` | `infer-backend-reference` | feature gate 下的旧 fixture 对照 |
+| `crates/testing/cpu/reference-ops` | `infer-reference-ops` | 标量参考算子：设备 kernel 的独立数值对照基准 |
 
 ## 依赖方向
 
