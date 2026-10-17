@@ -8,6 +8,8 @@ pub fn available() -> bool {
 }
 pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<SelectedBackend> {
     let _ = selection.autotune;
+    // Target attention profiles select CUDA kernels; Metal always runs its canonical path.
+    let _ = selection.attention_profile;
     let recommended = MetalBackend::recommended_memory_bytes()
         .ok_or_else(|| Error::unsupported("no Metal device available"))?;
     let share =
