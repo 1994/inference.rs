@@ -564,6 +564,17 @@ impl CudaDevice {
         unsafe { self.stream.device().synchronize() }.map_err(device_error)
     }
 
+    /// Waits until all work queued on the device has completed.
+    ///
+    /// Diagnostics that sample driver memory need a quiescent device; this is the
+    /// audited barrier already used before admission queries.
+    ///
+    /// # Errors
+    /// Returns a driver error when the device context cannot be bound or synchronized.
+    pub fn synchronize(&self) -> Result<()> {
+        self.reclaim_barrier()
+    }
+
     pub(crate) fn drain(&self) -> Result<()> {
         self.stream
             .device()
