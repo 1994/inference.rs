@@ -11,8 +11,8 @@
     "--prec-div=true",
     "--prec-sqrt=true"
   ],
-  "source_sha256": "916ae10919074d6c027d4c9f9ef5fc393c89c5a601d6d62fd9c57e116f221797",
-  "ptx_sha256": "b14eda8762b441ea83b670f6eb55582e2319c5335b65e0b7883673964dd20e80",
+  "source_sha256": "d261701f686ab7ec771f4a33bbcb5585eba033d89479ec5fc75d59e4a440702c",
+  "ptx_sha256": "692cc02c5d9982b1de0a3223b1fb5f3439bea175a80b6adb05890fe71e7afc28",
   "canonical_attention_ptx_sha256": "e41ad095da73871ffafa0de0318219b3f1f690f444ccad318fcd83c3b0001e66",
-  "numeric_evidence": "/home/r/benchmarks/inference.rs/exact-shared-attention-2026-10-16/packed-stage-prototype-v1/run-v1/result.json"
+  "numeric_evidence": "/home/r/benchmarks/inference.rs/exact-shared-attention-2026-10-16/paired-shared-consumer-v1/run-v1/result.json"
 }

@@ -1,0 +1,330 @@
+{
+  "repository": "https://github.com/Dao-AILab/flash-attention",
+  "commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "files": [
+    {
+      "path": "flash_attn/cute/__init__.py",
+      "git_blob_sha1": "be32e149b85557dc7dd25feb0f90f000a6f167ad",
+      "sha256": "50713012c3a5e8045f368672342aea6eeeb3b3ce0968cb5639b1f158b9499487",
+      "bytes": 367
+    },
+    {
+      "path": "flash_attn/cute/ampere_helpers.py",
+      "git_blob_sha1": "e3072d8ce85ca9c44eb5e7b809d0ceaf1e14170c",
+      "sha256": "cadac170a7da379e27c36d044360480d710cfa88d082dad2b9decd58e4847111",
+      "bytes": 3706
+    },
+    {
+      "path": "flash_attn/cute/barrier.py",
+      "git_blob_sha1": "c999b180167dfa3262d4b8491c6e81c73de2a966",
+      "sha256": "767af807aa7521b8d15ee6c9534f4745a7ad2224b0da2b816cc49ccb9ea6c119",
+      "bytes": 2054
+    },
+    {
+      "path": "flash_attn/cute/bench_utils.py",
+      "git_blob_sha1": "d83f1c4bb53d03df692a944a4e51c6f38e3bad69",
+      "sha256": "5bd0302c4cd4cd2c3b7e8b1d01eb49d546475d06897678f5543ea2e0172aae84",
+      "bytes": 8431
+    },
+    {
+      "path": "flash_attn/cute/benchmark.py",
+      "git_blob_sha1": "9a7820e7b0c7c70c3fea1c4239d8785561790de1",
+      "sha256": "43bb07eb55d46a402abab8c50984eb39d4cf8f19a11ad79cd0291919614a9101",
+      "bytes": 7367
+    },
+    {
+      "path": "flash_attn/cute/benchmark_flash_attention_fp8.py",
+      "git_blob_sha1": "e50777608869add89aff3eb2ffd8e23bb9d7e9ba",
+      "sha256": "7677c981bc5c9f997f8e1a82eacb2e4498ba55a6c6acccdb96196ec2c24ae193",
+      "bytes": 16735
+    },
+    {
+      "path": "flash_attn/cute/blackwell_helpers.py",
+      "git_blob_sha1": "058d9fa099b39000759c8ba938835da22c445860",
+      "sha256": "c3b80acdd7d35b1a03b7f64cd11b202cf4305c1f8894573ee492c5a178a5befa",
+      "bytes": 61238
+    },
+    {
+      "path": "flash_attn/cute/block_info.py",
+      "git_blob_sha1": "6fb05291be7fb8534da4c767bc93f9b67be3ab78",
+      "sha256": "96f12298fbcf9cc6d8ec5c7262b5d223e2597916111066dd5a59259d14fc6033",
+      "bytes": 8248
+    },
+    {
+      "path": "flash_attn/cute/block_sparse_utils.py",
+      "git_blob_sha1": "b0260468419ccdb86881f7a7ac679cc000240e43",
+      "sha256": "f0ed9697e5d5ad3326d8d32b7b4dab2aa2af7c56e6f642d4de11f3175f93c896",
+      "bytes": 72393
+    },
+    {
+      "path": "flash_attn/cute/block_sparsity.py",
+      "git_blob_sha1": "5c04d08085fea0baeb5d653ce9afdded5a3c5c66",
+      "sha256": "66c7a5988904857ab18ce327a7deef9e22496446a3439906e2b17cab715c13cf",
+      "bytes": 28329
+    },
+    {
+      "path": "flash_attn/cute/cache_utils.py",
+      "git_blob_sha1": "c407f07ed130c25656e24f8655b2a836c02f8515",
+      "sha256": "520eecc83e466061f786c09ffd2c3e638720fd997837219fd0e62b6532c05a01",
+      "bytes": 11672
+    },
+    {
+      "path": "flash_attn/cute/compute_block_sparsity.py",
+      "git_blob_sha1": "c32937b5257c0d8b587e7c32b7bc90d1c57544c3",
+      "sha256": "88a668f6a418f4bae08c810426d0fd6a43834f7c7cf8653599a62f5c46a4e92c",
+      "bytes": 21839
+    },
+    {
+      "path": "flash_attn/cute/copy_utils.py",
+      "git_blob_sha1": "d8c6083c8cc80335ab7182753d01679bf066e8c2",
+      "sha256": "0f563eeeb6654602d1541f7202b7b88386c4dbdbd24ad6b0825834d65e508c09",
+      "bytes": 12656
+    },
+    {
+      "path": "flash_attn/cute/cu_blocks_kernel.py",
+      "git_blob_sha1": "67935a6e20ad25cf68679f6f046b9872d95fc7d7",
+      "sha256": "aebbf862f2b90d13f3b1c50ee79ef49ce7babec7f61d37cfcd426bf2ab113a09",
+      "bytes": 6795
+    },
+    {
+      "path": "flash_attn/cute/cute_dsl_ptxas.py",
+      "git_blob_sha1": "4e00f3f00406c44b4feb44fd4564abc3692df36b",
+      "sha256": "21f0674c9f5a99d7c339092e49d5822d387b0a4673888becff1ac073cb5ac619",
+      "bytes": 5122
+    },
+    {
+      "path": "flash_attn/cute/cute_dsl_utils.py",
+      "git_blob_sha1": "a1e10a04b20dd8c2c86e83ddaa4700caa9d9026b",
+      "sha256": "36f81f1ceaae2c6dd49b7d5d00a3b51bfd3333359fd2e6afcdbd186fbbb1a765",
+      "bytes": 10344
+    },
+    {
+      "path": "flash_attn/cute/fa_logging.py",
+      "git_blob_sha1": "63189cd5d65adba3eb303d8db8757243ced1d0a3",
+      "sha256": "bc71edfa4b1cb7af64b78def09e790ff4c6fe64ab4fcf8e3d9699f44e8d3c0a0",
+      "bytes": 2915
+    },
+    {
+      "path": "flash_attn/cute/fast_math.py",
+      "git_blob_sha1": "c56ea89e79887ddf5f0ddb9bd396d08da8b1493a",
+      "sha256": "7e5f822bf4d0ba36967558f3ae9a1408b410cb726c31222cd61703569d1be738",
+      "bytes": 492
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd.py",
+      "git_blob_sha1": "de930bb6aec8230768fb8464adaf2b8108545263",
+      "sha256": "80cb6bfb436160d73b7214529f94d28b7333c98dff75a53d20552eb33645fea2",
+      "bytes": 67705
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_mla_dk_sm100.py",
+      "git_blob_sha1": "50d2d7a89086ffc029e70af6ab4b9c5729394857",
+      "sha256": "bd18ebf74f631c0593d0e1b24d50d5e911d48a25ac24b21765c85e8ebb137ab0",
+      "bytes": 47916
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_mla_dq_dqv_sm100.py",
+      "git_blob_sha1": "f642e6c058b9d2a06ef77738fcb34b72095da05b",
+      "sha256": "baae2413c7ad1b8acf6000ef18812c50d8f52b39981b81702cc22a0811f88094",
+      "bytes": 55785
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_mla_dq_dqv_sm100_h64.py",
+      "git_blob_sha1": "e737b294a9b6d01cfc553145f0f13ae582a8ed50",
+      "sha256": "24a23bb1b0cde1d0d6e6a93b8504d8093a7ab99e8f082ef61ec1daf7f7beb1f6",
+      "bytes": 57484
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_mla_sm100.py",
+      "git_blob_sha1": "fa5a80ea41855a83faf23fe0ae6fea13a7d5d75f",
+      "sha256": "bd479c29a65264fc5ae73c93c5b23cb940994e67d6bfebf4fb948bbb973ee3cb",
+      "bytes": 160411
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_postprocess.py",
+      "git_blob_sha1": "f15ac872df35304910df0a4f28aa0ef25052df31",
+      "sha256": "e60544466a7ce92a8f1e4a9a54222831b138119a7ff24cfdb10adf345a926b28",
+      "bytes": 35341
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_preprocess.py",
+      "git_blob_sha1": "c60298eb71eaca18b3971243460917e2ef0c1236",
+      "sha256": "36d4b63b857a9538ea62a96f43ff9c3d429bc8683f6cc8149592376b7a4a0265",
+      "bytes": 24791
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_sm100.py",
+      "git_blob_sha1": "9aedeeaadac11f69a4239b897c8ed08d17eb8ff1",
+      "sha256": "7bf6f846a2849ea1a43ee90fea0fccd78cb267b057dbf6d05431b4eb63b34d02",
+      "bytes": 224283
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_sm120.py",
+      "git_blob_sha1": "556c59e384a3916f52c1fb7fe85aabd866cb26e1",
+      "sha256": "ad2d802c97dbf654fd03724bcfa91702b18acec8518e5dd4a33f137ba238bf7d",
+      "bytes": 2041
+    },
+    {
+      "path": "flash_attn/cute/flash_bwd_sm90.py",
+      "git_blob_sha1": "accc221eb3ee6a49f21b629830ff9c403bbdd059",
+      "sha256": "4e8e5bd4518714e0de39635d0e5b09d3ceba619b731437a82ebfad1a3ef90e4c",
+      "bytes": 84202
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd.py",
+      "git_blob_sha1": "7ae0ba542447f1f12e4cc48c9c4bf5ada91479f9",
+      "sha256": "be6e88c7d9f122aa5ab29ff5946f6270af0b580e4403351b869f1330b71ca53c",
+      "bytes": 54497
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_combine.py",
+      "git_blob_sha1": "b0f87ebde9f3cb44b7f748049ca05e320a0fb911",
+      "sha256": "0632b05c41c725d627597b352d0d6eba704dcb3ea14c30c83ddd5e55bc422442",
+      "bytes": 34156
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_mla_1cta_kb64_sm100.py",
+      "git_blob_sha1": "87dba70755b02bd6a545d284bf290ce23b1e2141",
+      "sha256": "230ed109dee4b9224a0bfb2a51208ecce7280c6cf70b98beaf93998498a408cf",
+      "bytes": 119266
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_mla_1cta_sm100.py",
+      "git_blob_sha1": "09f724631c0f4a38e4fa42517a2ba0a7f650cc9c",
+      "sha256": "9e08547b7a656eece5af969dcdd15bd91cacd9bd4689c45feec057c1ea208398",
+      "bytes": 170634
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_mla_sm100.py",
+      "git_blob_sha1": "c5bd1b802c5fe41693552d4ca8ffe95a86e0c0ca",
+      "sha256": "58793b756c1b917135a9d7804e3fd59e52b1fda20d22666b66289dcbec154f9e",
+      "bytes": 145183
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_sm100.py",
+      "git_blob_sha1": "1660b9214f2f9f5b6b679f66dd79a4b96695e4b3",
+      "sha256": "c8cbc40b97c9f2a8fa5ce3da5dbe4f0eb80787158f1e4398889ca02572ec1cdb",
+      "bytes": 180145
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_sm120.py",
+      "git_blob_sha1": "52aef6f388836375167f8e2087ecc5124e4ed049",
+      "sha256": "abd017add69914e46f0fcfc017ad51c3d07d79fd87d15f969036ddd82bcc7da2",
+      "bytes": 2203
+    },
+    {
+      "path": "flash_attn/cute/flash_fwd_sm90.py",
+      "git_blob_sha1": "75bf9af4be8738ce70b70cf4208a7bc053d2e53f",
+      "sha256": "340e8e4115c5dd06ceb873d9c886fac7b0799ec5ac47324e0dc9244e2b87625e",
+      "bytes": 68429
+    },
+    {
+      "path": "flash_attn/cute/interface.py",
+      "git_blob_sha1": "bf4f7ee369538de7f6cf1bf9186ba59450929378",
+      "sha256": "26c36c3d789f31be07865e830e59d6446d3015276dc4ec86ef3bf0dd09000c61",
+      "bytes": 200672
+    },
+    {
+      "path": "flash_attn/cute/mask.py",
+      "git_blob_sha1": "051322f1eeacbb6d980bfffc8863f8e5017ef131",
+      "sha256": "a59a0ac2d10c6c0e799a08c216f706a3ccca09eba65778ddc6ed0151a0489684",
+      "bytes": 76856
+    },
+    {
+      "path": "flash_attn/cute/mma_sm100_desc.py",
+      "git_blob_sha1": "9a2adfca8d7952746e61b874117244305c5047e1",
+      "sha256": "ac6ec28b2f1a4b797c391a7807b88f83b430452d418262c3dfa7b0f3516e39f9",
+      "bytes": 10900
+    },
+    {
+      "path": "flash_attn/cute/named_barrier.py",
+      "git_blob_sha1": "8eb3ac61193413599efcf6b6c39c1a10702ceefd",
+      "sha256": "1f80f96b690a2888ee1301d377665db6e9dd74b402f80eaa867d38f7294d813b",
+      "bytes": 1753
+    },
+    {
+      "path": "flash_attn/cute/pack_gqa.py",
+      "git_blob_sha1": "22410d31209dcd5118fdf4a3408240000d904b97",
+      "sha256": "196fa8004d56a3184b6a7f314f12ffb202b1a431583cf31301dd61e719de94f9",
+      "bytes": 15265
+    },
+    {
+      "path": "flash_attn/cute/paged_kv.py",
+      "git_blob_sha1": "43b88c1a1b6a36e5093133ffb4016a7c48b49931",
+      "sha256": "da5b59b0cfca490c1e0b297ecc230a5d6ad99c41bd26705b27306d24455a40a5",
+      "bytes": 9621
+    },
+    {
+      "path": "flash_attn/cute/pipeline.py",
+      "git_blob_sha1": "a806707a7916534323423df44ce717e29a54226d",
+      "sha256": "16a276487d7d0cb2c90a2f451ad482939b9faaaaa1453e43a1fcc7b73a187337",
+      "bytes": 14916
+    },
+    {
+      "path": "flash_attn/cute/prepare_scheduler.py",
+      "git_blob_sha1": "44b7693ed764e384bc4e701e28da81174806c559",
+      "sha256": "4def44fa677db55f787d8ef73f8301b87349ba2c4b94876b972dd8324d084a6a",
+      "bytes": 14528
+    },
+    {
+      "path": "flash_attn/cute/seqlen_info.py",
+      "git_blob_sha1": "7110c8f2b783e033140ae03e64fbd0dc9b8bf760",
+      "sha256": "640d2433702635d68d4f0b94e9fa2d6b81da48b7f62056270b1b1fd480c72f30",
+      "bytes": 11805
+    },
+    {
+      "path": "flash_attn/cute/sm100_hd256_2cta_fmha_backward.py",
+      "git_blob_sha1": "5f9b91dc4dfe05b88eb750ad1811c4e63b59a1f9",
+      "sha256": "7755fe63ef1addc1fbdb4f4037e19ccd4bae982947fc43c1768253b7ae038133",
+      "bytes": 8624
+    },
+    {
+      "path": "flash_attn/cute/sm100_hd256_2cta_fmha_backward_dkdvkernel.py",
+      "git_blob_sha1": "2aef09d72cdfe3e5dfc17130c100b02e1a5f9c3e",
+      "sha256": "d69e8c9481b18fb132ec7c58cd254c716af9d7926500e5071c51b5eba3edf346",
+      "bytes": 145848
+    },
+    {
+      "path": "flash_attn/cute/sm100_hd256_2cta_fmha_backward_dqkernel.py",
+      "git_blob_sha1": "dedf0ad3fa278cae3d9150baf5454a37774789e9",
+      "sha256": "45bb821ec6112b1ae062556317f58f95185784c79286004870227eb81029c5a5",
+      "bytes": 120495
+    },
+    {
+      "path": "flash_attn/cute/sm90_config_search.py",
+      "git_blob_sha1": "6c9584ea36438bea11bdc1ebbf8d31e9323a4af3",
+      "sha256": "bd0ed6094e9fc48de587098f9b05bccbdd5f450b70d3500759a48b5d436cff9c",
+      "bytes": 13980
+    },
+    {
+      "path": "flash_attn/cute/softmax.py",
+      "git_blob_sha1": "39ff94867d5ec6c08c8955db95cf3dca0893c3bb",
+      "sha256": "aaddf3030dba7b9809c4fefae3caab22d0f22b9ecf5050601d6646aefb611a49",
+      "bytes": 32023
+    },
+    {
+      "path": "flash_attn/cute/testing.py",
+      "git_blob_sha1": "7da40d6a121c3f8592c9629d508c3b30e4c84173",
+      "sha256": "98ef40f06ddea3b508a216debdadb731af37df1e3dc04a0e352286c6e29826e9",
+      "bytes": 18738
+    },
+    {
+      "path": "flash_attn/cute/tile_scheduler.py",
+      "git_blob_sha1": "967508d00e7fc8b12b95e21530fcbbc669549f38",
+      "sha256": "bdd2affa3c11480f2a31b03755c43ee5181370a95ac2ef43cd00334d41073896",
+      "bytes": 87114
+    },
+    {
+      "path": "flash_attn/cute/topk_gather_kv.py",
+      "git_blob_sha1": "9b3460d505678b874f508d0d3d4778922d756106",
+      "sha256": "c32e091958c122f5d205b19853ddcb26603be174c2b9c057ce567d831380d5df",
+      "bytes": 24275
+    },
+    {
+      "path": "flash_attn/cute/utils.py",
+      "git_blob_sha1": "85633a030e23ae98c2d69927d86d5fc55485c194",
+      "sha256": "e099f758c0a891c2de83cf31bb1c2abb46583c263bfc236adfe1a97cdf381d45",
+      "bytes": 38031
+    }
+  ]
+}

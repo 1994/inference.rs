@@ -1,8 +1,12 @@
 //! Device-scoped query sharing search; complete attention graphs retain the FP8 KV contract.
 mod capture;
 pub mod exact;
+pub mod mma;
+pub mod mma_f32;
 mod reference;
 pub mod shared;
+pub mod vector;
+pub mod vector_combined;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS, median,
     resident_gemm::ResidentTuningSession,
@@ -51,17 +55,32 @@ pub enum Choice {
     Simt,
     RustSimt,
     SharedKv,
-    Tiled { query_tile: usize },
+    VectorSharedKv,
+    VectorSharedKvCombined,
+    Mma {
+        variant: crate::resident::attention_mma::catalog::Variant,
+    },
+    Tiled {
+        query_tile: usize,
+    },
 }
 impl Choice {
     pub(crate) const fn query_tile(self) -> Option<usize> {
         match self {
-            Self::Simt | Self::RustSimt | Self::SharedKv => None,
+            Self::Simt
+            | Self::RustSimt
+            | Self::SharedKv
+            | Self::VectorSharedKv
+            | Self::VectorSharedKvCombined
+            | Self::Mma { .. } => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }
     pub(crate) const fn uses_oxide(self) -> bool {
-        matches!(self, Self::RustSimt | Self::SharedKv)
+        matches!(
+            self,
+            Self::RustSimt | Self::SharedKv | Self::VectorSharedKv | Self::VectorSharedKvCombined
+        )
     }
     fn valid(self) -> bool {
         matches!(self, Self::Simt) || self.query_tile().is_some_and(|q| QUERY_TILES.contains(&q))

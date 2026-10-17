@@ -289,7 +289,7 @@ impl LoadedModel {
             LoadedVision::bind(&device, &mut package).map_err(|e| vision_phase.fail(&e))?;
         vision_phase.finish();
         let imported = package.imported.clone();
-        Ok(Self {
+        let loaded = Self {
             device,
             profile,
             model: package.imported.model,
@@ -303,7 +303,20 @@ impl LoadedModel {
             tuning,
             requirements,
             sequence_prices: budget::SequencePrices::default(),
-        })
+        };
+        loaded.prepare_attention()?;
+        Ok(loaded)
+    }
+    fn prepare_attention(&self) -> Result<()> {
+        let phase = phase::Phase::start("attention_tuning", "preparing hardware attention choices");
+        crate::tuning::attention::mma::prepare(&self.device, &self.graph, &self.weights)
+            .map_err(|e| phase.fail(&e))?;
+        if let Some(draft) = &self.draft {
+            crate::tuning::attention::mma::prepare(&self.device, &draft.graph, &draft.weights)
+                .map_err(|e| phase.fail(&e))?;
+        }
+        phase.finish();
+        Ok(())
     }
     /// Provider-imported description of this model, including its modalities.
     #[must_use]

@@ -1,0 +1,323 @@
+{
+  "schema": 1,
+  "upstream_commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "cutlass_dsl": "4.8.0",
+  "cuda_compiler": "13.4.92",
+  "host_platform": "linux-x86_64",
+  "host_ABI": 1,
+  "runtime_python": false,
+  "runtime_dependencies": [
+    "libcudart.so.13",
+    "libcuda.so.1",
+    "libstdc++.so.6",
+    "libm.so.6",
+    "libgcc_s.so.1",
+    "libc.so.6"
+  ],
+  "entries": [
+    {
+      "name": "sm120",
+      "architecture": "sm_120",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          64,
+          64
+        ],
+        "threads": 128,
+        "cluster": [
+          1,
+          1,
+          1
+        ],
+        "pack_gqa": true,
+        "features": [
+          "warp-MMA",
+          "cp.async"
+        ]
+      },
+      "features": {
+        "warp_MMA": true,
+        "WGMMA": false,
+        "TMA": false,
+        "tcgen05": false,
+        "TMEM": false,
+        "two_CTA": false
+      },
+      "files": {
+        "attention.ptx": "354d303bb3202a2d6cd47879bc230fde2f6e88924ce128a4973527745f0f4abc",
+        "attention.cubin": "705f63f23c25efaa9d20f6b6b01d397f8a2e6cd167b7f099af5beb46839eb5d0",
+        "attention_host.h": "3857e47018f42191dc919ae7fa608766224038893b6b4db22b9e7cc43adbb182",
+        "attention_host.o": "8fdd471daeef2306174693ccdecf0268b3f65205b9e6082ea64d68945301df14",
+        "host.cpp": "f6159f1799e7c6f4d5c4e6ce03644a512849d3f062bfa9afa626da99c8e71985",
+        "attention.so": "136563a565ac53ce98aca2ecfc653df12cd286a0be9c15ff9bebf6095a4a38f8"
+      },
+      "on_hardware_validated": true,
+      "task_quality_accepted": false,
+      "operator_validation": {
+        "sha256": "9f10610252ae633d089176813d8d896fadbe8782dfdc0d2a93f403948b03f86d",
+        "cases": 20,
+        "scope": "operator and CUDA Graph dynamic replay; task quality pending"
+      }
+    },
+    {
+      "name": "sm90a",
+      "architecture": "sm_90a",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          128,
+          64
+        ],
+        "threads": 384,
+        "cluster": [
+          1,
+          1,
+          1
+        ],
+        "pack_gqa": true,
+        "features": [
+          "WGMMA",
+          "TMA",
+          "warp-specialization"
+        ]
+      },
+      "features": {
+        "warp_MMA": false,
+        "WGMMA": true,
+        "TMA": true,
+        "tcgen05": false,
+        "TMEM": false,
+        "two_CTA": false
+      },
+      "files": {
+        "attention.ptx": "bc518c92178a50d7c228f795130e4a21cd2e8c4df59b25f72ae3ef62a96e1d21",
+        "attention.cubin": "8e1b4a00a772b7ef0e61f82654995721d6cbb6d5781641c1de94dee51a44c5e1",
+        "attention_host.h": "fd71ae228a7fa91867238870238873a19aa7c905dcbdd2ee089885973a3b476e",
+        "attention_host.o": "cdd18fefbb22d3729cc8d81b4d483870f108f542eb9388857ed302594812c9b8",
+        "host.cpp": "b32b0f8b5330ddbc83d6f4627d78dd077d120b373b6e7c1f408a8c9245f88e10",
+        "attention.so": "5f3a989e04a72e7ef9b1fe647f584df200bcebe47e99864aa086b8edefd5a362"
+      },
+      "on_hardware_validated": false,
+      "task_quality_accepted": false
+    },
+    {
+      "name": "sm100a-1cta",
+      "architecture": "sm_100a",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          128,
+          128
+        ],
+        "threads": "official-kernel",
+        "cluster": [
+          1,
+          1,
+          1
+        ],
+        "pack_gqa": true,
+        "features": [
+          "tcgen05",
+          "TMEM",
+          "TMA"
+        ]
+      },
+      "features": {
+        "warp_MMA": false,
+        "WGMMA": false,
+        "TMA": true,
+        "tcgen05": true,
+        "TMEM": true,
+        "two_CTA": false
+      },
+      "files": {
+        "attention.ptx": "046fe1207e68e042d6fe5f76d753e57fe6e4bf16fb19be2a4fab71f1b8d3efa9",
+        "attention.cubin": "6338621f49d5d1c5cdf3b8c59b119842be39a85dbc70dd617182a99a8bfd862b",
+        "attention_host.h": "f91f42b5a41e0d720412410e081dd61a74f4bdcdd18b0b70504d5d6fb0f0d78c",
+        "attention_host.o": "82402efce8bf276dc48d249acc88b584cdcce3a54134901d2967684abb2b3817",
+        "host.cpp": "4ce3e20e9778d26bd4bcf7424aee3515d97aae2e8d9132c6ec62f9d4e08bf568",
+        "attention.so": "e727f9591f8b42d7c4788759e16b9b09d89ec81155432b36ea26947eeec74855"
+      },
+      "on_hardware_validated": false,
+      "task_quality_accepted": false
+    },
+    {
+      "name": "sm100a-2cta",
+      "architecture": "sm_100a",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          128,
+          128
+        ],
+        "threads": "official-kernel",
+        "cluster": [
+          2,
+          1,
+          1
+        ],
+        "pack_gqa": false,
+        "features": [
+          "tcgen05",
+          "TMEM",
+          "TMA",
+          "2-CTA-MMA"
+        ]
+      },
+      "features": {
+        "warp_MMA": false,
+        "WGMMA": false,
+        "TMA": true,
+        "tcgen05": true,
+        "TMEM": true,
+        "two_CTA": true
+      },
+      "files": {
+        "attention.ptx": "281e9d325da257dfdae0a22e82ca250c8fb451e5427474146c3c036f897993ff",
+        "attention.cubin": "7faeacbe68074f1d8dfd37fe8c3e03418d3f2dacd237070ff3564df3e003ccf1",
+        "attention_host.h": "924b02dbcb8cd00c0f3fe614699857d3a6fca4413a5d509383b40f7cb709dd58",
+        "attention_host.o": "e1723573ecb43ef3196d1879c9fb94661f908508e4a858481ef5674e4462441f",
+        "host.cpp": "bd00c559a24e2b94a637a31ba72a04385a6519c060e3df92d770a4fbd33756c2",
+        "attention.so": "4302e2f81d07fb5f4750203e6d05e2650d28c77dcce4fe812fd956a539e3465c"
+      },
+      "on_hardware_validated": false,
+      "task_quality_accepted": false
+    },
+    {
+      "name": "sm103a-1cta",
+      "architecture": "sm_103a",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          128,
+          128
+        ],
+        "threads": "official-kernel",
+        "cluster": [
+          1,
+          1,
+          1
+        ],
+        "pack_gqa": true,
+        "features": [
+          "tcgen05",
+          "TMEM",
+          "TMA"
+        ]
+      },
+      "features": {
+        "warp_MMA": false,
+        "WGMMA": false,
+        "TMA": true,
+        "tcgen05": true,
+        "TMEM": true,
+        "two_CTA": false
+      },
+      "files": {
+        "attention.ptx": "94c3059f809ea6c5378aed4fd63c02517de3e25f7bc8db820c8ede2e7864cb1b",
+        "attention.cubin": "0be0592374e827650117fcc301ba65e8384cbd4155c4b8ce1b4d61860a799a2d",
+        "attention_host.h": "f3751f9befc289ec51dec06881dfa9dbd8bd709ae905e20040c9c11b3284ff75",
+        "attention_host.o": "8939ce46ca53a529f28670ff3d56228c51721cfbad4c522e2e65d4e5fcbfe92d",
+        "host.cpp": "3c65ad6d0369380c8edc62fdcda84fab71cbda06c6a285f443e1489842ebc204",
+        "attention.so": "029cd5bdee07f14316da240d2f750693c61352f6612dfeaaa76f9e59c9c61660"
+      },
+      "on_hardware_validated": false,
+      "task_quality_accepted": false
+    },
+    {
+      "name": "sm103a-2cta",
+      "architecture": "sm_103a",
+      "profile": "bf16-inputs-f32-accumulator-bf16-output",
+      "shape": {
+        "query_heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "lanes_multiple": 64,
+        "context_dynamic": true
+      },
+      "config": {
+        "tile": [
+          128,
+          128
+        ],
+        "threads": "official-kernel",
+        "cluster": [
+          2,
+          1,
+          1
+        ],
+        "pack_gqa": false,
+        "features": [
+          "tcgen05",
+          "TMEM",
+          "TMA",
+          "2-CTA-MMA"
+        ]
+      },
+      "features": {
+        "warp_MMA": false,
+        "WGMMA": false,
+        "TMA": true,
+        "tcgen05": true,
+        "TMEM": true,
+        "two_CTA": true
+      },
+      "files": {
+        "attention.ptx": "7bc6b014c8648f116f2116461491b50b7aae33a80d2af2aee56edc3aec6e82a0",
+        "attention.cubin": "f753f5818e914c0a306bdde99d14609bebced42db0a5874a1e8a7c8e455f06f1",
+        "attention_host.h": "62ddc52ebd4ece1bde6ecd4d6fb3ffbe88db502f116769c8b65c575cf50b92e8",
+        "attention_host.o": "18848cf753dd33199e5d67ec51341374cbe3a244cc322bbe0e3baebdf3618c3e",
+        "host.cpp": "5d5b1fdbec9823de86ce5600cc0f9f64fb10efbd8476ae4b362690744a14d388",
+        "attention.so": "ed6d6cf80a5d0e15aee04c662bba690889c76ab0a0b785d83f5a3a4358b6ccd6"
+      },
+      "on_hardware_validated": false,
+      "task_quality_accepted": false
+    }
+  ],
+  "common_files": {
+    "bridge.cu": "6f49f107cd4a400b47338658fc6cc974c14733df8e34ec68444bbb8790978c80",
+    "bridge.ptx": "128ff94a670760115d6cfa125e716f258a5f37ea08f889b5ad9fb44c8e714977",
+    "host.cpp.in": "d545c484619424ad1f975c2da01ce0cc047bdb053ff408180b15af1d7d5765b7",
+    "LICENSE.upstream": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+    "upstream-files.json": "5cdef6bccd14cc6b95ad6935afba58abd266e8ecdc1e339929008d32fbd5f9ea",
+    "compile.py": "85a2758896be396464e1fef91fa526df1202c93f69d568c2a73f8547cbd5784e",
+    "regenerate.py": "0ccfeab1948fcbe0e9f58c0d3faa9479d0a4ddecde0d8c38712b873d7f5bf46a",
+    "verify-artifact.py": "28b311c10976ee82de3af720be620308c09edbebbd1c178d66d0b95bdaac420f"
+  }
+}

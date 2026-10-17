@@ -270,3 +270,42 @@ fn fixture_profile() -> DeviceProfile {
         l2_cache_bytes: 0,
     }
 }
+
+#[test]
+fn bf16_proposal_attention_cannot_change_target_admission_or_capture() -> Result<()> {
+    let mut weights = fixture_weights();
+    let state = TensorId::new(1)?;
+    let graph = DataflowGraph {
+        nodes: vec![TensorNode {
+            id: OpId::new(1)?,
+            layer: None,
+            op: TensorOp::Attention {
+                query_heads: 24,
+                kv_heads: 4,
+                head_dim: 256,
+                window: None,
+            },
+            inputs: vec![],
+            outputs: vec![TensorId::new(2)?],
+            states: vec![state],
+        }],
+        ..DataflowGraph::default()
+    };
+    for architecture in ["sm_90", "sm_100", "sm_103", "sm_120"] {
+        assert!(!crate::resident::attention_mma::eligible(
+            architecture,
+            &graph,
+            &weights,
+            128,
+        ));
+        weights.kv_scales.insert(state, [1.0, 1.0]);
+        assert!(!crate::resident::attention_mma::eligible(
+            architecture,
+            &graph,
+            &weights,
+            128,
+        ));
+        weights.kv_scales.clear();
+    }
+    Ok(())
+}

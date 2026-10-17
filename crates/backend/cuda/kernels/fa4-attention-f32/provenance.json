@@ -1,0 +1,33 @@
+{
+  "completed": true,
+  "started_unix": 1792141349.8029497,
+  "limits": {
+    "path": "/user.slice/user-1000.slice/user@1000.service/app.slice/inference-benchmark-1790790.service",
+    "memory_max": 53687091200,
+    "pids_max": 256,
+    "host_available_bytes": 53886865408,
+    "memory_swap_max": 0,
+    "memory_oom_group": 1
+  },
+  "GPU_execution": false,
+  "hardware_validation": false,
+  "task_quality_accepted": false,
+  "command": [
+    "/opt/cuda/bin/nvcc",
+    "--ptx",
+    "-arch=compute_90",
+    "-O3",
+    "--fmad=false",
+    "--ftz=false",
+    "--prec-div=true",
+    "/home/r/benchmarks/inference.rs/exact-shared-attention-2026-10-16/source-v8/crates/backend/cuda/kernels/fa4-attention-f32/bridge.cu",
+    "-o",
+    "/home/r/benchmarks/inference.rs/exact-shared-attention-2026-10-16/source-v8/crates/backend/cuda/kernels/fa4-attention-f32/bridge.ptx"
+  ],
+  "returncode": 0,
+  "compiler_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Sep_01_08:45:21_PDT_2026\nCuda compilation tools, release 13.4, V13.4.92\nBuild cuda_13.4.r13.4/compiler.38855100_0\n",
+  "source_sha256": "09ae42d2b2b45d4e8db4f3fb322e3298daaafdeee83bcd1092c61966b6436b9d",
+  "ptx_sha256": "b58c0e0e3cdb1ca8ee336004dfafa9761dcc326e16d967d06b4b8bb735c06fc6",
+  "argument_count": 13,
+  "profile": "F32 paged KV to BF16 RNE; existing BF16 AOT cores and readout unchanged"
+}

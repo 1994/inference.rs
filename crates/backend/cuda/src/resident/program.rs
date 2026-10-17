@@ -500,6 +500,13 @@ impl DeviceProgram {
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        attention.prepare_mma(
+            device,
+            graph,
+            weights,
+            capacity,
+            geometry.prompts.into_iter().max().unwrap_or(0),
+        )?;
         let (mut nvfp4, mut delegated) =
             Self::projection_workspaces(device, graph, weights, geometry)?;
         let mut states = allocate_states(device, graph, capacity, weights)?;

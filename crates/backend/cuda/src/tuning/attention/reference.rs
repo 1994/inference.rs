@@ -146,6 +146,20 @@ impl Fixture {
         fixture.expected = fixture.reference()?;
         Ok(fixture)
     }
+    pub fn mma(shape: Shape, index: usize) -> Result<Self> {
+        let mut fixture = Self::new(shape, index)?;
+        fixture.window = 0;
+        let rounded = fixture
+            .query
+            .iter()
+            .map(|&q| cutile::half::bf16::from_f32(q).to_f32())
+            .collect();
+        let original = std::mem::replace(&mut fixture.query, rounded);
+        // Fixture KV codes times power-of-two scales are exactly representable in BF16.
+        fixture.expected = fixture.reference()?;
+        fixture.query = original;
+        Ok(fixture)
+    }
     fn physical(&self, position: usize) -> Result<usize> {
         let block = crate::constants::KV_BLOCK_TOKENS;
         Ok(

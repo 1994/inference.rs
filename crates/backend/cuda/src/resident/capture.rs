@@ -415,6 +415,44 @@ impl Capture<'_> {
         Ok(normalized.reshape(&[2 * dimension])?)
     }
 
+    /// Fusion normalization alone, reading an already gathered embedding row.
+    /// The arithmetic and reduction width are identical to `fusion_input`.
+    pub(super) fn fusion_norm(
+        &mut self,
+        dimension: usize,
+        embedding: &Tensor<f32>,
+    ) -> Result<Tensor<f32>, DeviceError> {
+        let fusion = self
+            .weights
+            .fusion
+            .as_ref()
+            .ok_or_else(|| error("missing fusion weights"))?;
+        let work = self
+            .fusion
+            .as_mut()
+            .ok_or_else(|| error("missing fusion workspace"))?;
+        let mut normalized = work
+            .normalized
+            .take()
+            .ok_or_else(|| error("fusion buffer"))?
+            .reshape(&[2, dimension])?;
+        self.scope.record(
+            aux::fusion_norm(
+                (&mut normalized).partition([1, dimension.next_power_of_two()]),
+                embedding,
+                self.external,
+                &fusion.norms,
+                fusion.epsilon,
+                fusion.offset,
+            )
+            .generics(vec![
+                dimension.to_string(),
+                dimension.next_power_of_two().to_string(),
+            ]),
+        )?;
+        Ok(normalized.reshape(&[2 * dimension])?)
+    }
+
     fn norm(
         &self,
         node: &TensorNode,

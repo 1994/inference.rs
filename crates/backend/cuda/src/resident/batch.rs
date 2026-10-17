@@ -36,8 +36,13 @@ pub(super) struct PromptOverrides<'a> {
     pub rotary: Option<&'a [[usize; infer_models::mrope::ROTARY_AXES]]>,
 }
 
-/// Per-lane metadata plus the shared prompt sidecar and rotary table.
-type PromptMetadata<'a> = (&'a [Tensor<i32>], &'a Tensor<i32>, Option<&'a Tensor<i32>>);
+/// Per-lane metadata plus the batched owner, the shared prompt sidecar and rotary table.
+type PromptMetadata<'a> = (
+    &'a [Tensor<i32>],
+    &'a Tensor<i32>,
+    &'a Tensor<i32>,
+    Option<&'a Tensor<i32>>,
+);
 
 pub(super) struct Lane {
     pub arena: ActivationArena,
@@ -68,6 +73,8 @@ pub(super) struct BatchGraph {
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
+    /// Owner of the batched metadata rows when the prompt graph uses one allocation.
+    _metadata_owner: Option<Tensor<i32>>,
     prefill_info: Option<Tensor<i32>>,
     /// Per-lane `(t, h, w)` rotary coordinates for prompt chunks; absent below prefill width 32.
     prefill_rotary: Option<Tensor<i32>>,
@@ -432,6 +439,7 @@ impl BatchBuilder<'_> {
             prefill_info: None,
             prefill_rotary: None,
             metadata,
+            _metadata_owner: None,
             hidden,
             logits,
             width,
@@ -459,14 +467,7 @@ impl BatchBuilder<'_> {
             self.width,
             usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
         )?;
-        let mut metadata = Vec::with_capacity(self.width);
-        for _ in 0..self.width {
-            metadata.push(
-                api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            );
-        }
+        let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
@@ -493,16 +494,24 @@ impl BatchBuilder<'_> {
         let mut profile = profile::PrefillProfile::from_env(self.device);
         let prefill = self.capture32(
             &mut arena,
-            &metadata,
-            (&prefill_info, prefill_rotary.as_ref()),
+            (
+                metadata.as_slice(),
+                &metadata_owner,
+                &prefill_info,
+                prefill_rotary.as_ref(),
+            ),
             PromptReadout::Hidden,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
         )?;
         let prefill_last = self.capture32(
             &mut arena,
-            &metadata,
-            (&prefill_info, prefill_rotary.as_ref()),
+            (
+                metadata.as_slice(),
+                &metadata_owner,
+                &prefill_info,
+                prefill_rotary.as_ref(),
+            ),
             PromptReadout::Logits,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
@@ -511,8 +520,12 @@ impl BatchBuilder<'_> {
         let state_prefill = if super::prefill_demand::enabled() {
             Some(self.capture32(
                 &mut arena,
-                &metadata,
-                (&prefill_info, prefill_rotary.as_ref()),
+                (
+                    metadata.as_slice(),
+                    &metadata_owner,
+                    &prefill_info,
+                    prefill_rotary.as_ref(),
+                ),
                 PromptReadout::StateOnly,
                 None,
                 (&mut partials, &mut recurrent, &mut fusion),
@@ -538,6 +551,7 @@ impl BatchBuilder<'_> {
             prefill_info: Some(prefill_info),
             prefill_rotary,
             metadata,
+            _metadata_owner: Some(metadata_owner),
             hidden,
             logits,
             width: self.width,
@@ -656,8 +670,7 @@ impl BatchBuilder<'_> {
     fn capture32(
         &mut self,
         arena: &mut ActivationArena,
-        metadata: &[Tensor<i32>],
-        info: (&Tensor<i32>, Option<&Tensor<i32>>),
+        metadata: PromptMetadata<'_>,
         readout: PromptReadout,
         profile: Option<&mut profile::PrefillProfile>,
         workspaces: (
@@ -666,16 +679,22 @@ impl BatchBuilder<'_> {
             &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> Result<CudaGraph<()>> {
+        let (metadata, metadata_batch, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         let last = readout == PromptReadout::Logits;
         #[cfg(test)]
         let demand = (readout == PromptReadout::StateOnly)
             .then(|| super::prefill_demand::StateDemand::new(self.graph));
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
+        let pairs = gdn_ba_pairs(self.graph, self.weights);
         self.nvfp4.begin_quant_capture();
         let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
+            let mut fused_second = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
+                if fused_second == Some(index) {
+                    continue;
+                }
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 let skip = logits && !last;
                 #[cfg(test)]
@@ -686,11 +705,41 @@ impl BatchBuilder<'_> {
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
                 }
+                if !skip && let Some(&second) = pairs.get(&index) {
+                    let paired = &self.graph.nodes[second];
+                    let paired_skip = paired
+                        .outputs
+                        .iter()
+                        .any(|id| Some(*id) == self.graph.logits)
+                        && !last;
+                    #[cfg(test)]
+                    let paired_skip =
+                        paired_skip || demand.as_ref().is_some_and(|plan| !plan.retains(second));
+                    let fused = if paired_skip {
+                        false
+                    } else {
+                        let profile = self.device.profile().map_err(error)?;
+                        super::prefill_projection::record_pair(
+                            scope,
+                            node,
+                            paired,
+                            arena,
+                            (self.weights, profile),
+                        )?
+                    };
+                    if fused {
+                        if let Some(boundaries) = boundaries.as_mut() {
+                            boundaries.boundary(scope, second, paired)?;
+                        }
+                        fused_second = Some(second);
+                        continue;
+                    }
+                }
                 self.record_prompt_node(
                     scope,
                     node,
                     arena,
-                    (metadata, info.0, info.1),
+                    (metadata, metadata_batch, prefill_info, prefill_rotary),
                     (partials, recurrent, fusion),
                 )?;
             }
@@ -715,10 +764,18 @@ impl BatchBuilder<'_> {
             &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> std::result::Result<(), DeviceError> {
-        let (metadata, prefill_info, prefill_rotary) = metadata;
+        let (metadata, metadata_batch, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         if let Some(workspace) = fusion.as_mut()
-            && super::fusion_batch::record(self, scope, node, arena, metadata, workspace)?
+            && super::fusion_batch::record(
+                self,
+                scope,
+                node,
+                arena,
+                metadata,
+                metadata_batch,
+                workspace,
+            )?
         {
             return Ok(());
         }
@@ -1624,6 +1681,72 @@ impl SlotDecodeGraph {
     }
 }
 
+/// Adjacent GDN `in_proj_b`/`in_proj_a` Dense projections of the same input.
+/// The pair is the only two consecutive N48 K5120 linears in the decoder graph.
+fn gdn_ba_pairs(graph: &DataflowGraph, weights: &ProgramWeights) -> BTreeMap<usize, usize> {
+    let mut pairs = BTreeMap::new();
+    let mut index = 0;
+    while index + 1 < graph.nodes.len() {
+        let first = &graph.nodes[index];
+        let second = &graph.nodes[index + 1];
+        if gdn_ba_nodes(first, second)
+            && gdn_ba_projection(first, weights)
+            && gdn_ba_projection(second, weights)
+        {
+            pairs.insert(index, index + 1);
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    pairs
+}
+
+/// Structural half of the pair test: same layer, same single activation input, both
+/// are plain `Linear` nodes. Weight identity/shape is checked separately.
+fn gdn_ba_nodes(first: &TensorNode, second: &TensorNode) -> bool {
+    first.layer == second.layer
+        && first.op == TensorOp::Linear
+        && second.op == TensorOp::Linear
+        && first.inputs.len() == 2
+        && second.inputs.len() == 2
+        && first.inputs[0] == second.inputs[0]
+        && first.outputs.len() == 1
+        && second.outputs.len() == 1
+}
+
+fn gdn_ba_projection(node: &TensorNode, weights: &ProgramWeights) -> bool {
+    matches!(
+        weights.projections.get(&node.inputs[1]),
+        Some(ProjectionWeight::Dense(weight))
+            if weight.shape() == super::prefill_projection::GDN_BA_SHAPE
+    )
+}
+
+/// One allocation for every prompt lane's metadata, with a non-owning row view per lane.
+/// The batched embedding gather reads token ids from this contiguous owner.
+#[expect(
+    unsafe_code,
+    reason = "Audited metadata lane views: the owner is returned and stored with the rows, \
+              each view addresses a disjoint lane, and graphs retain the owner"
+)]
+fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, Vec<Tensor<i32>>)> {
+    let fields = crate::constants::METADATA_FIELDS;
+    let elements = width
+        .checked_mul(fields)
+        .ok_or_else(|| Error::invalid("metadata size overflow"))?;
+    let owner = api::zeros::<i32>(&[elements])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let mut rows = Vec::with_capacity(width);
+    for lane in 0..width {
+        // SAFETY: `owner` is returned to the caller and stored beside `rows` for the
+        // whole graph lifetime; each view addresses one disjoint metadata row.
+        rows.push(unsafe { super::arena::row_view(&owner, width, lane)? });
+    }
+    Ok((owner, rows))
+}
+
 fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> {
     (0..width)
         .map(|_| {
@@ -1642,3 +1765,7 @@ fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Resul
         usize::try_from(device.profile()?.arena_budget_bytes()).map_err(device_error)?,
     )
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_batch_ba_pair.rs"]
+mod tests;
