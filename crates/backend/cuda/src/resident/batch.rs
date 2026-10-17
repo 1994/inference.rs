@@ -865,10 +865,10 @@ impl BatchBuilder<'_> {
         }
         match node.op {
             TensorOp::Rope { .. } => {
-                let (metadata, mode) = match prefill_rotary {
-                    Some(rotary) => (rotary, CaptureMode::PrefillRotary),
-                    None => (prefill_info, CaptureMode::Prefill),
-                };
+                let (metadata, mode) = prefill_rotary
+                    .map_or((prefill_info, CaptureMode::Prefill), |rotary| {
+                        (rotary, CaptureMode::PrefillRotary)
+                    });
                 self.record_prompt_sequence(scope, node, arena, metadata, mode)?;
             }
             TensorOp::Attention { .. } => {
