@@ -1,0 +1,57 @@
+{
+  "target": "sm_120",
+  "compiler": "nvcc V13.4.92",
+  "compiler_actual": "Cuda compilation tools, release 13.4, V13.4.92",
+  "language": "CUDA C++ device code;no host C++ runtime",
+  "arguments": [
+    "--ptx",
+    "-arch=compute_120",
+    "-O3",
+    "--fmad=false",
+    "--ftz=false",
+    "--prec-div=true",
+    "--prec-sqrt=true"
+  ],
+  "variant": "v-combined",
+  "symbol": "attention_fp8_256_vec_k_combined",
+  "source_sha256": "bb92a23c7a208e864fefb7217dd212506014051e5671b2eddc8a7358227ce6cb",
+  "ptx_sha256": "0e2eeb782308e5bd5c16932d0d78023a961e9f736be8540a3cfc587c8a469e59",
+  "base_source_sha256": "feea1072e8480a7235cfec7430aeb40e7960c00e1d3aea0b725b3b623421d2f9",
+  "base_ptx_sha256": "f3584032f21ee9fb014ad3677a6b7aca45c7805014949b3fc19c86e0893f306f",
+  "canonical_attention_ptx": "crates/backend/cuda/kernels/vector-attention/attention-sm120.ptx",
+  "canonical_attention_ptx_sha256": "f3584032f21ee9fb014ad3677a6b7aca45c7805014949b3fc19c86e0893f306f",
+  "numeric_evidence": {
+    "path": "/home/r/benchmarks/inference.rs/architect-dispatch-2026-10-17/J-kernel-variants/proofs/proof_v_combined.json",
+    "sha256": "50ee9bfa2dee361ef8f0b4c3a93687bae1cbd16e53f20ec484416ad991627760",
+    "claim": "v-combined is bit-exact vs attention_fp8_256_vec_k: the 16B staging loop yields the identical (destination, widened value) multiset per pair loop (LUT identity exhaustively proven for all 65536 u16, including reserved +/-480); shared_values keeps the identity bijection read by one conflict-free LDS.128 per row; QK/softmax are byte-for-byte the pinned baseline; every output dim keeps the baseline operand order and fmul/fadd pairing.",
+    "pairs_checked": 65536,
+    "bit_mismatches": 0,
+    "numpy_crosscheck_mismatches": 0,
+    "reserved_patch_hits": 1024
+  },
+  "performance_evidence": [
+    {
+      "base": 0,
+      "path": "/home/r/benchmarks/inference.rs/architect-dispatch-2026-10-17/J-kernel-variants/integration/run-v1/timing-0-2.json",
+      "sha256": "6f70dd81983cd2f2ec3113e24048c445bbd91c57591cdf501fee9276d3e7c6df",
+      "v_combined_gain_percent": 1.698,
+      "output_sha256": "8f7612d771aae59f4f6c032511002ea9dd5fe4bdeb756cafabe14a6455804d2f"
+    },
+    {
+      "base": 8192,
+      "path": "/home/r/benchmarks/inference.rs/architect-dispatch-2026-10-17/J-kernel-variants/integration/run-v1/timing-8192-2.json",
+      "sha256": "0344f78ceff2f9f27b75c75f83e8b0157525015a3cd1a3106c5f9590ff1dfbea",
+      "v_combined_gain_percent": 4.751,
+      "output_sha256": "c0015cc034027345374b40ef0da0ec02f1fa22e6a22c946b2b45d37cf1ffe3c0"
+    },
+    {
+      "base": 32512,
+      "path": "/home/r/benchmarks/inference.rs/architect-dispatch-2026-10-17/J-kernel-variants/integration/run-v1/timing-32512.json",
+      "sha256": "3ddbb2e4ba1d031f70eb2ca8c5daa111af738bfc9a38f4a0c55a96375996fac1",
+      "v_combined_gain_percent": 9.957,
+      "output_sha256": "dba9dfa3c4fbbcd3a6c9b58f80224c3d24d1a77e97c6a853f27d2c42b0e7a790"
+    }
+  ],
+  "acceptance": "5-arm roofline receipt completed=true with 9 repeats per arm; every arm reports bit_exact_vs_baseline=true and deterministic_rerun=true, and v-combined reproduces the baseline output sha256 at each of the three bases (0, 8192, 32512); median gain at base=32512 is +9.957%.",
+  "contract": "Bit-exact composition of the accepted vector staging (LDG.128 + 2x256 shared widen LUT + STS.128) and the accepted PV consumer (8 dims per lane, one LDS.128 per shared_values row, identity layout); compile flags include --fmad=false and --ftz=false so no fused or flushed operation can change the pinned F32 operation tree."
+}

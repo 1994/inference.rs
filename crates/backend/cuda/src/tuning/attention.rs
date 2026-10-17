@@ -6,6 +6,7 @@ pub mod mma_f32;
 mod reference;
 pub mod shared;
 pub mod vector;
+pub mod vector_combined;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS,
     resident_gemm::ResidentTuningSession,
@@ -55,6 +56,7 @@ pub enum Choice {
     RustSimt,
     SharedKv,
     VectorSharedKv,
+    VectorSharedKvCombined,
     Mma {
         variant: crate::resident::attention_mma::catalog::Variant,
     },
@@ -69,12 +71,16 @@ impl Choice {
             | Self::RustSimt
             | Self::SharedKv
             | Self::VectorSharedKv
+            | Self::VectorSharedKvCombined
             | Self::Mma { .. } => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }
     pub(crate) const fn uses_oxide(self) -> bool {
-        matches!(self, Self::RustSimt | Self::SharedKv | Self::VectorSharedKv)
+        matches!(
+            self,
+            Self::RustSimt | Self::SharedKv | Self::VectorSharedKv | Self::VectorSharedKvCombined
+        )
     }
     fn valid(self) -> bool {
         matches!(self, Self::Simt) || self.query_tile().is_some_and(|q| QUERY_TILES.contains(&q))
