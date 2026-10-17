@@ -472,17 +472,7 @@ impl BatchBuilder<'_> {
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
             .map_err(device_error)?;
-        // Only three-axis models need the per-lane table; text-only prompts keep the cheaper
-        // `prefill_info` path and avoid an upload per chunk.
-        let prefill_rotary = if self.weights.mrope {
-            Some(
-                api::zeros::<i32>(&[self.width * infer_models::mrope::ROTARY_AXES])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            )
-        } else {
-            None
-        };
+        let prefill_rotary = self.prompt_rotary()?;
         let mut recurrent = super::recurrent_prefill::Workspace::new(
             self.device,
             self.graph,
@@ -559,6 +549,19 @@ impl BatchBuilder<'_> {
             profile,
             _arena: Some(arena),
         })
+    }
+
+    /// Only three-axis models need the per-lane table; text-only prompts keep the cheaper
+    /// `prefill_info` path and avoid an upload per chunk.
+    fn prompt_rotary(&self) -> Result<Option<Tensor<i32>>> {
+        if !self.weights.mrope {
+            return Ok(None);
+        }
+        Ok(Some(
+            api::zeros::<i32>(&[self.width * infer_models::mrope::ROTARY_AXES])
+                .sync_on(&self.device.stream)
+                .map_err(device_error)?,
+        ))
     }
 
     fn allocate_prompt_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
@@ -783,36 +786,8 @@ impl BatchBuilder<'_> {
         if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
             return Ok(());
         }
-        let dynamic = !node
-            .inputs
-            .iter()
-            .any(|id| self.weights.constants.contains_key(id));
-        if matches!(node.op, TensorOp::Rope { .. }) && dynamic {
-            if let Some(rotary) = prefill_rotary {
-                return self.record_prompt_sequence(
-                    scope,
-                    node,
-                    arena,
-                    rotary,
-                    CaptureMode::PrefillRotary,
-                );
-            }
-            return self.record_prompt_sequence(
-                scope,
-                node,
-                arena,
-                prefill_info,
-                CaptureMode::Prefill,
-            );
-        }
-        if matches!(node.op, TensorOp::Attention { .. }) && dynamic {
-            return self.record_prompt_sequence(
-                scope,
-                node,
-                arena,
-                prefill_info,
-                CaptureMode::Prefill,
-            );
+        if self.record_prompt_dynamic(scope, node, arena, prefill_info, prefill_rotary)? {
+            return Ok(());
         }
         match dispatch32(node, self.weights) {
             Dispatch32::Linear => {
@@ -870,6 +845,44 @@ impl BatchBuilder<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Record a prompt-wide sequence kernel for dynamic `RoPE` or attention nodes.
+    fn record_prompt_dynamic(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        prefill_info: &Tensor<i32>,
+        prefill_rotary: Option<&Tensor<i32>>,
+    ) -> std::result::Result<bool, DeviceError> {
+        let dynamic = !node
+            .inputs
+            .iter()
+            .any(|id| self.weights.constants.contains_key(id));
+        if !dynamic {
+            return Ok(false);
+        }
+        match node.op {
+            TensorOp::Rope { .. } => {
+                let (metadata, mode) = match prefill_rotary {
+                    Some(rotary) => (rotary, CaptureMode::PrefillRotary),
+                    None => (prefill_info, CaptureMode::Prefill),
+                };
+                self.record_prompt_sequence(scope, node, arena, metadata, mode)?;
+            }
+            TensorOp::Attention { .. } => {
+                self.record_prompt_sequence(
+                    scope,
+                    node,
+                    arena,
+                    prefill_info,
+                    CaptureMode::Prefill,
+                )?;
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 
     /// Record one prompt-wide sequence kernel against a chosen metadata binding.
