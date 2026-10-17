@@ -189,7 +189,17 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     }
                     pending.ticket = Some(ticket);
                 }
-                Err(error) if error.code == ErrorCode::Capacity => return Ok(None),
+                Err(error) if error.code == ErrorCode::Capacity => {
+                    // A synchronous rejection is also an attempt at this epoch. Re-arm it
+                    // so a full control lane is not polled again until progress advances.
+                    if pending.retry_epoch.take().is_some() {
+                        pending.started = self.now_us;
+                    }
+                    if matches!(pending.phase, ResourcePhase::Reserve) {
+                        pending.retry_epoch = Some(self.resource_epoch);
+                    }
+                    return Ok(None);
+                }
                 Err(error) => return Err(error),
             }
         }
