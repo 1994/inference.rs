@@ -81,6 +81,10 @@ name = "cuda-multimodal-generate"
 required-features = ["cuda"]
 
 [[example]]
+name = "cuda-multimodal-media"
+required-features = ["cuda"]
+
+[[example]]
 name = "cuda-parity-2b"
 required-features = ["cuda"]
 

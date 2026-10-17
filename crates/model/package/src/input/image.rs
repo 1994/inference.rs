@@ -7,7 +7,7 @@
 use infer_core::{Error, Result};
 
 /// Channels of the RGB images the processor accepts.
-const RGB_CHANNELS: usize = 3;
+pub(crate) const RGB_CHANNELS: usize = 3;
 /// Full scale of one 8-bit channel.
 const BYTE_SCALE: f64 = 255.0;
 /// Reciprocal of [`BYTE_SCALE`], the processor's rescale factor.
@@ -73,6 +73,129 @@ pub struct PreprocessedImage {
     pub pixels: Vec<f32>,
     /// `(temporal, height, width)` patch grid.
     pub grid: (usize, usize, usize),
+}
+
+/// Per-channel normalization applied to a rescaled RGB value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Normalization {
+    pub mean: [f32; RGB_CHANNELS],
+    pub std: [f32; RGB_CHANNELS],
+    pub rescale: f32,
+}
+
+impl Normalization {
+    fn apply(self, value: f32, channel: usize) -> f32 {
+        value.mul_add(self.rescale, -self.mean[channel]) / self.std[channel]
+    }
+}
+
+/// Patch layout of one visual sample: `groups` temporal groups of `temporal` frames each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PatchGrid {
+    /// Frames merged into one token along the temporal axis.
+    pub temporal: usize,
+    /// Patch rows after resizing.
+    pub height: usize,
+    /// Patch columns after resizing.
+    pub width: usize,
+    /// Side of one square patch in pixels.
+    pub patch: usize,
+    /// Patches merged into one encoder output along each spatial axis.
+    pub merge: usize,
+    /// Temporal groups: one for an image, `frames / temporal` for a video.
+    pub groups: usize,
+}
+
+/// Lay out resized frames into merged patch vectors.
+///
+/// `frames` holds `groups × temporal` RGB frames, each `height × patch` rows by
+/// `width × patch` columns, in presentation order. A still image passes the same frame for every
+/// temporal tap, so images and videos share one layout.
+///
+/// # Errors
+/// Rejects missing frames, frames that disagree with the grid or a grid that does not divide by
+/// the merge size.
+pub(crate) fn patchify(
+    frames: &[&[f32]],
+    grid: PatchGrid,
+    norm: &Normalization,
+) -> Result<Vec<f32>> {
+    let resized_height = grid
+        .height
+        .checked_mul(grid.patch)
+        .ok_or_else(|| Error::invalid("patch grid height overflow"))?;
+    let resized_width = grid
+        .width
+        .checked_mul(grid.patch)
+        .ok_or_else(|| Error::invalid("patch grid width overflow"))?;
+    let expected_frames = grid
+        .groups
+        .checked_mul(grid.temporal)
+        .ok_or_else(|| Error::invalid("patch frame count overflow"))?;
+    if grid.temporal == 0
+        || grid.merge == 0
+        || grid.patch == 0
+        || grid.height == 0
+        || grid.width == 0
+        || !grid.height.is_multiple_of(grid.merge)
+        || !grid.width.is_multiple_of(grid.merge)
+        || frames.len() != expected_frames
+    {
+        return Err(Error::invalid("patch layout"));
+    }
+    let frame_values = resized_height
+        .checked_mul(resized_width)
+        .and_then(|value| value.checked_mul(RGB_CHANNELS))
+        .ok_or_else(|| Error::invalid("patch frame overflow"))?;
+    if frames.iter().any(|frame| frame.len() != frame_values) {
+        return Err(Error::invalid(
+            "patch frame does not match the resized grid",
+        ));
+    }
+    let patch_area = grid
+        .patch
+        .checked_mul(grid.patch)
+        .ok_or_else(|| Error::invalid("patch area overflow"))?;
+    let patch_width = RGB_CHANNELS
+        .checked_mul(grid.temporal)
+        .and_then(|value| value.checked_mul(patch_area))
+        .ok_or_else(|| Error::invalid("patch width overflow"))?;
+    let patches = expected_frames
+        .checked_mul(grid.height)
+        .and_then(|value| value.checked_mul(grid.width))
+        .ok_or_else(|| Error::invalid("patch count overflow"))?;
+    let mut pixels = Vec::with_capacity(
+        patches
+            .checked_mul(patch_width)
+            .ok_or_else(|| Error::invalid("patch vector overflow"))?,
+    );
+    for group in 0..grid.groups {
+        for block_row in 0..grid.height / grid.merge {
+            for block_col in 0..grid.width / grid.merge {
+                for in_row in 0..grid.merge {
+                    for in_col in 0..grid.merge {
+                        let row = block_row * grid.merge + in_row;
+                        let col = block_col * grid.merge + in_col;
+                        for channel in 0..RGB_CHANNELS {
+                            for tap in 0..grid.temporal {
+                                let frame = frames[group * grid.temporal + tap];
+                                for patch_row in 0..grid.patch {
+                                    for patch_col in 0..grid.patch {
+                                        let y = row * grid.patch + patch_row;
+                                        let x = col * grid.patch + patch_col;
+                                        let value =
+                                            frame[(y * resized_width + x) * RGB_CHANNELS + channel];
+                                        pixels.push(norm.apply(value, channel));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(pixels)
 }
 
 impl ImageProcessor {
@@ -204,34 +327,24 @@ impl ImageProcessor {
                 "patch grid does not divide by the merge size",
             ));
         }
-        let mut pixels = Vec::with_capacity(grid_h * grid_w * self.patch_width());
-        for block_row in 0..grid_h / merge {
-            for block_col in 0..grid_w / merge {
-                for in_row in 0..merge {
-                    for in_col in 0..merge {
-                        let row = block_row * merge + in_row;
-                        let col = block_col * merge + in_col;
-                        for channel in 0..RGB_CHANNELS {
-                            // A still image repeats the same patch across the temporal taps.
-                            for _ in 0..self.temporal_patch_size {
-                                for patch_row in 0..self.patch_size {
-                                    for patch_col in 0..self.patch_size {
-                                        let y = row * self.patch_size + patch_row;
-                                        let x = col * self.patch_size + patch_col;
-                                        let value = resized
-                                            [(y * resized_width + x) * RGB_CHANNELS + channel];
-                                        pixels.push(
-                                            value.mul_add(self.rescale, -self.mean[channel])
-                                                / self.std[channel],
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // A still image repeats the same frame across the temporal taps.
+        let frames = vec![resized.as_slice(); self.temporal_patch_size];
+        let pixels = patchify(
+            &frames,
+            PatchGrid {
+                temporal: self.temporal_patch_size,
+                height: grid_h,
+                width: grid_w,
+                patch: self.patch_size,
+                merge: self.merge_size,
+                groups: 1,
+            },
+            &Normalization {
+                mean: self.mean,
+                std: self.std,
+                rescale: self.rescale,
+            },
+        )?;
         Ok(PreprocessedImage {
             pixels,
             grid: (1, grid_h, grid_w),
@@ -243,7 +356,7 @@ impl ImageProcessor {
         clippy::cast_possible_truncation,
         reason = "Resampled values are rounded into the 8-bit range before the narrowing cast"
     )]
-    fn resize(image: &RgbImage, height: usize, width: usize) -> Vec<f32> {
+    pub(crate) fn resize(image: &RgbImage, height: usize, width: usize) -> Vec<f32> {
         let horizontal = resample_axis(image.width, width);
         let vertical = resample_axis(image.height, height);
         let mut intermediate = vec![0f32; image.height * width * RGB_CHANNELS];

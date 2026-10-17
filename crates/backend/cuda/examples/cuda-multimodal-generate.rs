@@ -26,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cutile::jit_cache::enable_default()?;
     let device = CudaDevice::new(0)?;
     let options = LoadOptions {
+        // A prompt graph turns the media prefill into fused chunks instead of one decode step
+        // per token; zero asks the loader to pick the widest graph the package can hold.
+        prefill_width: 0,
         autotune: false,
         ..LoadOptions::default()
     };
@@ -120,8 +123,6 @@ fn run_case(
     use infer_backend_cuda::vision;
     use infer_core::Error;
     use infer_ir::Modality;
-    use infer_models::place_visual_embeddings;
-
     let imported = loaded.imported();
     let vision = loaded
         .vision()
@@ -139,24 +140,29 @@ fn run_case(
         .first()
         .ok_or_else(|| Error::invariant("prepared prompt without an image"))?;
     let encoded = vision.encode(loaded.device(), image)?;
-    let placements =
-        place_visual_embeddings(&prepared, imported, &Modality::Image, &[encoded], hidden)?;
-    let logits = vision::prefill(program, imported, &prepared.tokens, &placements, hidden, 0)?;
-    let generated = vision::generate(
+    let encodings = [encoded];
+    let prefill = vision::prefill(
         program,
         imported,
-        &prepared.tokens,
-        &placements,
+        &prepared,
+        &Modality::Image,
+        &encodings,
         hidden,
-        budget,
-        &[],
+        0,
     )?;
+    let logits = prefill.logits.clone();
+    let generated = vision::decode(program, prepared.tokens.len(), &prefill, budget, &[])?;
+    let media_tokens = prepared
+        .spans
+        .iter()
+        .map(std::ops::Range::len)
+        .sum::<usize>();
     Ok(Case {
         summary: serde_json::json!({
             "image": kind,
             "grid": [image.grid.0, image.grid.1, image.grid.2],
             "prompt_tokens": prepared.tokens.len(),
-            "media_tokens": placements.len(),
+            "media_tokens": media_tokens,
             "generated_tokens": generated,
             "generated_text": assets.decode(&generated, true)?,
         }),

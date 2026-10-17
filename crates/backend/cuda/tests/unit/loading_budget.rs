@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),

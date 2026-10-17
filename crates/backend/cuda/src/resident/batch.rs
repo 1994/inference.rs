@@ -27,6 +27,18 @@ impl BatchReadout {
     }
 }
 
+/// Per-lane embedding overrides and the rotary coordinates they run at.
+#[derive(Clone, Copy)]
+pub(super) struct PromptOverrides<'a> {
+    /// `lanes[lane]` selects that lane's external embedding slot.
+    pub lanes: &'a [bool],
+    /// Per-lane `(t, h, w)`; absent means `[position + lane; 3]`.
+    pub rotary: Option<&'a [[usize; infer_models::mrope::ROTARY_AXES]]>,
+}
+
+/// Per-lane metadata plus the shared prompt sidecar and rotary table.
+type PromptMetadata<'a> = (&'a [Tensor<i32>], &'a Tensor<i32>, Option<&'a Tensor<i32>>);
+
 pub(super) struct Lane {
     pub arena: ActivationArena,
     metadata: Tensor<i32>,
@@ -57,6 +69,8 @@ pub(super) struct BatchGraph {
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
     prefill_info: Option<Tensor<i32>>,
+    /// Per-lane `(t, h, w)` rotary coordinates for prompt chunks; absent below prefill width 32.
+    prefill_rotary: Option<Tensor<i32>>,
     hidden: Vec<Arc<Tensor<f32>>>,
     logits: Vec<Arc<Tensor<f32>>>,
     pub width: usize,
@@ -416,6 +430,7 @@ impl BatchBuilder<'_> {
             _recurrent: super::recurrent_prefill::Workspace::default(),
             _fusion: None,
             prefill_info: None,
+            prefill_rotary: None,
             metadata,
             hidden,
             logits,
@@ -456,6 +471,17 @@ impl BatchBuilder<'_> {
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
             .map_err(device_error)?;
+        // Only three-axis models need the per-lane table; text-only prompts keep the cheaper
+        // `prefill_info` path and avoid an upload per chunk.
+        let prefill_rotary = if self.weights.mrope {
+            Some(
+                api::zeros::<i32>(&[self.width * infer_models::mrope::ROTARY_AXES])
+                    .sync_on(&self.device.stream)
+                    .map_err(device_error)?,
+            )
+        } else {
+            None
+        };
         let mut recurrent = super::recurrent_prefill::Workspace::new(
             self.device,
             self.graph,
@@ -468,7 +494,7 @@ impl BatchBuilder<'_> {
         let prefill = self.capture32(
             &mut arena,
             &metadata,
-            &prefill_info,
+            (&prefill_info, prefill_rotary.as_ref()),
             PromptReadout::Hidden,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
@@ -476,7 +502,7 @@ impl BatchBuilder<'_> {
         let prefill_last = self.capture32(
             &mut arena,
             &metadata,
-            &prefill_info,
+            (&prefill_info, prefill_rotary.as_ref()),
             PromptReadout::Logits,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
@@ -486,7 +512,7 @@ impl BatchBuilder<'_> {
             Some(self.capture32(
                 &mut arena,
                 &metadata,
-                &prefill_info,
+                (&prefill_info, prefill_rotary.as_ref()),
                 PromptReadout::StateOnly,
                 None,
                 (&mut partials, &mut recurrent, &mut fusion),
@@ -510,6 +536,7 @@ impl BatchBuilder<'_> {
             _recurrent: recurrent,
             _fusion: fusion,
             prefill_info: Some(prefill_info),
+            prefill_rotary,
             metadata,
             hidden,
             logits,
@@ -630,7 +657,7 @@ impl BatchBuilder<'_> {
         &mut self,
         arena: &mut ActivationArena,
         metadata: &[Tensor<i32>],
-        prefill_info: &Tensor<i32>,
+        info: (&Tensor<i32>, Option<&Tensor<i32>>),
         readout: PromptReadout,
         profile: Option<&mut profile::PrefillProfile>,
         workspaces: (
@@ -663,7 +690,7 @@ impl BatchBuilder<'_> {
                     scope,
                     node,
                     arena,
-                    (metadata, prefill_info),
+                    (metadata, info.0, info.1),
                     (partials, recurrent, fusion),
                 )?;
             }
@@ -681,14 +708,14 @@ impl BatchBuilder<'_> {
         scope: &Scope,
         node: &TensorNode,
         arena: &mut ActivationArena,
-        metadata: (&[Tensor<i32>], &Tensor<i32>),
+        metadata: PromptMetadata<'_>,
         workspaces: (
             &mut BTreeMap<usize, Tensor<f32>>,
             &mut super::recurrent_prefill::Workspace,
             &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> std::result::Result<(), DeviceError> {
-        let (metadata, prefill_info) = metadata;
+        let (metadata, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         if let Some(workspace) = fusion.as_mut()
             && super::fusion_batch::record(self, scope, node, arena, metadata, workspace)?
@@ -699,29 +726,36 @@ impl BatchBuilder<'_> {
         if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
             return Ok(());
         }
-        if matches!(node.op, TensorOp::Attention { .. } | TensorOp::Rope { .. })
-            && !node
-                .inputs
-                .iter()
-                .any(|id| self.weights.constants.contains_key(id))
-        {
-            Capture {
-                scope,
-                arena: &mut *arena,
-                weights: self.weights,
-                nvfp4: self.nvfp4,
-                attention: self.attention,
-                states: self.states,
-                fp8_states: self.fp8_states,
-                metadata: prefill_info,
-                table: &self.tables[0],
-                external: self.external,
-                capacity: self.capacity,
-                fusion: &mut no_fusion,
-                mode: CaptureMode::Prefill,
+        let dynamic = !node
+            .inputs
+            .iter()
+            .any(|id| self.weights.constants.contains_key(id));
+        if matches!(node.op, TensorOp::Rope { .. }) && dynamic {
+            if let Some(rotary) = prefill_rotary {
+                return self.record_prompt_sequence(
+                    scope,
+                    node,
+                    arena,
+                    rotary,
+                    CaptureMode::PrefillRotary,
+                );
             }
-            .record(node)?;
-            return Ok(());
+            return self.record_prompt_sequence(
+                scope,
+                node,
+                arena,
+                prefill_info,
+                CaptureMode::Prefill,
+            );
+        }
+        if matches!(node.op, TensorOp::Attention { .. }) && dynamic {
+            return self.record_prompt_sequence(
+                scope,
+                node,
+                arena,
+                prefill_info,
+                CaptureMode::Prefill,
+            );
         }
         match dispatch32(node, self.weights) {
             Dispatch32::Linear => {
@@ -779,6 +813,34 @@ impl BatchBuilder<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Record one prompt-wide sequence kernel against a chosen metadata binding.
+    fn record_prompt_sequence(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: &Tensor<i32>,
+        mode: CaptureMode,
+    ) -> std::result::Result<(), DeviceError> {
+        let mut no_fusion = None;
+        Capture {
+            scope,
+            arena,
+            weights: self.weights,
+            nvfp4: self.nvfp4,
+            attention: self.attention,
+            states: self.states,
+            fp8_states: self.fp8_states,
+            metadata,
+            table: &self.tables[0],
+            external: self.external,
+            capacity: self.capacity,
+            fusion: &mut no_fusion,
+            mode,
+        }
+        .record(node)
     }
 
     fn skip_quant(
@@ -915,7 +977,17 @@ impl BatchGraph {
     ) -> Result<BatchReadout> {
         if self.width >= crate::constants::PREFILL_LANES {
             return self
-                .run32(device, tokens, position, prefill, read_hidden)
+                .run32(
+                    device,
+                    tokens,
+                    position,
+                    prefill,
+                    read_hidden,
+                    PromptOverrides {
+                        lanes: &[],
+                        rotary: None,
+                    },
+                )
                 .map(BatchReadout::host);
         }
         let device_tokens = plain_greedy && prefill.is_none() && self.token_readout.is_some();
@@ -935,6 +1007,10 @@ impl BatchGraph {
             tokens,
             position,
             self.state_offset,
+            PromptOverrides {
+                lanes: &[],
+                rotary: None,
+            },
         )?;
         if prefill.is_some() {
             // A prompt graph's append and recurrent kernels resolve positions from this sidecar
@@ -1023,6 +1099,10 @@ impl BatchGraph {
             .map_err(device_error)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Launch fields are independent scalars; bundling them would hide the metadata contract"
+    )]
     fn update_metadata(
         graph: &CudaGraph<()>,
         metadata: &mut [Tensor<i32>],
@@ -1031,6 +1111,7 @@ impl BatchGraph {
         tokens: &[u32],
         position: usize,
         state_offset: i32,
+        overrides: PromptOverrides<'_>,
     ) -> Result<()> {
         for (lane, metadata) in metadata.iter_mut().enumerate().take(width) {
             let token = tokens.get(lane).copied().unwrap_or(0);
@@ -1061,7 +1142,7 @@ impl BatchGraph {
                     pos,
                     i32::try_from(token).map_err(device_error)?,
                     state_pos,
-                    0,
+                    i32::from(overrides.lanes.get(lane).copied().unwrap_or(false)),
                 ],
             )?;
         }
@@ -1097,8 +1178,10 @@ impl BatchGraph {
         position: usize,
         prefill: Option<bool>,
         read_hidden: bool,
+        overrides: PromptOverrides<'_>,
     ) -> Result<BatchOutput> {
         self.validate_prompt_positions(tokens.len(), position)?;
+        self.update_prompt_rotary(device, tokens.len(), position, overrides.rotary)?;
         let graph = match prefill {
             Some(false) => {
                 #[cfg(test)]
@@ -1123,6 +1206,7 @@ impl BatchGraph {
             tokens,
             position,
             self.state_offset,
+            overrides,
         )?;
         super::metadata::update(
             graph,
@@ -1178,6 +1262,63 @@ impl BatchGraph {
                 Ok((hidden, logits))
             })
             .collect()
+    }
+
+    /// Write the per-lane `(t, h, w)` table a prompt chunk's M-RoPE kernel reads.
+    fn update_prompt_rotary(
+        &mut self,
+        device: &CudaDevice,
+        lanes: usize,
+        position: usize,
+        rotary: Option<&[[usize; infer_models::mrope::ROTARY_AXES]]>,
+    ) -> Result<()> {
+        let Some(table) = self.prefill_rotary.as_mut() else {
+            return Ok(());
+        };
+        if rotary.is_some_and(|rotary| rotary.len() != lanes) {
+            return Err(Error::invalid("prompt rotary table width"));
+        }
+        let mut values = vec![0i32; self.width * infer_models::mrope::ROTARY_AXES];
+        for lane in 0..lanes {
+            // Prompt-local coordinates shift with the base, like the 1-D fallback does.
+            let axes = rotary.map_or(
+                [position + lane; infer_models::mrope::ROTARY_AXES],
+                |rotary| {
+                    let axes = rotary[lane];
+                    [axes[0] + position, axes[1] + position, axes[2] + position]
+                },
+            );
+            let base = lane * infer_models::mrope::ROTARY_AXES;
+            values[base] = i32::try_from(axes[0]).map_err(device_error)?;
+            values[base + 1] = i32::try_from(axes[1]).map_err(device_error)?;
+            values[base + 2] = i32::try_from(axes[2]).map_err(device_error)?;
+        }
+        device.copy_host_slice(table, &values)
+    }
+
+    /// Replay one prompt chunk whose media lanes carry precomputed embeddings.
+    ///
+    /// The caller has already copied each media row into its lane's external slot on the device
+    /// stream; `overrides[lane]` selects that slot in the embedding kernel.
+    pub(crate) fn run_media(
+        &mut self,
+        device: &CudaDevice,
+        tokens: &[u32],
+        position: usize,
+        read_logits: bool,
+        overrides: PromptOverrides<'_>,
+    ) -> Result<BatchOutput> {
+        if overrides.lanes.len() != tokens.len() {
+            return Err(Error::invalid("media prefill overrides"));
+        }
+        self.run32(
+            device,
+            tokens,
+            position,
+            Some(read_logits),
+            false,
+            overrides,
+        )
     }
 
     #[cfg(test)]

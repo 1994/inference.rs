@@ -15,6 +15,8 @@ pub(super) enum CaptureMode {
     Batched,
     /// Contiguous prompt rows with [position, active rows, state offset, unused] metadata.
     Prefill,
+    /// Prefill width 32 with a per-lane `(t, h, w)` rotary table instead of one base position.
+    PrefillRotary,
     /// Prefill width 32, one lane at a time: slots stay `[32, size]`, kernels
     /// with per-lane metadata or ordered state read and write single rows.
     Row(usize),
@@ -62,7 +64,7 @@ impl Capture<'_> {
         let tensor = self.arena.get(id).map_err(error)?;
         match self.mode {
             CaptureMode::Flat => identity(tensor),
-            CaptureMode::Batched | CaptureMode::Prefill => {
+            CaptureMode::Batched | CaptureMode::Prefill | CaptureMode::PrefillRotary => {
                 tensor.view(&[tensor.size()]).map_err(error)
             }
             CaptureMode::Row(lane) => self.arena.row(id, lane).map_err(error),

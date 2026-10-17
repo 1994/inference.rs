@@ -36,7 +36,7 @@ See the [code layout](docs/architecture/layout.md) for module boundaries and ext
 
 CUDA currently uses a synchronous provider and runtime JIT compilation through the CUDA Toolkit / `tileiras`. Model and operator coverage is limited; an arbitrary Hugging Face package is not guaranteed to run.
 
-The generic attention implementation has **not passed its Candle performance gate**. Candle is an isolated benchmark baseline, outside the production runtime. Image generation is validated through dedicated examples and is not yet integrated into multimodal service scheduling.
+The generic attention implementation has **not passed its Candle performance gate**. Candle is an isolated benchmark baseline, outside the production runtime. Image and video generation are validated through dedicated examples and are not yet integrated into multimodal service scheduling.
 
 Support and measurements apply to their tested configurations. See [backend capabilities](docs/architecture/backends.md), [quality gates](docs/guides/quality-gates.md), and [image model validation](docs/guides/vision.md) for details.
 

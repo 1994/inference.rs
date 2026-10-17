@@ -24,7 +24,7 @@ impl Capture<'_> {
         if !half.is_power_of_two() || !head_dim.is_multiple_of(half) {
             return Err(error("unsupported rotary dimensions"));
         }
-        let rows = if self.mode == CaptureMode::Prefill {
+        let rows = if matches!(self.mode, CaptureMode::Prefill | CaptureMode::PrefillRotary) {
             self.arena.lanes() * heads
         } else {
             *heads
@@ -35,7 +35,27 @@ impl Capture<'_> {
             .rope_frequencies
             .get(&node.id)
             .ok_or_else(|| error("missing rotary frequencies"))?;
-        if self.mode == CaptureMode::Prefill {
+        if self.mode == CaptureMode::PrefillRotary {
+            let axes = self
+                .weights
+                .rope_axes
+                .get(&node.id)
+                .ok_or_else(|| error("missing rotary axes"))?;
+            self.scope.record(
+                aux::prefill_mrope(
+                    (&mut output).partition([1, half]),
+                    &self.input(node.inputs[0])?.view(&[rows, *head_dim])?,
+                    frequency,
+                    axes,
+                    self.metadata,
+                )
+                .generics(vec![
+                    head_dim.to_string(),
+                    half.to_string(),
+                    heads.to_string(),
+                ]),
+            )?;
+        } else if self.mode == CaptureMode::Prefill {
             self.scope.record(
                 aux::prefill_rope(
                     (&mut output).partition([1, half]),
