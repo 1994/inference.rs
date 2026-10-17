@@ -645,10 +645,15 @@ impl BatchBuilder<'_> {
         let demand = (readout == PromptReadout::StateOnly)
             .then(|| super::prefill_demand::StateDemand::new(self.graph));
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
+        let pairs = gdn_ba_pairs(self.graph, self.weights);
         self.nvfp4.begin_quant_capture();
         let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
+            let mut fused_second = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
+                if fused_second == Some(index) {
+                    continue;
+                }
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 let skip = logits && !last;
                 #[cfg(test)]
@@ -658,6 +663,36 @@ impl BatchBuilder<'_> {
                 }
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
+                }
+                if !skip && let Some(&second) = pairs.get(&index) {
+                    let paired = &self.graph.nodes[second];
+                    let paired_skip = paired
+                        .outputs
+                        .iter()
+                        .any(|id| Some(*id) == self.graph.logits)
+                        && !last;
+                    #[cfg(test)]
+                    let paired_skip =
+                        paired_skip || demand.as_ref().is_some_and(|plan| !plan.retains(second));
+                    let fused = if paired_skip {
+                        false
+                    } else {
+                        let profile = self.device.profile().map_err(error)?;
+                        super::prefill_projection::record_pair(
+                            scope,
+                            node,
+                            paired,
+                            arena,
+                            (self.weights, &profile),
+                        )?
+                    };
+                    if fused {
+                        if let Some(boundaries) = boundaries.as_mut() {
+                            boundaries.boundary(scope, second, paired)?;
+                        }
+                        fused_second = Some(second);
+                        continue;
+                    }
                 }
                 self.record_prompt_node(
                     scope,
@@ -1483,6 +1518,48 @@ impl SlotDecodeGraph {
     }
 }
 
+/// Adjacent GDN `in_proj_b`/`in_proj_a` Dense projections of the same input.
+/// The pair is the only two consecutive N48 K5120 linears in the decoder graph.
+fn gdn_ba_pairs(graph: &DataflowGraph, weights: &ProgramWeights) -> BTreeMap<usize, usize> {
+    let mut pairs = BTreeMap::new();
+    let mut index = 0;
+    while index + 1 < graph.nodes.len() {
+        let first = &graph.nodes[index];
+        let second = &graph.nodes[index + 1];
+        if gdn_ba_nodes(first, second)
+            && gdn_ba_projection(first, weights)
+            && gdn_ba_projection(second, weights)
+        {
+            pairs.insert(index, index + 1);
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    pairs
+}
+
+/// Structural half of the pair test: same layer, same single activation input, both
+/// are plain `Linear` nodes. Weight identity/shape is checked separately.
+fn gdn_ba_nodes(first: &TensorNode, second: &TensorNode) -> bool {
+    first.layer == second.layer
+        && first.op == TensorOp::Linear
+        && second.op == TensorOp::Linear
+        && first.inputs.len() == 2
+        && second.inputs.len() == 2
+        && first.inputs[0] == second.inputs[0]
+        && first.outputs.len() == 1
+        && second.outputs.len() == 1
+}
+
+fn gdn_ba_projection(node: &TensorNode, weights: &ProgramWeights) -> bool {
+    matches!(
+        weights.projections.get(&node.inputs[1]),
+        Some(ProjectionWeight::Dense(weight))
+            if weight.shape() == super::prefill_projection::GDN_BA_SHAPE
+    )
+}
+
 fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> {
     (0..width)
         .map(|_| {
@@ -1501,3 +1578,7 @@ fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Resul
         usize::try_from(device.profile()?.arena_budget_bytes()).map_err(device_error)?,
     )
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_batch_ba_pair.rs"]
+mod tests;

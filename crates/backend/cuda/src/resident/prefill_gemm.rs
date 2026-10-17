@@ -45,6 +45,32 @@ pub(crate) mod gemm {
         out.store(acc);
     }
 
+    /// Two same-input N48 projections (GDN `in_proj_b` and `in_proj_a`) in one launch.
+    /// Both outputs keep their own `acc` chain and the exact same K order as `dense`:
+    /// the fused block computes the two BF16 MMA accumulators from the same `x` tile.
+    #[cutile::entry()]
+    fn dense_pair<const K: i32>(
+        out_b: &mut Tensor<f32, { [32, 64] }>,
+        out_a: &mut Tensor<f32, { [32, 64] }>,
+        input: &Tensor<f32, { [-1, K] }>,
+        weight_b: &Tensor<bf16, { [-1, K] }>,
+        weight_a: &Tensor<bf16, { [-1, K] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let xp = input.partition(shape![32, 64]);
+        let wb = weight_b.partition(shape![64, 64]);
+        let wa = weight_a.partition(shape![64, 64]);
+        let mut acc_b: Tile<f32, { [32, 64] }> = constant(0.0f32, shape![32, 64]);
+        let mut acc_a: Tile<f32, { [32, 64] }> = constant(0.0f32, shape![32, 64]);
+        for k in 0i32..((K + 63) / 64) {
+            let x: Tile<bf16, { [32, 64] }> = convert_tile(xp.load([pid.0, k]));
+            acc_b = mmaf(x, wb.load([pid.1, k]).transpose(), acc_b);
+            acc_a = mmaf(x, wa.load([pid.1, k]).transpose(), acc_a);
+        }
+        out_b.store(acc_b);
+        out_a.store(acc_a);
+    }
+
     #[cutile::entry()]
     fn fp8<const K: i32>(
         out: &mut Tensor<f32, { [32, 64] }>,
