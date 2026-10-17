@@ -199,7 +199,7 @@ unsafe impl DeviceAllocation for RowAllocation {
     reason = "Audited lane view: the owner is retained by the caller for the graph lifetime, \
               the lane extent is checked against the slot, and same-stream replay serializes access"
 )]
-pub(crate) unsafe fn row_view<T: DType>(
+pub(super) unsafe fn row_view<T: DType>(
     slot: &Tensor<T>,
     lanes: usize,
     lane: usize,

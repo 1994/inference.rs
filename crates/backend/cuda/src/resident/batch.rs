@@ -463,18 +463,14 @@ impl BatchBuilder<'_> {
         let mut profile = profile::PrefillProfile::from_env(self.device);
         let prefill = self.capture32(
             &mut arena,
-            &metadata,
-            &metadata_owner,
-            &prefill_info,
+            (metadata.as_slice(), &metadata_owner, &prefill_info),
             PromptReadout::Hidden,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
         )?;
         let prefill_last = self.capture32(
             &mut arena,
-            &metadata,
-            &metadata_owner,
-            &prefill_info,
+            (metadata.as_slice(), &metadata_owner, &prefill_info),
             PromptReadout::Logits,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
@@ -483,9 +479,7 @@ impl BatchBuilder<'_> {
         let state_prefill = if super::prefill_demand::enabled() {
             Some(self.capture32(
                 &mut arena,
-                &metadata,
-                &metadata_owner,
-                &prefill_info,
+                (metadata.as_slice(), &metadata_owner, &prefill_info),
                 PromptReadout::StateOnly,
                 None,
                 (&mut partials, &mut recurrent, &mut fusion),
@@ -629,9 +623,7 @@ impl BatchBuilder<'_> {
     fn capture32(
         &mut self,
         arena: &mut ActivationArena,
-        metadata: &[Tensor<i32>],
-        metadata_batch: &Tensor<i32>,
-        prefill_info: &Tensor<i32>,
+        metadata: (&[Tensor<i32>], &Tensor<i32>, &Tensor<i32>),
         readout: PromptReadout,
         profile: Option<&mut profile::PrefillProfile>,
         workspaces: (
@@ -640,6 +632,7 @@ impl BatchBuilder<'_> {
             &mut Option<super::fusion_batch::Workspace>,
         ),
     ) -> Result<CudaGraph<()>> {
+        let (metadata, metadata_batch, prefill_info) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         let last = readout == PromptReadout::Logits;
         #[cfg(test)]
@@ -684,7 +677,7 @@ impl BatchBuilder<'_> {
                             node,
                             paired,
                             arena,
-                            (self.weights, &profile),
+                            (self.weights, profile),
                         )?
                     };
                     if fused {

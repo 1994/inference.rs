@@ -424,5 +424,5 @@ fn tile_m_128_is_accepted_and_enumerated_after_the_schema_bump() {
             && config.tile_n == crate::constants::QUANT_GEMM_TILE[1]
             && config.main_loop == MainLoop::Plain
     }));
-    assert!(!candidates.is_empty());
+    assert_ne!(candidates, [] as [GemmConfig; 0]);
 }

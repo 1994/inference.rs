@@ -324,5 +324,5 @@ fn fp8_row_tile_128_is_accepted_and_enumerated_after_the_contract_bump() {
             if config.tile_m == 128
                 && config.tile_n == crate::constants::QUANT_GEMM_TILE[1])
     }));
-    assert!(!choices.is_empty());
+    assert_ne!(choices, [] as [Choice; 0]);
 }
