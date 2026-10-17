@@ -2,8 +2,15 @@ name: quality
 # Documentation-only changes run `.github/workflows/docs.yml` instead: the full matrix here
 # spends four package builds and two macOS runners on a markdown edit, and none of that can be
 # affected by prose. Anything touching code still runs every gate.
+#
+# Branches are gated by their pull request, not by the branch push: a push to a branch with an
+# open PR otherwise starts a second full 11-job matrix on the same SHA (push and PR use different
+# concurrency groups, so neither run cancels the other). Main and the merge queue still run the
+# whole matrix, and `workflow_dispatch` remains available for a branch-only check.
 on:
   push:
+    branches:
+      - main
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -39,6 +46,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ matrix.os }}
+          cache-workspace-crates: true
       - run: make check-rust
       - name: Linux placement acceptance
         if: runner.os == 'Linux'
@@ -106,6 +117,15 @@ jobs:
             libclang-dev cuda-cudart-dev-13-2 cuda-crt-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2
           test -f /usr/local/cuda-13.2/include/crt/host_config.h
           echo 'CUDA_HOME=/usr/local/cuda-13.2' >> "$GITHUB_ENV"
+          # cuda-bindings generates bindings from cuda.h without a rerun-if-changed on the
+          # header; salt the cache with the installed toolkit package versions so an apt
+          # update at the same path cannot reuse bindings generated from older headers.
+          echo "CUDA_TOOLKIT_CACHE_KEY=$(dpkg-query -W -f='${Package}=${Version}\n' cuda-cudart-dev-13-2 cuda-crt-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2 | sort | paste -sd, -)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: cuda-hosted
+          cache-workspace-crates: true
+          env-vars: CUDA_HOME CUDA_TOOLKIT_PATH CUDA_TOOLKIT_TARGET_DIR CUDA_TOOLKIT_CACHE_KEY
       - run: make test-cuda-hosted
 
   packages:
@@ -151,6 +171,15 @@ jobs:
             libclang-dev cuda-cudart-dev-13-2 cuda-crt-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2
           test -f /usr/local/cuda-13.2/include/crt/host_config.h
           echo 'CUDA_HOME=/usr/local/cuda-13.2' >> "$GITHUB_ENV"
+          # cuda-bindings generates bindings from cuda.h without a rerun-if-changed on the
+          # header; salt the cache with the installed toolkit package versions so an apt
+          # update at the same path cannot reuse bindings generated from older headers.
+          echo "CUDA_TOOLKIT_CACHE_KEY=$(dpkg-query -W -f='${Package}=${Version}\n' cuda-cudart-dev-13-2 cuda-crt-13-2 cuda-driver-dev-13-2 libcurand-dev-13-2 | sort | paste -sd, -)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ matrix.target }}
+          cache-workspace-crates: true
+          env-vars: CUDA_HOME CUDA_TOOLKIT_PATH CUDA_TOOLKIT_TARGET_DIR CUDA_TOOLKIT_CACHE_KEY
       - name: Select macOS SDK
         if: runner.os == 'macOS'
         run: echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
