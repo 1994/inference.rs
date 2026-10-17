@@ -9,7 +9,7 @@ fn capability_limits_scratch_to_validated_layout() -> Result<()> {
     );
     assert_eq!(
         Some(SCRATCH_BYTES),
-        u64::try_from(ROWS * COLUMNS * size_of::<f32>()).ok()
+        u64::try_from((ROWS * COLUMNS + ROWS * HIDDEN) * size_of::<f32>()).ok()
     );
     for width in [1, 3, 4, 32, 64, 256] {
         assert_eq!(
@@ -50,4 +50,14 @@ fn row_reference_is_nested_and_unwind_safe() {
         std::panic::catch_unwind(|| with_row_reference(|| std::panic::resume_unwind(Box::new(()))));
     assert!(unwind.is_err());
     assert!(!DISABLED.get());
+}
+
+#[test]
+fn batched_gather_preserves_the_ir_graph_contract_and_reduces_captured_nodes() {
+    // The profile census keys on the draft IR graph (`node_count = 23`), which this
+    // change does not touch: only the number of kernels captured per chunk changes.
+    assert_eq!(ROWS, 128);
+    assert_eq!(1 + ROWS * 3, 385);
+    assert_eq!(captured_nodes(ROWS), 1 + ROWS * 2 + 1);
+    assert_eq!(captured_nodes(ROWS), 258);
 }

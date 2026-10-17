@@ -25,10 +25,11 @@ use std::{
 
 pub(crate) mod probe_inputs;
 
-const CONTRACT: &str = "fp8-channel-exact-v1:row-pad-pow2:maxabs/448:floor1e-12:clip448:e4m3-rne:mma-k128-f32:lt-scalar32f-scales1:fastaccum0:col-tn:raw*xs*ws:rn-ftz0:align256:workspace0:four-fixtures:exact-native-or-verified-lt-optin:search-ab-confirm-ba";
-const ROW_TILES: [usize; 2] = [
+const CONTRACT: &str = "fp8-channel-exact-v2:row-pad-pow2:maxabs/448:floor1e-12:clip448:e4m3-rne:mma-k128-f32:lt-scalar32f-scales1:fastaccum0:col-tn:raw*xs*ws:rn-ftz0:align256:workspace0:four-fixtures:exact-native-or-verified-lt-optin:search-ab-confirm-ba:tile-m128";
+const ROW_TILES: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
     crate::constants::PROMPT_GEMM_TILE_ROWS,
+    128,
 ];
 const COLUMN_TILES: [usize; 2] = [
     crate::constants::QUANT_GEMM_TILE[1],

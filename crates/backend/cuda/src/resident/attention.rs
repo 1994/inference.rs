@@ -28,6 +28,27 @@ pub(crate) mod attention {
         }
     }
 
+    /// One gather for every prompt lane: row `pid.0` reads token id `metadata[row][1]`
+    /// and copies the 256-wide weight slice at column tile `pid.1`. Pure copy + convert,
+    /// bit-identical to the per-lane `embedding` kernel.
+    #[cutile::entry()]
+    fn embedding_batch<const D: i32, const FIELDS: i32>(
+        out: &mut Tensor<f32, { [1, 256] }>,
+        weight: &Tensor<bf16, { [-1, D] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let token: i32 = tile_to_scalar(
+            metadata
+                .partition(shape![1])
+                .load([pid.0 * FIELDS + 1i32])
+                .reshape(shape![]),
+        );
+        let w = weight.partition(shape![1, 256]).load([token, pid.1]);
+        let value: Tile<f32, { [1, 256] }> = convert_tile(w);
+        out.store(value);
+    }
+
     #[cutile::entry()]
     fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32>(
         keys: &mut Tensor<E, { [1, CAP, D] }>,
