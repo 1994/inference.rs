@@ -36,6 +36,7 @@ struct ReserveGate {
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
     poll_gate: Arc<AtomicBool>,
+    poll_permits: Arc<AtomicUsize>,
 }
 impl BackendProvider for ReserveGate {
     type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
@@ -131,11 +132,15 @@ impl BackendProvider for ReserveGate {
         self.inner.submit(program, step, tasks)
     }
     fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
-        if self.poll_gate.load(Ordering::Acquire) {
-            self.inner.poll(ticket)
-        } else {
-            Ok(None)
+        if !self.poll_gate.load(Ordering::Acquire) || self.poll_permits.load(Ordering::Acquire) == 0
+        {
+            return Ok(None);
         }
+        let result = self.inner.poll(ticket)?;
+        if result.is_some() {
+            self.poll_permits.fetch_sub(1, Ordering::AcqRel);
+        }
+        Ok(result)
     }
 }
 type TestEngine = Engine<ThreadedBackend<ReserveGate>>;
@@ -150,6 +155,7 @@ struct Fixture {
     observed_work: Arc<AtomicUsize>,
     observed_sampling: Arc<AtomicUsize>,
     poll_gate: Arc<AtomicBool>,
+    poll_permits: Arc<AtomicUsize>,
 }
 impl Fixture {
     fn new(gated: bool) -> Result<Self> {
@@ -174,6 +180,7 @@ impl Fixture {
         let observed_work = Arc::new(AtomicUsize::new(0));
         let observed_sampling = Arc::new(AtomicUsize::new(0));
         let poll_gate = Arc::new(AtomicBool::new(true));
+        let poll_permits = Arc::new(AtomicUsize::new(usize::MAX));
         let backend = ReserveGate {
             inner: ProtocolBackend::new(16, 8, &ir)?,
             draft_depth,
@@ -186,6 +193,7 @@ impl Fixture {
             observed_work: observed_work.clone(),
             observed_sampling: observed_sampling.clone(),
             poll_gate: poll_gate.clone(),
+            poll_permits: poll_permits.clone(),
         };
         let mut registry = KernelRegistry::default();
         registry.register(&support::DeclaredKernels)?;
@@ -217,6 +225,7 @@ impl Fixture {
             observed_work,
             observed_sampling,
             poll_gate,
+            poll_permits,
         })
     }
     fn admit(&mut self, id: u64) -> Result<()> {
