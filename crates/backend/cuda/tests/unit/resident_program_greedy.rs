@@ -15,12 +15,14 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .map(|i| bf16::from_f32(f32::from(i16::try_from(i * 13 % 29).unwrap() - 14) / 32.0))
         .collect();
     Ok(ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: crate::AttentionProfile::Canonical,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: Some(FusionWeights {

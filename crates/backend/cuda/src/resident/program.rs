@@ -83,6 +83,9 @@ pub struct ProgramWeights {
     pub kv_scales: BTreeMap<TensorId, [f32; 2]>,
     pub tiling: BTreeMap<TensorId, LinearTiling>,
     pub fusion: Option<FusionWeights>,
+    /// Target prefill attention numerical profile, resolved once at load. The draft proposal
+    /// program keeps its existing BF16 behavior regardless of this selection.
+    pub attention_profile: crate::AttentionProfile,
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
     pub input_scales: BTreeMap<TensorId, f32>,
     pub fp8_inputs: std::collections::BTreeSet<TensorId>,
@@ -93,6 +96,8 @@ pub struct ProgramWeights {
     pub embeddings: BTreeMap<TensorId, Arc<Tensor<bf16>>>,
     pub rope_axes: BTreeMap<infer_core::OpId, Arc<Tensor<i32>>>,
     pub rope_frequencies: BTreeMap<infer_core::OpId, Arc<Tensor<f32>>>,
+    /// Whether the model's `RoPE` carries three-axis (`t`, `h`, `w`) positions.
+    pub mrope: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -165,7 +170,10 @@ pub struct DeviceProgram {
     states: super::batch::States,
     fp8_states: super::fp8_cache::Fp8Caches,
     lane_external: Vec<Tensor<f32>>,
-    lane_uploads: Vec<Arc<Tensor<f32>>>,
+    // Mutable upload handle for one contiguous external hidden per prompt lane. Every row in
+    // `lane_external` keeps the backing storage alive, so this handle is only the transfer
+    // target and is written before the prompt replay on the device stream.
+    lane_external_owner: Tensor<f32>,
     // Fusion workspaces are referenced by the captured graphs and never touched afterwards.
     lane_fusion: Vec<Option<FusionWorkspace>>,
     reset_graph: CudaGraph<()>,
@@ -261,13 +269,15 @@ fn retained_tensor_bytes(
     activations + state_bytes + packed_bytes + recurrent * verify as u64
 }
 
-/// Per-lane external hidden buffers paired with their fusion workspaces.
-type LaneFusion = (Vec<Tensor<f32>>, Vec<Option<FusionWorkspace>>);
+/// One contiguous external-hidden owner, its per-lane row views and fusion workspaces.
+type LaneFusion = (Tensor<f32>, Vec<Tensor<f32>>, Vec<Option<FusionWorkspace>>);
 
-/// Per-lane external hidden buffers and fusion workspaces for batched captures.
+/// Per-lane external hidden row views and fusion workspaces for batched captures.
 ///
-/// A fused program consumes one external hidden per lane; the batch capture owns a buffer and
-/// a workspace per lane so batched draft priming no longer replays the prompt token by token.
+/// A fused program consumes one external hidden per lane. One contiguous owner makes a
+/// prompt chunk one host transfer; the captured graphs keep pointing at the same disjoint
+/// rows, so draft priming no longer uploads and rebinds one buffer per token. Each row
+/// holds the backing storage itself, so the owner handle is free to remain the upload target.
 fn allocate_lane_fusion(
     device: &CudaDevice,
     hidden: usize,
@@ -275,17 +285,18 @@ fn allocate_lane_fusion(
 ) -> Result<LaneFusion> {
     let width = weights.prefill_width.max(weights.batch_width).max(1);
     let enabled = weights.fusion.is_some();
-    let mut external = Vec::new();
-    let mut fusion = Vec::new();
+    let elements = width
+        .checked_mul(hidden)
+        .ok_or_else(|| Error::invalid("external hidden size overflow"))?;
+    let owner = api::zeros::<f32>(&[elements])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let external = super::arena::batch_rows(&owner, width)?;
+    let mut fusion = Vec::with_capacity(width);
     for _ in 0..width {
-        external.push(
-            api::zeros::<f32>(&[hidden])
-                .sync_on(&device.stream)
-                .map_err(device_error)?,
-        );
         fusion.push(FusionWorkspace::allocate(device, hidden, enabled)?);
     }
-    Ok((external, fusion))
+    Ok((owner, external, fusion))
 }
 
 /// Activation arena budget for this device, as a host `usize`.
@@ -498,6 +509,13 @@ impl DeviceProgram {
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        attention.prepare_mma(
+            device,
+            graph,
+            weights,
+            capacity,
+            geometry.prompts.into_iter().max().unwrap_or(0),
+        )?;
         let (mut nvfp4, mut delegated) =
             Self::projection_workspaces(device, graph, weights, geometry)?;
         let mut states = allocate_states(device, graph, capacity, weights)?;
@@ -505,7 +523,8 @@ impl DeviceProgram {
             super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
         let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
-        let (mut lane_external, mut lane_fusion) = allocate_lane_fusion(device, hidden, weights)?;
+        let (lane_external_owner, mut lane_external, mut lane_fusion) =
+            allocate_lane_fusion(device, hidden, weights)?;
         let mut builder = super::batch::BatchBuilder {
             device,
             graph,
@@ -558,7 +577,7 @@ impl DeviceProgram {
             metadata,
             external,
             lane_external,
-            lane_uploads: Vec::new(),
+            lane_external_owner,
             states,
             fp8_states,
             lane_fusion,
@@ -837,6 +856,11 @@ impl DeviceProgram {
         &mut self.fp8_states
     }
 
+    /// Device that owns this program's state and graphs.
+    pub(crate) const fn device(&self) -> &CudaDevice {
+        &self.device
+    }
+
     #[must_use]
     pub fn prefill_width(&self) -> usize {
         let widest = self
@@ -936,7 +960,16 @@ impl DeviceProgram {
         if externals.len() != lanes {
             return Err(Error::invalid("prompt externals"));
         }
-        self.lane_uploads.clear();
+        // The prompt graphs captured row views that share this owner's storage. One contiguous
+        // transfer replaces 128 allocations, host-to-device copies, stream syncs and per-lane
+        // graph rebinds per chunk; row order and draft state order are unchanged. `&mut self`
+        // excludes concurrent uploads/replays, and the copy stays on the device stream ahead of
+        // the prompt replay, so the shared owner obeys the same exclusivity contract as before.
+        self.device
+            .copy_host_slice(&mut self.lane_external_owner, externals)?;
+        // The source slice is only borrowed for this call. Drain the same stream before
+        // returning so no pageable host range can outlive its backing allocation.
+        self.device.drain()?;
         let narrow_fits = self.prefers_narrow_prompt(tokens.len());
         let batch = if narrow_fits {
             self.prompt_narrow.take()
@@ -944,14 +977,6 @@ impl DeviceProgram {
             self.prompt_batch.take()
         }
         .ok_or_else(|| Error::invariant("prompt batch graph"))?;
-        for lane in 0..tokens.len() {
-            let slice = externals
-                .get(lane * hidden..(lane + 1) * hidden)
-                .ok_or_else(|| Error::invalid("prompt externals"))?;
-            let uploaded = self.device.upload(slice.to_vec(), &[hidden])?;
-            batch.bind_lane_external(&mut self.lane_external[lane], &uploaded)?;
-            self.lane_uploads.push(uploaded);
-        }
         if narrow_fits {
             self.prompt_narrow = Some(batch);
         } else {
@@ -1020,6 +1045,88 @@ impl DeviceProgram {
         let end = position
             .checked_add(tokens.len())
             .ok_or_else(|| Error::invalid("prefill position overflow"))?;
+        self.next_position = end.saturating_sub(lag);
+        self.last_batch = None;
+        Ok(output)
+    }
+
+    /// Ingest one prompt chunk whose media lanes carry precomputed embeddings.
+    ///
+    /// Row copies and the replay share the device stream, so the chunk runs once instead of one
+    /// decode step per media token. The wide prompt graph is used deliberately: the narrow graph
+    /// would split media chunks at its own fixed width.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The chunk names its media tensor, row map, width, rotary table and readout explicitly"
+    )]
+    pub(crate) fn prefill_media_chunk(
+        &mut self,
+        tokens: &[u32],
+        position: usize,
+        media: &Tensor<f32>,
+        rows: &[(usize, usize)],
+        hidden: usize,
+        rotary: Option<&[[usize; infer_models::mrope::ROTARY_AXES]]>,
+        read_logits: bool,
+    ) -> Result<super::BatchOutput> {
+        let width = self.prefill_width();
+        if (self.prompt_batch.is_none() && self.batch.is_none())
+            || tokens.is_empty()
+            || tokens.len() > width
+            || position
+                .checked_add(tokens.len())
+                .is_none_or(|end| end > self.capacity)
+            || tokens
+                .iter()
+                .any(|t| usize::try_from(*t).map_or(true, |n| n >= self.vocabulary))
+        {
+            return Err(Error::invalid("media prefill tokens, width or capacity"));
+        }
+        if rotary.is_some_and(|rotary| rotary.len() != tokens.len()) {
+            return Err(Error::invalid("media prefill rotary width"));
+        }
+        let lag = self.batch_state_lag()?;
+        if position == 0 {
+            self.reset()?;
+        }
+        if position.saturating_sub(lag) != self.next_position {
+            return Err(Error::invalid("media prefill state position"));
+        }
+        let mut overrides = vec![false; tokens.len()];
+        for &(lane, row) in rows {
+            if lane >= tokens.len() || overrides[lane] {
+                return Err(Error::invalid("media prefill lane"));
+            }
+            let offset = row
+                .checked_mul(hidden)
+                .ok_or_else(|| Error::invalid("media row offset overflow"))?;
+            let slot = self
+                .lane_external
+                .get_mut(lane)
+                .ok_or_else(|| Error::invalid("media prefill lane"))?;
+            if slot.size() != hidden {
+                return Err(Error::invalid("media external width"));
+            }
+            self.device.copy_d2d_at(slot, media, 0, offset, hidden)?;
+            overrides[lane] = true;
+        }
+        let prompt = self
+            .prompt_batch
+            .as_mut()
+            .ok_or_else(|| Error::invariant("media prefill requires a prompt graph"))?;
+        let output = prompt.run_media(
+            &self.device,
+            tokens,
+            position,
+            read_logits,
+            super::batch::PromptOverrides {
+                lanes: &overrides,
+                rotary,
+            },
+        )?;
+        let end = position
+            .checked_add(tokens.len())
+            .ok_or_else(|| Error::invalid("media prefill position overflow"))?;
         self.next_position = end.saturating_sub(lag);
         self.last_batch = None;
         Ok(output)

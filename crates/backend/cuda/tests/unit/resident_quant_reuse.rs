@@ -127,11 +127,13 @@ impl Pair {
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         batch_width: 4,
         prefill_width: 256,
         narrow_prefill_width: 64,
+        attention_profile: crate::AttentionProfile::Canonical,
         chunked_recurrent: false,
         fusion: None,
         projections: BTreeMap::new(),

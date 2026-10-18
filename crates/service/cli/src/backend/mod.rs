@@ -16,6 +16,40 @@ pub enum BackendChoice {
     Metal,
     Cuda,
 }
+/// Explicit target attention numerical profile.
+///
+/// `Canonical` is the existing exact path. `Bf16` and `Fp16` are experimental target FP8-KV
+/// prefill profiles that have not passed the fixed task-quality gate; neither is enabled
+/// implicitly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum CudaAttentionProfile {
+    #[default]
+    Canonical,
+    Bf16,
+    Fp16,
+}
+impl CudaAttentionProfile {
+    /// Stable startup-log name.
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Canonical => "canonical",
+            Self::Bf16 => "bf16",
+            Self::Fp16 => "fp16",
+        }
+    }
+}
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+impl From<CudaAttentionProfile> for infer_backend_cuda::AttentionProfile {
+    fn from(value: CudaAttentionProfile) -> Self {
+        match value {
+            CudaAttentionProfile::Canonical => Self::Canonical,
+            CudaAttentionProfile::Bf16 => Self::Bf16,
+            CudaAttentionProfile::Fp16 => Self::Fp16,
+        }
+    }
+}
 #[cfg(target_os = "macos")]
 pub fn metal_available() -> bool {
     metal::available()
@@ -61,6 +95,9 @@ pub struct Selection {
     pub served_model_name: Option<String>,
     pub upload_staging_mib: Option<usize>,
     pub num_speculative_tokens: usize,
+    /// Target attention numerical profile, experimental for `bf16`.
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    pub attention_profile: CudaAttentionProfile,
     pub gpu_memory_utilization: f64,
     /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
     pub autotune: bool,

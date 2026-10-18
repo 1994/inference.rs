@@ -23,6 +23,7 @@ pub fn prepare(
     fusion: Option<FusionWeights>,
 ) -> Result<()> {
     let mut weights = ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -31,6 +32,7 @@ pub fn prepare(
         batch_width: model.verify_width,
         prefill_width: model.prefill_width,
         narrow_prefill_width: 0,
+        attention_profile: infer_backend_cuda::AttentionProfile::Canonical,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion,

@@ -18,7 +18,8 @@ use std::{
 const CAPACITY: usize = 32768;
 const HIDDEN: usize = 5120;
 const VOCABULARY: usize = 248_320;
-const SCRATCH_BYTES: usize = 128 * 10240 * size_of::<f32>();
+// G1 keeps the 128x10240 fusion input and adds the 128x5120 gathered embedding rows.
+const SCRATCH_BYTES: usize = 128 * (10240 + 5120) * size_of::<f32>();
 const PROMPTS: [usize; 5] = [127, 128, 129, 255, 511];
 type StateDigest = BTreeMap<TensorId, Vec<[u8; 32]>>;
 

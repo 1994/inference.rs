@@ -127,6 +127,7 @@ impl Operands {
         f: &Fixture,
         choice: Choice,
         oxide: Option<&crate::resident::attention_oxide::Support>,
+        mma: Option<&mut crate::resident::attention_mma::Support>,
     ) -> std::result::Result<(), DeviceError> {
         let s = f.shape;
         scope.record(
@@ -143,7 +144,30 @@ impl Operands {
             .generics(Self::append_generics(s, f.capacity)),
         )?;
         let window = i32::try_from(f.window).map_err(|e| DeviceError::Internal(e.to_string()))?;
-        if matches!(choice, Choice::RustSimt | Choice::SharedKv) {
+        if let Choice::Mma { variant } = choice {
+            let supported = mma
+                .ok_or_else(|| DeviceError::Internal("MMA attention missing".into()))?
+                .record(
+                    scope,
+                    crate::resident::attention_mma::Bindings {
+                        output: &mut self.output,
+                        query: &self.query,
+                        keys: &self.keys,
+                        values: &self.values,
+                        metadata: &self.metadata,
+                        table: &self.table,
+                    },
+                    (s.heads, s.kv_heads, s.dim, s.lanes, f.capacity),
+                    window,
+                    [KEY_SCALE, VALUE_SCALE],
+                    variant,
+                )?;
+            if !supported {
+                return Err(DeviceError::Internal(
+                    "MMA fixture geometry unsupported".into(),
+                ));
+            }
+        } else if choice.uses_oxide() {
             let supported = oxide
                 .ok_or_else(|| DeviceError::Internal("Rust attention module missing".into()))?
                 .record(
@@ -263,11 +287,16 @@ pub(super) struct Captured {
     pub graph: CudaGraph<()>,
     operands: Operands,
     _oxide: Option<crate::resident::attention_oxide::Support>,
+    _mma: Option<crate::resident::attention_mma::Support>,
 }
 impl Captured {
     pub fn new(device: &CudaDevice, fixture: &Fixture, choice: Choice) -> Result<Self> {
         let oxide = if choice == Choice::SharedKv {
             crate::resident::attention_oxide::Support::load_shared(device)?
+        } else if choice == Choice::VectorSharedKv {
+            crate::resident::attention_oxide::Support::load_vector(device)?
+        } else if choice == Choice::VectorSharedKvCombined {
+            crate::resident::attention_oxide::Support::load_combined(device)?
         } else if choice == Choice::RustSimt {
             crate::resident::attention_oxide::Support::load(device)?
         } else {
@@ -281,15 +310,28 @@ impl Captured {
         choice: Choice,
         oxide: Option<crate::resident::attention_oxide::Support>,
     ) -> Result<Self> {
+        let mut mma = if let Choice::Mma { variant } = choice {
+            let mut support = crate::resident::attention_mma::Support::load(
+                device,
+                fixture.capacity,
+                fixture.shape.lanes,
+                crate::resident::attention_mma::Arithmetic::Bf16,
+            )?;
+            support.prepare_variant(device, variant)?;
+            Some(support)
+        } else {
+            None
+        };
         let mut operands = Operands::new(device, fixture, choice)?;
         let graph = CudaGraph::scope(&device.stream, |scope| {
-            operands.record(scope, fixture, choice, oxide.as_ref())
+            operands.record(scope, fixture, choice, oxide.as_ref(), mma.as_mut())
         })
         .map_err(device_error)?;
         Ok(Self {
             graph,
             operands,
             _oxide: oxide,
+            _mma: mma,
         })
     }
     #[cfg(test)]
@@ -309,7 +351,7 @@ impl Captured {
     ) -> Result<CudaGraph<()>> {
         CudaGraph::scope(&device.stream, |scope| {
             self.operands
-                .record(scope, f, Choice::RustSimt, Some(support))
+                .record(scope, f, Choice::RustSimt, Some(support), None)
         })
         .map_err(device_error)
     }
@@ -361,6 +403,34 @@ impl Captured {
         self.verify_graph(device, f, &self.graph)
     }
     fn verify_graph(&self, device: &CudaDevice, f: &Fixture, graph: &CudaGraph<()>) -> Result<f64> {
+        self.verify_graph_limit(device, f, graph, super::MAX_ERROR)
+    }
+    pub fn verify_mma(&self, device: &CudaDevice, f: &Fixture) -> Result<f64> {
+        self.verify_graph_limit(device, f, &self.graph, super::mma::MAX_ERROR)
+    }
+    pub fn verify_mma_history(&self, device: &CudaDevice, f: &Fixture) -> Result<()> {
+        self.graph
+            .launch()
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        let output = device.read_borrowed(&self.operands.output)?;
+        for (index, &value) in output.iter().enumerate() {
+            let row = index / (f.shape.heads * f.shape.dim);
+            let inactive = row >= usize::try_from(f.metadata[1]).map_err(device_error)?
+                || f.metadata[0] + f.metadata[2] + i32::try_from(row).map_err(device_error)? < 0;
+            if !value.is_finite() || inactive && value != 0.0 {
+                return Err(Error::invalid("MMA history output or inactive row"));
+            }
+        }
+        Ok(())
+    }
+    fn verify_graph_limit(
+        &self,
+        device: &CudaDevice,
+        f: &Fixture,
+        graph: &CudaGraph<()>,
+        limit: f64,
+    ) -> Result<f64> {
         graph
             .launch()
             .sync_on(&device.stream)
@@ -387,7 +457,7 @@ impl Captured {
             }
             maximum = maximum.max((f64::from(a) - b).abs() / b.abs().max(1.0));
         }
-        if maximum >= super::MAX_ERROR {
+        if maximum >= limit {
             return Err(Error::invalid(format!(
                 "attention full F64 error {maximum}"
             )));

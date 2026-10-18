@@ -9,10 +9,11 @@
 ```sh
 export CUDA_TOOLKIT_PATH=/path/to/cuda
 cargo build --locked --release -p infer-cli --features cuda
-make test-cuda
+make test-cuda-hosted   # 编译、Clippy、Rustdoc 与 CPU 侧测试；不需要 GPU
+make test-cuda          # 追加 GPU kernel 验收
 ```
 
-bindgen 找不到 C 标准头时，将实际主机 include 路径传给 `BINDGEN_EXTRA_CLANG_ARGS`，例如 `-isystem /path/to/gcc/include`；该路径不能照搬其他机器。默认 CLI 不启用 CUDA feature，普通 hosted Rust 门禁不需要 Toolkit。
+bindgen 找不到 C 标准头时，将实际主机 include 路径传给 `BINDGEN_EXTRA_CLANG_ARGS`，例如 `-isystem /path/to/gcc/include`；该路径不能照搬其他机器。默认 CLI 不启用 CUDA feature，普通 hosted Rust 门禁不需要 Toolkit；需要 Toolkit 的固定检查集中在 `make test-cuda-hosted`。
 
 ## 执行边界
 
@@ -64,7 +65,8 @@ FP8 默认只搜索保持原生 K 累积顺序的 tile。`INFER_CUDA_FP8_LT_AUTO
 
 | 入口 | 用途 |
 |---|---|
-| `make test-cuda` | 严格 Clippy、测试、Rustdoc 与 GPU kernel 检查 |
+| `make test-cuda-hosted` | 严格 Clippy、CPU 侧测试、Rustdoc 与示例构建；托管 CI 可运行，不需要 GPU |
+| `make test-cuda` | 上述全部，再加 GPU kernel 检查 |
 | `make check-attention` | 独立 F64 oracle 与 Candle 数值/性能门禁 |
 | `cuda-resident-check` / `cuda-provider-check` | 驻留执行图、加载与 provider 回归 |
 | `cuda-model-smoke` | 完整模型诊断与 MTP 对照 |

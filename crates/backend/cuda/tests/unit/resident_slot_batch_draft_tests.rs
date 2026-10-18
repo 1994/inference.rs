@@ -73,12 +73,14 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
             .collect()
     };
     let weights = ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: crate::AttentionProfile::Canonical,
         fusion: Some(FusionWeights {
             projection: crate::mlp::ProjectionWeight::Dense(
                 device.upload(values(32 * 64), &[32, 64])?,

@@ -1,0 +1,55 @@
+{
+  "completed": true,
+  "GPU_execution": false,
+  "started_unix": 1792135412.1570528,
+  "architecture": "sm_120",
+  "candidate": "sm120",
+  "source_official_commit": "e9d8944c855489e03c66262d07ba4c81d9d8dd31",
+  "on_hardware_validated": false,
+  "quality_accepted": false,
+  "limits": {
+    "path": "/user.slice/user-1000.slice/user@1000.service/app.slice/inference-benchmark-1719915.service",
+    "memory_max": 53687091200,
+    "pids_max": 256,
+    "host_available_bytes": 53442150400,
+    "memory_swap_max": 0,
+    "memory_oom_group": 1
+  },
+  "config": {
+    "tile": [
+      64,
+      64
+    ],
+    "threads": 128,
+    "cluster": [
+      1,
+      1,
+      1
+    ],
+    "pack_gqa": true,
+    "features": [
+      "warp-MMA",
+      "cp.async"
+    ]
+  },
+  "attention.ptx": {
+    "sha256": "354d303bb3202a2d6cd47879bc230fde2f6e88924ce128a4973527745f0f4abc",
+    "bytes": 277780
+  },
+  "attention.cubin": {
+    "sha256": "705f63f23c25efaa9d20f6b6b01d397f8a2e6cd167b7f099af5beb46839eb5d0",
+    "bytes": 157680
+  },
+  "kernel_symbols": [
+    "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrbf16gmemalign16o6div6425641256614411536i64div8_tensorptrbf16gmemalign16odiv32256411024125_0"
+  ],
+  "PTX_features": {
+    "warp_MMA": true,
+    "WGMMA": false,
+    "TMA": false,
+    "tcgen05": false,
+    "TMEM": false,
+    "two_CTA": false
+  },
+  "finished_unix": 1792135415.2612188
+}

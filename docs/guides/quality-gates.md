@@ -1,6 +1,6 @@
 # 质量门禁
 
-所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV、依赖安全与四平台打包结果，见 [打包指南](packaging.md)。
+所有检查共用统一入口 `make check`，任一步失败即退出。CI 与本地使用同一脚本，`quality-gate` job 汇总 Rust、工具、MSRV、依赖安全、CUDA（无 GPU 的头文件门禁）与四平台打包结果，见 [打包指南](packaging.md)。
 
 本文描述现有门禁。正式测试与服务对比的共同要求见 [性能基线方案](../plans/performance/baseline.md)；release 构建身份、当前 native/vLLM 配置和证据校验仍待接入，现有 gate 成功退出不代表已通过该契约。入口与测试收集的调整见 [工程方案](../plans/engineering/build-and-dependencies.md)。
 
@@ -34,13 +34,14 @@ make check-security   # cargo-deny、cargo-audit、Gitleaks
 make check-msrv       # Rust 1.90
 make bench            # 隔离的 CPU 分配计数（别名 check-cpu）
 make test-metal       # Metal 实机验收（仅 macOS，别名 check-metal）
-make test-cuda        # CUDA 实机 kernel 验收（需 Toolkit 与 GPU，别名 check-cuda）
+make test-cuda-hosted # CUDA 编译、lint 与 CPU 侧测试：需 Toolkit 头文件，不需 GPU
+make test-cuda        # CUDA 实机 kernel 验收（需 Toolkit、GPU 与 tileiras，别名 check-cuda）
 make check-attention  # 自研 Attention 对 Candle 基线：数值与性能不达标均非零退出
 make check-linux      # Linux 原生放置测试
 make check-linux-numa # Linux NUMA 硬件验收，见 Linux 指南
 ```
 
-`check-rust` 会单独构建 CUDA crate 的无 feature 版本，因此托管 CI 不需要 CUDA Toolkit；设备检查集中在 `check-cuda`。缺少 GPU 或相应 syscall 权限时，硬件门禁明确失败，不会跳过。
+`check-rust` 只构建 CUDA crate 的无 feature 版本。需要 Toolkit 的部分分成两半：`test-cuda-hosted` 用 CUDA 13.2 开发头文件编译、lint 全部 target 并运行 CPU 侧测试，因此托管 CI 可以运行，也是唯一会编译 cuda-gated `#[cfg(test)]` 模块的门禁；`test-cuda` 追加设备验收（`cuda-kernels` 示例与需 GPU 的用例）。缺少 GPU 或相应 syscall 权限时，硬件门禁明确失败，不会跳过。
 
 ## 通用 Attention 门禁
 

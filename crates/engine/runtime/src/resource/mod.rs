@@ -18,7 +18,9 @@ pub struct PendingResource {
     pub ticket: Option<ResourceTicket>,
     pub phase: ResourcePhase,
     pub started: u64,
-    /// Retry a rejected reservation only after resources or execution have progressed.
+    /// Epoch at which the latest reservation attempt was issued. A rejected intent is
+    /// retried only after resources or execution advance past this epoch, so progress
+    /// that races with the acknowledgement is not discarded.
     pub retry_epoch: Option<u64>,
 }
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
@@ -64,7 +66,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             PendingResource {
                 ticket: Some(ticket),
                 phase,
-                retry_epoch: None,
+                // A reservation attempt is armed at the epoch it starts in. If its
+                // rejection is observed after further progress, one retry must still
+                // probe that newer epoch instead of waiting for the next one.
+                retry_epoch: matches!(phase, ResourcePhase::Reserve).then_some(self.resource_epoch),
                 started: self.now_us,
             },
         )
@@ -177,9 +182,24 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     if pending.retry_epoch.take().is_some() {
                         pending.started = self.now_us;
                     }
+                    // Re-arm at the epoch this attempt starts in; its rejection may be
+                    // observed only after a later progress epoch.
+                    if matches!(pending.phase, ResourcePhase::Reserve) {
+                        pending.retry_epoch = Some(self.resource_epoch);
+                    }
                     pending.ticket = Some(ticket);
                 }
-                Err(error) if error.code == ErrorCode::Capacity => return Ok(None),
+                Err(error) if error.code == ErrorCode::Capacity => {
+                    // A synchronous rejection is also an attempt at this epoch. Re-arm it
+                    // so a full control lane is not polled again until progress advances.
+                    if pending.retry_epoch.take().is_some() {
+                        pending.started = self.now_us;
+                    }
+                    if matches!(pending.phase, ResourcePhase::Reserve) {
+                        pending.retry_epoch = Some(self.resource_epoch);
+                    }
+                    return Ok(None);
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -217,7 +237,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 .get_mut(id)
                 .ok_or_else(|| Error::invariant("resource waiter lost"))?;
             pending.ticket = None;
-            pending.retry_epoch = Some(self.resource_epoch);
+            // Keep the epoch of the attempt that produced this rejection. If progress
+            // happened while the reply was in flight, the next poll probes that newer
+            // epoch instead of discarding the progress.
+            pending.retry_epoch.get_or_insert(self.resource_epoch);
             result = Ok(None);
         }
         if matches!(result, Ok(None)) {

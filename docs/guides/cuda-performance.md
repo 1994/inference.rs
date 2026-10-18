@@ -15,6 +15,38 @@ profiling、冻结缓存和测试的 A/B 控制是开发诊断工具，不能用
 或 `INFER_CUBLAS_PROJECTIONS` 切换算术。Chunk 与 BF16 Lt 委派由独立诊断程序显式构造，
 完成资格后才纳入默认策略。历史实验命令须使用其冻结制品，不能当成当前用户配置建议。
 
+### 实验数值 profile：目标 attention BF16（未获准入）
+
+FA4 架构接入（`88dd26e`，包含 vector attention 与 linear exact bundle）已由 `e86e05b`
+合入当前 `main`；本分支以该 HEAD 为基线移植本地 `codex/target-attention-profile` 提交，
+新增 `--cuda-attention-profile canonical|bf16`。该 profile 提交本身仍只存在于本地分支，
+没有 push、PR 或 merge，不能据此声称已部署到 `main`。
+
+- 默认 `canonical`：保持既有精确 attention 路径；目标图的执行与结果不变。
+- 显式 `bf16`：只允许目标图的 **FP8-KV prefill** 使用已有 FA4 BF16 QKV / F32 累加 /
+  BF16 输出核。目标 F32-KV、不支持的几何、以及没有可用调参/回退证据的路径仍走原有路径。
+  混合图中即使某个 FP8 节点使 MMA workspace 存在，目标 F32-KV 节点也按节点级资格回退，
+  不会把整个图按 `any` 资格错误地送进 BF16 路径。
+- draft/MTP proposal 的既有 BF16 行为不受该开关影响；它不是自动启用 target BF16 的入口。
+
+该 profile 是实验数值选择，**尚未通过固定任务质量门**，不自动启用，也不表示已获质量或
+生产准入。目标 BF16 调参使用独立的 `fa4-bf16` schema 与 `resident_mma_attention` 缓存区，
+不与 canonical FP8-KV 的 `resident_attention` 缓存混用；加载期 tuning、workspace 定价与
+admission 共用同一纯 eligibility 判断。
+
+### 实验数值 profile：目标 attention FP16（仅 SM120，未获准入）
+
+在同一开关上新增 `--cuda-attention-profile fp16`。它只接入已通过算子探针的 SM120
+plain-FP16 FA4 制品（`fa4-attention-f16`：FP16 QKV / F32 累加 / FP16 输出），并且只允许
+目标图的 FP8-KV prefill 在已验证的 24/4/256 全因果几何上使用。其它架构、tile、几何、
+目标 F32-KV、缺少制品或加载失败的路径都显式回退 canonical；draft/MTP proposal 仍保持
+原有 BF16 行为，不受该 profile 影响。该 profile 没有新增性能矩阵，也不自动成为默认。
+
+FP16 的 scratch、`prepare_fa4_f16`、AOT kernel、`finish_fa4_f16` 和 host ABI 共用一套
+FP16 dtype；host 制品缓存按 `sm120-f16` 名称和字节哈希隔离，tuning/cache 使用独立的
+`fa4-f16` schema 与 artifact identity，不能消费 `fa4-bf16` 或 canonical 条目。加载日志和
+执行 readback 必须同时证明实际选中并记录了 FP16 kernel；只传 CLI flag 不算路由证据。
+
 ## 投影基线
 
 ```sh

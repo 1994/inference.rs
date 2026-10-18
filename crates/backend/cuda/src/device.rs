@@ -267,6 +267,43 @@ impl CudaDevice {
             .map_err(device_error)
     }
 
+    /// Enqueue a host slice into an existing device tensor on the device stream.
+    ///
+    /// The driver stages pageable host memory before returning, so the caller may drop `values`
+    /// immediately; the device-side write stays ordered before later work on the same stream.
+    ///
+    /// # Errors
+    /// Rejects a slice longer than the tensor or a driver failure when the copy cannot be enqueued.
+    #[expect(
+        unsafe_code,
+        reason = "Audited host-to-device copy from a live slice into a live tensor of known length"
+    )]
+    pub(crate) fn copy_host_slice<T: DType>(
+        &self,
+        dst: &mut Tensor<T>,
+        values: &[T],
+    ) -> Result<()> {
+        if values.len() > dst.size() {
+            return Err(InferError::invalid("host copy range outside tensor"));
+        }
+        let bytes = values
+            .len()
+            .checked_mul(size_of::<T>())
+            .ok_or_else(|| InferError::invalid("host copy size overflow"))?;
+        let stream = self.stream.cu_stream();
+        // SAFETY: the checked length keeps the write inside the tensor, the source slice is live
+        // for the duration of the call, and the stream belongs to this device.
+        let status = unsafe {
+            cuda_core::sys::cuMemcpyHtoDAsync_v2(
+                dst.device_pointer().cu_deviceptr(),
+                values.as_ptr().cast(),
+                bytes,
+                stream,
+            )
+        };
+        driver_status(status)
+    }
+
     /// Copy a resident tensor back without taking ownership, so a borrowed snapshot can be inspected.
     ///
     /// # Errors
@@ -525,6 +562,17 @@ impl CudaDevice {
         // `pool_reclaimable_bytes`; nothing here pretends to make the query honest.
         // SAFETY: the owned device's context is current; this only waits for its work.
         unsafe { self.stream.device().synchronize() }.map_err(device_error)
+    }
+
+    /// Waits until all work queued on the device has completed.
+    ///
+    /// Diagnostics that sample driver memory need a quiescent device; this is the
+    /// audited barrier already used before admission queries.
+    ///
+    /// # Errors
+    /// Returns a driver error when the device context cannot be bound or synchronized.
+    pub fn synchronize(&self) -> Result<()> {
+        self.reclaim_barrier()
     }
 
     pub(crate) fn drain(&self) -> Result<()> {

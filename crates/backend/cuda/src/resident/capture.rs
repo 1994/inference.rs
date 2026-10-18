@@ -15,6 +15,8 @@ pub(super) enum CaptureMode {
     Batched,
     /// Contiguous prompt rows with [position, active rows, state offset, unused] metadata.
     Prefill,
+    /// Prefill width 32 with a per-lane `(t, h, w)` rotary table instead of one base position.
+    PrefillRotary,
     /// Prefill width 32, one lane at a time: slots stay `[32, size]`, kernels
     /// with per-lane metadata or ordered state read and write single rows.
     Row(usize),
@@ -62,7 +64,7 @@ impl Capture<'_> {
         let tensor = self.arena.get(id).map_err(error)?;
         match self.mode {
             CaptureMode::Flat => identity(tensor),
-            CaptureMode::Batched | CaptureMode::Prefill => {
+            CaptureMode::Batched | CaptureMode::Prefill | CaptureMode::PrefillRotary => {
                 tensor.view(&[tensor.size()]).map_err(error)
             }
             CaptureMode::Row(lane) => self.arena.row(id, lane).map_err(error),
@@ -400,6 +402,44 @@ impl Capture<'_> {
             aux::fusion_norm(
                 (&mut normalized).partition([1, dimension.next_power_of_two()]),
                 &work.embedding,
+                self.external,
+                &fusion.norms,
+                fusion.epsilon,
+                fusion.offset,
+            )
+            .generics(vec![
+                dimension.to_string(),
+                dimension.next_power_of_two().to_string(),
+            ]),
+        )?;
+        Ok(normalized.reshape(&[2 * dimension])?)
+    }
+
+    /// Fusion normalization alone, reading an already gathered embedding row.
+    /// The arithmetic and reduction width are identical to `fusion_input`.
+    pub(super) fn fusion_norm(
+        &mut self,
+        dimension: usize,
+        embedding: &Tensor<f32>,
+    ) -> Result<Tensor<f32>, DeviceError> {
+        let fusion = self
+            .weights
+            .fusion
+            .as_ref()
+            .ok_or_else(|| error("missing fusion weights"))?;
+        let work = self
+            .fusion
+            .as_mut()
+            .ok_or_else(|| error("missing fusion workspace"))?;
+        let mut normalized = work
+            .normalized
+            .take()
+            .ok_or_else(|| error("fusion buffer"))?
+            .reshape(&[2, dimension])?;
+        self.scope.record(
+            aux::fusion_norm(
+                (&mut normalized).partition([1, dimension.next_power_of_two()]),
+                embedding,
                 self.external,
                 &fusion.norms,
                 fusion.epsilon,

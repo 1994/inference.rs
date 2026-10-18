@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -15,6 +16,7 @@ fn fixture_weights() -> ProgramWeights {
         prefill_width: 32,
         narrow_prefill_width: 0,
         fusion: None,
+        attention_profile: crate::AttentionProfile::Canonical,
         projections: BTreeMap::new(),
         fp8_inputs: std::collections::BTreeSet::new(),
         input_scales: BTreeMap::new(),
@@ -268,4 +270,256 @@ fn fixture_profile() -> DeviceProfile {
         memory_bus_width_bits: 0,
         l2_cache_bytes: 0,
     }
+}
+
+/// A valid attention graph for admission arithmetic: three embedding producers feed one
+/// FA4-shaped attention node whose KV state is either FP8-packed or F32 by scale presence.
+fn attention_graph(lanes: usize) -> Result<(DataflowGraph, TensorId)> {
+    let state = TensorId::new(1)?;
+    let embedding = TensorId::new(2)?;
+    let query = TensorId::new(3)?;
+    let key = TensorId::new(4)?;
+    let value = TensorId::new(5)?;
+    let output = TensorId::new(6)?;
+    let width = crate::resident::attention_mma::catalog::HEADS
+        * crate::resident::attention_mma::catalog::DIM;
+    let kv_width = crate::resident::attention_mma::catalog::KV_HEADS
+        * crate::resident::attention_mma::catalog::DIM;
+    let activation = |id, elements| TensorSpec {
+        id,
+        shape: vec![elements],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    };
+    let graph = DataflowGraph {
+        tensors: vec![
+            TensorSpec {
+                id: state,
+                shape: vec![64, kv_width],
+                dtype: DType::F32,
+                storage: TensorStorage::State {
+                    layer: 0,
+                    kind: StateKind::AttentionKv,
+                },
+            },
+            TensorSpec {
+                id: embedding,
+                shape: vec![1, 1],
+                dtype: DType::Bf16,
+                storage: TensorStorage::Weight {
+                    slot: "embedding".into(),
+                },
+            },
+            activation(query, lanes * width),
+            activation(key, lanes * kv_width),
+            activation(value, lanes * kv_width),
+            activation(output, lanes * width),
+        ],
+        nodes: vec![
+            TensorNode {
+                id: OpId::new(1)?,
+                layer: None,
+                op: TensorOp::Embedding,
+                inputs: vec![embedding],
+                outputs: vec![query],
+                states: vec![],
+            },
+            TensorNode {
+                id: OpId::new(2)?,
+                layer: None,
+                op: TensorOp::Embedding,
+                inputs: vec![embedding],
+                outputs: vec![key],
+                states: vec![],
+            },
+            TensorNode {
+                id: OpId::new(3)?,
+                layer: None,
+                op: TensorOp::Embedding,
+                inputs: vec![embedding],
+                outputs: vec![value],
+                states: vec![],
+            },
+            TensorNode {
+                id: OpId::new(4)?,
+                layer: None,
+                op: TensorOp::Attention {
+                    query_heads: crate::resident::attention_mma::catalog::HEADS,
+                    kv_heads: crate::resident::attention_mma::catalog::KV_HEADS,
+                    head_dim: crate::resident::attention_mma::catalog::DIM,
+                    window: None,
+                },
+                inputs: vec![query, key, value],
+                outputs: vec![output],
+                states: vec![state],
+            },
+        ],
+        hidden: Some(output),
+        logits: Some(output),
+        ..DataflowGraph::default()
+    };
+    Ok((graph, state))
+}
+
+#[test]
+fn target_attention_profile_eligibility_matrix_is_explicit() -> Result<()> {
+    let (graph, state) = attention_graph(128)?;
+    let compiled = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+    for architecture in ["sm_90", "sm_100", "sm_103", "sm_120"] {
+        for fp8 in [false, true] {
+            let mut weights = fixture_weights();
+            weights.prefill_width = 128;
+            if fp8 {
+                weights.kv_scales.insert(state, [1.0, 1.0]);
+            }
+            for profile in [
+                crate::AttentionProfile::Canonical,
+                crate::AttentionProfile::Bf16,
+                crate::AttentionProfile::Fp16,
+            ] {
+                weights.attention_profile = profile;
+                let target = compiled
+                    && fp8
+                    && match profile {
+                        crate::AttentionProfile::Bf16 => true,
+                        crate::AttentionProfile::Fp16 => architecture == "sm_120",
+                        crate::AttentionProfile::Canonical => false,
+                    };
+                assert_eq!(
+                    crate::resident::attention_mma::eligible(architecture, &graph, &weights, 128,),
+                    target
+                );
+                for draft in [false, true] {
+                    assert_eq!(
+                        crate::resident::attention_mma::eligible_with_role(
+                            architecture,
+                            &graph,
+                            &weights,
+                            draft,
+                            128,
+                        ),
+                        draft || target
+                    );
+                }
+            }
+        }
+    }
+    // Unsupported geometry falls back for the draft too, not only for the target.
+    let mut weights = fixture_weights();
+    weights.prefill_width = 128;
+    weights.kv_scales.insert(state, [1.0, 1.0]);
+    weights.attention_profile = crate::AttentionProfile::Bf16;
+    let mut unsupported = graph;
+    if let TensorOp::Attention { query_heads, .. } = &mut unsupported.nodes[3].op {
+        *query_heads = 8;
+    }
+    assert!(!crate::resident::attention_mma::eligible(
+        "sm_120",
+        &unsupported,
+        &weights,
+        128,
+    ));
+    assert!(!crate::resident::attention_mma::eligible_with_role(
+        "sm_120",
+        &unsupported,
+        &weights,
+        true,
+        128,
+    ));
+    Ok(())
+}
+
+#[test]
+fn mixed_fp8_and_f32_graph_is_decided_per_attention_node() -> Result<()> {
+    let (mut graph, fp8_state) = attention_graph(128)?;
+    // Keep the FP8 node (index 3) and add a sibling F32 target node. The graph-level helper
+    // must remain true because of the FP8 node, while the F32 node itself must never become
+    // eligible for the target BF16 profile.
+    let float_state = TensorId::new(7)?;
+    let mut f32_node = graph.nodes[3].clone();
+    f32_node.id = OpId::new(5)?;
+    f32_node.states = vec![float_state];
+    f32_node.outputs = vec![TensorId::new(8)?];
+    graph.nodes.push(f32_node);
+
+    let mut weights = fixture_weights();
+    weights.prefill_width = 128;
+    weights.attention_profile = crate::AttentionProfile::Bf16;
+    weights.kv_scales.insert(fp8_state, [1.0, 1.0]);
+    assert!(crate::resident::attention_mma::eligible(
+        "sm_120", &graph, &weights, 128
+    ));
+    assert!(crate::resident::attention_mma::node_eligible(
+        "sm_120",
+        &graph.nodes[3],
+        &weights,
+        false,
+        128
+    ));
+    assert!(!crate::resident::attention_mma::node_eligible(
+        "sm_120",
+        &graph.nodes[4],
+        &weights,
+        false,
+        128
+    ));
+    // The draft proposal keeps its existing F32-KV behavior in the same graph.
+    for node in &graph.nodes[3..] {
+        assert!(crate::resident::attention_mma::node_eligible(
+            "sm_120", node, &weights, true, 128
+        ));
+    }
+    // Canonical never routes either node to the BF16 target path, even with FP8 KV.
+    weights.attention_profile = crate::AttentionProfile::Canonical;
+    assert!(!crate::resident::attention_mma::eligible(
+        "sm_120", &graph, &weights, 128
+    ));
+    for node in &graph.nodes[3..] {
+        assert!(!crate::resident::attention_mma::node_eligible(
+            "sm_120", node, &weights, false, 128
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn target_bf16_profile_admission_quotes_the_same_eligibility_decision() -> Result<()> {
+    let (graph, state) = attention_graph(128)?;
+    let quote = |fp8: bool, profile| -> Result<u64> {
+        let mut weights = fixture_weights();
+        weights.prefill_width = 128;
+        weights.attention_profile = profile;
+        if fp8 {
+            weights.kv_scales.insert(state, [1.0, 1.0]);
+        }
+        program_price(
+            &graph,
+            &weights,
+            48,
+            48,
+            OutputReadout::Logits,
+            ProgramGeometry::new(&weights, false),
+            &fixture_profile(),
+        )?
+        .at(256)
+    };
+    let canonical_fp8 = quote(true, crate::AttentionProfile::Canonical)?;
+    let bf16_fp8 = quote(true, crate::AttentionProfile::Bf16)?;
+    let fp16_fp8 = quote(true, crate::AttentionProfile::Fp16)?;
+    let workspace = crate::resident::attention_mma::catalog::workspace_bytes(0, 128)? as u64;
+    let token = (crate::resident::attention_mma::catalog::KV_HEADS
+        * crate::resident::attention_mma::catalog::DIM
+        * 2
+        * size_of::<cutile::half::bf16>()) as u64;
+    assert_eq!(bf16_fp8 - canonical_fp8, workspace + token * 256);
+    // FP16 uses the same 16-bit staging size and the same target-only admission rule.
+    assert_eq!(fp16_fp8, bf16_fp8);
+    // The explicit profiles do not move F32-KV target admission.
+    for profile in [crate::AttentionProfile::Bf16, crate::AttentionProfile::Fp16] {
+        assert_eq!(
+            quote(false, profile)?,
+            quote(false, crate::AttentionProfile::Canonical)?
+        );
+    }
+    Ok(())
 }

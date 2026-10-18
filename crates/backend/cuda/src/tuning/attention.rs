@@ -1,8 +1,12 @@
 //! Device-scoped query sharing search; complete attention graphs retain the FP8 KV contract.
 mod capture;
 pub mod exact;
+pub mod mma;
+pub mod mma_f32;
 mod reference;
 pub mod shared;
+pub mod vector;
+pub mod vector_combined;
 use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS, median,
     resident_gemm::ResidentTuningSession,
@@ -22,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-const SCHEMA: &str = "prefill-fp8-kv:precise-bf16-products6:f32-accum:original-append:gqa:query-causal-bound:qt16-32:f64-full1e-4:tail-history-window-permuted:ab-ba-v2";
+pub(crate) const SCHEMA: &str = "prefill-fp8-kv:precise-bf16-products6:f32-accum:original-append:gqa:query-causal-bound:qt16-32:f64-full1e-4:tail-history-window-permuted:ab-ba-v2";
 const QUERY_TILES: [usize; 2] = [16, 32];
 const MAX_ERROR: f64 = 1e-4;
 const VALIDATED_DIM: usize = 256;
@@ -51,17 +55,35 @@ pub enum Choice {
     Simt,
     RustSimt,
     SharedKv,
-    Tiled { query_tile: usize },
+    VectorSharedKv,
+    VectorSharedKvCombined,
+    Mma {
+        variant: crate::resident::attention_mma::catalog::Variant,
+    },
+    /// Validated SM120 plain-FP16 target prefill; never selected by the draft path.
+    MmaF16,
+    Tiled {
+        query_tile: usize,
+    },
 }
 impl Choice {
     pub(crate) const fn query_tile(self) -> Option<usize> {
         match self {
-            Self::Simt | Self::RustSimt | Self::SharedKv => None,
+            Self::Simt
+            | Self::RustSimt
+            | Self::SharedKv
+            | Self::VectorSharedKv
+            | Self::VectorSharedKvCombined
+            | Self::Mma { .. }
+            | Self::MmaF16 => None,
             Self::Tiled { query_tile } => Some(query_tile),
         }
     }
     pub(crate) const fn uses_oxide(self) -> bool {
-        matches!(self, Self::RustSimt | Self::SharedKv)
+        matches!(
+            self,
+            Self::RustSimt | Self::SharedKv | Self::VectorSharedKv | Self::VectorSharedKvCombined
+        )
     }
     fn valid(self) -> bool {
         matches!(self, Self::Simt) || self.query_tile().is_some_and(|q| QUERY_TILES.contains(&q))

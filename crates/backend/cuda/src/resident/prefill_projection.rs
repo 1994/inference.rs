@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 
 const NARROW_DENSE_SHAPE: (usize, usize, usize) = (64, 48, 5120);
 const NARROW_DENSE_TILE: [usize; 2] = [crate::constants::PREFILL_LANES, 16];
+/// Output columns and reduction width of the GDN `in_proj_b`/`in_proj_a` pair.
+pub(super) const GDN_BA_SHAPE: [i32; 2] = [48, 5120];
 
 /// Zero-copy prompt GEMM: the batched input slot holds all 32 rows and the
 /// output slot is reshaped to `[32, rows]` in place; no packing kernels remain.
@@ -113,6 +115,100 @@ pub(super) fn record(
     }
     arena.buffers[slot] = Some(output.reshape(&[flat])?);
     Ok(())
+}
+
+/// Record GDN `in_proj_b` + `in_proj_a` as one launch: both are Dense BF16 N48
+/// projections of the same normalized input. The pair kernel keeps each output's
+/// independent K accumulation order; only the launch (and the shared `x` load) is fused.
+///
+/// Returns false when either node would take a different path (narrow N16 layout,
+/// sparse experts, vendor GEMM, or unexpected shape). A 48x5120 weight is below
+/// `MIN_DELEGATED_WEIGHT_ELEMENTS`, so the vendor path is impossible for this shape.
+pub(super) fn record_pair(
+    scope: &Scope,
+    first: &TensorNode,
+    second: &TensorNode,
+    arena: &mut super::ActivationArena,
+    (weights, profile): (&ProgramWeights, &DeviceProfile),
+) -> Result<bool, DeviceError> {
+    if first.inputs.len() != 2
+        || second.inputs.len() != 2
+        || first.inputs[0] != second.inputs[0]
+        || first.outputs.len() != 1
+        || second.outputs.len() != 1
+        || !weights.expert_banks.is_empty()
+    {
+        return Ok(false);
+    }
+    let (Some(ProjectionWeight::Dense(weight_b)), Some(ProjectionWeight::Dense(weight_a))) = (
+        weights.projections.get(&first.inputs[1]),
+        weights.projections.get(&second.inputs[1]),
+    ) else {
+        return Ok(false);
+    };
+    if weight_b.shape() != GDN_BA_SHAPE || weight_a.shape() != weight_b.shape() {
+        return Ok(false);
+    }
+    let width = arena.lanes();
+    let expected = usize::try_from(GDN_BA_SHAPE[0]).map_err(error)? * width;
+    let input_slot = arena.slot(first.inputs[0]).map_err(error)?;
+    let input_elements = arena.buffers[input_slot]
+        .as_ref()
+        .ok_or_else(|| error("paired projection input"))?
+        .size();
+    let columns = input_elements / width;
+    if columns * width != input_elements
+        || columns != usize::try_from(GDN_BA_SHAPE[1]).map_err(error)?
+        || arena.get(first.outputs[0]).map_err(error)?.size() != expected
+        || arena.get(second.outputs[0]).map_err(error)?.size() != expected
+        || narrow_dense_layout(
+            &profile.architecture,
+            (
+                width,
+                usize::try_from(GDN_BA_SHAPE[0]).map_err(error)?,
+                columns,
+            ),
+        )
+    {
+        return Ok(false);
+    }
+    let slot_b = arena.slot(first.outputs[0]).map_err(error)?;
+    let slot_a = arena.slot(second.outputs[0]).map_err(error)?;
+    if slot_b == slot_a {
+        return Ok(false);
+    }
+    let output_b = arena.buffers[slot_b]
+        .take()
+        .ok_or_else(|| error("paired projection b output"))?;
+    let output_a = arena.buffers[slot_a]
+        .take()
+        .ok_or_else(|| error("paired projection a output"))?;
+    let rows = usize::try_from(GDN_BA_SHAPE[0]).map_err(error)?;
+    let mut output_b = output_b.reshape(&[width, rows])?;
+    let mut output_a = output_a.reshape(&[width, rows])?;
+    let flat_input = arena.buffers[input_slot]
+        .as_ref()
+        .ok_or_else(|| error("paired projection input"))?;
+    let input = flat_input.view(&[width, columns]).map_err(error)?;
+    scope.record(
+        gemm::dense_pair(
+            (&mut output_b).partition([
+                crate::constants::PREFILL_LANES,
+                crate::constants::PREFILL_GEMM_TILE_N,
+            ]),
+            (&mut output_a).partition([
+                crate::constants::PREFILL_LANES,
+                crate::constants::PREFILL_GEMM_TILE_N,
+            ]),
+            &input,
+            weight_b,
+            weight_a,
+        )
+        .generics(vec![columns.to_string()]),
+    )?;
+    arena.buffers[slot_b] = Some(output_b.reshape(&[expected])?);
+    arena.buffers[slot_a] = Some(output_a.reshape(&[expected])?);
+    Ok(true)
 }
 
 /// Record the established split-K projection with its existing operands and reduction.

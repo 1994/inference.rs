@@ -45,6 +45,7 @@ fn fixture_at(
         &[16, out_columns],
     )?;
     let weights = ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -53,6 +54,7 @@ fn fixture_at(
         batch_width: 3,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: crate::AttentionProfile::Canonical,
         fusion: None,
         embeddings,
         projections: BTreeMap::from([(TensorId::new(11)?, ProjectionWeight::Dense(dense))]),

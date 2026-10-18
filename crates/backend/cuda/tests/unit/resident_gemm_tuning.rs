@@ -96,9 +96,8 @@ fn resident_keys_isolate_full_geometry_hardware_and_numeric_contract() -> Result
     changed.kernel_schema.push_str("-changed");
     variants.push(changed);
     let mut changed = original.clone();
-    changed.kernel_schema = changed
-        .kernel_schema
-        .replace("-v2:search-ab:confirm-ba", "-v1");
+    assert!(changed.kernel_schema.contains("nvfp4-v3"));
+    changed.kernel_schema = changed.kernel_schema.replace("nvfp4-v3", "nvfp4-v1");
     variants.push(changed);
     let mut changed = original.clone();
     changed.activation_mode = "different-scale-mode".into();
@@ -390,4 +389,39 @@ fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> 
         );
     }
     Ok(())
+}
+
+#[test]
+fn tile_m_128_is_accepted_and_enumerated_after_the_schema_bump() {
+    // The schema is part of the table-cache key: without this bump a stored 64x128
+    // selection keeps short-circuiting the search and the new row tile never runs.
+    assert!(KERNEL_SCHEMA.contains(":tile-m128"));
+    for tile_n in TILE_N_SEARCH {
+        assert!(
+            GemmConfig {
+                tile_m: 128,
+                tile_n,
+                main_loop: MainLoop::Plain,
+            }
+            .valid()
+        );
+    }
+    let mut candidates = Vec::new();
+    for tile_m in TILE_M_SEARCH {
+        for tile_n in TILE_N_SEARCH {
+            for main_loop in LOOP_SEARCH {
+                candidates.push(GemmConfig {
+                    tile_m,
+                    tile_n,
+                    main_loop,
+                });
+            }
+        }
+    }
+    assert!(candidates.iter().any(|config| {
+        config.tile_m == 128
+            && config.tile_n == crate::constants::QUANT_GEMM_TILE[1]
+            && config.main_loop == MainLoop::Plain
+    }));
+    assert_ne!(candidates, [] as [GemmConfig; 0]);
 }

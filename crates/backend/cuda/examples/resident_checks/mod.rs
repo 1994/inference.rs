@@ -34,6 +34,16 @@ fn check(
     check_projection(device, op, inputs, size, state, None)
 }
 
+/// Activation tensor spec used by the fixture's graph.
+fn activation(id: TensorId, size: usize) -> TensorSpec {
+    TensorSpec {
+        id,
+        shape: vec![size],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    }
+}
+
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Test cases own their input fixtures for clarity"
@@ -48,6 +58,7 @@ fn check_projection(
 ) -> Result<()> {
     let mut graph = DataflowGraph::default();
     let mut weights = ProgramWeights {
+        mrope: false,
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -56,6 +67,7 @@ fn check_projection(
         batch_width: 3,
         prefill_width: 3,
         narrow_prefill_width: 0,
+        attention_profile: infer_backend_cuda::AttentionProfile::Canonical,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,
@@ -98,14 +110,9 @@ fn check_projection(
     }
     let hidden = TensorId::new(100)?;
     let logits = TensorId::new(101)?;
-    for id in [hidden, logits] {
-        graph.tensors.push(TensorSpec {
-            id,
-            shape: vec![size],
-            dtype: DType::F32,
-            storage: TensorStorage::Activation,
-        });
-    }
+    graph
+        .tensors
+        .extend([activation(hidden, size), activation(logits, size)]);
     let mut state_ids = vec![];
     let initial = if let Some((kind, shape, value)) = state {
         let id = TensorId::new(102)?;

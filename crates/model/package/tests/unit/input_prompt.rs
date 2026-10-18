@@ -220,3 +220,243 @@ fn square_grid_matches_the_visual_token_count() -> Result<()> {
     assert!(visual_tokens((1, 3, 3), encoder).is_err());
     Ok(())
 }
+
+#[test]
+fn media_layout_exposes_every_span_and_the_next_rotary_coordinate() -> Result<()> {
+    let imported = shipped()?;
+    let counts = [4usize, 6];
+    let tokens = [
+        VISION_START,
+        IMAGE,
+        VISION_END,
+        7,
+        VISION_START,
+        IMAGE,
+        VISION_END,
+    ];
+    let expanded = expand_placeholders(&tokens, &counts, IMAGE)?;
+    let prepared = PreparedPrompt {
+        tokens: expanded.tokens,
+        images: vec![
+            PromptImage {
+                pixels: Vec::new(),
+                grid: (1, 4, 4),
+            },
+            PromptImage {
+                pixels: Vec::new(),
+                grid: (1, 4, 6),
+            },
+        ],
+        spans: expanded.spans,
+    };
+    let layout = media_layout(&prepared, &imported, &Modality::Image)?;
+    assert_eq!(layout.spans.len(), 2);
+    assert_eq!(layout.spans[0].range, 1..5);
+    assert_eq!(layout.spans[1].range, 8..14);
+    assert_eq!(layout.spans[1].rotary.as_ref().map(Vec::len), Some(6));
+    assert_eq!(layout.next_rotary, 10);
+    let positions = layout
+        .positions
+        .as_ref()
+        .ok_or_else(|| Error::invalid("expected three-axis positions"))?;
+    assert_eq!(positions.len(), prepared.tokens.len());
+    assert_eq!(positions[1], [1, 1, 1]);
+    assert_eq!(positions[2], [1, 1, 2]);
+    assert_eq!(positions[4], [1, 2, 2]);
+    assert_eq!(positions[8], [6, 6, 6]);
+    assert_eq!(positions[13], [6, 7, 8]);
+    // A span whose tokens are not the modality placeholder must fail.
+    let mut tampered = prepared;
+    tampered.tokens[2] = VISION_END;
+    assert!(media_layout(&tampered, &imported, &Modality::Image).is_err());
+    Ok(())
+}
+
+/// Video prompts go through the same alignment contract as images.
+///
+/// Skipped unless the real package (with its tokenizer and video processor) is configured.
+#[test]
+fn prepared_video_prompt_expands_temporal_patches() -> Result<()> {
+    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+        return Ok(());
+    };
+    let imported = shipped()?;
+    let assets = crate::input::text::TextAssets::open(&package, 4096)?;
+    let processor = VideoProcessor::from_json(
+        &std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
+            .map_err(|error| Error::invalid(error.to_string()))?,
+    )?;
+    // Four 32x32 frames fill two temporal groups and a 2x2 spatial patch grid.
+    let video = RawVideo {
+        fps: 30.0,
+        frames: (0..4)
+            .map(|index| crate::RgbImage {
+                height: 32,
+                width: 32,
+                pixels: vec![u8::try_from(index * 60).unwrap_or(0); 32 * 32 * 3],
+            })
+            .collect(),
+    };
+    let text = "<|vision_start|><|video_pad|><|vision_end|>describe";
+    let prepared = prepare_video(
+        &assets,
+        &processor,
+        &imported,
+        text,
+        std::slice::from_ref(&video),
+        &Modality::Video,
+    )?;
+    let placeholder = placeholders(&imported, &Modality::Video)?[0];
+    // Each temporal group is its own timestamped, marker-delimited media item.
+    assert_eq!(prepared.images.len(), 2);
+    assert_eq!(prepared.images[0].grid, (1, 2, 2));
+    assert_eq!(prepared.spans.len(), 2);
+    let vision_start = assets.encode("<|vision_start|>", false)?[0];
+    let vision_end = assets.encode("<|vision_end|>", false)?[0];
+    for span in &prepared.spans {
+        assert_eq!(span.len(), 1);
+        assert!(
+            prepared.tokens[span.clone()]
+                .iter()
+                .all(|token| *token == placeholder)
+        );
+        assert_eq!(prepared.tokens[span.start - 1], vision_start);
+        assert_eq!(prepared.tokens[span.end], vision_end);
+    }
+    let empty = prepare_video(
+        &assets,
+        &processor,
+        &imported,
+        "describe",
+        &[],
+        &Modality::Video,
+    )?;
+    assert!(empty.spans.is_empty() && empty.images.is_empty());
+    // Text without a video placeholder must not silently drop the clip.
+    assert!(
+        prepare_video(
+            &assets,
+            &processor,
+            &imported,
+            "describe",
+            std::slice::from_ref(&video),
+            &Modality::Video
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn foreign_modality_placeholders_are_rejected() -> Result<()> {
+    let imported = shipped()?;
+    let video = placeholders(&imported, &Modality::Video)?[0];
+    assert!(
+        reject_foreign_placeholders(
+            &imported,
+            &[VISION_START, video, VISION_END],
+            &Modality::Image
+        )
+        .is_err()
+    );
+    assert!(
+        reject_foreign_placeholders(
+            &imported,
+            &[VISION_START, IMAGE, VISION_END],
+            &Modality::Video
+        )
+        .is_err()
+    );
+    reject_foreign_placeholders(
+        &imported,
+        &[VISION_START, IMAGE, VISION_END],
+        &Modality::Image,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn media_layout_rejects_uncovered_or_misaligned_spans() -> Result<()> {
+    let imported = shipped()?;
+    // A placeholder without media must not reach the model as ordinary text.
+    let stray = PreparedPrompt {
+        tokens: vec![VISION_START, IMAGE, VISION_END],
+        images: Vec::new(),
+        spans: Vec::new(),
+    };
+    assert!(media_layout(&stray, &imported, &Modality::Image).is_err());
+    // Two four-token spans overlap by two tokens.
+    let overlap = PreparedPrompt {
+        tokens: vec![IMAGE; 6],
+        images: vec![
+            PromptImage {
+                pixels: Vec::new(),
+                grid: (1, 4, 4),
+            },
+            PromptImage {
+                pixels: Vec::new(),
+                grid: (1, 4, 4),
+            },
+        ],
+        spans: vec![0..4, 2..6],
+    };
+    assert!(media_layout(&overlap, &imported, &Modality::Image).is_err());
+    // A 1x4x6 grid merges into six tokens, not four.
+    let short = PreparedPrompt {
+        tokens: vec![IMAGE; 4],
+        images: vec![PromptImage {
+            pixels: Vec::new(),
+            grid: (1, 4, 6),
+        }],
+        spans: std::iter::once(0..4).collect(),
+    };
+    assert!(media_layout(&short, &imported, &Modality::Image).is_err());
+    Ok(())
+}
+
+/// Multiple clips keep their placeholder order and each contributes one span per group.
+///
+/// Skipped unless the real package (with its tokenizer and video processor) is configured.
+#[test]
+fn prepared_video_prompt_orders_multiple_clips() -> Result<()> {
+    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+        return Ok(());
+    };
+    let imported = shipped()?;
+    let assets = crate::input::text::TextAssets::open(&package, 4096)?;
+    let processor = VideoProcessor::from_json(
+        &std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
+            .map_err(|error| Error::invalid(error.to_string()))?,
+    )?;
+    let clip = |level: u8| RawVideo {
+        fps: 30.0,
+        frames: (0..4)
+            .map(|_| crate::RgbImage {
+                height: 32,
+                width: 32,
+                pixels: vec![level; 32 * 32 * 3],
+            })
+            .collect(),
+    };
+    let text = "<|vision_start|><|video_pad|><|vision_end|> and \
+                <|vision_start|><|video_pad|><|vision_end|>";
+    let prepared = prepare_video(
+        &assets,
+        &processor,
+        &imported,
+        text,
+        &[clip(10), clip(200)],
+        &Modality::Video,
+    )?;
+    assert_eq!(prepared.images.len(), 4);
+    assert_eq!(prepared.spans.len(), 4);
+    assert!(
+        prepared
+            .spans
+            .windows(2)
+            .all(|pair| pair[0].end <= pair[1].start)
+    );
+    // The first clip's first group must precede the second clip's first group.
+    assert_ne!(prepared.images[0].pixels, prepared.images[2].pixels);
+    Ok(())
+}

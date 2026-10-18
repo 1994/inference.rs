@@ -21,6 +21,35 @@ fn model_path_serves_with_automatic_defaults() {
 }
 
 #[test]
+fn attention_profile_defaults_to_canonical_and_rejects_unknown_values() {
+    let default = Cli::try_parse_from(["infer", "/models/example"]).unwrap();
+    assert_eq!(
+        default.cuda_attention_profile,
+        backend::CudaAttentionProfile::Canonical
+    );
+    for (name, expected) in [
+        ("canonical", backend::CudaAttentionProfile::Canonical),
+        ("bf16", backend::CudaAttentionProfile::Bf16),
+        ("fp16", backend::CudaAttentionProfile::Fp16),
+    ] {
+        let cli =
+            Cli::try_parse_from(["infer", "/models/example", "--cuda-attention-profile", name])
+                .unwrap();
+        assert_eq!(cli.cuda_attention_profile, expected);
+    }
+    // The profile is a closed enum; a near-miss precision name is not a numerical option.
+    assert!(
+        Cli::try_parse_from([
+            "infer",
+            "/models/example",
+            "--cuda-attention-profile",
+            "f16",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn shorthand_preserves_overrides_and_legacy_commands() {
     for args in [
         vec![
