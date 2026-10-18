@@ -11,6 +11,9 @@ fn capacity_wait_renews_only_when_execution_makes_resource_progress() -> Result<
     let mut fixture = Fixture::new(false)?;
     fixture.reservation_limit.store(1, Ordering::Release);
     fixture.poll_gate.store(false, Ordering::Release);
+    // Close the compute permit before the gate opens: no poll may consume the
+    // default unlimited allowance between the two stores.
+    fixture.poll_permits.store(0, Ordering::Release);
     // Keep the first sequence active through several resource progress/retry rounds.
     let mut first = request(1)?;
     first.workload = serde_json::from_value(serde_json::json!({
@@ -48,12 +51,18 @@ fn capacity_wait_renews_only_when_execution_makes_resource_progress() -> Result<
     // Allow exactly one compute completion per round. Each completion advances the
     // resource epoch and must produce exactly one renewed reservation attempt.
     for _ in 0..3 {
+        let expected = before + 1;
         fixture.poll_permits.store(1, Ordering::Release);
-        while fixture.reservation_attempts.load(Ordering::Acquire) == before {
+        while fixture.reservation_attempts.load(Ordering::Acquire) < expected {
             fixture.engine.tick(fixture.engine.now_us() + 1)?;
             deadline(limit)?;
         }
-        before = fixture.reservation_attempts.load(Ordering::Acquire);
+        assert_eq!(
+            fixture.reservation_attempts.load(Ordering::Acquire),
+            expected,
+            "one compute completion must renew exactly one reservation attempt"
+        );
+        before = expected;
     }
     fixture.poll_permits.store(0, Ordering::Release);
     // Consume the rejection of the renewed reservation, without advancing the GPU.
