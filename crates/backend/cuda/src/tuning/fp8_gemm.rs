@@ -29,7 +29,7 @@ const CONTRACT: &str = "fp8-channel-exact-v2:row-pad-pow2:maxabs/448:floor1e-12:
 const ROW_TILES: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
     crate::constants::PROMPT_GEMM_TILE_ROWS,
-    128,
+    crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS,
 ];
 const COLUMN_TILES: [usize; 2] = [
     crate::constants::QUANT_GEMM_TILE[1],
@@ -58,11 +58,7 @@ pub struct NativeConfig {
 impl NativeConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: if rows > crate::constants::QUANT_GEMM_TILE[0] {
-                crate::constants::PROMPT_GEMM_TILE_ROWS
-            } else {
-                crate::constants::QUANT_GEMM_TILE[0]
-            },
+            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
             tile_n: crate::constants::QUANT_GEMM_TILE[1],
         }
     }

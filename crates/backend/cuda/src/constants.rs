@@ -42,6 +42,28 @@ mod device {
     /// tensor-core work. Keep the row-dependent split and re-measure serving, not just the
     /// kernel, before changing either dimension.
     pub const PROMPT_GEMM_TILE_ROWS: usize = 64;
+    /// Wide prompt row tile.
+    ///
+    /// **Measured (RTX 5090, 32K C1 BF16 MTP2, table B, A B B A)**: the 128-row prompt tile cut
+    /// TTFT by 0.54 s (paired mean, 12 pairs; median −0.47 s) with identical 64-token greedy
+    /// streams. A 256-row chunk becomes two 128-row CTAs instead of four 64-row CTAs, so each
+    /// weight tile is read fewer times. The tile is only taken once a graph has this many rows:
+    /// shorter prompt tails keep `PROMPT_GEMM_TILE_ROWS`, and decode never takes either.
+    pub const WIDE_PROMPT_GEMM_TILE_ROWS: usize = 128;
+    /// Prompt row tile for a graph with `rows` output rows.
+    ///
+    /// Decode-width graphs keep `QUANT_GEMM_TILE`; prompt graphs take the wide tile once they have
+    /// enough rows to fill it, so the choice remains a pure function of the row count and a short
+    /// tail is never padded to half a CTA.
+    pub const fn prompt_gemm_tile_rows(rows: usize) -> usize {
+        if rows >= WIDE_PROMPT_GEMM_TILE_ROWS {
+            WIDE_PROMPT_GEMM_TILE_ROWS
+        } else if rows > QUANT_GEMM_TILE[0] {
+            PROMPT_GEMM_TILE_ROWS
+        } else {
+            QUANT_GEMM_TILE[0]
+        }
+    }
 
     /// Tokens per KV block. Step 1 of the KV refactor uses it only to resolve a position through
     /// the sequence's block table; a real allocator will later hand these blocks out across
@@ -49,19 +71,15 @@ mod device {
     pub const KV_BLOCK_TOKENS: usize = 32;
     /// Output tile of the activation-quantized GEMM for a graph with `rows` output rows.
     ///
-    /// Decode-width graphs keep the 16-row tile; wider ones take the prompt tile so one CTA
-    /// covers the whole width and reads each weight once. Selection is a pure function of the
-    /// output row count, so one shared `Workspace` can serve prompt and decode graphs without any
-    /// mutable per-graph state.
+    /// Decode-width graphs keep the 16-row tile; wider ones take the row-dependent prompt tile so
+    /// one CTA covers a whole 128-row half-chunk and reads each weight once. Selection is a pure
+    /// function of the output row count, so one shared `Workspace` can serve prompt and decode
+    /// graphs without any mutable per-graph state.
     pub fn quant_gemm_tile(rows: usize) -> [usize; 2] {
         if let Some(tile) = quant_gemm_tile_override() {
             return tile;
         }
-        if rows > QUANT_GEMM_TILE[0] {
-            [PROMPT_GEMM_TILE_ROWS, QUANT_GEMM_TILE[1]]
-        } else {
-            QUANT_GEMM_TILE
-        }
+        [prompt_gemm_tile_rows(rows), QUANT_GEMM_TILE[1]]
     }
     /// `INFER_CUDA_QUANT_TILE=rows,cols` replaces both the decode and the prompt tile, so a sweep
     /// can move the prompt tile the decode sweep in §11.7 never covered. Capture-time read, once

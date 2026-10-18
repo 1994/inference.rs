@@ -30,7 +30,7 @@ const MEDIAN_INTERPOLATION: f32 = 0.5;
 const TILE_M_SEARCH: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
     crate::constants::PROMPT_GEMM_TILE_ROWS,
-    128,
+    crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS,
 ];
 /// Supported output-column tile variants; the first is the conservative baseline.
 const TILE_N_SEARCH: [usize; 2] = [
@@ -175,11 +175,7 @@ pub struct GemmConfig {
 impl GemmConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: if rows > crate::constants::QUANT_GEMM_TILE[0] {
-                crate::constants::PROMPT_GEMM_TILE_ROWS
-            } else {
-                crate::constants::QUANT_GEMM_TILE[0]
-            },
+            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
             tile_n: crate::constants::QUANT_GEMM_TILE[1],
             main_loop: MainLoop::Plain,
         }
