@@ -20,6 +20,7 @@ struct Buffers {
 pub struct Workspace {
     oxide_available: bool,
     mma: Option<super::super::attention_mma::Workspace>,
+    mma_f16: Option<super::super::attention_mma::Workspace>,
     pub(in crate::resident) oxide: Option<super::super::attention_oxide::Support>,
     pub(in crate::resident) shared: Option<super::super::attention_oxide::Support>,
     vector: Option<super::super::attention_oxide::Support>,
@@ -91,6 +92,7 @@ impl Workspace {
             taps: taps::Taps::default(),
             oxide_available: super::super::attention_oxide::Support::eligible(device, graph)?,
             mma: None,
+            mma_f16: None,
             oxide: None,
             shared: None,
             vector: None,
@@ -112,8 +114,71 @@ impl Workspace {
         if super::super::attention_oxide::disabled() {
             return Ok(());
         }
-        self.mma =
-            super::super::attention_mma::Workspace::new(device, graph, weights, capacity, lanes)?;
+        self.mma = None;
+        self.mma_f16 = None;
+        let architecture = device.profile()?.architecture.clone();
+        let target = weights.fusion.is_none();
+        let any_f16 = target
+            && weights.attention_profile.is_fp16()
+            && graph.nodes.iter().any(|node| {
+                let TensorOp::Attention {
+                    query_heads,
+                    kv_heads,
+                    head_dim,
+                    window,
+                } = node.op
+                else {
+                    return false;
+                };
+                node.states
+                    .first()
+                    .is_some_and(|id| weights.kv_scales.contains_key(id))
+                    && super::super::attention_mma::f16::supported(
+                        &architecture,
+                        query_heads,
+                        kv_heads,
+                        head_dim,
+                        lanes,
+                        window.unwrap_or(0),
+                    )
+            });
+        if any_f16 {
+            match super::super::attention_mma::Workspace::new(
+                device,
+                graph,
+                weights,
+                capacity,
+                lanes,
+                super::super::attention_mma::Arithmetic::F16,
+            )
+            .and_then(|workspace| {
+                workspace
+                    .map(|mut workspace| {
+                        workspace.support.prepare_variant(
+                            device,
+                            super::super::attention_mma::catalog::Variant::Sm120,
+                        )?;
+                        Ok(workspace)
+                    })
+                    .transpose()
+            }) {
+                Ok(Some(workspace)) => self.mma_f16 = Some(workspace),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(target:"infer::tuning",%error,"FP16 target attention unavailable: canonical fallback");
+                }
+            }
+        }
+        if !any_f16 {
+            self.mma = super::super::attention_mma::Workspace::new(
+                device,
+                graph,
+                weights,
+                capacity,
+                lanes,
+                super::super::attention_mma::Arithmetic::Bf16,
+            )?;
+        }
         Ok(())
     }
 
@@ -127,10 +192,14 @@ impl Workspace {
         let enabled = crate::tuning::attention::enabled();
         #[cfg(test)]
         let enabled = enabled || taps::forced_choice().is_some();
-        if !enabled && !self.oxide_available && self.mma.is_none() {
+        if !enabled && !self.oxide_available && self.mma.is_none() && self.mma_f16.is_none() {
             self.prefill.retain(|(_, width), _| *width != lanes);
             return;
         }
+        let architecture = device
+            .profile()
+            .map(|p| p.architecture.clone())
+            .unwrap_or_default();
         let mut choices = BTreeMap::new();
         for node in &graph.nodes {
             let TensorOp::Attention {
@@ -146,7 +215,29 @@ impl Workspace {
                 continue;
             };
             let fp8 = weights.kv_scales.contains_key(state);
-            if !fp8 && self.mma.is_none() {
+            let f16_route = weights.fusion.is_none()
+                && weights.attention_profile.is_fp16()
+                && fp8
+                && self.mma_f16.is_some()
+                && super::super::attention_mma::f16::supported(
+                    &architecture,
+                    query_heads,
+                    kv_heads,
+                    head_dim,
+                    lanes,
+                    window.unwrap_or(0),
+                );
+            if f16_route {
+                self.prefill.insert(
+                    (node.outputs[0], lanes),
+                    crate::tuning::attention::Choice::MmaF16,
+                );
+                continue;
+            }
+            // The target experimental profiles are limited to FP8-packed KV. Only the draft
+            // proposal program keeps its existing F32-KV staging path, so a target graph that
+            // mixes FP8 and F32 attention cannot leak a profile into the F32 nodes.
+            if !fp8 && (self.mma.is_none() || weights.fusion.is_none()) {
                 continue;
             }
             let shape = crate::tuning::attention::Shape {
@@ -375,12 +466,15 @@ impl Workspace {
         &mut super::super::attention_mma::Support,
         super::super::attention_mma::catalog::Variant,
     )> {
-        if let crate::tuning::attention::Choice::Mma { variant } =
-            *self.prefill.get(&(output, lanes))?
-        {
-            Some((&mut self.mma.as_mut()?.support, variant))
-        } else {
-            None
+        match *self.prefill.get(&(output, lanes))? {
+            crate::tuning::attention::Choice::Mma { variant } => {
+                Some((&mut self.mma.as_mut()?.support, variant))
+            }
+            crate::tuning::attention::Choice::MmaF16 => Some((
+                &mut self.mma_f16.as_mut()?.support,
+                super::super::attention_mma::catalog::Variant::Sm120,
+            )),
+            _ => None,
         }
     }
 

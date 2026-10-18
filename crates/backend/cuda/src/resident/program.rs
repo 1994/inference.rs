@@ -83,6 +83,9 @@ pub struct ProgramWeights {
     pub kv_scales: BTreeMap<TensorId, [f32; 2]>,
     pub tiling: BTreeMap<TensorId, LinearTiling>,
     pub fusion: Option<FusionWeights>,
+    /// Target prefill attention numerical profile, resolved once at load. The draft proposal
+    /// program keeps its existing BF16 behavior regardless of this selection.
+    pub attention_profile: crate::AttentionProfile,
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
     pub input_scales: BTreeMap<TensorId, f32>,
     pub fp8_inputs: std::collections::BTreeSet<TensorId>,

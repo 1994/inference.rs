@@ -53,6 +53,12 @@ pub struct Cli {
     /// Draft tokens proposed per step by the MTP head; 0 disables speculation.
     #[arg(long, global = true, default_value_t = 0)]
     pub(super) num_speculative_tokens: usize,
+    /// Target attention numerical profile. `bf16` is an experimental FA4 target FP8-KV prefill
+    /// profile. `fp16` is the validated-SM120 plain-FP16 variant of the same target-only
+    /// prefill profile. The fixed task-quality gate has not passed for either. Default is
+    /// canonical and the draft proposal path is unchanged.
+    #[arg(long, global = true, value_enum, default_value = "canonical")]
+    pub(super) cuda_attention_profile: backend::CudaAttentionProfile,
     /// Fraction of device memory the engine may use, as in vLLM (0 disables the cap).
     #[arg(long, global = true, default_value_t = crate::constants::DEFAULT_GPU_MEMORY_UTILIZATION)]
     pub(super) gpu_memory_utilization: f64,

@@ -32,6 +32,10 @@ pub struct LoadOptions {
     /// Capture the chunked gated-delta prompt kernel instead of the exact per-token kernel.
     /// The two lowerings differ in the last bits, so this is an explicit numerical choice.
     pub chunked_recurrent: bool,
+    /// Target prefill attention numerical profile. `Canonical` preserves the existing exact
+    /// path; `Bf16` is the experimental FA4 profile for target FP8-KV prefill only. The profile
+    /// is resolved once here and never changes the draft, weights, KV storage or quality gate.
+    pub attention_profile: crate::AttentionProfile,
 }
 impl Default for LoadOptions {
     fn default() -> Self {
@@ -42,6 +46,7 @@ impl Default for LoadOptions {
             mtp_depth: 0,
             autotune: true,
             chunked_recurrent: false,
+            attention_profile: crate::AttentionProfile::Canonical,
         }
     }
 }
@@ -206,6 +211,7 @@ impl LoadedModel {
             draft_depth: self.mtp_depth,
             automatic_prefill: self.automatic_prefill,
             arena_budget_bytes: self.profile.arena_budget_bytes(),
+            attention_profile: self.weights.attention_profile.name().to_owned(),
         }
     }
     /// # Errors
@@ -305,6 +311,11 @@ impl LoadedModel {
             sequence_prices: budget::SequencePrices::default(),
         };
         loaded.prepare_attention()?;
+        tracing::info!(
+            target: "infer::load",
+            attention_profile = loaded.weights.attention_profile.name(),
+            "target attention numerical profile"
+        );
         Ok(loaded)
     }
     fn prepare_attention(&self) -> Result<()> {

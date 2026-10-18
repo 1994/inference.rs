@@ -41,15 +41,7 @@ impl<E: DType> DeviceOp for Recorded<'_, E> {
             &(&mut *self.bindings.output).partition([1, super::DIM]),
             ctx,
         )?;
-        for tensor in [
-            &mut self.scratch.query,
-            &mut self.scratch.keys,
-            &mut self.scratch.values,
-            &mut self.scratch.output,
-        ] {
-            KernelOutputStored::retain(&tensor.partition([1]), ctx)?;
-        }
-        KernelOutputStored::retain(&(&mut self.scratch.used).partition([1]), ctx)?;
+        self.scratch.retain(ctx)?;
         ctx.retain(Arc::clone(&self.prepare.func))?;
         ctx.retain(Arc::clone(&self.finish.func))?;
         ctx.retain(Arc::clone(&self.api))?;

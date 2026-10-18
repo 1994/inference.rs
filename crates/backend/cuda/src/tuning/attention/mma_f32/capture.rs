@@ -141,7 +141,12 @@ pub(super) struct Proof {
 impl Captured {
     pub fn new(device: &CudaDevice, f: &Fixture, choice: Choice) -> Result<Self> {
         let mut support = if let Choice::Mma { variant } = choice {
-            let mut module = attention_mma::Support::load(device, f.capacity, f.shape.lanes)?;
+            let mut module = attention_mma::Support::load(
+                device,
+                f.capacity,
+                f.shape.lanes,
+                attention_mma::Arithmetic::Bf16,
+            )?;
             module.prepare_float_cache(device)?;
             module.prepare_variant(device, variant)?;
             Some(module)

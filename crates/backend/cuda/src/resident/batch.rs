@@ -790,13 +790,25 @@ impl BatchBuilder<'_> {
         {
             return Ok(());
         }
-        let mut no_fusion = None;
         if recurrent.record(scope, node, arena, self.weights, self.states, prefill_info)? {
             return Ok(());
         }
         if self.record_prompt_dynamic(scope, node, arena, prefill_info, prefill_rotary)? {
             return Ok(());
         }
+        self.record_prompt_dispatch(scope, node, arena, metadata, partials)
+    }
+
+    /// Record the width-32 dispatch for a node whose special prefill cases did not apply.
+    fn record_prompt_dispatch(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: &[Tensor<i32>],
+        partials: &mut BTreeMap<usize, Tensor<f32>>,
+    ) -> std::result::Result<(), DeviceError> {
+        let mut no_fusion = None;
         match dispatch32(node, self.weights) {
             Dispatch32::Linear => {
                 super::prefill_projection::record(

@@ -98,6 +98,7 @@ fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: infer_backend_cuda::AttentionProfile::Canonical,
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: Some(FusionWeights {

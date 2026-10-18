@@ -315,6 +315,7 @@ impl Captured {
                 device,
                 fixture.capacity,
                 fixture.shape.lanes,
+                crate::resident::attention_mma::Arithmetic::Bf16,
             )?;
             support.prepare_variant(device, variant)?;
             Some(support)

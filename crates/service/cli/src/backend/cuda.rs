@@ -46,6 +46,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
                 prefill_width: selection.max_num_batched_tokens.unwrap_or(0),
                 mtp_depth: selection.num_speculative_tokens,
                 autotune: selection.autotune,
+                attention_profile: selection.attention_profile.into(),
                 ..LoadOptions::default()
             },
         )
@@ -159,6 +160,7 @@ fn report_environment(
     tracing::info!(
         target: "infer::load",
         mtp_depth = selection.num_speculative_tokens,
+        attention_profile = selection.attention_profile.name(),
         autotune = selection.autotune,
         max_num_batched_tokens = %optional(selection.max_num_batched_tokens),
         block_size = %optional(selection.block_size),

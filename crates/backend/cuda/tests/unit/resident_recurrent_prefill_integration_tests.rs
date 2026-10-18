@@ -54,6 +54,7 @@ fn fixture_at(
         batch_width: 3,
         prefill_width: 1,
         narrow_prefill_width: 0,
+        attention_profile: crate::AttentionProfile::Canonical,
         fusion: None,
         embeddings,
         projections: BTreeMap::from([(TensorId::new(11)?, ProjectionWeight::Dense(dense))]),
