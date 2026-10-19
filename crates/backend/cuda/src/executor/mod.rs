@@ -33,6 +33,10 @@ pub struct CudaBackend {
     kv_block_bytes: u64,
     /// Prompt tokens restored from the prefix cache instead of recomputed, for observability.
     reused_tokens: u64,
+    /// Per slot, the target and draft programs that prefill straight into that slot while no
+    /// sequence holds them. Declared before the pools so they drop first: their states are
+    /// views of the slots' storage.
+    homes: Vec<Option<Home>>,
     /// Continuous-batching decode slots, captured lazily on the first batchable step;
     /// `None` with `slots_disabled` means initialization failed and decode stays serial.
     slots: Option<SlotPool>,
@@ -46,7 +50,15 @@ pub struct CudaBackend {
     busy: bool,
     fatal: Option<Error>,
 }
+/// A pool slot's resident programs: prompts prefill into the slot's own storage, so a sequence
+/// that holds them never owns a private copy of its state.
+struct Home {
+    program: DeviceProgram,
+    draft: Option<DeviceProgram>,
+}
 struct Sequence {
+    /// The slot whose resident programs this sequence holds; it keeps that slot leased.
+    home: Option<usize>,
     program: DeviceProgram,
     speculation: Option<Speculation>,
     capacity: usize,
@@ -174,6 +186,7 @@ impl CudaBackend {
             prefix: prefix::PrefixCache::new(prefix_cache_bytes(state_budget)),
             kv_block_bytes,
             reused_tokens: 0,
+            homes: Vec::new(),
             slots: None,
             draft_slots: None,
             reclaimed_slot_capacity: None,

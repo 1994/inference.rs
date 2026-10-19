@@ -1,4 +1,5 @@
 use super::{CudaBackend, Sequence};
+use crate::resident::DeviceProgram;
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::OutputReadout;
 impl CudaBackend {
@@ -101,6 +102,7 @@ impl CudaBackend {
         let pool_width = pool.width();
         let pool_capacity = pool.capacity();
         let before = self.physical_available()?;
+        self.homes.clear();
         drop(self.draft_slots.take());
         drop(self.slots.take());
         // The pool's padded storage may exceed a non-power-of-two model ceiling.
@@ -139,6 +141,9 @@ impl CudaBackend {
             ));
         }
         self.prepare_reservation_for(capacity, readout)?;
+        if self.reserve_home(id, capacity, readout)? {
+            return Ok(());
+        }
         let private_verification = self.private_verification_for(capacity, readout);
         let budget = self.reservation_budget(capacity, readout, private_verification)?;
         if self.states.len() >= self.maximum_states
@@ -210,6 +215,7 @@ impl CudaBackend {
         self.states.insert(
             id,
             Sequence {
+                home: None,
                 program,
                 speculation,
                 capacity,
@@ -293,11 +299,16 @@ impl CudaBackend {
         if let Some(speculation) = state.speculation.as_mut() {
             speculation.reset()?;
         }
-        // The slot keeps no rollback state: the next bind overwrites its covered prefix.
+        // The slot keeps no rollback state: the next bind overwrites its covered prefix. A
+        // slot-resident sequence keeps its slot leased; only the pooled replay forgets it.
         if let Some(lease) = state.slot.take()
             && let Some(pool) = self.slots.as_mut()
         {
-            pool.release(lease.slot);
+            if state.home == Some(lease.slot) {
+                pool.discard(lease.slot);
+            } else {
+                pool.release(lease.slot);
+            }
         }
         state.history.clear();
         state.hidden.clear();
@@ -316,6 +327,18 @@ impl CudaBackend {
         {
             pool.release(lease.slot);
         }
+        if let Some(slot) = state.home {
+            if let Some(pool) = self.slots.as_mut() {
+                pool.release(slot);
+            }
+            if let Some(home) = self.homes.get_mut(slot) {
+                *home = Some(super::Home {
+                    program: state.program,
+                    draft: state.speculation.map(|speculation| speculation.program),
+                });
+            }
+            return Ok(());
+        }
         if !state.poisoned {
             state.history.clear();
             state.hidden.clear();
@@ -323,6 +346,69 @@ impl CudaBackend {
         }
         Ok(())
     }
+    /// Admit a pooled request onto a free slot's resident programs: it prefills straight into
+    /// the slot and then decodes from it, so admission captures nothing and the request owns no
+    /// private state. False when no such slot is free; the caller admits a private program.
+    fn reserve_home(
+        &mut self,
+        id: StateId,
+        capacity: usize,
+        readout: OutputReadout,
+    ) -> Result<bool> {
+        let Some(pool) = self.slots.as_mut() else {
+            return Ok(false);
+        };
+        if readout != OutputReadout::Logits
+            || capacity > pool.capacity()
+            || self.states.len() >= self.maximum_states
+        {
+            return Ok(false);
+        }
+        let Some(slot) = (0..self.homes.len()).find(|&slot| {
+            self.homes[slot].as_ref().is_some_and(|home| {
+                home.draft.is_some() || self.loaded.mtp_depth() == 0
+            })
+        }) else {
+            return Ok(false);
+        };
+        if !pool.take_slot(slot) {
+            return Ok(false);
+        }
+        let Some(mut home) = self.homes[slot].take() else {
+            return Ok(false);
+        };
+        let reset = home
+            .program
+            .reset()
+            .and_then(|()| home.draft.as_mut().map_or(Ok(()), DeviceProgram::reset));
+        if let Err(error) = reset {
+            pool.release(slot);
+            self.homes[slot] = Some(home);
+            return Err(error);
+        }
+        let depth = self.loaded.mtp_depth();
+        self.states.insert(
+            id,
+            Sequence {
+                home: Some(slot),
+                program: home.program,
+                speculation: home
+                    .draft
+                    .map(|program| super::Speculation::new(program, depth)),
+                capacity,
+                readout,
+                // The pool paid for the slot's storage and programs when it was built.
+                budget: 0,
+                history: Vec::new(),
+                hidden: Vec::new(),
+                poisoned: false,
+                slot: None,
+                verification_priced: false,
+            },
+        );
+        Ok(true)
+    }
+
     pub(super) fn ownership(&self, states: &[(StateId, usize, usize)]) -> Result<()> {
         if states.len() != self.states.len()
             || states

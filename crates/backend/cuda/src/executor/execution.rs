@@ -221,6 +221,7 @@ impl CudaBackend {
         }
         self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
         self.slots = Some(pool);
+        self.build_homes();
         self.reclaimed_slot_capacity = None;
     }
 
@@ -247,6 +248,7 @@ impl CudaBackend {
         let width = pool.width();
         self.draft_slots = self.prepare_draft_pool(width, capacity);
         self.slots = Some(pool);
+        self.build_homes();
         self.reclaimed_slot_capacity = None;
         tracing::info!(
             target: "infer::executor",
@@ -254,6 +256,45 @@ impl CudaBackend {
             capacity,
             "CUDA slot pool captured at load"
         );
+    }
+
+    /// Capture each slot's resident target and draft programs. A slot without them still
+    /// serves sequences that bind a private program's state, so failures only log.
+    #[expect(
+        unsafe_code,
+        reason = "Audited slot alias: homes are declared before the pools and cleared before \
+                  either pool drops, and only the slot's lease holder replays them"
+    )]
+    fn build_homes(&mut self) {
+        self.homes.clear();
+        let Some(pool) = self.slots.as_ref() else {
+            return;
+        };
+        for slot in 0..pool.width() {
+            let before = self.loaded.device().memory_info().map_or(0, |info| info.0);
+            // SAFETY: see the expectation above.
+            let built = unsafe { self.loaded.slot_programs(pool, self.draft_slots.as_ref(), slot) };
+            let after = self.loaded.device().memory_info().map_or(0, |info| info.0);
+            tracing::debug!(
+                target: "infer::executor",
+                slot,
+                used_mib = before.saturating_sub(after) / MIB as u64,
+                free_mib = after / MIB as u64,
+                "slot-resident programs captured"
+            );
+            match built {
+                Ok((program, draft)) => self.homes.push(Some(super::Home { program, draft })),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "infer::executor",
+                        slot,
+                        %error,
+                        "slot-resident programs unavailable; this slot binds private state"
+                    );
+                    self.homes.push(None);
+                }
+            }
+        }
     }
 
     /// Widest pool the device can fund, trying every width down to two.
@@ -369,19 +410,22 @@ impl CudaBackend {
             .ok_or_else(|| Error::invariant("CUDA slot pool"))?;
         let mut participants: Vec<(usize, usize)> = Vec::new();
         let mut unbound: Vec<usize> = Vec::new();
+        // Slot-resident sequences already hold their slot and wrote its state in place.
+        let mut homed: Vec<(usize, usize)> = Vec::new();
         for index in segment {
             let state = self
                 .states
                 .get(&tasks[index].state)
                 .ok_or_else(|| Error::invariant("validated CUDA state"))?;
-            match &state.slot {
-                Some(lease) => participants.push((index, lease.slot)),
-                None => unbound.push(index),
+            match (&state.slot, state.home) {
+                (Some(lease), _) => participants.push((index, lease.slot)),
+                (None, Some(slot)) => homed.push((index, slot)),
+                (None, None) => unbound.push(index),
             }
         }
         let mut newly: Vec<(usize, usize)> = Vec::new();
         for &index in &unbound {
-            if participants.len() + newly.len() >= pool.width() {
+            if participants.len() + homed.len() + newly.len() >= pool.width() {
                 break;
             }
             let Some(slot) = pool.take_free() else {
@@ -390,12 +434,14 @@ impl CudaBackend {
             newly.push((index, slot));
         }
         let minimum = if pool.verify().is_some() { 1 } else { 2 };
-        if participants.is_empty() && newly.len() < minimum {
+        if participants.is_empty() && homed.is_empty() && newly.len() < minimum {
             for (_, slot) in newly {
                 pool.release(slot);
             }
             return Ok(Vec::new());
         }
+        // Binding a slot-resident sequence copies nothing: its program's views are the slot.
+        newly.extend_from_slice(&homed);
         participants.extend_from_slice(&newly);
         participants.sort_unstable_by_key(|&(index, _)| index);
         let device = self.loaded.device();

@@ -446,7 +446,7 @@ impl DeviceProgram {
         hidden: usize,
         vocabulary: usize,
     ) -> Result<Self> {
-        Self::new_impl(device, graph, weights, capacity, hidden, vocabulary, true)
+        Self::new_impl(device, graph, weights, (capacity, hidden, vocabulary), true, None)
     }
 
     /// A sequence that will verify through the shared slot pool skips its private
@@ -462,7 +462,29 @@ impl DeviceProgram {
         hidden: usize,
         vocabulary: usize,
     ) -> Result<Self> {
-        Self::new_impl(device, graph, weights, capacity, hidden, vocabulary, false)
+        Self::new_impl(device, graph, weights, (capacity, hidden, vocabulary), false, None)
+    }
+
+    /// A pooled program whose recurrent states and KV caches are `slot`, one slot pool slot's
+    /// storage seen through aliasing views ([`super::slot_batch::SlotPool::slot_views`]): a
+    /// sequence prefills straight into the slot it then decodes from, with no private copy.
+    /// # Errors
+    /// Rejects invalid capacity, mismatched slot layouts or CUDA graph capture failures.
+    pub(crate) fn new_on_slot(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        (capacity, hidden, vocabulary): (usize, usize, usize),
+        slot: (super::batch::States, super::fp8_cache::Fp8Caches),
+    ) -> Result<Self> {
+        Self::new_impl(
+            device,
+            graph,
+            weights,
+            (capacity, hidden, vocabulary),
+            false,
+            Some(slot),
+        )
     }
 
     /// Zeroed decode metadata tensor and external hidden row shared by every capture.
@@ -521,10 +543,9 @@ impl DeviceProgram {
         device: &CudaDevice,
         graph: &DataflowGraph,
         weights: &ProgramWeights,
-        capacity: usize,
-        hidden: usize,
-        vocabulary: usize,
+        (capacity, hidden, vocabulary): (usize, usize, usize),
         private_verification: bool,
+        slot: Option<(super::batch::States, super::fp8_cache::Fp8Caches)>,
     ) -> Result<Self> {
         let geometry = ProgramGeometry::new(weights, private_verification);
         super::validation::validate(graph, weights)?;
@@ -541,9 +562,13 @@ impl DeviceProgram {
         )?;
         let (mut nvfp4, mut delegated) =
             Self::projection_workspaces(device, graph, weights, geometry)?;
-        let mut states = allocate_states(device, graph, capacity, weights)?;
-        let mut fp8_states =
-            super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
+        let (mut states, mut fp8_states) = match slot {
+            Some(slot) => slot,
+            None => (
+                allocate_states(device, graph, capacity, weights)?,
+                super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?,
+            ),
+        };
         let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (lane_external_owner, mut lane_external, mut lane_fusion) =

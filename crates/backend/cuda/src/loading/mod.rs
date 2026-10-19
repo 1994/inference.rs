@@ -474,6 +474,49 @@ impl LoadedModel {
     /// graph is the pooled speculation graph of `mtp_depth + 1` candidate lanes per slot.
     /// # Errors
     /// Rejects invalid geometry, exceeded device budgets or CUDA capture failures.
+    /// Target and draft programs that prefill straight into `slot` of the target and draft
+    /// pools: their recurrent states and KV caches are the slots' storage.
+    /// # Safety
+    /// Both pools must outlive the programs, and a program may replay only while its sequence
+    /// owns the slot.
+    /// # Errors
+    /// Rejects unknown slots or CUDA graph capture failures.
+    #[expect(
+        unsafe_code,
+        reason = "Audited slot alias: forwarded from SlotPool::slot_views"
+    )]
+    pub(crate) unsafe fn slot_programs(
+        &self,
+        target: &crate::resident::slot_batch::SlotPool,
+        draft: Option<&crate::resident::slot_batch::SlotPool>,
+        slot: usize,
+    ) -> Result<(DeviceProgram, Option<DeviceProgram>)> {
+        let geometry = (
+            target.capacity(),
+            self.model.hidden_size,
+            self.model.vocab_size,
+        );
+        // SAFETY: forwarded from this function's contract.
+        let views = unsafe { target.slot_views(slot)? };
+        let program =
+            DeviceProgram::new_on_slot(&self.device, &self.graph, &self.weights, geometry, views)?;
+        let draft = match (&self.draft, draft) {
+            (Some(model), Some(pool)) => {
+                // SAFETY: forwarded from this function's contract.
+                let views = unsafe { pool.slot_views(slot)? };
+                Some(DeviceProgram::new_on_slot(
+                    &self.device,
+                    &model.graph,
+                    &model.weights,
+                    geometry,
+                    views,
+                )?)
+            }
+            _ => None,
+        };
+        Ok((program, draft))
+    }
+
     pub(crate) fn slot_pool(
         &self,
         width: usize,
