@@ -59,6 +59,11 @@ pub struct Cli {
     /// canonical and the draft proposal path is unchanged.
     #[arg(long, global = true, value_enum, default_value = "canonical")]
     pub(super) cuda_attention_profile: backend::CudaAttentionProfile,
+    /// Per-prompt multimodal item limits as JSON, as in vLLM (for example
+    /// `{"image":0,"video":0}`). All-zero limits serve text only and skip loading the vision
+    /// tower; image inputs are then rejected.
+    #[arg(long, global = true, value_name = "JSON", value_parser = parse_text_only)]
+    pub(super) limit_mm_per_prompt: Option<bool>,
     /// Fraction of device memory the engine may use, as in vLLM (0 disables the cap).
     #[arg(long, global = true, default_value_t = crate::constants::DEFAULT_GPU_MEMORY_UTILIZATION)]
     pub(super) gpu_memory_utilization: f64,
@@ -119,3 +124,10 @@ impl Cli {
 #[cfg(test)]
 #[path = "../tests/unit/arguments.rs"]
 mod tests;
+
+/// Whether `--limit-mm-per-prompt` limits every modality to zero items.
+fn parse_text_only(value: &str) -> Result<bool, String> {
+    let limits: std::collections::BTreeMap<String, u64> =
+        serde_json::from_str(value).map_err(|error| format!("modality limits: {error}"))?;
+    Ok(!limits.is_empty() && limits.values().all(|&limit| limit == 0))
+}

@@ -101,6 +101,8 @@ pub struct Selection {
     pub gpu_memory_utilization: f64,
     /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
     pub autotune: bool,
+    /// Serve text only (`--limit-mm-per-prompt` with every limit zero): skip the vision tower.
+    pub text_only: bool,
 }
 #[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 fn resolve(

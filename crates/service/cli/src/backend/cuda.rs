@@ -47,6 +47,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
                 mtp_depth: selection.num_speculative_tokens,
                 autotune: selection.autotune,
                 attention_profile: selection.attention_profile.into(),
+                vision: !selection.text_only,
                 ..LoadOptions::default()
             },
         )
