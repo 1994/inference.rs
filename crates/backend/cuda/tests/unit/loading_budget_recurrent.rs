@@ -23,6 +23,18 @@ fn graph() -> DataflowGraph {
     }
 }
 
+// The chunked path retains one F32 normalization row, two F32 gates, BF16
+// Q/K/U/W/interaction matrices, and F32 cumulative decay for each geometry.
+const fn preparation_bytes(key_heads: u64, lanes: u64) -> u64 {
+    let normalized = 2 * key_heads * 128 * 4;
+    let gates = 2 * 48 * lanes * 4;
+    let queries_and_keys = 2 * key_heads * lanes * 128 * 2;
+    let updates_and_weights = 2 * 48 * lanes * 128 * 2;
+    let interactions = 48 * lanes * 64 * 2;
+    let cumulative_decay = 48 * lanes * 4;
+    normalized + gates + queries_and_keys + updates_and_weights + interactions + cumulative_decay
+}
+
 #[test]
 fn quantized_recurrent_admission_counts_retained_prompt_graphs_and_shares_layers() -> Result<()> {
     let mut weights = fixture_weights();
@@ -58,10 +70,11 @@ fn quantized_recurrent_admission_counts_retained_prompt_graphs_and_shares_layers
                 Ok::<_, infer_core::Error>(total + required_bytes(&graph, &weights, width)?)
             })
     };
-    // 6 MiB output + 4 MiB Q/K + 96 KiB gates at 256, one quarter at 64.
-    let wide = 6_291_456 + (2 * 16 * 128 + 2 * 48) * 256 * 4;
-    assert_eq!(quote(false)?, wide / 4);
-    assert_eq!(quote(true)?, wide + wide / 4);
+    // Output storage is shared by value geometry; preparation is shared by full geometry.
+    let wide = 48 * 128 * 256 * 4 + preparation_bytes(16, 256);
+    let narrow = 48 * 128 * 64 * 4 + preparation_bytes(16, 64);
+    assert_eq!(quote(false)?, narrow);
+    assert_eq!(quote(true)?, wide + narrow);
     weights.fp8_inputs.insert(TensorId::ONE);
     assert_eq!(required_bytes(&graph, &weights, 256)?, wide);
     Ok(())
@@ -72,7 +85,12 @@ fn recurrent_admission_counts_all_prompt_scratch_widths() -> Result<()> {
     let mut weights = fixture_weights();
     weights.chunked_recurrent = true;
     assert_eq!(required_bytes(&graph(), &weights, 16)?, 48 * 128 * 16 * 4);
-    assert_eq!(required_bytes(&graph(), &weights, 512)?, 48 * 128 * 512 * 4);
+    for lanes in [64, 256, 512, 1024, 2048] {
+        assert_eq!(
+            required_bytes(&graph(), &weights, lanes)?,
+            48 * 128 * lanes as u64 * 4 + preparation_bytes(16, lanes as u64)
+        );
+    }
     Ok(())
 }
 
@@ -107,8 +125,8 @@ fn ordered_recurrent_preparation_counts_distinct_key_geometries() -> Result<()> 
     node.id = OpId::new(3)?;
     graph.nodes.push(node);
     let output = 48 * 128 * 64 * 4;
-    let first_inputs = (2 * 16 * 128 + 2 * 48) * 64 * 4;
-    let second_inputs = (2 * 8 * 128 + 2 * 48) * 64 * 4;
+    let first_inputs = preparation_bytes(16, 64);
+    let second_inputs = preparation_bytes(8, 64);
     assert_eq!(
         required_bytes(&graph, &weights, 64)?,
         output + first_inputs + second_inputs
@@ -122,9 +140,9 @@ fn quantized_default_prices_only_exact_ordered_recurrent_shapes() -> Result<()> 
     weights.input_scales.insert(TensorId::ONE, 1.0);
     assert!(!weights.chunked_recurrent);
     let graph = graph();
-    for width in [64, 256] {
-        let expected = (48 * 128 + 2 * 16 * 128 + 2 * 48) * width * 4;
-        assert_eq!(required_bytes(&graph, &weights, width)?, expected as u64);
+    for width in [64, 256, 512, 1024, 2048] {
+        let expected = 48 * 128 * width as u64 * 4 + preparation_bytes(16, width as u64);
+        assert_eq!(required_bytes(&graph, &weights, width)?, expected);
     }
     assert_eq!(required_bytes(&graph, &weights, 32)?, 0);
     let mut unsupported = graph.clone();
@@ -141,7 +159,7 @@ fn quantized_default_prices_only_exact_ordered_recurrent_shapes() -> Result<()> 
     mixed.nodes.push(later);
     assert_eq!(
         required_bytes(&mixed, &weights, 64)?,
-        (48 * 128 + 2 * 16 * 128 + 2 * 48) * 64 * 4
+        48 * 128 * 64 * 4 + preparation_bytes(16, 64)
     );
     Ok(())
 }

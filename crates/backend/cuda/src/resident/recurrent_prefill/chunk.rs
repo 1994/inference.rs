@@ -333,14 +333,15 @@ impl Scratch {
 
     /// Device bytes of [`Self::new`].
     pub(super) const fn bytes((kh, vh, dim): (usize, usize, usize), lanes: usize) -> usize {
-        (2 * kh * lanes * dim + 2 * vh * lanes * dim + vh * lanes * CHUNK) * 2 + vh * lanes * 4
+        (2 * kh * lanes * dim + 2 * vh * lanes * dim + vh * lanes * CHUNK) * size_of::<bf16>()
+            + vh * lanes * size_of::<f32>()
     }
 }
 
 /// Whether the chunked rule covers this geometry. `INFER_CUDA_GDN_CHUNK=0` keeps the
 /// token-serial recurrence.
 pub(super) fn enabled(dim: usize, lanes: usize) -> bool {
-    dim == 128
+    dim == super::ORDERED_DIM
         && lanes >= CHUNK
         && lanes.is_multiple_of(CHUNK)
         && std::env::var("INFER_CUDA_GDN_CHUNK").map_or(true, |value| value != "0")

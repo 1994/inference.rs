@@ -12,6 +12,16 @@ const STAGING: u64 = 2 * 1024 * 1024 * 1024;
 /// Decoded BF16 byte budget for one NVFP4 projection falling back to host decoding.
 const NVFP4_DECODE_BUDGET: usize = crate::constants::GIB;
 
+// E4M3 finite encoding: four biased exponent bits and three fraction bits.
+const E4M3_NAN_CODE: u8 = 127;
+const E4M3_MAX_CODE: u8 = E4M3_NAN_CODE - 1;
+const E4M3_MANTISSA_BITS: u8 = 3;
+const E4M3_MANTISSA_MASK: u8 = 7;
+const E4M3_MANTISSA_SCALE: f32 = 8.0;
+const E4M3_EXPONENT_BIAS: i32 = 7;
+const E4M3_MAX: f32 = 448.0;
+const E4M3_SIGN: u8 = 0x80;
+
 #[derive(Clone)]
 pub enum Projection {
     Dense(Arc<Tensor<bf16>>),
@@ -46,14 +56,14 @@ pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<V
 
 /// Finite non-negative E4M3 values in code order (codes 0..=126; 127 is NaN).
 fn e4m3_magnitudes() -> Vec<f32> {
-    (0u8..127)
+    (0u8..E4M3_NAN_CODE)
         .map(|code| {
-            let exponent = i32::from(code >> 3);
-            let mantissa = f32::from(code & 7);
+            let exponent = i32::from(code >> E4M3_MANTISSA_BITS);
+            let mantissa = f32::from(code & E4M3_MANTISSA_MASK);
             if exponent == 0 {
-                mantissa / 8.0 * 2f32.powi(-6)
+                mantissa / E4M3_MANTISSA_SCALE * 2f32.powi(1 - E4M3_EXPONENT_BIAS)
             } else {
-                (1.0 + mantissa / 8.0) * 2f32.powi(exponent - 7)
+                (1.0 + mantissa / E4M3_MANTISSA_SCALE) * 2f32.powi(exponent - E4M3_EXPONENT_BIAS)
             }
         })
         .collect()
@@ -61,7 +71,7 @@ fn e4m3_magnitudes() -> Vec<f32> {
 
 /// Round to the nearest E4M3 code (ties to the even code), saturating at +-448.
 fn e4m3_code(value: f32, magnitudes: &[f32]) -> u8 {
-    let magnitude = value.abs().min(448.0);
+    let magnitude = value.abs().min(E4M3_MAX);
     let upper = magnitudes.partition_point(|&m| m < magnitude);
     let code = if upper == 0 {
         0
@@ -77,11 +87,11 @@ fn e4m3_code(value: f32, magnitudes: &[f32]) -> u8 {
         }
     };
     let sign = if value.is_sign_negative() && code != 0 {
-        0x80
+        E4M3_SIGN
     } else {
         0
     };
-    u8::try_from(code).unwrap_or(126) | sign
+    u8::try_from(code).unwrap_or(E4M3_MAX_CODE) | sign
 }
 
 impl Projection {
@@ -101,7 +111,11 @@ impl Projection {
         let mut scales = Vec::with_capacity(*rows);
         for row in values.chunks(*columns) {
             let largest = row.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
-            let scale = if largest > 0.0 { largest / 448.0 } else { 1.0 };
+            let scale = if largest > 0.0 {
+                largest / E4M3_MAX
+            } else {
+                1.0
+            };
             scales.push(scale);
             codes.extend(
                 row.iter()

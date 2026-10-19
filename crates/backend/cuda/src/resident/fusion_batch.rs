@@ -42,7 +42,7 @@ fn layout_bytes(
         SCRATCH_BYTES
     } else if wide(width) {
         // F32 projection input and gathered embeddings, plus the BF16 copy the vendor GEMM reads.
-        (width * (COLUMNS + HIDDEN) * 4 + width * COLUMNS * 2) as u64
+        (width * (COLUMNS + HIDDEN) * size_of::<f32>() + width * COLUMNS * size_of::<bf16>()) as u64
     } else {
         0
     }
