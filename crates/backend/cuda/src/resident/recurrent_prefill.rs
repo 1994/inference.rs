@@ -729,6 +729,7 @@ pub(super) const ORDERED_BLOCK: usize = 16;
 pub(super) const ORDERED_WIDTHS: [usize; 5] = [64, 256, 512, 1024, 2048];
 
 mod budget;
+mod chunk;
 pub mod oxide;
 mod prepared;
 mod workspace;
