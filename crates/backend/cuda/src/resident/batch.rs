@@ -779,6 +779,103 @@ impl BatchBuilder<'_> {
         Ok(true)
     }
 
+    /// Verification lanes' delta-rule state writes in one launch that reads the recurrent state
+    /// once; each lane still writes its own output and rollback snapshot. False when this node
+    /// keeps the per-lane path.
+    fn record_verify_delta(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        lanes: &mut [Lane],
+        prefill: Option<bool>,
+    ) -> std::result::Result<bool, DeviceError> {
+        let TensorOp::Delta {
+            key_heads,
+            value_heads,
+            key_dim,
+            value_dim,
+        } = node.op
+        else {
+            return Ok(false);
+        };
+        let (Some(&id), [qkv, beta, alpha, a_log, bias]) = (node.states.first(), &node.inputs[..])
+        else {
+            return Ok(false);
+        };
+        let eligible = prefill.is_none()
+            && lanes.len() == super::attention_decode::VERIFY_LANES
+            && node.outputs.len() == 1
+            && node.states.len() == 1
+            && super::capture_checkpoint::flat_checkpoint_enabled()
+            && lanes.iter().all(|lane| lane.checkpoints.contains_key(&id));
+        if !eligible {
+            return Ok(false);
+        }
+        let mut taken = Vec::with_capacity(lanes.len());
+        for lane in lanes.iter_mut() {
+            let slot = lane.arena.slot(node.outputs[0]).map_err(error)?;
+            let output = lane.arena.buffers[slot]
+                .take()
+                .ok_or_else(|| error("verification delta output"))?;
+            let shape = output
+                .shape()
+                .iter()
+                .map(|&dim| usize::try_from(dim).map_err(error))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let size = output.size();
+            taken.push((
+                slot,
+                shape,
+                output.reshape(&[value_heads, 1, size / value_heads])?,
+            ));
+        }
+        let mut state = self
+            .states
+            .remove(&id)
+            .ok_or_else(|| error("verification delta state"))?;
+        let recorded = {
+            let weights = self.weights;
+            let [l0, l1, l2] = lanes else {
+                return Err(error("verification lanes"));
+            };
+            let [o0, o1, o2] = taken.as_mut_slice() else {
+                return Err(error("verification lanes"));
+            };
+            let snapshots = (
+                l0.checkpoints.get_mut(&id),
+                l1.checkpoints.get_mut(&id),
+                l2.checkpoints.get_mut(&id),
+            );
+            let (Some(s0), Some(s1), Some(s2), [state]) =
+                (snapshots.0, snapshots.1, snapshots.2, state.as_mut_slice())
+            else {
+                return Err(error("checkpoint delta state layout"));
+            };
+            let rows = [*qkv, *beta, *alpha];
+            let lanes = [
+                delta_lane(weights, &l0.arena, s0, &mut o0.2, &l0.metadata, rows)?,
+                delta_lane(weights, &l1.arena, s1, &mut o1.2, &l1.metadata, rows)?,
+                delta_lane(weights, &l2.arena, s2, &mut o2.2, &l2.metadata, rows)?,
+            ];
+            super::capture_checkpoint::record_delta3(
+                scope,
+                state,
+                lanes,
+                (
+                    &flat_input(weights, &l0.arena, *a_log)?,
+                    &flat_input(weights, &l0.arena, *bias)?,
+                ),
+                (key_heads, value_heads, key_dim, value_dim),
+            )
+        };
+        self.states.insert(id, state);
+        for ((slot, shape, output), lane) in taken.into_iter().zip(lanes.iter_mut()) {
+            lane.arena.buffers[slot] = Some(output.reshape(&shape)?);
+        }
+        recorded?;
+        Ok(true)
+    }
+
     fn capture(
         &mut self,
         lanes: &mut [Lane],
@@ -811,7 +908,9 @@ impl BatchBuilder<'_> {
                     )?;
                     continue;
                 }
-                if self.record_verify_attention(scope, node, lanes, prefill)? {
+                if self.record_verify_attention(scope, node, lanes, prefill)?
+                    || self.record_verify_delta(scope, node, lanes, prefill)?
+                {
                     continue;
                 }
                 for (index, lane) in lanes.iter_mut().enumerate() {
@@ -2121,6 +2220,43 @@ fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Resul
         width,
         usize::try_from(device.profile()?.arena_budget_bytes()).map_err(device_error)?,
     )
+}
+
+/// One verification lane's bindings of the fused delta-rule launch.
+fn delta_lane<'a>(
+    weights: &'a ProgramWeights,
+    arena: &'a ActivationArena,
+    snapshot: &'a mut [Tensor<f32>],
+    output: &'a mut Tensor<f32>,
+    metadata: &'a Tensor<i32>,
+    [qkv, beta, alpha]: [TensorId; 3],
+) -> std::result::Result<super::capture_checkpoint::DeltaLane<'a>, DeviceError> {
+    let [snapshot] = snapshot else {
+        return Err(error("checkpoint delta snapshot layout"));
+    };
+    Ok(super::capture_checkpoint::DeltaLane {
+        output,
+        snapshot,
+        rows: [
+            flat_input(weights, arena, qkv)?,
+            flat_input(weights, arena, beta)?,
+            flat_input(weights, arena, alpha)?,
+        ],
+        metadata,
+    })
+}
+
+/// A flat lane's input as one row: a weight constant, or the lane's activation slot.
+fn flat_input<'a>(
+    weights: &'a ProgramWeights,
+    arena: &'a ActivationArena,
+    id: TensorId,
+) -> std::result::Result<TensorView<'a, f32>, DeviceError> {
+    let tensor: &Tensor<f32> = match weights.constants.get(&id) {
+        Some(constant) => constant,
+        None => arena.get(id).map_err(error)?,
+    };
+    tensor.view(&[tensor.size()]).map_err(error)
 }
 
 #[cfg(test)]

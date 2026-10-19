@@ -5,8 +5,8 @@
 pub(crate) mod checkpoint {
     use cutile::core::{
         BroadcastScalar, LoadTileLike, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2,
-        cmp_ordering, cmpf, convert_scalar, exp, ftz, get_tile_block_id, log, predicate,
+        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, Tile_3,
+        cmp_ordering, cmpf, convert_scalar, exp, ftz, ge_tile, get_tile_block_id, log, predicate,
         reduce_sum, rsqrt, select, tile_to_scalar,
     };
 
@@ -124,6 +124,198 @@ pub(crate) mod checkpoint {
         } else {
             out.store(0.0f32.broadcast(shape![1, 1, SW]));
         }
+    }
+
+    /// Whether a lane's metadata marks a real token rather than padding.
+    fn lane_active(metadata: &Tensor<i32, { [-1] }>) -> Tile<bool, { [1] }> {
+        let position = metadata.partition(shape![1]).load([2i32]);
+        ge_tile(position, 0i32.broadcast(shape![1]))
+    }
+
+    /// [`delta_checkpoint`] for the three lanes of an MTP verification step: the state block is
+    /// read once, the lanes' updates are applied in order in registers, and each lane writes its
+    /// own output and rollback snapshot before the final state is stored. A padding lane leaves
+    /// the state unchanged and outputs zero.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "CUDA state kernel binds three lanes' outputs, snapshots and inputs explicitly"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The DSL cannot pass generic tile shapes through helpers, so the lanes are inline"
+    )]
+    #[cutile::entry()]
+    fn delta_checkpoint3<const KH: i32, const VH: i32, const D: i32, const SW: i32>(
+        out0: &mut Tensor<f32, { [1, 1, SW] }>,
+        out1: &mut Tensor<f32, { [1, 1, SW] }>,
+        out2: &mut Tensor<f32, { [1, 1, SW] }>,
+        state: &mut Tensor<f32, { [1, D, SW] }>,
+        checkpoint0: &mut Tensor<f32, { [1, D, SW] }>,
+        checkpoint1: &mut Tensor<f32, { [1, D, SW] }>,
+        checkpoint2: &mut Tensor<f32, { [1, D, SW] }>,
+        qkv0: &Tensor<f32, { [-1] }>,
+        qkv1: &Tensor<f32, { [-1] }>,
+        qkv2: &Tensor<f32, { [-1] }>,
+        beta0: &Tensor<f32, { [-1] }>,
+        beta1: &Tensor<f32, { [-1] }>,
+        beta2: &Tensor<f32, { [-1] }>,
+        alpha0: &Tensor<f32, { [-1] }>,
+        alpha1: &Tensor<f32, { [-1] }>,
+        alpha2: &Tensor<f32, { [-1] }>,
+        a_log: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+        metadata0: &Tensor<i32, { [-1] }>,
+        metadata1: &Tensor<i32, { [-1] }>,
+        metadata2: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let key = pid.0 / (VH / KH);
+        let zero_out: Tile<f32, { [1, 1, SW] }> = 0.0f32.broadcast(shape![1, 1, SW]);
+        let one = 1.0f32.broadcast(shape![1]);
+        let zero = 0.0f32.broadcast(shape![1]);
+        let epsilon = 1e-6f32.broadcast(shape![1]);
+        let threshold = 20.0f32.broadcast(shape![1]);
+        let d: f32 = convert_scalar(D);
+        let dinv = rsqrt(d.broadcast(shape![1]), ftz::Disabled);
+        let head_bias = bias.partition(shape![1]).load([pid.0]);
+        let rate = exp(a_log.partition(shape![1]).load([pid.0]));
+        let initial: Tile<f32, { [D, SW] }> = state.load_like(state).reshape(shape![D, SW]);
+
+        let active0: Tile<bool, { [1] }> = lane_active(metadata0);
+        let qp0 = qkv0.partition(shape![D]);
+        let q0: Tile<f32, { [D] }> = qp0.load([key]);
+        let k0: Tile<f32, { [D] }> = qp0.load([KH + key]);
+        let v0: Tile<f32, { [SW] }> = qkv0
+            .partition(shape![SW])
+            .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
+        let qs0: Tile<f32, { [] }> = reduce_sum(q0 * q0, 0i32);
+        let ks0: Tile<f32, { [] }> = reduce_sum(k0 * k0, 0i32);
+        let qinv0 = rsqrt(qs0.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let kinv0 = rsqrt(ks0.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let q0 = q0 * (qinv0 * dinv).broadcast(shape![D]);
+        let k0 = k0 * kinv0.broadcast(shape![D]);
+        let bt0 = beta0.partition(shape![1]).load([pid.0]);
+        let bt0 = one / (one + exp(zero - bt0));
+        let at0 = alpha0.partition(shape![1]).load([pid.0]) + head_bias;
+        let soft0 = log(one + exp(at0));
+        let large0 = cmpf(
+            at0,
+            threshold,
+            predicate::GreaterThan,
+            cmp_ordering::Ordered,
+        );
+        let soft0 = select(large0, at0, soft0);
+        let decay0 = exp(zero - rate * soft0);
+        let decayed0 = initial * decay0.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+        let kb0 = k0.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let predicted0: Tile<f32, { [SW] }> = reduce_sum(decayed0 * kb0, 0i32);
+        let diff0 = (v0 - predicted0.reshape(shape![SW])) * bt0.broadcast(shape![SW]);
+        let next0: Tile<f32, { [D, SW] }> =
+            decayed0 + kb0 * diff0.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+        let after0 = select(
+            active0.reshape(shape![1, 1]).broadcast(shape![D, SW]),
+            next0,
+            initial,
+        );
+        let qb0 = q0.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let result0: Tile<f32, { [SW] }> = reduce_sum(after0 * qb0, 0i32);
+        checkpoint0.store(after0.reshape(shape![1, D, SW]));
+        out0.store(select(
+            active0.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
+            result0.reshape(shape![1, 1, SW]),
+            zero_out,
+        ));
+
+        let active1: Tile<bool, { [1] }> = lane_active(metadata1);
+        let qp1 = qkv1.partition(shape![D]);
+        let q1: Tile<f32, { [D] }> = qp1.load([key]);
+        let k1: Tile<f32, { [D] }> = qp1.load([KH + key]);
+        let v1: Tile<f32, { [SW] }> = qkv1
+            .partition(shape![SW])
+            .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
+        let qs1: Tile<f32, { [] }> = reduce_sum(q1 * q1, 0i32);
+        let ks1: Tile<f32, { [] }> = reduce_sum(k1 * k1, 0i32);
+        let qinv1 = rsqrt(qs1.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let kinv1 = rsqrt(ks1.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let q1 = q1 * (qinv1 * dinv).broadcast(shape![D]);
+        let k1 = k1 * kinv1.broadcast(shape![D]);
+        let bt1 = beta1.partition(shape![1]).load([pid.0]);
+        let bt1 = one / (one + exp(zero - bt1));
+        let at1 = alpha1.partition(shape![1]).load([pid.0]) + head_bias;
+        let soft1 = log(one + exp(at1));
+        let large1 = cmpf(
+            at1,
+            threshold,
+            predicate::GreaterThan,
+            cmp_ordering::Ordered,
+        );
+        let soft1 = select(large1, at1, soft1);
+        let decay1 = exp(zero - rate * soft1);
+        let decayed1 = after0 * decay1.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+        let kb1 = k1.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let predicted1: Tile<f32, { [SW] }> = reduce_sum(decayed1 * kb1, 0i32);
+        let diff1 = (v1 - predicted1.reshape(shape![SW])) * bt1.broadcast(shape![SW]);
+        let next1: Tile<f32, { [D, SW] }> =
+            decayed1 + kb1 * diff1.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+        let after1 = select(
+            active1.reshape(shape![1, 1]).broadcast(shape![D, SW]),
+            next1,
+            after0,
+        );
+        let qb1 = q1.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let result1: Tile<f32, { [SW] }> = reduce_sum(after1 * qb1, 0i32);
+        checkpoint1.store(after1.reshape(shape![1, D, SW]));
+        out1.store(select(
+            active1.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
+            result1.reshape(shape![1, 1, SW]),
+            zero_out,
+        ));
+
+        let active2: Tile<bool, { [1] }> = lane_active(metadata2);
+        let qp2 = qkv2.partition(shape![D]);
+        let q2: Tile<f32, { [D] }> = qp2.load([key]);
+        let k2: Tile<f32, { [D] }> = qp2.load([KH + key]);
+        let v2: Tile<f32, { [SW] }> = qkv2
+            .partition(shape![SW])
+            .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
+        let qs2: Tile<f32, { [] }> = reduce_sum(q2 * q2, 0i32);
+        let ks2: Tile<f32, { [] }> = reduce_sum(k2 * k2, 0i32);
+        let qinv2 = rsqrt(qs2.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let kinv2 = rsqrt(ks2.reshape(shape![1]) + epsilon, ftz::Disabled);
+        let q2 = q2 * (qinv2 * dinv).broadcast(shape![D]);
+        let k2 = k2 * kinv2.broadcast(shape![D]);
+        let bt2 = beta2.partition(shape![1]).load([pid.0]);
+        let bt2 = one / (one + exp(zero - bt2));
+        let at2 = alpha2.partition(shape![1]).load([pid.0]) + head_bias;
+        let soft2 = log(one + exp(at2));
+        let large2 = cmpf(
+            at2,
+            threshold,
+            predicate::GreaterThan,
+            cmp_ordering::Ordered,
+        );
+        let soft2 = select(large2, at2, soft2);
+        let decay2 = exp(zero - rate * soft2);
+        let decayed2 = after1 * decay2.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+        let kb2 = k2.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let predicted2: Tile<f32, { [SW] }> = reduce_sum(decayed2 * kb2, 0i32);
+        let diff2 = (v2 - predicted2.reshape(shape![SW])) * bt2.broadcast(shape![SW]);
+        let next2: Tile<f32, { [D, SW] }> =
+            decayed2 + kb2 * diff2.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+        let after2 = select(
+            active2.reshape(shape![1, 1]).broadcast(shape![D, SW]),
+            next2,
+            after1,
+        );
+        let qb2 = q2.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let result2: Tile<f32, { [SW] }> = reduce_sum(after2 * qb2, 0i32);
+        checkpoint2.store(after2.reshape(shape![1, D, SW]));
+        out2.store(select(
+            active2.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
+            result2.reshape(shape![1, 1, SW]),
+            zero_out,
+        ));
+        state.store(after2.reshape(shape![1, D, SW]));
     }
 }
 

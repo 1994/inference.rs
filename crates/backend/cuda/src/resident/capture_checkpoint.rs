@@ -170,6 +170,67 @@ impl Capture<'_> {
     }
 }
 
+/// Bindings of one lane of [`record_delta3`]: its output, rollback snapshot and row inputs
+/// (`qkv`, `beta`, `alpha`, metadata).
+pub(super) struct DeltaLane<'a> {
+    pub output: &'a mut Tensor<f32>,
+    pub snapshot: &'a mut Tensor<f32>,
+    pub rows: [TensorView<'a, f32>; 3],
+    pub metadata: &'a Tensor<i32>,
+}
+
+/// Record the three verification lanes' delta-rule state writes as one launch: the state block
+/// is read once and every lane writes its own output and snapshot.
+pub(super) fn record_delta3(
+    scope: &Scope,
+    state: &mut Tensor<f32>,
+    lanes: [DeltaLane<'_>; 3],
+    (a_log, bias): (&TensorView<'_, f32>, &TensorView<'_, f32>),
+    (key_heads, value_heads, key_dim, value_dim): (usize, usize, usize, usize),
+) -> Result<(), DeviceError> {
+    if key_dim != value_dim
+        || !key_dim.is_power_of_two()
+        || key_heads == 0
+        || !value_heads.is_multiple_of(key_heads)
+    {
+        return Err(error("checkpoint delta dimensions"));
+    }
+    let block = value_block(value_dim)?;
+    let [first, second, third] = lanes;
+    scope.record(
+        checkpoint::delta_checkpoint3(
+            first.output.partition([1, 1, block]),
+            second.output.partition([1, 1, block]),
+            third.output.partition([1, 1, block]),
+            state.partition([1, key_dim, block]),
+            first.snapshot.partition([1, key_dim, block]),
+            second.snapshot.partition([1, key_dim, block]),
+            third.snapshot.partition([1, key_dim, block]),
+            &first.rows[0],
+            &second.rows[0],
+            &third.rows[0],
+            &first.rows[1],
+            &second.rows[1],
+            &third.rows[1],
+            &first.rows[2],
+            &second.rows[2],
+            &third.rows[2],
+            a_log,
+            bias,
+            first.metadata,
+            second.metadata,
+            third.metadata,
+        )
+        .generics(vec![
+            key_heads.to_string(),
+            value_heads.to_string(),
+            key_dim.to_string(),
+            block.to_string(),
+        ]),
+    )?;
+    Ok(())
+}
+
 #[cfg(not(test))]
 pub(super) const fn flat_checkpoint_enabled() -> bool {
     true
