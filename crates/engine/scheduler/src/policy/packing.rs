@@ -324,12 +324,15 @@ impl<'a> BatchBuilder<'a> {
         // A prompt chunk is atomic: one captured prompt graph replays at a fixed width, so a
         // chunk sliced into fair quanta pays a whole replay per slice for no extra progress.
         // Grant the whole chunk and let fairness order whole chunks between rounds instead of
-        // trimming them; defer the request when this round cannot fund a full chunk. A round
-        // budget smaller than one chunk keeps the fair-quantum split, so a small budget cannot
-        // starve prompt work.
+        // trimming them. When decodes already hold part of the round, grant what remains if it
+        // still funds at least half a chunk: the replay costs the same, and deferring instead
+        // starved every prompt while any request decoded, serializing concurrent requests. A
+        // round budget smaller than one chunk keeps the fair-quantum split, so a small budget
+        // cannot starve prompt work.
         let atomic =
             item.role == ExecutionRole::Prefill && chunk <= self.resources.max_num_batched_tokens;
         let quantum = match item.role {
+            ExecutionRole::Prefill if atomic && chunk > budget && budget * 2 >= chunk => budget,
             ExecutionRole::Prefill if atomic && chunk > budget => return None,
             ExecutionRole::Prefill if atomic => chunk,
             _ => chunk
