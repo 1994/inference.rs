@@ -110,8 +110,8 @@ pub(crate) fn select(
     match resolve(device, shape, autotune, session) {
         Ok(value) => value,
         Err(error) => {
-            tracing::warn!(target:"infer::tuning",?shape,%error,"exact GDN tuning failed: cuTile fallback");
-            false
+            tracing::warn!(target:"infer::tuning",?shape,%error,"exact GDN tuning failed: Rust SIMT default");
+            true
         }
     }
 }
