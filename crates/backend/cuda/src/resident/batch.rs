@@ -383,6 +383,9 @@ impl BatchBuilder<'_> {
                 crate::constants::MID_PREFILL_LANES,
                 crate::constants::MAX_PREFILL_LANES,
                 crate::constants::WIDE_PREFILL_LANES,
+                crate::constants::EXTRA_WIDE_PREFILL_LANES,
+                crate::constants::WIDER_PREFILL_LANES,
+                crate::constants::WIDEST_PREFILL_LANES,
             ]
             .contains(&width)
         {

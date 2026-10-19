@@ -335,11 +335,21 @@ fn resolve(
         tracing::info!(target:"infer::tuning",?shape,?choice,profile=catalog::PROFILE,source="table-cache","MMA attention selected");
         return Ok(choice);
     }
+    // Tensor-core attention is the default arithmetic for these programs; a shape without a
+    // measured entry takes the architecture's first variant instead of the scalar baseline,
+    // which is several times slower at every prompt width.
+    let untuned = || {
+        let choice = Variant::candidates(architecture)
+            .first()
+            .map_or(baseline, |&variant| Choice::Mma { variant });
+        tracing::info!(target:"infer::tuning",?shape,?choice,profile=catalog::PROFILE,source="default","MMA attention selected");
+        choice
+    };
     if !autotune || !session.permits_attention_search() || cfg!(debug_assertions) {
-        return Ok(baseline);
+        return Ok(untuned());
     }
     let Some(entry) = tune(device, key.clone(), session, baseline)? else {
-        return Ok(baseline);
+        return Ok(untuned());
     };
     let cached = key.driver_build.is_some()
         && crate::tuning::update_table(path.as_deref(), |table| {
