@@ -6,6 +6,7 @@ use super::{
     capture::{Capture, CaptureMode, error},
     fp8_cache::Fp8Caches,
     profile,
+    prompt_scratch::PromptScratch,
 };
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use crate::mlp::ProjectionWeight;
@@ -74,6 +75,8 @@ pub(super) struct BatchGraph {
     prompt_row: Option<Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
+    /// Shared prompt scratch the prompt graphs captured against.
+    _prompt_scratch: Option<Arc<std::sync::Mutex<PromptScratch>>>,
     metadata: Vec<Tensor<i32>>,
     /// Owner of the batched metadata rows when the prompt graph uses one allocation.
     metadata_owner: Option<Tensor<i32>>,
@@ -458,6 +461,7 @@ impl BatchBuilder<'_> {
             prompt_row: None,
             _recurrent: super::recurrent_prefill::Workspace::default(),
             _fusion: None,
+            _prompt_scratch: None,
             prefill_info: None,
             prefill_rotary: None,
             metadata,
@@ -489,6 +493,10 @@ impl BatchBuilder<'_> {
         Ok((arena, Some(row)))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Prompt graphs capture hidden and logits readouts against one shared scratch"
+    )]
     fn build32(&mut self) -> Result<BatchGraph> {
         #[cfg(test)]
         self.attention.taps.prepare(
@@ -500,21 +508,25 @@ impl BatchBuilder<'_> {
         )?;
         self.attention
             .prepare_prefill(self.device, self.graph, self.weights, self.width);
-        let (mut arena, mut prompt_row) = self.prompt_arena()?;
+        let scratch = self
+            .weights
+            .prompt_scratch
+            .get_or_allocate(self.width, || self.allocate_prompt_scratch())?;
+        let mut shared = scratch
+            .lock()
+            .map_err(|_| Error::invariant("prompt scratch poisoned"))?;
+        let (mut arena, mut prompt_row) = shared_prompt_views(&shared)?;
+        let PromptScratch {
+            partials,
+            recurrent,
+            fusion,
+            ..
+        } = &mut *shared;
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
-        let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
             .map_err(device_error)?;
         let prefill_rotary = self.prompt_rotary()?;
-        let mut recurrent = super::recurrent_prefill::Workspace::new(
-            self.device,
-            self.graph,
-            self.weights,
-            self.width,
-        )?;
-        let mut fusion =
-            super::fusion_batch::Workspace::allocate(self.device, self.weights, self.width)?;
         let mut profile = profile::PrefillProfile::from_env(self.device);
         let prefill = self.capture32(
             &mut arena,
@@ -526,7 +538,7 @@ impl BatchBuilder<'_> {
             ),
             PromptReadout::Hidden,
             profile.as_mut(),
-            (&mut partials, &mut recurrent, &mut fusion),
+            (&mut *partials, &mut *recurrent, &mut *fusion),
             prompt_row.as_mut(),
         )?;
         let prefill_last = self.capture32(
@@ -539,7 +551,7 @@ impl BatchBuilder<'_> {
             ),
             PromptReadout::Logits,
             profile.as_mut(),
-            (&mut partials, &mut recurrent, &mut fusion),
+            (&mut *partials, &mut *recurrent, &mut *fusion),
             prompt_row.as_mut(),
         )?;
         #[cfg(test)]
@@ -554,12 +566,13 @@ impl BatchBuilder<'_> {
                 ),
                 PromptReadout::StateOnly,
                 None,
-                (&mut partials, &mut recurrent, &mut fusion),
+                (&mut *partials, &mut *recurrent, &mut *fusion),
                 prompt_row.as_mut(),
             )?)
         } else {
             None
         };
+        drop(shared);
         let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
         let logits = vec![take_result(&mut arena, self.graph.logits)?];
         Ok(BatchGraph {
@@ -572,10 +585,11 @@ impl BatchBuilder<'_> {
             #[cfg(test)]
             state_prefill,
             restore: Vec::new(),
-            _partials: partials,
+            _partials: BTreeMap::new(),
             prompt_row,
-            _recurrent: recurrent,
-            _fusion: fusion,
+            _recurrent: super::recurrent_prefill::Workspace::default(),
+            _fusion: None,
+            _prompt_scratch: Some(Arc::clone(&scratch)),
             prefill_info: Some(prefill_info),
             prefill_rotary,
             metadata,
@@ -601,6 +615,27 @@ impl BatchBuilder<'_> {
                 .sync_on(&self.device.stream)
                 .map_err(device_error)?,
         ))
+    }
+
+    /// Prompt scratch for this width, allocated once per program and shared by its sequences.
+    fn allocate_prompt_scratch(&self) -> Result<PromptScratch> {
+        let (arena, row) = self.prompt_arena()?;
+        Ok(PromptScratch {
+            arena,
+            row,
+            partials: self.allocate_prompt_partials()?,
+            recurrent: super::recurrent_prefill::Workspace::new(
+                self.device,
+                self.graph,
+                self.weights,
+                self.width,
+            )?,
+            fusion: super::fusion_batch::Workspace::allocate(
+                self.device,
+                self.weights,
+                self.width,
+            )?,
+        })
     }
 
     fn allocate_prompt_partials(&self) -> Result<BTreeMap<usize, Tensor<f32>>> {
@@ -2112,6 +2147,25 @@ fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> 
                 .map_err(device_error)
         })
         .collect()
+}
+
+/// Views of the shared prompt arena and logits row for one program's prompt graphs.
+#[expect(
+    unsafe_code,
+    reason = "Audited prompt alias: graphs retain the shared scratch, and sequences replay prompt graphs one at a time on the device stream, reading their outputs before another starts"
+)]
+fn shared_prompt_views(shared: &PromptScratch) -> Result<(ActivationArena, Option<Tensor<f32>>)> {
+    // SAFETY: see the expectation above.
+    let arena = unsafe { shared.arena.shared_view()? };
+    let row = match &shared.row {
+        Some(row) => {
+            // SAFETY: see the expectation above; one lane spans the whole row.
+            let view = unsafe { super::arena::row_view(row, 1, 0)? };
+            Some(view.reshape(&[1, row.size()]).map_err(device_error)?)
+        }
+        None => None,
+    };
+    Ok((arena, row))
 }
 
 fn slot_arena(device: &CudaDevice, graph: &DataflowGraph, width: usize) -> Result<ActivationArena> {

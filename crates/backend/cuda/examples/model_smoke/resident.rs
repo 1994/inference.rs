@@ -24,6 +24,7 @@ pub fn prepare(
 ) -> Result<()> {
     let mut weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: infer_backend_cuda::resident::PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),

@@ -46,6 +46,7 @@ fn fixture_at(
     )?;
     let weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),

@@ -148,6 +148,43 @@ impl ActivationArena {
         })
     }
 
+    /// An arena whose slots alias this one's storage with the same shapes.
+    ///
+    /// Prompt graphs of different sequences capture against views of one shared arena, so the
+    /// activation memory is paid once per prompt width instead of once per admitted sequence.
+    /// # Safety
+    /// `self` must outlive every graph captured through the view, replays through any two
+    /// views must be serialized on one stream, and no activation may be read after another
+    /// view's replay has started.
+    /// # Errors
+    /// Rejects an arena with a slot currently taken out as an output.
+    #[expect(
+        unsafe_code,
+        reason = "Audited arena alias: the shared owner outlives the views by the caller's contract"
+    )]
+    pub(super) unsafe fn shared_view(&self) -> Result<Self> {
+        let mut buffers = Vec::with_capacity(self.buffers.len());
+        for buffer in &self.buffers {
+            let slot = buffer
+                .as_ref()
+                .ok_or_else(|| Error::invariant("shared arena slot is currently an output"))?;
+            let shape = slot
+                .shape()
+                .iter()
+                .map(|&dim| usize::try_from(dim).map_err(device_error))
+                .collect::<Result<Vec<_>>>()?;
+            // SAFETY: forwarded from this function's contract; one lane spans the whole slot.
+            let view = unsafe { row_view(slot, 1, 0)? };
+            buffers.push(Some(view.reshape(&shape).map_err(device_error)?));
+        }
+        Ok(Self {
+            indices: self.indices.clone(),
+            buffers,
+            lanes: self.lanes,
+            elements: self.elements,
+        })
+    }
+
     /// Batched prompt arena whose logits slot holds only the final row: prompt graphs project
     /// just the last active lane onto the vocabulary.
     /// # Errors

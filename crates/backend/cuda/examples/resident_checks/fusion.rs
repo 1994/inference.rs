@@ -90,6 +90,7 @@ fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights
         .collect();
     Ok(ProgramWeights {
         mrope: false,
+        prompt_scratch: infer_backend_cuda::resident::PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),

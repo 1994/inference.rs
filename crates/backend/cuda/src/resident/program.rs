@@ -98,6 +98,8 @@ pub struct ProgramWeights {
     pub rope_frequencies: BTreeMap<infer_core::OpId, Arc<Tensor<f32>>>,
     /// Whether the model's `RoPE` carries three-axis (`t`, `h`, `w`) positions.
     pub mrope: bool,
+    /// Prompt-graph scratch shared by every sequence of this program.
+    pub prompt_scratch: super::prompt_scratch::Registry,
 }
 
 #[derive(Clone, Copy)]

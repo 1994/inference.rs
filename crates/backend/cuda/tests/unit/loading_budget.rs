@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
         mrope: false,
+        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: std::sync::Arc::new(
             crate::tuning::resident_gemm::ResidentTuningSession::default(),
@@ -142,14 +143,24 @@ fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Re
         .at(256)
     };
     // Two live F32 activation rows per graph lane; external rows retain their configured
-    // allocation, and prompt readback stages only its final row.
-    let pooled = (1 + 64) * (2 * 48) * F32 + (1 + 256) * 48 * F32 + 2 * (48 + 48) * F32;
+    // allocation, and prompt readback stages only its final row. Prompt arenas are shared by
+    // every sequence and priced once (`prompt_scratch_bytes`), never per sequence.
+    let pooled = (2 * 48) * F32 + (1 + 256) * 48 * F32 + 2 * (48 + 48) * F32;
     assert_eq!(quote(false)?, pooled);
-    // Private capture adds the wide prompt arena, three verification arena rows and
-    // three readback rows. Its narrow prompt is shared with the pooled geometry.
+    // Private capture adds three verification arena rows and three readback rows.
     assert_eq!(
         quote(true)? - quote(false)?,
-        (256 + 3) * (2 * 48) * F32 + 3 * (48 + 48) * F32
+        3 * (2 * 48) * F32 + 3 * (48 + 48) * F32
+    );
+    // The shared scratch covers both prompt widths once.
+    assert_eq!(
+        prompt_scratch_bytes(
+            &graph,
+            &weights,
+            ProgramGeometry::new(&weights, true),
+            &fixture_profile()
+        )?,
+        (256 + 64) * (2 * 48) * F32
     );
     Ok(())
 }

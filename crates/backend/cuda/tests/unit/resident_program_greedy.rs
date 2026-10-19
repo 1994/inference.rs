@@ -16,6 +16,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .collect();
     Ok(ProgramWeights {
         mrope: false,
+        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
         chunked_recurrent: false,

@@ -111,6 +111,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
         mrope: false,
+        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
     }
 }
 
@@ -330,6 +331,7 @@ fn draft_weights(
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
         mrope: false,
+        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
     };
     for tensor in &graph.tensors {
         let TensorStorage::Weight { slot } = &tensor.storage else {
