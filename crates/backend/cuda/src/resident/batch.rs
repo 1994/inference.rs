@@ -398,11 +398,24 @@ impl BatchBuilder<'_> {
         if width >= crate::constants::PREFILL_LANES {
             return self.build32();
         }
-        let mut lanes = self.allocate_lanes(width)?;
+        // Verification records stateless nodes once over a batched arena whose rows the lanes
+        // alias; per-lane stateful nodes and the prompt captures keep their lane views.
+        let mut shared = if verify_batched() {
+            Some(ActivationArena::new_batched(
+                self.device,
+                self.graph,
+                width,
+                usize::try_from(self.device.profile()?.arena_budget_bytes())
+                    .map_err(device_error)?,
+            )?)
+        } else {
+            None
+        };
+        let mut lanes = self.allocate_lanes(width, shared.as_ref())?;
         let mut projections = super::batch_projection::allocate(self.device, self.graph, width)?;
-        let graph = Some(self.capture(&mut lanes, &mut projections, None)?);
-        let prefill = self.capture(&mut lanes, &mut projections, Some(false))?;
-        let prefill_last = self.capture(&mut lanes, &mut projections, Some(true))?;
+        let graph = Some(self.capture(&mut lanes, &mut projections, None, shared.as_mut())?);
+        let prefill = self.capture(&mut lanes, &mut projections, Some(false), None)?;
+        let prefill_last = self.capture(&mut lanes, &mut projections, Some(true), None)?;
         let mut restore = Vec::new();
         let mut metadata = Vec::new();
         let mut hidden = Vec::new();
@@ -460,7 +473,7 @@ impl BatchBuilder<'_> {
             width,
             capacity: self.capacity,
             profile: None,
-            _arena: None,
+            _arena: shared,
         })
     }
 
@@ -627,6 +640,50 @@ impl BatchBuilder<'_> {
         Ok(partials)
     }
 
+    /// Record a verification node once over the batched arena the lanes alias: projections read
+    /// and write every lane's row in place, and stateless nodes cover all rows in one launch.
+    /// False leaves the node to the per-lane path.
+    fn record_shared(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: &Tensor<i32>,
+    ) -> std::result::Result<bool, DeviceError> {
+        match dispatch32(node, self.weights) {
+            Dispatch32::Linear if !self.weights.constants.contains_key(&node.inputs[0]) => {
+                super::batch_projection::record_slots(
+                    scope,
+                    node,
+                    arena,
+                    self.weights,
+                    self.nvfp4,
+                )?;
+            }
+            Dispatch32::Batched => {
+                let mut no_fusion = None;
+                Capture {
+                    scope,
+                    arena,
+                    weights: self.weights,
+                    nvfp4: self.nvfp4,
+                    attention: self.attention,
+                    states: self.states,
+                    fp8_states: self.fp8_states,
+                    metadata,
+                    table: &self.tables[0],
+                    external: self.external,
+                    capacity: self.capacity,
+                    fusion: &mut no_fusion,
+                    mode: CaptureMode::Batched,
+                }
+                .record(node)?;
+            }
+            Dispatch32::Linear | Dispatch32::Row => return Ok(false),
+        }
+        Ok(true)
+    }
+
     /// Verification lanes append their rows, then attend in one grouped launch that reads each
     /// KV block once for all three lanes. False when this node keeps the per-lane path.
     fn record_verify_attention(
@@ -732,6 +789,7 @@ impl BatchBuilder<'_> {
         lanes: &mut [Lane],
         projections: &mut super::batch_projection::Workspace,
         prefill: Option<bool>,
+        mut shared: Option<&mut ActivationArena>,
     ) -> Result<CudaGraph<()>> {
         let width = lanes.len();
         let device = self.device;
@@ -740,6 +798,11 @@ impl BatchBuilder<'_> {
             for node in &self.graph.nodes {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 if logits && prefill == Some(false) {
+                    continue;
+                }
+                if let Some(arena) = shared.as_deref_mut()
+                    && self.record_shared(scope, node, arena, &lanes[0].metadata)?
+                {
                     continue;
                 }
                 if width > 1 && node.op == TensorOp::Linear && !(logits && prefill.is_some()) {
@@ -1101,7 +1164,12 @@ impl BatchBuilder<'_> {
         skip
     }
 
-    fn allocate_lanes(&self, width: usize) -> Result<Vec<Lane>> {
+    #[expect(
+        unsafe_code,
+        reason = "Audited lane aliasing: the batched arena is stored in the BatchGraph that owns \
+                  every graph captured against its lane views"
+    )]
+    fn allocate_lanes(&self, width: usize, shared: Option<&ActivationArena>) -> Result<Vec<Lane>> {
         let mut lanes = Vec::new();
         let mut bytes = 0usize;
         for _ in 0..width {
@@ -1141,13 +1209,20 @@ impl BatchBuilder<'_> {
                 }
                 checkpoints.insert(spec.id, copies);
             }
-            lanes.push(Lane {
-                arena: ActivationArena::new(
+            let arena = if let Some(shared) = shared {
+                // SAFETY: `build` keeps `shared` alive in the BatchGraph beside these lanes'
+                // graphs; per-lane and whole-slot nodes are recorded in sequence on one stream.
+                unsafe { shared.lane_view(lanes.len())? }
+            } else {
+                ActivationArena::new(
                     self.device,
                     self.graph,
                     usize::try_from(self.device.profile()?.arena_budget_bytes())
                         .map_err(device_error)?,
-                )?,
+                )?
+            };
+            lanes.push(Lane {
+                arena,
                 metadata: api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
                     .sync_on(&self.device.stream)
                     .map_err(device_error)?,
@@ -1185,6 +1260,12 @@ pub(super) fn dispatch32(node: &TensorNode, weights: &ProgramWeights) -> Dispatc
     } else {
         Dispatch32::Row
     }
+}
+
+/// Whether verification graphs record stateless nodes over one batched arena.
+/// `INFER_CUDA_VERIFY_BATCHED=0` keeps one recording per lane.
+fn verify_batched() -> bool {
+    std::env::var("INFER_CUDA_VERIFY_BATCHED").map_or(true, |value| value != "0")
 }
 
 /// Enqueue a prompt replay with nothing to read back: the host stages the next chunk while this

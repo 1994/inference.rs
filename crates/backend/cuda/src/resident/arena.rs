@@ -115,6 +115,39 @@ impl ActivationArena {
             .ok_or_else(|| Error::invalid("activation size overflow"))
     }
 
+    /// One lane of this batched arena as a single-row arena whose slots alias that lane's rows,
+    /// so per-lane captures and whole-slot captures of the batched arena share storage.
+    ///
+    /// # Safety
+    /// The returned arena does not own its storage: `self` must outlive every use of it and of
+    /// every graph captured against it, and a lane's rows must not be used as concurrent mutable
+    /// outputs together with the whole slot.
+    /// # Errors
+    /// Rejects a lane outside the arena or a slot that is currently taken.
+    #[expect(
+        unsafe_code,
+        reason = "Audited lane alias: the batched owner outlives the views by the caller's contract"
+    )]
+    pub(super) unsafe fn lane_view(&self, lane: usize) -> Result<Self> {
+        if lane >= self.lanes {
+            return Err(Error::invalid("activation lane out of bounds"));
+        }
+        let mut buffers = Vec::with_capacity(self.buffers.len());
+        for buffer in &self.buffers {
+            let slot = buffer
+                .as_ref()
+                .ok_or_else(|| Error::invariant("batched slot is currently an output"))?;
+            // SAFETY: forwarded from this function's contract; the row lies inside the slot.
+            buffers.push(Some(unsafe { row_view(slot, self.lanes, lane)? }));
+        }
+        Ok(Self {
+            indices: self.indices.clone(),
+            buffers,
+            lanes: 1,
+            elements: self.elements / self.lanes,
+        })
+    }
+
     /// Batched prompt arena whose logits slot holds only the final row: prompt graphs project
     /// just the last active lane onto the vocabulary.
     /// # Errors
