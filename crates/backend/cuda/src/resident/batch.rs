@@ -70,6 +70,8 @@ pub(super) struct BatchGraph {
     /// Split-K partial windows the captured fp4 prompt GEMMs accumulate into;
     /// declared after the graphs so their executables drop first.
     _partials: BTreeMap<usize, Tensor<f32>>,
+    /// Final prompt row the one-row logits projection reads; captured by the prompt graphs.
+    _prompt_row: Option<Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
@@ -443,6 +445,7 @@ impl BatchBuilder<'_> {
             state_prefill: None,
             restore,
             _partials: BTreeMap::new(),
+            _prompt_row: None,
             _recurrent: super::recurrent_prefill::Workspace::default(),
             _fusion: None,
             prefill_info: None,
@@ -471,12 +474,23 @@ impl BatchBuilder<'_> {
         )?;
         self.attention
             .prepare_prefill(self.device, self.graph, self.weights, self.width);
-        let mut arena = ActivationArena::new_batched(
-            self.device,
-            self.graph,
-            self.width,
-            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
-        )?;
+        let budget =
+            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?;
+        let single_logits = super::prompt_logits::supported(self.graph, self.weights);
+        let mut arena = if single_logits {
+            ActivationArena::new_prompt(self.device, self.graph, self.width, budget)?
+        } else {
+            ActivationArena::new_batched(self.device, self.graph, self.width, budget)?
+        };
+        let mut prompt_row = if single_logits {
+            Some(
+                api::zeros::<f32>(&[1, self.external.size()])
+                    .sync_on(&self.device.stream)
+                    .map_err(device_error)?,
+            )
+        } else {
+            None
+        };
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
@@ -503,6 +517,7 @@ impl BatchBuilder<'_> {
             PromptReadout::Hidden,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
+            prompt_row.as_mut(),
         )?;
         let prefill_last = self.capture32(
             &mut arena,
@@ -515,6 +530,7 @@ impl BatchBuilder<'_> {
             PromptReadout::Logits,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
+            prompt_row.as_mut(),
         )?;
         #[cfg(test)]
         let state_prefill = if super::prefill_demand::enabled() {
@@ -529,6 +545,7 @@ impl BatchBuilder<'_> {
                 PromptReadout::StateOnly,
                 None,
                 (&mut partials, &mut recurrent, &mut fusion),
+                prompt_row.as_mut(),
             )?)
         } else {
             None
@@ -546,6 +563,7 @@ impl BatchBuilder<'_> {
             state_prefill,
             restore: Vec::new(),
             _partials: partials,
+            _prompt_row: prompt_row,
             _recurrent: recurrent,
             _fusion: fusion,
             prefill_info: Some(prefill_info),
@@ -692,6 +710,7 @@ impl BatchBuilder<'_> {
             &mut super::recurrent_prefill::Workspace,
             &mut Option<super::fusion_batch::Workspace>,
         ),
+        mut prompt_row: Option<&mut Tensor<f32>>,
     ) -> Result<CudaGraph<()>> {
         let (metadata, metadata_batch, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
@@ -753,6 +772,17 @@ impl BatchBuilder<'_> {
                         fused_second = Some(second);
                         continue;
                     }
+                }
+                if logits && let Some(row) = prompt_row.as_deref_mut() {
+                    super::prompt_logits::record(
+                        scope,
+                        node,
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                        (row, prefill_info),
+                    )?;
+                    continue;
                 }
                 if let Some(&(.., gate, up)) = swiglu.get(&index) {
                     if !super::prefill_projection::record_swiglu(
@@ -1315,6 +1345,10 @@ impl BatchGraph {
     }
 
     /// Batched slots read back in one copy each; per-lane rows are split on host.
+    #[expect(
+        unsafe_code,
+        reason = "Audited detached replay of a readback-free prompt chunk on the single engine stream"
+    )]
     fn run32(
         &mut self,
         device: &CudaDevice,
@@ -1373,7 +1407,13 @@ impl BatchGraph {
             ],
         )?;
         let hidden_dim = self.hidden[0].size() / self.width;
-        let vocabulary = self.logits[0].size() / self.width;
+        // A one-row logits slot already holds the final lane.
+        let single_logits = self._prompt_row.is_some();
+        let vocabulary = if single_logits {
+            self.logits[0].size()
+        } else {
+            self.logits[0].size() / self.width
+        };
         let sources = [
             read_hidden.then(|| ReadbackSource {
                 tensor: Arc::clone(&self.hidden[0]),
@@ -1382,10 +1422,24 @@ impl BatchGraph {
             }),
             (prefill == Some(true)).then(|| ReadbackSource {
                 tensor: Arc::clone(&self.logits[0]),
-                skip: (tokens.len() - 1) * vocabulary,
+                skip: if single_logits {
+                    0
+                } else {
+                    (tokens.len() - 1) * vocabulary
+                },
                 len: vocabulary,
             }),
         ];
+        if sources.iter().all(Option::is_none) && self.profile.is_none() {
+            // Nothing is read back, so the host only needs the replay enqueued: it stages the next
+            // chunk while this one runs instead of idling the GPU for a sync per chunk.
+            // SAFETY: single engine stream; this replay follows its staged metadata and uploads
+            // (pageable copies and graph updates, both stream-ordered and host-safe on return)
+            // and precedes every later replay. The graph owns every buffer it touches, and the
+            // next readback, device read or drain on this device waits for it.
+            unsafe { graph.launch().async_on(&device.stream) }.map_err(device_error)?;
+            return Ok((0..tokens.len()).map(|_| (Vec::new(), Vec::new())).collect());
+        }
         let rows = self.readbacks.run(device, graph, &sources);
         if rows.is_ok()
             && let Some(profile) = &self.profile

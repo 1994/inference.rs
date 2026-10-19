@@ -103,8 +103,9 @@ const GRAPH_HEADROOM_DIVISOR: u64 = 128;
 const MIN_GRAPH_HEADROOM: u64 = 64 * MIB;
 /// Upper bound of that reservation.
 const MAX_GRAPH_HEADROOM: u64 = 512 * MIB;
-/// Per-request activation arena budget.
-const ARENA_DIVISOR: u64 = 64;
+/// Per-request activation arena budget. A 32 GiB device funds the 2048-lane prompt graph of a
+/// 27B hybrid model (953 MiB once prompt logits keep one row).
+const ARENA_DIVISOR: u64 = 32;
 /// Lower bound of the activation arena budget.
 const MIN_ARENA_BUDGET: u64 = 128 * MIB;
 /// Upper bound of the activation arena budget.

@@ -191,11 +191,28 @@ fn program_price(
     }
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
+    // Prompt arenas keep one logits row (prompt_logits); decode and verification arenas keep one
+    // per lane.
+    let prompt_arenas = geometry
+        .prompts
+        .into_iter()
+        .filter(|width| *width > 0)
+        .try_fold(0usize, |sum, width| {
+            crate::resident::prompt_logits::required_bytes(graph, weights, width)
+                .and_then(|bytes| {
+                    sum.checked_add(bytes)
+                        .ok_or_else(|| Error::invalid("activation budget"))
+                })
+        })?;
+    let other_arenas =
+        crate::resident::arena::ActivationArena::required_bytes(graph, lanes - geometry.prompt_lanes())?;
     bytes = add(
         bytes,
-        u64::try_from(crate::resident::arena::ActivationArena::required_bytes(
-            graph, lanes,
-        )?)
+        u64::try_from(
+            prompt_arenas
+                .checked_add(other_arenas)
+                .ok_or_else(|| Error::invalid("activation budget"))?,
+        )
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
     for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
