@@ -255,16 +255,18 @@ fn program_price(
     // External hidden buffers keep the configured lane allocation even when capture omits
     // the wide prompt arena.
     // Fused draft programs additionally retain embedding and two normalized rows per lane.
-    let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
-    let fusion_rows = if weights.fusion.is_some() {
-        crate::constants::MTP_FUSION_ROWS
+    // Batched prompt fusion leaves only decode and verification lanes with their own rows.
+    let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
+    let external_lanes = 1 + width;
+    let fused_lanes = if weights.fusion.is_none() {
+        0
+    } else if crate::resident::fusion_batch::batched(weights, weights.prefill_width, profile) {
+        1 + weights.batch_width.max(1) as u64
     } else {
-        1
+        external_lanes
     };
-    bytes = add(
-        bytes,
-        mul(mul(hidden as u64, external_lanes * fusion_rows)?, F32)?,
-    )?;
+    let rows = external_lanes + fused_lanes * (crate::constants::MTP_FUSION_ROWS - 1);
+    bytes = add(bytes, mul(mul(hidden as u64, rows)?, F32)?)?;
     // Pinned readback is allocated on demand and capped per batch (device/readback.rs), so
     // charge what a step actually stages: one decode lane, the verification batch when it is
     // private, and the last prompt lane (prompt modes read only the last logits row).
@@ -282,27 +284,25 @@ fn program_price(
 }
 /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
 /// Charge the supported upper bound (16 partitions), independent of device tuning.
+/// Partial rows per KV head of the grouped decode kernel: 64 splits of 32 query rows.
+const GROUPED_DECODE_ROWS: usize = 64 * 32;
 fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
     let mut bytes = 0;
     let mut shapes = std::collections::BTreeSet::new();
     for node in &graph.nodes {
         if let TensorOp::Attention {
             query_heads,
+            kv_heads,
             head_dim,
             ..
         } = node.op
             && shapes.insert((query_heads, head_dim))
         {
-            bytes = add(
-                bytes,
-                mul(
-                    mul(
-                        query_heads as u64,
-                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
-                    )?,
-                    mul(head_dim as u64 + 2, F32)?,
-                )?,
-            )?;
+            // Either one partial row per query head and split, or the grouped decode layout of
+            // 32 rows per KV head and split (resident/attention_decode/workspace.rs).
+            let rows = (query_heads * crate::constants::ATTENTION_SPLIT_MAX_PARTS)
+                .max(kv_heads * GROUPED_DECODE_ROWS);
+            bytes = add(bytes, mul(rows as u64, mul(head_dim as u64 + 2, F32)?)?)?;
         }
     }
     Ok(bytes)

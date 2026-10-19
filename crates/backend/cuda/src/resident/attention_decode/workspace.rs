@@ -10,7 +10,22 @@ use std::collections::BTreeMap;
 #[path = "../../../tests/unit/resident_attention_prefill_taps.rs"]
 pub mod taps;
 
+/// Splits per KV head of the grouped decode kernel: four KV heads fill ~1.5 waves on 170 SMs.
+const GQA_PARTS: usize = 64;
+/// Query rows one grouped decode CTA scores; every query head must fit.
+const GQA_ROWS: usize = 32;
+
+/// Whether decode attention of this geometry takes the grouped tensor-core kernel.
+fn grouped(heads: usize, kv_heads: usize) -> bool {
+    heads <= GQA_ROWS
+        && kv_heads > 0
+        && heads.is_multiple_of(kv_heads)
+        && std::env::var("INFER_CUDA_GQA_DECODE").map_or(true, |value| value != "0")
+}
+
 struct Buffers {
+    /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
+    grouped: Option<usize>,
     parts: usize,
     numerator: Tensor<f32>,
     maxima: Tensor<f32>,
@@ -55,9 +70,9 @@ impl Workspace {
         for node in &graph.nodes {
             let TensorOp::Attention {
                 query_heads,
+                kv_heads,
                 head_dim,
                 window,
-                ..
             } = node.op
             else {
                 continue;
@@ -71,21 +86,30 @@ impl Workspace {
             if parts == 1 || buffers.contains_key(&(query_heads, head_dim)) {
                 continue;
             }
-            buffers.insert(
-                (query_heads, head_dim),
+            let zeros = |shape: &[usize]| {
+                api::zeros::<f32>(shape)
+                    .sync_on(&device.stream)
+                    .map_err(device_error)
+            };
+            let entry = if grouped(query_heads, kv_heads) {
+                let blocks = kv_heads * GQA_PARTS;
                 Buffers {
+                    grouped: Some(kv_heads),
+                    parts: GQA_PARTS,
+                    numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
+                    maxima: zeros(&[blocks, GQA_ROWS])?,
+                    sums: zeros(&[blocks, GQA_ROWS])?,
+                }
+            } else {
+                Buffers {
+                    grouped: None,
                     parts,
-                    numerator: api::zeros::<f32>(&[query_heads * parts, head_dim])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                    maxima: api::zeros::<f32>(&[query_heads * parts, 1])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                    sums: api::zeros::<f32>(&[query_heads * parts, 1])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                },
-            );
+                    numerator: zeros(&[query_heads * parts, head_dim])?,
+                    maxima: zeros(&[query_heads * parts, 1])?,
+                    sums: zeros(&[query_heads * parts, 1])?,
+                }
+            };
+            buffers.insert((query_heads, head_dim), entry);
         }
         Ok(Self {
             #[cfg(test)]
@@ -536,6 +560,44 @@ impl Workspace {
             .get_mut(&(heads, dim))
             .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
         let parts = work.parts;
+        if let Some(groups) = work.grouped {
+            scope.record(
+                kernels::partial_gqa(
+                    (&mut work.numerator).partition([1, GQA_ROWS, dim]),
+                    (&mut work.maxima).partition([1, GQA_ROWS]),
+                    (&mut work.sums).partition([1, GQA_ROWS]),
+                    q,
+                    keys,
+                    values,
+                    metadata,
+                    table,
+                    window,
+                    scales[0],
+                    scales[1],
+                )
+                .generics(vec![
+                    E::DTYPE.as_str().into(),
+                    dim.to_string(),
+                    (heads / kv_heads).to_string(),
+                    parts.to_string(),
+                    crate::constants::KV_BLOCK_TOKENS.to_string(),
+                ]),
+            )?;
+            scope.record(
+                kernels::merge_gqa(
+                    output.partition([1, dim]),
+                    &work.numerator.view(&[groups, parts, GQA_ROWS, dim])?,
+                    &work.maxima.view(&[groups, parts, GQA_ROWS])?,
+                    &work.sums.view(&[groups, parts, GQA_ROWS])?,
+                )
+                .generics(vec![
+                    dim.to_string(),
+                    parts.to_string(),
+                    (heads / kv_heads).to_string(),
+                ]),
+            )?;
+            return Ok(());
+        }
         scope.record(
             kernels::partial(
                 (&mut work.numerator).partition([1, dim]),

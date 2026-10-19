@@ -48,6 +48,12 @@ fn layout_bytes(
     }
 }
 
+/// Whether prompt chunks of `width` lanes take the fully batched fusion, which needs no
+/// per-lane fusion workspace.
+pub fn batched(weights: &ProgramWeights, width: usize, profile: &DeviceProfile) -> bool {
+    wide(width) && required_bytes(weights, width, profile) > 0
+}
+
 /// The allocation and sequence admission use the same bounded capability.
 pub fn required_bytes(weights: &ProgramWeights, width: usize, profile: &DeviceProfile) -> u64 {
     #[cfg(test)]
