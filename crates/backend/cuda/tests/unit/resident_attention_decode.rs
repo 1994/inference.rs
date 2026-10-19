@@ -309,3 +309,42 @@ fn bench_case(
     }
     Ok(())
 }
+
+// Rust compilation does not specialize the cuTile DSL bodies. Compile Tile IR on
+// header-only CI as well, so missing operand types fail before a device serves a request.
+#[test]
+fn grouped_decode_helpers_compile_without_a_device() -> Result<(), Box<dyn std::error::Error>> {
+    use cutile::cutile_compiler::compile_api::KernelCompiler;
+    for (entry, lanes) in [("partial_gqa", 1), ("partial_gqa3", 3)] {
+        let mut strides: Vec<(&str, &[i32])> = vec![
+            ("keys", &[32768, 256, 1]),
+            ("values", &[32768, 256, 1]),
+            ("table", &[1]),
+        ];
+        for (out, maxima, sums, query, metadata) in [
+            ("out0", "maxima0", "sums0", "q0", "metadata0"),
+            ("out1", "maxima1", "sums1", "q1", "metadata1"),
+            ("out2", "maxima2", "sums2", "q2", "metadata2"),
+        ]
+        .into_iter()
+        .take(lanes)
+        {
+            strides.extend([
+                (out, &[4096, 256, 1][..]),
+                (maxima, &[16, 1][..]),
+                (sums, &[16, 1][..]),
+                (query, &[1536, 256, 1][..]),
+                (metadata, &[1][..]),
+            ]);
+        }
+        for dtype in [f32::DTYPE.as_str(), f8e4m3fn::DTYPE.as_str()] {
+            let compiled = KernelCompiler::new(kernels::__module_ast_self, "kernels", entry)
+                .target("sm_120")
+                .generics(vec![dtype.into(), "256".into(), "64".into(), "32".into()])
+                .strides(&strides)
+                .compile()?;
+            assert!(compiled.ir_text().contains("mma"));
+        }
+    }
+    Ok(())
+}
