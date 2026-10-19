@@ -1046,6 +1046,11 @@ pub(super) fn take_result(
 }
 
 impl BatchGraph {
+    /// Device hidden rows of this graph's prompt lanes, valid after a replay.
+    pub(crate) fn hidden_rows(&self) -> Arc<Tensor<f32>> {
+        Arc::clone(&self.hidden[0])
+    }
+
     pub fn run(
         &mut self,
         device: &CudaDevice,

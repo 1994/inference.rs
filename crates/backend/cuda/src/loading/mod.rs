@@ -285,6 +285,7 @@ impl LoadedModel {
                 target: "infer::load",
                 prefill_width = weights.prefill_width,
                 narrow_prefill_width = weights.narrow_prefill_width,
+                draft_prefill_width = draft.as_ref().map_or(0, |d| d.weights.prefill_width),
                 "prompt graph width selected"
             );
             geometry_phase.finish();

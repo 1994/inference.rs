@@ -174,6 +174,8 @@ pub struct DeviceProgram {
     // `lane_external` keeps the backing storage alive, so this handle is only the transfer
     // target and is written before the prompt replay on the device stream.
     lane_external_owner: Tensor<f32>,
+    // Hidden row of the position before the next device-primed chunk.
+    prime_previous: Tensor<f32>,
     // Fusion workspaces are referenced by the captured graphs and never touched afterwards.
     lane_fusion: Vec<Option<FusionWorkspace>>,
     reset_graph: CudaGraph<()>,
@@ -525,6 +527,9 @@ impl DeviceProgram {
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (lane_external_owner, mut lane_external, mut lane_fusion) =
             allocate_lane_fusion(device, hidden, weights)?;
+        let prime_previous = api::zeros::<f32>(&[hidden])
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
         let mut builder = super::batch::BatchBuilder {
             device,
             graph,
@@ -578,6 +583,7 @@ impl DeviceProgram {
             external,
             lane_external,
             lane_external_owner,
+            prime_previous,
             states,
             fp8_states,
             lane_fusion,
@@ -941,6 +947,101 @@ impl DeviceProgram {
             .or(self.batch.as_ref())
             .map_or(0, super::batch::BatchGraph::state_offset);
         usize::try_from(offset.unsigned_abs()).map_err(device_error)
+    }
+
+    /// Device hidden rows written by the prompt graph that runs a `lanes`-token chunk.
+    pub(crate) fn prompt_hidden(&self, lanes: usize) -> Option<Arc<Tensor<f32>>> {
+        let prompt = if self.prefers_narrow_prompt(lanes) {
+            self.prompt_narrow.as_ref()
+        } else {
+            self.prompt_batch.as_ref()
+        };
+        prompt
+            .or(self.batch.as_ref())
+            .map(super::batch::BatchGraph::hidden_rows)
+    }
+
+    /// Prime a fused draft from a target chunk's device hidden rows, without a host round trip.
+    ///
+    /// Lane `i` embeds `tokens[i]` with the hidden of the position before it: the previous
+    /// chunk's last row for lane zero (`previous` when the host holds it, the chunk's own first
+    /// row at position zero where the state write is masked), then `rows[i - 1]`. The copies and
+    /// replays are ordered on the shared device stream ahead of the target's next chunk.
+    /// # Errors
+    /// Rejects short row tensors or a missing prompt graph, then reports CUDA failures.
+    pub(crate) fn prime_from_target(
+        &mut self,
+        tokens: &[u32],
+        position: usize,
+        rows: &Tensor<f32>,
+        previous: Option<&[f32]>,
+    ) -> Result<()> {
+        let hidden = self.external.size();
+        if tokens.is_empty()
+            || rows.size() < tokens.len() * hidden
+            || previous.is_some_and(|row| row.len() != hidden)
+        {
+            return Err(Error::invalid("draft priming rows"));
+        }
+        if let Some(row) = previous {
+            self.device.copy_host_slice(&mut self.prime_previous, row)?;
+            self.device.drain()?;
+        } else if position == 0 {
+            self.device
+                .copy_d2d_at(&mut self.prime_previous, rows, 0, 0, hidden)?;
+        }
+        let width = self.prefill_width().max(PREFILL_LANES);
+        let mut start = 0;
+        while start < tokens.len() {
+            let count = width.min(tokens.len() - start);
+            if start == 0 {
+                self.device.copy_d2d_at(
+                    &mut self.lane_external_owner,
+                    &self.prime_previous,
+                    0,
+                    0,
+                    hidden,
+                )?;
+            } else {
+                self.device.copy_d2d_at(
+                    &mut self.lane_external_owner,
+                    rows,
+                    0,
+                    (start - 1) * hidden,
+                    hidden,
+                )?;
+            }
+            if count > 1 {
+                self.device.copy_d2d_at(
+                    &mut self.lane_external_owner,
+                    rows,
+                    hidden,
+                    start * hidden,
+                    (count - 1) * hidden,
+                )?;
+            }
+            self.prefill_batch_readout(
+                &tokens[start..start + count],
+                position + start,
+                false,
+                false,
+            )?;
+            start += count;
+        }
+        self.device.copy_d2d_at(
+            &mut self.prime_previous,
+            rows,
+            0,
+            (tokens.len() - 1) * hidden,
+            hidden,
+        )
+    }
+
+    /// Host copy of the hidden row the next device-primed chunk would start from.
+    /// # Errors
+    /// Reports CUDA readback failures.
+    pub(crate) fn primed_hidden(&self) -> Result<Vec<f32>> {
+        self.device.read_borrowed(&self.prime_previous)
     }
 
     /// Ingest a prompt chunk with one external hidden per lane, as a fused draft needs.
