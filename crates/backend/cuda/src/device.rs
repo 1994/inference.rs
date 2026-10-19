@@ -129,7 +129,20 @@ fn graph_headroom(total_memory_bytes: u64) -> u64 {
 
 /// Per-request activation arena and projection workspace budget.
 fn arena_budget(total_memory_bytes: u64) -> u64 {
+    if let Some(bytes) = arena_budget_override() {
+        return bytes;
+    }
     (total_memory_bytes / ARENA_DIVISOR).clamp(MIN_ARENA_BUDGET, MAX_ARENA_BUDGET)
+}
+
+/// `INFER_CUDA_ARENA_MIB=<mib>` replaces the derived arena budget so a prompt-width sweep can
+/// fund wider graphs. Read once per process, like the other experiment switches.
+fn arena_budget_override() -> Option<u64> {
+    static BYTES: OnceLock<Option<u64>> = OnceLock::new();
+    *BYTES.get_or_init(|| {
+        let mib: u64 = std::env::var("INFER_CUDA_ARENA_MIB").ok()?.trim().parse().ok()?;
+        (mib > 0).then(|| mib * MIB)
+    })
 }
 
 /// Retained verification checkpoint budget.

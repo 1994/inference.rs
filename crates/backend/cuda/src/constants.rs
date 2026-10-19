@@ -124,6 +124,12 @@ mod device {
     /// measured history agrees: 128 lanes matched two 64-lane chunks exactly and cut long-prompt
     /// TTFT 13% by turning eight replays into four.
     pub const WIDE_PREFILL_LANES: usize = 256;
+    /// Prompt rung above `WIDE_PREFILL_LANES`, taken only when the arena funds it.
+    pub const EXTRA_WIDE_PREFILL_LANES: usize = 512;
+    /// Prompt rung above `EXTRA_WIDE_PREFILL_LANES`, taken only when the arena funds it.
+    pub const WIDER_PREFILL_LANES: usize = 1024;
+    /// Widest prompt rung, matching vLLM's 2048-token prefill step.
+    pub const WIDEST_PREFILL_LANES: usize = 2048;
     /// Column tile of the batched prefill GEMM.
     pub const PREFILL_GEMM_TILE_N: usize = 64;
     /// K tile of the batched prefill GEMM: columns of input per loop iteration.
