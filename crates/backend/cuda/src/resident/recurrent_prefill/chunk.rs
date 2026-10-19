@@ -338,13 +338,9 @@ impl Scratch {
     }
 }
 
-/// Whether the chunked rule covers this geometry. `INFER_CUDA_GDN_CHUNK=0` keeps the
-/// token-serial recurrence.
-pub(super) fn enabled(dim: usize, lanes: usize) -> bool {
-    dim == super::ORDERED_DIM
-        && lanes >= CHUNK
-        && lanes.is_multiple_of(CHUNK)
-        && std::env::var("INFER_CUDA_GDN_CHUNK").map_or(true, |value| value != "0")
+/// Whether the chunked rule covers this geometry.
+pub(super) const fn enabled(dim: usize, lanes: usize) -> bool {
+    dim == super::ORDERED_DIM && lanes >= CHUNK && lanes.is_multiple_of(CHUNK)
 }
 
 /// Record the chunked recurrence; `betas` and `decays` come from the shared gate kernel.

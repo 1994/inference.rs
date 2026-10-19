@@ -141,7 +141,7 @@ fn compare_case(
     let mut inputs = Inputs::new(device, shape)?;
     let mut original_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
     let mut optimized_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
-    let original_tile = crate::constants::quant_gemm_tile(rows);
+    let original_tile = crate::tuning::resident_gemm::native_tile(rows);
     // Sweep the supported wider-column candidate; production choice requires measured proof.
     let optimized_tile = [original_tile[0], original_tile[1] * 2];
     let original = CudaGraph::scope(&device.stream, |scope| {

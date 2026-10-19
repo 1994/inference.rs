@@ -58,7 +58,7 @@ pub struct NativeConfig {
 impl NativeConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
+            tile_m: super::resident_gemm::prompt_tile_rows(rows),
             tile_n: crate::constants::QUANT_GEMM_TILE[1],
         }
     }
@@ -1099,6 +1099,30 @@ pub(crate) const fn vendor_autotune_enabled() -> bool {
 #[cfg(test)]
 pub(crate) fn vendor_autotune_enabled() -> bool {
     std::env::var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
+}
+
+/// Default prompt projection algorithm queried from the installed library for this device.
+/// The vendor heuristic warms zero-workspace candidates before graph capture.
+pub(crate) fn prefill_choice(
+    device: &CudaDevice,
+    support: &mut vendor_fp8::Support,
+    input: &Tensor<f8e4m3fn>,
+    weight: &Arc<Tensor<f8e4m3fn>>,
+    shape: [usize; GEMM_RANK],
+) -> Result<Option<Choice>> {
+    let [rows, outputs, _] = shape;
+    if rows < crate::constants::WIDE_PREFILL_LANES {
+        return Ok(None);
+    }
+    let out = api::zeros::<f32>(&[rows, outputs])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let configs = support
+        .prepare_candidates(input, weight, &out)
+        .map_err(device_error)?;
+    let choice = configs.first().copied().map(Choice::Lt);
+    tracing::info!(target: "infer::tuning", ?shape, ?choice, "FP8 prefill cuBLASLt default");
+    Ok(choice)
 }
 
 /// Resolve every loaded channel weight before its graph capture; failures affect only this weight.

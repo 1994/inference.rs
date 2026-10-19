@@ -162,7 +162,7 @@ impl<'a> Inputs<'a> {
                 ));
             }
         } else {
-            let tile = crate::constants::quant_gemm_tile(self.rows);
+            let tile = crate::tuning::resident_gemm::native_tile(self.rows);
             scope.record(
                 kernels::matmul(
                     output.partition(tile),
@@ -741,7 +741,7 @@ fn measure_graphs(
                     serde_json::json!({
                         "kind": "performance", "weight": weight.name, "shape": [rows, weight.n, weight.k],
                         "round": round, "clear_l2": clear_l2, "scope": scope,
-                        "native_tile": crate::constants::quant_gemm_tile(rows), "vendor_workspace_bytes": 0,
+                        "native_tile": crate::tuning::resident_gemm::native_tile(rows), "vendor_workspace_bytes": 0,
                         "native_ms": base.median_ms(), "vendor_ms": candidate.median_ms(),
                         "speedup": base.median_ms() / candidate.median_ms(),
                         "native_p95_ms": base.quantile_ms(0.95), "vendor_p95_ms": candidate.quantile_ms(0.95),

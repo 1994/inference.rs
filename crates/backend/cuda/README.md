@@ -53,13 +53,16 @@ NVFP4 和 FP8 共享每次模型加载的 30 秒驻留调优预算，target、dr
 失败原因写入日志，基线失败则保守回退。kernel 测量门禁通过不等于已证明服务 TTFT、TPOT 或吞吐提升。
 
 `--no-autotune` 禁止新的性能搜索，仍可复用有效缓存；驻留配置仍需当前真实权重的数值验收，
-未验收或预算不足时回退。`INFER_CUDA_QUANT_TILE` 属于诊断覆盖，Lt 强制投影只保留在内部测试程序，
-其结果不作为自动择优证据落盘。
+未验收或预算不足时使用默认配置。硬件相关的 arena 预算、解码分片、投影和量化 tile 由 `tuning/`
+统一选择，生产路径不再提供环境变量覆盖器；宽 prompt 的 FP8 投影默认使用设备库查询到的
+cuBLASLt 算法。验证图批处理、SwiGLU 融合、chunked GDN 和 FP8 draft 投影默认启用。
 
-FP8 默认只搜索保持原生 K 累积顺序的 tile。`INFER_CUDA_FP8_LT_AUTOTUNE=1`（或 `true`）
-才将 cuBLASLt 加入候选；SDK 不承诺它与原生 kernel 的 K 累积顺序相同。
+窄图的 FP8 自动搜索保持原生 K 累积顺序的 tile；内部测试可通过 `INFER_CUDA_FP8_LT_AUTOTUNE=1`
+（或 `true`）将 cuBLASLt 加入数值对照候选。宽 prompt 默认委托 cuBLASLt，SDK 不承诺它与原生
+kernel 的 K 累积顺序相同。
 四种激活 pattern 的全部输出通过 finite/bitwise 检查，只证明这些验收输入，不能证明所有输入等价。
-因此 Lt 是显式数值 profile，不是默认路径；`INFER_CUDA_VENDOR_FP8` 仅用于独立诊断。
+这些 bitwise 检查属于内部数值诊断；生产默认路径的质量按任务准确率验收，
+`INFER_CUDA_VENDOR_FP8` 仅用于独立测试诊断。
 
 ## 验收入口
 

@@ -70,7 +70,7 @@ impl DeviceProfile {
     /// Per-request activation arena and projection workspace budget.
     #[must_use]
     pub fn arena_budget_bytes(&self) -> u64 {
-        arena_budget(self.total_memory_bytes)
+        crate::tuning::memory::arena_budget(self.total_memory_bytes)
     }
     /// Verification checkpoint budget retained across speculation lanes.
     #[must_use]
@@ -103,13 +103,6 @@ const GRAPH_HEADROOM_DIVISOR: u64 = 128;
 const MIN_GRAPH_HEADROOM: u64 = 64 * MIB;
 /// Upper bound of that reservation.
 const MAX_GRAPH_HEADROOM: u64 = 512 * MIB;
-/// Per-request activation arena budget. A 32 GiB device funds the 2048-lane prompt graph of a
-/// 27B hybrid model (953 MiB once prompt logits keep one row).
-const ARENA_DIVISOR: u64 = 32;
-/// Lower bound of the activation arena budget.
-const MIN_ARENA_BUDGET: u64 = 128 * MIB;
-/// Upper bound of the activation arena budget.
-const MAX_ARENA_BUDGET: u64 = 1024 * MIB;
 /// Retained verification checkpoints across all speculation lanes.
 const CHECKPOINT_DIVISOR: u64 = 16;
 /// Lower bound of the checkpoint budget.
@@ -126,28 +119,6 @@ const MAX_RESIDENT_STATES: usize = 64;
 /// Fraction of device memory reserved for graph capture and allocator bookkeeping.
 fn graph_headroom(total_memory_bytes: u64) -> u64 {
     (total_memory_bytes / GRAPH_HEADROOM_DIVISOR).clamp(MIN_GRAPH_HEADROOM, MAX_GRAPH_HEADROOM)
-}
-
-/// Per-request activation arena and projection workspace budget.
-fn arena_budget(total_memory_bytes: u64) -> u64 {
-    if let Some(bytes) = arena_budget_override() {
-        return bytes;
-    }
-    (total_memory_bytes / ARENA_DIVISOR).clamp(MIN_ARENA_BUDGET, MAX_ARENA_BUDGET)
-}
-
-/// `INFER_CUDA_ARENA_MIB=<mib>` replaces the derived arena budget so a prompt-width sweep can
-/// fund wider graphs. Read once per process, like the other experiment switches.
-fn arena_budget_override() -> Option<u64> {
-    static BYTES: OnceLock<Option<u64>> = OnceLock::new();
-    *BYTES.get_or_init(|| {
-        let mib: u64 = std::env::var("INFER_CUDA_ARENA_MIB")
-            .ok()?
-            .trim()
-            .parse()
-            .ok()?;
-        (mib > 0).then(|| mib * MIB)
-    })
 }
 
 /// Retained verification checkpoint budget.

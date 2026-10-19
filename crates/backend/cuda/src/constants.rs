@@ -50,49 +50,10 @@ mod device {
     /// weight tile is read fewer times. The tile is only taken once a graph has this many rows:
     /// shorter prompt tails keep `PROMPT_GEMM_TILE_ROWS`, and decode never takes either.
     pub const WIDE_PROMPT_GEMM_TILE_ROWS: usize = 128;
-    /// Prompt row tile for a graph with `rows` output rows.
-    ///
-    /// Decode-width graphs keep `QUANT_GEMM_TILE`; prompt graphs take the wide tile once they have
-    /// enough rows to fill it, so the choice remains a pure function of the row count and a short
-    /// tail is never padded to half a CTA.
-    pub const fn prompt_gemm_tile_rows(rows: usize) -> usize {
-        if rows >= WIDE_PROMPT_GEMM_TILE_ROWS {
-            WIDE_PROMPT_GEMM_TILE_ROWS
-        } else if rows > QUANT_GEMM_TILE[0] {
-            PROMPT_GEMM_TILE_ROWS
-        } else {
-            QUANT_GEMM_TILE[0]
-        }
-    }
-
     /// Tokens per KV block. Step 1 of the KV refactor uses it only to resolve a position through
     /// the sequence's block table; a real allocator will later hand these blocks out across
     /// sequences. It matches the attention kernels' 32-token KV tile, so a block is one tile.
     pub const KV_BLOCK_TOKENS: usize = 32;
-    /// Output tile of the activation-quantized GEMM for a graph with `rows` output rows.
-    ///
-    /// Decode-width graphs keep the 16-row tile; wider ones take the row-dependent prompt tile so
-    /// one CTA covers a whole 128-row half-chunk and reads each weight once. Selection is a pure
-    /// function of the output row count, so one shared `Workspace` can serve prompt and decode
-    /// graphs without any mutable per-graph state.
-    pub fn quant_gemm_tile(rows: usize) -> [usize; 2] {
-        if let Some(tile) = quant_gemm_tile_override() {
-            return tile;
-        }
-        [prompt_gemm_tile_rows(rows), QUANT_GEMM_TILE[1]]
-    }
-    /// `INFER_CUDA_QUANT_TILE=rows,cols` replaces both the decode and the prompt tile, so a sweep
-    /// can move the prompt tile the decode sweep in §11.7 never covered. Capture-time read, once
-    /// per process, exactly like the other experiment switches.
-    fn quant_gemm_tile_override() -> Option<[usize; 2]> {
-        static TILE: std::sync::OnceLock<Option<[usize; 2]>> = std::sync::OnceLock::new();
-        *TILE.get_or_init(|| {
-            let value = std::env::var("INFER_CUDA_QUANT_TILE").ok()?;
-            let (rows, columns) = value.split_once(',')?;
-            let tile = [rows.trim().parse().ok()?, columns.trim().parse().ok()?];
-            (tile[0] > 0 && tile[1] > 0).then_some(tile)
-        })
-    }
     /// Column block of a block-scaled FP8 GEMM: one scale covers this many input columns.
     pub const FP8_BLOCK_COLUMNS: usize = 128;
     /// Packed activation codes written by one NVFP4 quantization block.

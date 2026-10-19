@@ -400,17 +400,12 @@ impl BatchBuilder<'_> {
         }
         // Verification records stateless nodes once over a batched arena whose rows the lanes
         // alias; per-lane stateful nodes and the prompt captures keep their lane views.
-        let mut shared = if verify_batched() {
-            Some(ActivationArena::new_batched(
-                self.device,
-                self.graph,
-                width,
-                usize::try_from(self.device.profile()?.arena_budget_bytes())
-                    .map_err(device_error)?,
-            )?)
-        } else {
-            None
-        };
+        let mut shared = Some(ActivationArena::new_batched(
+            self.device,
+            self.graph,
+            width,
+            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
+        )?);
         let mut lanes = self.allocate_lanes(width, shared.as_ref())?;
         let mut projections = super::batch_projection::allocate(self.device, self.graph, width)?;
         let graph = Some(self.capture(&mut lanes, &mut projections, None, shared.as_mut())?);
@@ -1260,12 +1255,6 @@ pub(super) fn dispatch32(node: &TensorNode, weights: &ProgramWeights) -> Dispatc
     } else {
         Dispatch32::Row
     }
-}
-
-/// Whether verification graphs record stateless nodes over one batched arena.
-/// `INFER_CUDA_VERIFY_BATCHED=0` keeps one recording per lane.
-fn verify_batched() -> bool {
-    std::env::var("INFER_CUDA_VERIFY_BATCHED").map_or(true, |value| value != "0")
 }
 
 /// Enqueue a prompt replay with nothing to read back: the host stages the next chunk while this

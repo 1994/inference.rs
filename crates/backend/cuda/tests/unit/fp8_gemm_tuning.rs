@@ -329,13 +329,13 @@ fn fp8_row_tile_128_is_accepted_and_enumerated_after_the_contract_bump() {
     // baseline, so an autotune can still demote it on a shape where 64 measures faster.
     assert!(ROW_TILES.contains(&crate::constants::PROMPT_GEMM_TILE_ROWS));
     // The baseline is row-dependent: decode and tails keep 16/64, only full chunks take 128.
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(1), 16);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(16), 16);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(17), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(64), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(127), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(128), 128);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(256), 128);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(1), 16);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(16), 16);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(17), 64);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(64), 64);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(127), 64);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(128), 128);
+    assert_eq!(crate::tuning::resident_gemm::prompt_tile_rows(256), 128);
     assert_eq!(NativeConfig::baseline(256).tile_m, 128);
     assert_eq!(NativeConfig::baseline(64).tile_m, 64);
 }

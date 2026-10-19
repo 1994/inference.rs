@@ -244,7 +244,7 @@ fn draft(
 
 /// Load one draft projection. BF16 draft projections are re-encoded as FP8 channels with
 /// per-token activations, which halves the bytes each proposal step streams; the target still
-/// verifies every token. `INFER_CUDA_DRAFT_FP8=0` keeps them in BF16.
+/// verifies every token.
 fn draft_projection(
     device: &CudaDevice,
     package: &mut QuantizedPackage,
@@ -252,9 +252,7 @@ fn draft_projection(
     weights: &mut ProgramWeights,
     id: TensorId,
 ) -> Result<ProjectionWeight> {
-    let projection = if source.encoding == infer_models::WeightEncoding::Float
-        && std::env::var("INFER_CUDA_DRAFT_FP8").map_or(true, |value| value != "0")
-    {
+    let projection = if source.encoding == infer_models::WeightEncoding::Float {
         weights.fp8_inputs.insert(id);
         let values = floats(package, &source.data)?;
         Projection::quantize_fp8(device, &values, &source.shape)?.resident()

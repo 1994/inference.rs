@@ -3,6 +3,7 @@ use super::{
     kernels,
     quant_reuse::{CaptureQuantReuse, QuantKey, QuantKind, QuantPairRole},
 };
+use crate::tuning::resident_gemm::QUANTIZATION_ROWS;
 use crate::{
     device::{CudaDevice, device_error, vendor_fp8},
     mlp::ProjectionWeight,
@@ -17,8 +18,6 @@ use std::collections::BTreeMap;
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 /// Keyed by `(rows, columns, activation-scale columns)`.
 type Fp8Key = (usize, usize, usize);
-/// Rows one prompt quantization block covers; a one-row block reached ~0.6 TB/s.
-const SWIGLU_ROWS: usize = 16;
 type StrategyKey = (crate::tuning::resident_gemm::WeightKey, usize, usize, usize);
 /// Quantized activation and its per-token scales.
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
@@ -153,12 +152,7 @@ impl Workspace {
             buffers: BTreeMap::new(),
             fp8: BTreeMap::new(),
             fp8_strategies: BTreeMap::new(),
-            vendor_fp8: vendor_fp8::Support::new_with(
-                device,
-                crate::tuning::fp8_gemm::vendor_autotune_enabled()
-                    || vendor_diagnostic_enabled()
-                    || lt_prefill_enabled(),
-            ),
+            vendor_fp8: vendor_fp8::Support::new_with(device, true),
             vendor_diagnostic: vendor_diagnostic_enabled(),
         };
         workspace.extend(device, graph, weights, widths)?;
@@ -321,11 +315,20 @@ impl Workspace {
                 if self.fp8_strategies.contains_key(&key) {
                     continue;
                 }
-                let lt_prefill = (rows >= crate::constants::WIDE_PREFILL_LANES
-                    && lt_prefill_enabled())
-                .then(|| self.lt_prefill_choice(device, codes, rows, outputs, columns))
-                .transpose()?
-                .flatten();
+                let lt_prefill = self
+                    .fp8
+                    .get(&(rows, columns, 1))
+                    .map(|(q, ..)| {
+                        crate::tuning::fp8_gemm::prefill_choice(
+                            device,
+                            &mut self.vendor_fp8,
+                            q,
+                            codes,
+                            [rows, outputs, columns],
+                        )
+                    })
+                    .transpose()?
+                    .flatten();
                 let choice = if let Some(choice) = lt_prefill {
                     choice
                 } else if self.vendor_diagnostic {
@@ -355,32 +358,6 @@ impl Workspace {
             }
         }
         Ok(())
-    }
-
-    /// First warmed cuBLASLt algorithm for a prompt-width FP8 projection, if Lt accepts it.
-    fn lt_prefill_choice(
-        &mut self,
-        device: &CudaDevice,
-        codes: &Arc<Tensor<f8e4m3fn>>,
-        rows: usize,
-        outputs: usize,
-        columns: usize,
-    ) -> Result<Option<crate::tuning::fp8_gemm::Choice>> {
-        let Some((q, ..)) = self.fp8.get(&(rows, columns, 1)) else {
-            return Ok(None);
-        };
-        let out = api::zeros::<f32>(&[rows, outputs])
-            .sync_on(&device.stream)
-            .map_err(device_error)?;
-        let configs = self
-            .vendor_fp8
-            .prepare_candidates(q, codes, &out)
-            .map_err(device_error)?;
-        let choice = configs
-            .first()
-            .map(|&config| crate::tuning::fp8_gemm::Choice::Lt(config));
-        tracing::info!(target: "infer::tuning", shape = ?[rows, outputs, columns], ?choice, "FP8 prefill cuBLASLt choice");
-        Ok(choice)
     }
 
     #[expect(
@@ -417,13 +394,17 @@ impl Workspace {
         );
         let (reuse, ticket) = self.quant_reuse.prepare(key);
         let mut record = || {
-            if !reuse && rows.is_multiple_of(SWIGLU_ROWS) {
+            if !reuse && rows.is_multiple_of(QUANTIZATION_ROWS) {
                 scope.record(
                     kernels::quantize_rows(
-                        (&mut *q)
-                            .partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
-                        (&mut *qs)
-                            .partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_SCALES_TILE[1]]),
+                        (&mut *q).partition([
+                            QUANTIZATION_ROWS,
+                            crate::constants::NVFP4_QUANT_CODES_TILE[1],
+                        ]),
+                        (&mut *qs).partition([
+                            QUANTIZATION_ROWS,
+                            crate::constants::NVFP4_QUANT_SCALES_TILE[1],
+                        ]),
                         input,
                         scale,
                     )
@@ -482,13 +463,19 @@ impl Workspace {
             .buffers
             .get_mut(&(rows, columns))
             .ok_or_else(|| super::super::capture::error("FP4 quantization workspace missing"))?;
-        if !rows.is_multiple_of(SWIGLU_ROWS) {
+        if !rows.is_multiple_of(QUANTIZATION_ROWS) {
             return Err(super::super::capture::error("fused SwiGLU row tile"));
         }
         scope.record(
             kernels::swiglu_quantize(
-                (&mut *q).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
-                (&mut *qs).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_SCALES_TILE[1]]),
+                (&mut *q).partition([
+                    QUANTIZATION_ROWS,
+                    crate::constants::NVFP4_QUANT_CODES_TILE[1],
+                ]),
+                (&mut *qs).partition([
+                    QUANTIZATION_ROWS,
+                    crate::constants::NVFP4_QUANT_SCALES_TILE[1],
+                ]),
                 gate,
                 up,
                 scale,
@@ -518,7 +505,7 @@ impl Workspace {
         {
             let outputs =
                 usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
-            let mut config = strategies
+            let config = strategies
                 .get(&(
                     crate::tuning::resident_gemm::WeightKey::new(weight, scale)
                         .map_err(super::super::capture::error)?,
@@ -528,19 +515,6 @@ impl Workspace {
                 ))
                 .copied()
                 .unwrap_or_else(|| crate::tuning::resident_gemm::GemmConfig::baseline(rows));
-            // An explicit experimental override never enters the measured table or memo.
-            if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
-                let tile = crate::constants::quant_gemm_tile(rows);
-                config.tile_m = tile[0];
-                config.tile_n = tile[1];
-                config.main_loop = if rows > crate::constants::QUANT_GEMM_TILE[0]
-                    && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
-                {
-                    crate::tuning::resident_gemm::MainLoop::Prefetch8
-                } else {
-                    crate::tuning::resident_gemm::MainLoop::Plain
-                };
-            }
             config.record(scope, weight, scale, q, qs, output, columns)?;
             Ok(())
         }
@@ -582,7 +556,7 @@ impl Workspace {
         });
         let (reuse, ticket) = self.quant_reuse.prepare(key);
         let mut record = || {
-            let tile = crate::constants::quant_gemm_tile(rows);
+            let tile = crate::tuning::resident_gemm::native_tile(rows);
             let generics = [columns, tile[0], tile[1]]
                 .map(|value| value.to_string())
                 .to_vec();
@@ -696,15 +670,6 @@ fn quant_key<Q: DType, S: DType>(
 #[cfg(not(test))]
 const fn vendor_diagnostic_enabled() -> bool {
     false
-}
-/// Prompt-width FP8 projections take the first zero-workspace cuBLASLt heuristic algorithm: at
-/// 2048 rows it beats the native tile by ~0.5 s per 32K prompt with identical greedy streams.
-/// `INFER_CUDA_FP8_LT_PREFILL=0` keeps the native kernel. Read once per process.
-fn lt_prefill_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("INFER_CUDA_FP8_LT_PREFILL").map_or(true, |value| value != "0")
-    })
 }
 #[cfg(test)]
 fn vendor_diagnostic_enabled() -> bool {

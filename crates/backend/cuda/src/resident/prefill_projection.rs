@@ -4,7 +4,7 @@ use cutile::prelude::*;
 use infer_ir::TensorNode;
 use std::collections::BTreeMap;
 
-const NARROW_DENSE_SHAPE: (usize, usize, usize) = (64, 48, 5120);
+use crate::tuning::prefill::narrow_dense_layout;
 const NARROW_DENSE_TILE: [usize; 2] = [crate::constants::PREFILL_LANES, 16];
 /// Output columns and reduction width of the GDN `in_proj_b`/`in_proj_a` pair.
 pub(super) const GDN_BA_SHAPE: [i32; 2] = [48, 5120];
@@ -21,9 +21,7 @@ pub(super) fn swiglu_plan(
 ) -> BTreeMap<usize, Swiglu> {
     use infer_ir::TensorOp;
     let mut plan = BTreeMap::new();
-    if weights.fusion.is_some()
-        || std::env::var("INFER_CUDA_SWIGLU_FUSION").is_ok_and(|value| value == "0")
-    {
+    if weights.fusion.is_some() {
         return plan;
     }
     let mut producer = BTreeMap::new();
@@ -228,7 +226,7 @@ pub(super) fn record(
 ///
 /// Returns false when either node would take a different path (narrow N16 layout,
 /// sparse experts, vendor GEMM, or unexpected shape). A 48x5120 weight is below
-/// `MIN_DELEGATED_WEIGHT_ELEMENTS`, so the vendor path is impossible for this shape.
+/// the tuning policy's vendor threshold, so the vendor path is impossible for this shape.
 pub(super) fn record_pair(
     scope: &Scope,
     first: &TensorNode,
@@ -398,10 +396,6 @@ fn records_precise_sparse(
         ]),
     )?;
     Ok(true)
-}
-
-fn narrow_dense_layout(architecture: &str, shape: (usize, usize, usize)) -> bool {
-    architecture == "sm_120" && shape == NARROW_DENSE_SHAPE
 }
 
 fn records_narrow_dense(

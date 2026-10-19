@@ -1,6 +1,7 @@
 //! Capture-time split-KV planning and reusable scratch, independent of model identity.
 use super::kernels;
 use crate::device::{CudaDevice, device_error};
+use crate::tuning::attention::decode::{GROUPED_ROWS as GQA_ROWS, grouped_parts, partitions};
 use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
@@ -10,20 +11,8 @@ use std::collections::BTreeMap;
 #[path = "../../../tests/unit/resident_attention_prefill_taps.rs"]
 pub mod taps;
 
-/// Splits per KV head of the grouped decode kernel: four KV heads fill ~1.5 waves on 170 SMs.
-const GQA_PARTS: usize = 64;
-/// Query rows one grouped decode CTA scores: the group's heads, padded for the MMA shape.
-const GQA_ROWS: usize = 16;
 /// Lanes of one MTP verification step that share a three-lane grouped launch.
 pub const VERIFY_LANES: usize = 3;
-
-/// Whether decode attention of this geometry takes the grouped tensor-core kernel.
-fn grouped(heads: usize, kv_heads: usize) -> bool {
-    kv_heads > 0
-        && heads.is_multiple_of(kv_heads)
-        && heads / kv_heads <= GQA_ROWS
-        && std::env::var("INFER_CUDA_GQA_DECODE").map_or(true, |value| value != "0")
-}
 
 struct Buffers {
     /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
@@ -55,18 +44,6 @@ pub struct Workspace {
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
     prefill: BTreeMap<(TensorId, usize), crate::tuning::attention::Choice>,
-}
-
-/// A hardware/window-scoped partition count gives private and pooled sequences the same
-/// F32 reduction tree. Reserved KV capacity only changes storage, never arithmetic.
-fn partitions(heads: usize, window: Option<usize>, multiprocessors: usize) -> usize {
-    if window.is_some_and(|tokens| tokens < crate::constants::ATTENTION_SPLIT_THRESHOLD) {
-        return 1;
-    }
-    let limit = multiprocessors
-        .div_ceil(heads)
-        .clamp(1, crate::constants::ATTENTION_SPLIT_MAX_PARTS);
-    1 << limit.ilog2()
 }
 
 impl Workspace {
@@ -102,8 +79,8 @@ impl Workspace {
                     .sync_on(&device.stream)
                     .map_err(device_error)
             };
-            let entry = if grouped(query_heads, kv_heads) {
-                let blocks = kv_heads * GQA_PARTS;
+            let entry = if let Some(grouped) = grouped_parts(query_heads, kv_heads, sms) {
+                let blocks = kv_heads * grouped;
                 let mut verify = Vec::with_capacity(VERIFY_LANES - 1);
                 for _ in 1..VERIFY_LANES {
                     verify.push(Partials {
@@ -114,7 +91,7 @@ impl Workspace {
                 }
                 Buffers {
                     grouped: Some(kv_heads),
-                    parts: GQA_PARTS,
+                    parts: grouped,
                     numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
                     maxima: zeros(&[blocks, GQA_ROWS])?,
                     sums: zeros(&[blocks, GQA_ROWS])?,
@@ -740,7 +717,3 @@ impl Workspace {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../tests/unit/resident_attention_decode_workspace.rs"]
-mod tests;

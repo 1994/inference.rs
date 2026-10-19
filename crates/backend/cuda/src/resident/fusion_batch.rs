@@ -35,7 +35,8 @@ fn layout_bytes(
     shape: Option<&[i32]>,
     tiling: LinearTiling,
 ) -> u64 {
-    if architecture != "sm_120" || shape != Some(WEIGHT_SHAPE.as_slice()) {
+    if !crate::tuning::prefill::fused_draft(architecture) || shape != Some(WEIGHT_SHAPE.as_slice())
+    {
         return 0;
     }
     if width == ROWS && tiling.rows() == TILE[1] && tiling.columns() == DEPTH {

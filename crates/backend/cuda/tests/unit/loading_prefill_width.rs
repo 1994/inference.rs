@@ -286,7 +286,6 @@ fn compare_continuation(
 fn exact_profile() -> Result<()> {
     for variable in [
         "INFER_CUDA_CHUNKED_RECURRENT",
-        "INFER_CUDA_QUANT_TILE",
         "INFER_CUDA_VENDOR_FP8",
         "INFER_CUDA_FP8_LT_AUTOTUNE",
         "INFER_CUBLAS_PROJECTIONS",
