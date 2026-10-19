@@ -155,7 +155,9 @@ impl Workspace {
             fp8_strategies: BTreeMap::new(),
             vendor_fp8: vendor_fp8::Support::new_with(
                 device,
-                crate::tuning::fp8_gemm::vendor_autotune_enabled() || vendor_diagnostic_enabled(),
+                crate::tuning::fp8_gemm::vendor_autotune_enabled()
+                    || vendor_diagnostic_enabled()
+                    || lt_prefill_enabled(),
             ),
             vendor_diagnostic: vendor_diagnostic_enabled(),
         };
@@ -319,7 +321,14 @@ impl Workspace {
                 if self.fp8_strategies.contains_key(&key) {
                     continue;
                 }
-                let choice = if self.vendor_diagnostic {
+                let lt_prefill = (rows >= crate::constants::WIDE_PREFILL_LANES
+                    && lt_prefill_enabled())
+                .then(|| self.lt_prefill_choice(device, codes, rows, outputs, columns))
+                .transpose()?
+                .flatten();
+                let choice = if let Some(choice) = lt_prefill {
+                    choice
+                } else if self.vendor_diagnostic {
                     let q = &self
                         .fp8
                         .get(&(rows, columns, 1))
@@ -346,6 +355,32 @@ impl Workspace {
             }
         }
         Ok(())
+    }
+
+    /// First warmed cuBLASLt algorithm for a prompt-width FP8 projection, if Lt accepts it.
+    fn lt_prefill_choice(
+        &mut self,
+        device: &CudaDevice,
+        codes: &Arc<Tensor<f8e4m3fn>>,
+        rows: usize,
+        outputs: usize,
+        columns: usize,
+    ) -> Result<Option<crate::tuning::fp8_gemm::Choice>> {
+        let Some((q, ..)) = self.fp8.get(&(rows, columns, 1)) else {
+            return Ok(None);
+        };
+        let out = api::zeros::<f32>(&[rows, outputs])
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        let configs = self
+            .vendor_fp8
+            .prepare_candidates(q, codes, &out)
+            .map_err(device_error)?;
+        let choice = configs
+            .first()
+            .map(|&config| crate::tuning::fp8_gemm::Choice::Lt(config));
+        tracing::info!(target: "infer::tuning", shape = ?[rows, outputs, columns], ?choice, "FP8 prefill cuBLASLt choice");
+        Ok(choice)
     }
 
     #[expect(
@@ -577,6 +612,15 @@ fn quant_key<Q: DType, S: DType>(
 #[cfg(not(test))]
 const fn vendor_diagnostic_enabled() -> bool {
     false
+}
+/// Prompt-width FP8 projections take the first zero-workspace cuBLASLt heuristic algorithm: at
+/// 2048 rows it beats the native tile by ~0.5 s per 32K prompt with identical greedy streams.
+/// `INFER_CUDA_FP8_LT_PREFILL=0` keeps the native kernel. Read once per process.
+fn lt_prefill_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("INFER_CUDA_FP8_LT_PREFILL").map_or(true, |value| value != "0")
+    })
 }
 #[cfg(test)]
 fn vendor_diagnostic_enabled() -> bool {
