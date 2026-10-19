@@ -116,21 +116,21 @@ pub(crate) mod kernels {
         }
     }
     /// Split-KV decode attention for grouped queries: one CTA per (KV head, split) reads each KV
-    /// block once and scores every query head with BF16 tensor-core products. Rows of other KV
-    /// heads are computed and discarded; [`merge_gqa`] reads only the rows of each head's group.
+    /// block once and scores the group's query heads (padded to 16 rows; `q` is viewed as
+    /// `[kv_heads, group, D]`) with BF16 tensor-core products.
     #[expect(
         clippy::too_many_arguments,
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
     #[cutile::entry()]
-    fn partial_gqa<E: ElementType, const D: i32, const GROUP: i32, const PARTS: i32, const BT: i32>(
-        out: &mut Tensor<f32, { [1, 32, D] }>,
-        maxima: &mut Tensor<f32, { [1, 32] }>,
-        sums: &mut Tensor<f32, { [1, 32] }>,
-        q: &Tensor<f32, { [-1, D] }>,
+    fn partial_gqa<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
+        out0: &mut Tensor<f32, { [1, 16, D] }>,
+        maxima0: &mut Tensor<f32, { [1, 16] }>,
+        sums0: &mut Tensor<f32, { [1, 16] }>,
+        q0: &Tensor<f32, { [-1, -1, D] }>,
+        metadata0: &Tensor<i32, { [-1] }>,
         keys: &Tensor<E, { [-1, -1, D] }>,
         values: &Tensor<E, { [-1, -1, D] }>,
-        metadata: &Tensor<i32, { [-1] }>,
         table: &Tensor<i32, { [-1] }>,
         window: i32,
         k_scale: f32,
@@ -139,27 +139,29 @@ pub(crate) mod kernels {
         let pid = get_tile_block_id();
         let kv = pid.0 / PARTS;
         let split = pid.0 % PARTS;
-        let position: i32 =
-            tile_to_scalar(metadata.partition(shape![1]).load([2i32]).reshape(shape![]));
-        let mut start = 0i32;
-        if window > 0 && position + 1i32 > window {
-            start = position + 1i32 - window;
-        }
         let d: f32 = convert_scalar(D);
         let scale: f32 = tile_to_scalar(
             (rsqrt(d.broadcast(shape![1]), ftz::Disabled) * k_scale.broadcast(shape![1]))
                 .reshape(shape![]),
         );
-        let query: Tile<f32, { [32, D] }> = q.partition(shape![32, D]).load([0i32, 0i32]);
-        let query: Tile<bf16, { [32, D] }> = convert_tile(query);
-        let kp = keys.partition(shape![1, 32, D]);
-        let vp = values.partition(shape![1, 32, D]);
-        let blocks = table.partition(shape![1]);
-        let zero_scores: Tile<f32, { [32, 32] }> = constant(0.0f32, shape![32, 32]);
-        let zero_rows: Tile<f32, { [32, D] }> = constant(0.0f32, shape![32, D]);
-        let mut numerator = zero_rows;
-        let mut denominator: Tile<f32, { [32] }> = constant(0.0f32, shape![32]);
-        let mut maximum: Tile<f32, { [32] }> = constant(-1.0e30f32, shape![32]);
+        let zero_scores: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
+        let zero_rows: Tile<f32, { [16, D] }> = constant(0.0f32, shape![16, D]);
+        let masked: Tile<f32, { [16, 32] }> = constant(-1.0e30f32, shape![16, 32]);
+        let position0: i32 =
+            tile_to_scalar(metadata0.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let mut start0 = 0i32;
+        if window > 0 && position0 + 1i32 > window {
+            start0 = position0 + 1i32 - window;
+        }
+        let query0: Tile<f32, { [16, D] }> =
+            q0.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query0: Tile<bf16, { [16, D] }> = convert_tile(query0);
+        let mut numerator0 = zero_rows;
+        let mut denominator0: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
+        let mut maximum0: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
+        // Blocks up to the furthest lane; earlier lanes mask the rows past their own position.
+        let position = position0;
+        let start = start0;
         let mut first = 0i32;
         let mut last = 0i32;
         if position >= 0i32 {
@@ -172,6 +174,9 @@ pub(crate) mod kernels {
                 last = end;
             }
         }
+        let kp = keys.partition(shape![1, 32, D]);
+        let vp = values.partition(shape![1, 32, D]);
+        let blocks = table.partition(shape![1]);
         let offsets: Tile<i32, { [32] }> = iota(shape![32]);
         for block in first..last {
             let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
@@ -179,58 +184,245 @@ pub(crate) mod kernels {
                 convert_tile(kp.load([kv, physical, 0i32]).reshape(shape![32, D]));
             let value: Tile<bf16, { [32, D] }> =
                 convert_tile(vp.load([kv, physical, 0i32]).reshape(shape![32, D]));
-            let raw: Tile<f32, { [32, 32] }> = mmaf(query, key.transpose(), zero_scores);
-            let scores = raw * scale.broadcast(shape![32, 32]);
+            let key_t: Tile<bf16, { [D, 32] }> = key.transpose();
             let positions = offsets + (block * 32i32).broadcast(shape![32]);
-            let valid = ge_tile(positions, start.broadcast(shape![32]))
-                & le_tile(positions, position.broadcast(shape![32]));
-            let valid = valid.reshape(shape![1, 32]).broadcast(shape![32, 32]);
-            let masked: Tile<f32, { [32, 32] }> = constant(-1.0e30f32, shape![32, 32]);
-            let scores = select(valid, scores, masked);
-            let block_max: Tile<f32, { [32] }> = reduce_max(scores, 1i32);
-            let next_max = max_tile(block_max, maximum);
-            let old_scale = exp(maximum - next_max);
-            let probabilities =
-                exp(scores - next_max.reshape(shape![32, 1]).broadcast(shape![32, 32]));
-            let block_sum: Tile<f32, { [32] }> = reduce_sum(probabilities, 1i32);
-            let weights: Tile<bf16, { [32, 32] }> = convert_tile(probabilities);
-            let contribution: Tile<f32, { [32, D] }> = mmaf(weights, value, zero_rows);
-            numerator = numerator * old_scale.reshape(shape![32, 1]).broadcast(shape![32, D])
-                + contribution;
-            denominator = denominator * old_scale + block_sum;
-            maximum = next_max;
+            let raw0: Tile<f32, { [16, 32] }> = mmaf(query0, key_t, zero_scores);
+            let valid0 = ge_tile(positions, start0.broadcast(shape![32]))
+                & le_tile(positions, position0.broadcast(shape![32]));
+            let scores0 = select(
+                valid0.reshape(shape![1, 32]).broadcast(shape![16, 32]),
+                raw0 * scale.broadcast(shape![16, 32]),
+                masked,
+            );
+            let block_max0: Tile<f32, { [16] }> = reduce_max(scores0, 1i32);
+            let next0 = max_tile(block_max0, maximum0);
+            let old0 = exp(maximum0 - next0);
+            let p0 = exp(scores0 - next0.reshape(shape![16, 1]).broadcast(shape![16, 32]));
+            let sum0: Tile<f32, { [16] }> = reduce_sum(p0, 1i32);
+            let w0: Tile<bf16, { [16, 32] }> = convert_tile(p0);
+            let c0: Tile<f32, { [16, D] }> = mmaf(w0, value, zero_rows);
+            numerator0 =
+                numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
+            denominator0 = denominator0 * old0 + sum0;
+            maximum0 = next0;
         }
-        out.store((numerator * v_scale.broadcast(shape![32, D])).reshape(shape![1, 32, D]));
-        maxima.store(maximum.reshape(shape![1, 32]));
-        sums.store(denominator.reshape(shape![1, 32]));
+        out0.store((numerator0 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
+        maxima0.store(maximum0.reshape(shape![1, 16]));
+        sums0.store(denominator0.reshape(shape![1, 16]));
     }
 
-    /// Merge [`partial_gqa`] splits: head `h` reads row `h` of its KV head's partials.
+    /// [`partial_gqa`] for the three lanes of an MTP verification step: each KV block is read
+    /// once and scored against every lane's queries, each masked to its own position.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
+    )]
+    #[expect(clippy::similar_names, reason = "per-lane accumulators differ only by lane index")]
+    #[cutile::entry()]
+    fn partial_gqa3<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
+        out0: &mut Tensor<f32, { [1, 16, D] }>,
+        maxima0: &mut Tensor<f32, { [1, 16] }>,
+        sums0: &mut Tensor<f32, { [1, 16] }>,
+        out1: &mut Tensor<f32, { [1, 16, D] }>,
+        maxima1: &mut Tensor<f32, { [1, 16] }>,
+        sums1: &mut Tensor<f32, { [1, 16] }>,
+        out2: &mut Tensor<f32, { [1, 16, D] }>,
+        maxima2: &mut Tensor<f32, { [1, 16] }>,
+        sums2: &mut Tensor<f32, { [1, 16] }>,
+        q0: &Tensor<f32, { [-1, -1, D] }>,
+        q1: &Tensor<f32, { [-1, -1, D] }>,
+        q2: &Tensor<f32, { [-1, -1, D] }>,
+        metadata0: &Tensor<i32, { [-1] }>,
+        metadata1: &Tensor<i32, { [-1] }>,
+        metadata2: &Tensor<i32, { [-1] }>,
+        keys: &Tensor<E, { [-1, -1, D] }>,
+        values: &Tensor<E, { [-1, -1, D] }>,
+        table: &Tensor<i32, { [-1] }>,
+        window: i32,
+        k_scale: f32,
+        v_scale: f32,
+    ) {
+        let pid = get_tile_block_id();
+        let kv = pid.0 / PARTS;
+        let split = pid.0 % PARTS;
+        let d: f32 = convert_scalar(D);
+        let scale: f32 = tile_to_scalar(
+            (rsqrt(d.broadcast(shape![1]), ftz::Disabled) * k_scale.broadcast(shape![1]))
+                .reshape(shape![]),
+        );
+        let zero_scores: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
+        let zero_rows: Tile<f32, { [16, D] }> = constant(0.0f32, shape![16, D]);
+        let masked: Tile<f32, { [16, 32] }> = constant(-1.0e30f32, shape![16, 32]);
+        let position0: i32 =
+            tile_to_scalar(metadata0.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let mut start0 = 0i32;
+        if window > 0 && position0 + 1i32 > window {
+            start0 = position0 + 1i32 - window;
+        }
+        let query0: Tile<f32, { [16, D] }> =
+            q0.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query0: Tile<bf16, { [16, D] }> = convert_tile(query0);
+        let mut numerator0 = zero_rows;
+        let mut denominator0: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
+        let mut maximum0: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
+        let position1: i32 =
+            tile_to_scalar(metadata1.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let mut start1 = 0i32;
+        if window > 0 && position1 + 1i32 > window {
+            start1 = position1 + 1i32 - window;
+        }
+        let query1: Tile<f32, { [16, D] }> =
+            q1.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query1: Tile<bf16, { [16, D] }> = convert_tile(query1);
+        let mut numerator1 = zero_rows;
+        let mut denominator1: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
+        let mut maximum1: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
+        let position2: i32 =
+            tile_to_scalar(metadata2.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let mut start2 = 0i32;
+        if window > 0 && position2 + 1i32 > window {
+            start2 = position2 + 1i32 - window;
+        }
+        let query2: Tile<f32, { [16, D] }> =
+            q2.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query2: Tile<bf16, { [16, D] }> = convert_tile(query2);
+        let mut numerator2 = zero_rows;
+        let mut denominator2: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
+        let mut maximum2: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
+        // Blocks up to the furthest lane; earlier lanes mask the rows past their own position.
+        let mut position = position0;
+        if position1 > position {
+            position = position1;
+        }
+        if position2 > position {
+            position = position2;
+        }
+        let mut start = start0;
+        if start1 < start {
+            start = start1;
+        }
+        if start2 < start {
+            start = start2;
+        }
+        let mut first = 0i32;
+        let mut last = 0i32;
+        if position >= 0i32 {
+            let lowest = start / 32i32;
+            let end = position / 32i32 + 1i32;
+            let block_count = (end - lowest + PARTS - 1i32) / PARTS;
+            first = lowest + split * block_count;
+            last = first + block_count;
+            if last > end {
+                last = end;
+            }
+        }
+        let kp = keys.partition(shape![1, 32, D]);
+        let vp = values.partition(shape![1, 32, D]);
+        let blocks = table.partition(shape![1]);
+        let offsets: Tile<i32, { [32] }> = iota(shape![32]);
+        for block in first..last {
+            let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
+            let key: Tile<bf16, { [32, D] }> =
+                convert_tile(kp.load([kv, physical, 0i32]).reshape(shape![32, D]));
+            let value: Tile<bf16, { [32, D] }> =
+                convert_tile(vp.load([kv, physical, 0i32]).reshape(shape![32, D]));
+            let key_t: Tile<bf16, { [D, 32] }> = key.transpose();
+            let positions = offsets + (block * 32i32).broadcast(shape![32]);
+            let raw0: Tile<f32, { [16, 32] }> = mmaf(query0, key_t, zero_scores);
+            let valid0 = ge_tile(positions, start0.broadcast(shape![32]))
+                & le_tile(positions, position0.broadcast(shape![32]));
+            let scores0 = select(
+                valid0.reshape(shape![1, 32]).broadcast(shape![16, 32]),
+                raw0 * scale.broadcast(shape![16, 32]),
+                masked,
+            );
+            let block_max0: Tile<f32, { [16] }> = reduce_max(scores0, 1i32);
+            let next0 = max_tile(block_max0, maximum0);
+            let old0 = exp(maximum0 - next0);
+            let p0 = exp(scores0 - next0.reshape(shape![16, 1]).broadcast(shape![16, 32]));
+            let sum0: Tile<f32, { [16] }> = reduce_sum(p0, 1i32);
+            let w0: Tile<bf16, { [16, 32] }> = convert_tile(p0);
+            let c0: Tile<f32, { [16, D] }> = mmaf(w0, value, zero_rows);
+            numerator0 =
+                numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
+            denominator0 = denominator0 * old0 + sum0;
+            maximum0 = next0;
+            let raw1: Tile<f32, { [16, 32] }> = mmaf(query1, key_t, zero_scores);
+            let valid1 = ge_tile(positions, start1.broadcast(shape![32]))
+                & le_tile(positions, position1.broadcast(shape![32]));
+            let scores1 = select(
+                valid1.reshape(shape![1, 32]).broadcast(shape![16, 32]),
+                raw1 * scale.broadcast(shape![16, 32]),
+                masked,
+            );
+            let block_max1: Tile<f32, { [16] }> = reduce_max(scores1, 1i32);
+            let next1 = max_tile(block_max1, maximum1);
+            let old1 = exp(maximum1 - next1);
+            let p1 = exp(scores1 - next1.reshape(shape![16, 1]).broadcast(shape![16, 32]));
+            let sum1: Tile<f32, { [16] }> = reduce_sum(p1, 1i32);
+            let w1: Tile<bf16, { [16, 32] }> = convert_tile(p1);
+            let c1: Tile<f32, { [16, D] }> = mmaf(w1, value, zero_rows);
+            numerator1 =
+                numerator1 * old1.reshape(shape![16, 1]).broadcast(shape![16, D]) + c1;
+            denominator1 = denominator1 * old1 + sum1;
+            maximum1 = next1;
+            let raw2: Tile<f32, { [16, 32] }> = mmaf(query2, key_t, zero_scores);
+            let valid2 = ge_tile(positions, start2.broadcast(shape![32]))
+                & le_tile(positions, position2.broadcast(shape![32]));
+            let scores2 = select(
+                valid2.reshape(shape![1, 32]).broadcast(shape![16, 32]),
+                raw2 * scale.broadcast(shape![16, 32]),
+                masked,
+            );
+            let block_max2: Tile<f32, { [16] }> = reduce_max(scores2, 1i32);
+            let next2 = max_tile(block_max2, maximum2);
+            let old2 = exp(maximum2 - next2);
+            let p2 = exp(scores2 - next2.reshape(shape![16, 1]).broadcast(shape![16, 32]));
+            let sum2: Tile<f32, { [16] }> = reduce_sum(p2, 1i32);
+            let w2: Tile<bf16, { [16, 32] }> = convert_tile(p2);
+            let c2: Tile<f32, { [16, D] }> = mmaf(w2, value, zero_rows);
+            numerator2 =
+                numerator2 * old2.reshape(shape![16, 1]).broadcast(shape![16, D]) + c2;
+            denominator2 = denominator2 * old2 + sum2;
+            maximum2 = next2;
+        }
+        out0.store((numerator0 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
+        maxima0.store(maximum0.reshape(shape![1, 16]));
+        sums0.store(denominator0.reshape(shape![1, 16]));
+        out1.store((numerator1 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
+        maxima1.store(maximum1.reshape(shape![1, 16]));
+        sums1.store(denominator1.reshape(shape![1, 16]));
+        out2.store((numerator2 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
+        maxima2.store(maximum2.reshape(shape![1, 16]));
+        sums2.store(denominator2.reshape(shape![1, 16]));
+    }
+
+    /// Merge grouped splits: head `h` reads row `h % GROUP` of its KV head's partials.
     #[cutile::entry()]
     fn merge_gqa<const D: i32, const PARTS: i32, const GROUP: i32>(
         out: &mut Tensor<f32, { [1, D] }>,
-        numerator: &Tensor<f32, { [-1, PARTS, 32, D] }>,
-        maxima: &Tensor<f32, { [-1, PARTS, 32] }>,
-        sums: &Tensor<f32, { [-1, PARTS, 32] }>,
+        numerator: &Tensor<f32, { [-1, PARTS, 16, D] }>,
+        maxima: &Tensor<f32, { [-1, PARTS, 16] }>,
+        sums: &Tensor<f32, { [-1, PARTS, 16] }>,
     ) {
         let pid = get_tile_block_id();
-        let head = pid.0;
-        let kv = head / GROUP;
+        let kv = pid.0 / GROUP;
+        let row = pid.0 % GROUP;
         let maxima = maxima
             .partition(shape![1, PARTS, 1])
-            .load([kv, 0i32, head])
+            .load([kv, 0i32, row])
             .reshape(shape![PARTS]);
         let maximum: Tile<f32, { [] }> = reduce_max(maxima, 0i32);
         let weights = exp(maxima - maximum.reshape(shape![1]).broadcast(shape![PARTS]));
         let sums = sums
             .partition(shape![1, PARTS, 1])
-            .load([kv, 0i32, head])
+            .load([kv, 0i32, row])
             .reshape(shape![PARTS]);
         let total: Tile<f32, { [] }> = reduce_sum(sums * weights, 0i32);
         let total = max_tile(total.reshape(shape![1]), 1.0e-20f32.broadcast(shape![1]));
         let values = numerator
             .partition(shape![1, PARTS, 1, D])
-            .load([kv, 0i32, head, 0i32])
+            .load([kv, 0i32, row, 0i32])
             .reshape(shape![PARTS, D]);
         let sum: Tile<f32, { [D] }> = reduce_sum(
             values
@@ -282,6 +474,7 @@ pub(crate) mod kernels {
 mod tests;
 
 mod workspace;
+pub(crate) use workspace::VERIFY_LANES;
 pub use workspace::Workspace;
 
 #[cfg(test)]

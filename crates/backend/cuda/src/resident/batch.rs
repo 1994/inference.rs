@@ -652,6 +652,90 @@ impl BatchBuilder<'_> {
                     )?;
                     continue;
                 }
+                // Verification lanes append their rows, then attend in one grouped launch that
+                // reads each KV block once for all three lanes.
+                if let TensorOp::Attention {
+                    query_heads,
+                    kv_heads,
+                    head_dim,
+                    window,
+                } = node.op
+                    && prefill.is_none()
+                    && width == super::attention_decode::VERIFY_LANES
+                    && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
+                    && self.attention.supports_verify(query_heads, head_dim)
+                    && !self.weights.constants.contains_key(&node.inputs[0])
+                    && let Some(&id) = node.states.first()
+                    && self.fp8_states.contains_key(&id)
+                    && lanes.iter().all(|lane| !lane.checkpoints.contains_key(&id))
+                {
+                    for (index, lane) in lanes.iter_mut().enumerate() {
+                        Capture {
+                            scope,
+                            arena: &mut lane.arena,
+                            weights: self.weights,
+                            nvfp4: self.nvfp4,
+                            attention: self.attention,
+                            states: self.states,
+                            fp8_states: self.fp8_states,
+                            metadata: &lane.metadata,
+                            table: &self.tables[0],
+                            external: &self.lane_external[index],
+                            capacity: self.capacity,
+                            fusion: &mut self.lane_fusion[index],
+                            mode: CaptureMode::Flat,
+                        }
+                        .record_attention_append(node)?;
+                    }
+                    let (keys, values) = self
+                        .fp8_states
+                        .remove(&id)
+                        .ok_or_else(|| error("verification FP8 state"))?;
+                    let mut outputs = Vec::with_capacity(width);
+                    for lane in lanes.iter_mut() {
+                        let slot = lane.arena.slot(node.outputs[0]).map_err(error)?;
+                        let output = lane.arena.buffers[slot]
+                            .take()
+                            .ok_or_else(|| error("verification attention output"))?;
+                        let shape = output
+                            .shape()
+                            .iter()
+                            .map(|&dim| usize::try_from(dim).map_err(error))
+                            .collect::<std::result::Result<Vec<_>, _>>()?;
+                        outputs.push((slot, shape, output.reshape(&[query_heads, head_dim])?));
+                    }
+                    let recorded = {
+                        let queries = lanes
+                            .iter()
+                            .map(|lane| {
+                                lane.arena
+                                    .get(node.inputs[0])
+                                    .map_err(error)?
+                                    .view(&[query_heads, head_dim])
+                                    .map_err(error)
+                            })
+                            .collect::<std::result::Result<Vec<_>, DeviceError>>()?;
+                        let [first, second, third] = outputs.as_mut_slice() else {
+                            return Err(error("verification lanes"));
+                        };
+                        self.attention.record_verify(
+                            scope,
+                            [&mut first.2, &mut second.2, &mut third.2],
+                            [&queries[0], &queries[1], &queries[2]],
+                            [&lanes[0].metadata, &lanes[1].metadata, &lanes[2].metadata],
+                            (&keys, &values, &self.tables[0]),
+                            (query_heads, kv_heads, head_dim),
+                            i32::try_from(window.unwrap_or(0)).map_err(error)?,
+                            self.weights.kv_scales[&id],
+                        )
+                    };
+                    self.fp8_states.insert(id, (keys, values));
+                    for ((slot, shape, output), lane) in outputs.into_iter().zip(lanes.iter_mut()) {
+                        lane.arena.buffers[slot] = Some(output.reshape(&shape)?);
+                    }
+                    recorded?;
+                    continue;
+                }
                 for (index, lane) in lanes.iter_mut().enumerate() {
                     if logits && prefill.is_some() && index + 1 != width {
                         continue;

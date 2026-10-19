@@ -12,14 +12,16 @@ pub mod taps;
 
 /// Splits per KV head of the grouped decode kernel: four KV heads fill ~1.5 waves on 170 SMs.
 const GQA_PARTS: usize = 64;
-/// Query rows one grouped decode CTA scores; every query head must fit.
-const GQA_ROWS: usize = 32;
+/// Query rows one grouped decode CTA scores: the group's heads, padded for the MMA shape.
+const GQA_ROWS: usize = 16;
+/// Lanes of one MTP verification step that share a three-lane grouped launch.
+pub(crate) const VERIFY_LANES: usize = 3;
 
 /// Whether decode attention of this geometry takes the grouped tensor-core kernel.
 fn grouped(heads: usize, kv_heads: usize) -> bool {
-    heads <= GQA_ROWS
-        && kv_heads > 0
+    kv_heads > 0
         && heads.is_multiple_of(kv_heads)
+        && heads / kv_heads <= GQA_ROWS
         && std::env::var("INFER_CUDA_GQA_DECODE").map_or(true, |value| value != "0")
 }
 
@@ -27,6 +29,15 @@ struct Buffers {
     /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
     grouped: Option<usize>,
     parts: usize,
+    numerator: Tensor<f32>,
+    maxima: Tensor<f32>,
+    sums: Tensor<f32>,
+    /// Partials of the second and third MTP verification lanes for the three-lane kernel.
+    verify: Vec<Partials>,
+}
+
+/// One lane's grouped split partials.
+struct Partials {
     numerator: Tensor<f32>,
     maxima: Tensor<f32>,
     sums: Tensor<f32>,
@@ -93,16 +104,26 @@ impl Workspace {
             };
             let entry = if grouped(query_heads, kv_heads) {
                 let blocks = kv_heads * GQA_PARTS;
+                let mut verify = Vec::with_capacity(VERIFY_LANES - 1);
+                for _ in 1..VERIFY_LANES {
+                    verify.push(Partials {
+                        numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
+                        maxima: zeros(&[blocks, GQA_ROWS])?,
+                        sums: zeros(&[blocks, GQA_ROWS])?,
+                    });
+                }
                 Buffers {
                     grouped: Some(kv_heads),
                     parts: GQA_PARTS,
                     numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
                     maxima: zeros(&[blocks, GQA_ROWS])?,
                     sums: zeros(&[blocks, GQA_ROWS])?,
+                    verify,
                 }
             } else {
                 Buffers {
                     grouped: None,
+                    verify: Vec::new(),
                     parts,
                     numerator: zeros(&[query_heads * parts, head_dim])?,
                     maxima: zeros(&[query_heads * parts, 1])?,
@@ -536,6 +557,92 @@ impl Workspace {
         self.buffers.contains_key(&(heads, dim))
     }
 
+    /// Whether three verification lanes of this geometry share one grouped launch.
+    pub(crate) fn supports_verify(&self, heads: usize, dim: usize) -> bool {
+        self.buffers
+            .get(&(heads, dim))
+            .is_some_and(|work| work.grouped.is_some() && work.verify.len() + 1 == VERIFY_LANES)
+    }
+
+    /// Decode attention of the three lanes of one verification step: one grouped launch reads
+    /// each KV block once, then each lane merges its own splits.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Attention binding includes three lanes, shared KV, metadata and scale tensors"
+    )]
+    pub(crate) fn record_verify<E: DType>(
+        &mut self,
+        scope: &Scope,
+        outputs: [&mut Tensor<f32>; VERIFY_LANES],
+        queries: [&TensorView<'_, f32>; VERIFY_LANES],
+        metadata: [&Tensor<i32>; VERIFY_LANES],
+        (keys, values, table): (&Tensor<E>, &Tensor<E>, &Tensor<i32>),
+        (heads, kv_heads, dim): (usize, usize, usize),
+        window: i32,
+        scales: [f32; 2],
+    ) -> std::result::Result<(), DeviceError> {
+        let work = self
+            .buffers
+            .get_mut(&(heads, dim))
+            .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
+        let (Some(groups), [second, third]) = (work.grouped, work.verify.as_mut_slice()) else {
+            return Err(super::super::capture::error("grouped verification workspace"));
+        };
+        let parts = work.parts;
+        scope.record(
+            kernels::partial_gqa3(
+                (&mut work.numerator).partition([1, GQA_ROWS, dim]),
+                (&mut work.maxima).partition([1, GQA_ROWS]),
+                (&mut work.sums).partition([1, GQA_ROWS]),
+                (&mut second.numerator).partition([1, GQA_ROWS, dim]),
+                (&mut second.maxima).partition([1, GQA_ROWS]),
+                (&mut second.sums).partition([1, GQA_ROWS]),
+                (&mut third.numerator).partition([1, GQA_ROWS, dim]),
+                (&mut third.maxima).partition([1, GQA_ROWS]),
+                (&mut third.sums).partition([1, GQA_ROWS]),
+                &queries[0].view(&[groups, heads / kv_heads, dim])?,
+                &queries[1].view(&[groups, heads / kv_heads, dim])?,
+                &queries[2].view(&[groups, heads / kv_heads, dim])?,
+                metadata[0],
+                metadata[1],
+                metadata[2],
+                keys,
+                values,
+                table,
+                window,
+                scales[0],
+                scales[1],
+            )
+            .generics(vec![
+                E::DTYPE.as_str().into(),
+                dim.to_string(),
+                parts.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
+            ]),
+        )?;
+        let partials = [
+            (&work.numerator, &work.maxima, &work.sums),
+            (&second.numerator, &second.maxima, &second.sums),
+            (&third.numerator, &third.maxima, &third.sums),
+        ];
+        for (output, (numerator, maxima, sums)) in outputs.into_iter().zip(partials) {
+            scope.record(
+                kernels::merge_gqa(
+                    output.partition([1, dim]),
+                    &numerator.view(&[groups, parts, GQA_ROWS, dim])?,
+                    &maxima.view(&[groups, parts, GQA_ROWS])?,
+                    &sums.view(&[groups, parts, GQA_ROWS])?,
+                )
+                .generics(vec![
+                    dim.to_string(),
+                    parts.to_string(),
+                    (heads / kv_heads).to_string(),
+                ]),
+            )?;
+        }
+        Ok(())
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "Attention binding includes separate KV, metadata and scale tensors"
@@ -566,10 +673,10 @@ impl Workspace {
                     (&mut work.numerator).partition([1, GQA_ROWS, dim]),
                     (&mut work.maxima).partition([1, GQA_ROWS]),
                     (&mut work.sums).partition([1, GQA_ROWS]),
-                    q,
+                    &q.view(&[groups, heads / kv_heads, dim])?,
+                    metadata,
                     keys,
                     values,
-                    metadata,
                     table,
                     window,
                     scales[0],
@@ -578,7 +685,6 @@ impl Workspace {
                 .generics(vec![
                     E::DTYPE.as_str().into(),
                     dim.to_string(),
-                    (heads / kv_heads).to_string(),
                     parts.to_string(),
                     crate::constants::KV_BLOCK_TOKENS.to_string(),
                 ]),

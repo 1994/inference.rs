@@ -284,8 +284,9 @@ fn program_price(
 }
 /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
 /// Charge the supported upper bound (16 partitions), independent of device tuning.
-/// Partial rows per KV head of the grouped decode kernel: 64 splits of 32 query rows.
-const GROUPED_DECODE_ROWS: usize = 64 * 32;
+/// Partial rows per KV head of the grouped decode kernel: 64 splits of 16 query rows for each of
+/// the three verification lanes.
+const GROUPED_DECODE_ROWS: usize = 3 * 64 * 16;
 fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
     let mut bytes = 0;
     let mut shapes = std::collections::BTreeSet::new();

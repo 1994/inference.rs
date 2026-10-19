@@ -8,6 +8,48 @@ use infer_ir::{TensorNode, TensorOp};
 type AttentionResult<E> = Result<(Tensor<f32>, Tensor<E>, Tensor<E>), DeviceError>;
 
 impl Capture<'_> {
+    /// Append this lane's key and value row to the shared FP8 cache without attending; a
+    /// verification step then attends all its lanes in one grouped launch.
+    pub fn record_attention_append(&mut self, node: &TensorNode) -> Result<(), DeviceError> {
+        let TensorOp::Attention {
+            kv_heads, head_dim, ..
+        } = node.op
+        else {
+            return Err(error("expected attention"));
+        };
+        let id = *node
+            .states
+            .first()
+            .ok_or_else(|| error("missing state binding"))?;
+        let scales = self.weights.kv_scales[&id];
+        let (keys, values) = self
+            .fp8_states
+            .remove(&id)
+            .ok_or_else(|| error("missing FP8 attention state"))?;
+        let mut keys = keys.reshape(&[kv_heads, self.capacity, head_dim])?;
+        let mut values = values.reshape(&[kv_heads, self.capacity, head_dim])?;
+        let result = self.scope.record(
+            attention::append(
+                (&mut keys).partition([1, self.capacity, head_dim]),
+                (&mut values).partition([1, self.capacity, head_dim]),
+                &self.input(node.inputs[1])?.view(&[kv_heads, head_dim])?,
+                &self.input(node.inputs[2])?.view(&[kv_heads, head_dim])?,
+                self.metadata,
+                scales[0],
+                scales[1],
+            )
+            .generics(vec![
+                cuda_core::f8e4m3fn::DTYPE.as_str().into(),
+                head_dim.to_string(),
+                self.capacity.to_string(),
+                "1".into(),
+            ]),
+        )
+        .map(|_| ());
+        self.fp8_states.insert(id, (keys, values));
+        result
+    }
+
     pub fn record_attention<E: DType>(
         &mut self,
         node: &TensorNode,
