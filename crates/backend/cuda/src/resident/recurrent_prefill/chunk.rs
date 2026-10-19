@@ -6,7 +6,8 @@
 //! `T = (I + strict_lower(b_i k_i k_j G_ij))^-1`.
 //!
 //! [`kernels::chunk_normalize`] writes L2-normalized BF16 queries and keys per key head;
-//! [`kernels::chunk_prepare`] evaluates every chunk independently into BF16 factors;
+//! [`kernels::chunk_prepare`] evaluates every chunk independently into BF16 factors (BF16
+//! products, TF32 for the triangular inverse);
 //! [`kernels::chunk_scan`] then carries the F32 state across chunks with four BF16 products per
 //! chunk, as the FLA and FlashInfer kernels do.
 use crate::device::{CudaDevice, device_error};
@@ -213,7 +214,7 @@ pub(super) mod kernels {
             - g.reshape(shape![1, 64]).broadcast(shape![64, 64]);
         // Mask before exponentiation: upper-triangle gaps can overflow.
         let relative = exp(select(causal, gap, zero_square));
-        let kk: Tile<f32, { [64, 64] }> = tf32_product(k, k.transpose(), zero_square);
+        let kk: Tile<f32, { [64, 64] }> = bf16_product(k, k.transpose(), zero_square);
         let interactions = select(
             lower,
             kk * relative * b.reshape(shape![64, 1]).broadcast(shape![64, 64]),
@@ -222,9 +223,9 @@ pub(super) mod kernels {
         let inverse = unit_lower_inverse(interactions, row_index, column_index, lower);
         let bv = v * b.reshape(shape![64, 1]).broadcast(shape![64, D]);
         let bk = k * (b * exp(g)).reshape(shape![64, 1]).broadcast(shape![64, D]);
-        let qk: Tile<f32, { [64, 64] }> = tf32_product(q, k.transpose(), zero_square);
-        let updates: Tile<f32, { [64, D] }> = tf32_product(inverse, bv, zero_rows);
-        let weights: Tile<f32, { [64, D] }> = tf32_product(inverse, bk, zero_rows);
+        let qk: Tile<f32, { [64, 64] }> = bf16_product(q, k.transpose(), zero_square);
+        let updates: Tile<f32, { [64, D] }> = bf16_product(inverse, bv, zero_rows);
+        let weights: Tile<f32, { [64, D] }> = bf16_product(inverse, bk, zero_rows);
         let weights: Tile<bf16, { [64, D] }> = convert_tile(weights);
         let scores: Tile<bf16, { [64, 64] }> =
             convert_tile(select(causal, qk * relative, zero_square));
