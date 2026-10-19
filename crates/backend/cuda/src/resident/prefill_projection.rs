@@ -9,12 +9,12 @@ const NARROW_DENSE_TILE: [usize; 2] = [crate::constants::PREFILL_LANES, 16];
 /// Output columns and reduction width of the GDN `in_proj_b`/`in_proj_a` pair.
 pub(super) const GDN_BA_SHAPE: [i32; 2] = [48, 5120];
 
-/// Down projection absorbing `silu(gate) * up`: node indices of the SiLU and multiply it
+/// Down projection absorbing `silu(gate) * up`: node indices of the `SiLU` and multiply it
 /// replaces, then the gate and up tensors it reads.
 pub(super) type Swiglu = (usize, usize, infer_core::TensorId, infer_core::TensorId);
 
 /// Target-graph NVFP4 down projections whose input is `silu(gate) * up` with no other reader of
-/// the SiLU or product rows. Their prompt capture quantizes straight from gate and up.
+/// the `SiLU` or product rows. Their prompt capture quantizes straight from gate and up.
 pub(super) fn swiglu_plan(
     graph: &infer_ir::DataflowGraph,
     weights: &ProgramWeights,

@@ -71,7 +71,7 @@ pub(super) struct BatchGraph {
     /// declared after the graphs so their executables drop first.
     _partials: BTreeMap<usize, Tensor<f32>>,
     /// Final prompt row the one-row logits projection reads; captured by the prompt graphs.
-    _prompt_row: Option<Tensor<f32>>,
+    prompt_row: Option<Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
@@ -447,7 +447,7 @@ impl BatchBuilder<'_> {
             state_prefill: None,
             restore,
             _partials: BTreeMap::new(),
-            _prompt_row: None,
+            prompt_row: None,
             _recurrent: super::recurrent_prefill::Workspace::default(),
             _fusion: None,
             prefill_info: None,
@@ -465,6 +465,22 @@ impl BatchBuilder<'_> {
     }
 
     /// Prefill width 32: one batched arena, one metadata tensor per lane.
+    /// The prompt arena, with the one-row logits buffer its final chunk projects when the
+    /// vocabulary projection supports it.
+    fn prompt_arena(&self) -> Result<(ActivationArena, Option<Tensor<f32>>)> {
+        let budget =
+            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?;
+        if !super::prompt_logits::supported(self.graph, self.weights) {
+            let arena = ActivationArena::new_batched(self.device, self.graph, self.width, budget)?;
+            return Ok((arena, None));
+        }
+        let arena = ActivationArena::new_prompt(self.device, self.graph, self.width, budget)?;
+        let row = api::zeros::<f32>(&[1, self.external.size()])
+            .sync_on(&self.device.stream)
+            .map_err(device_error)?;
+        Ok((arena, Some(row)))
+    }
+
     fn build32(&mut self) -> Result<BatchGraph> {
         #[cfg(test)]
         self.attention.taps.prepare(
@@ -476,23 +492,7 @@ impl BatchBuilder<'_> {
         )?;
         self.attention
             .prepare_prefill(self.device, self.graph, self.weights, self.width);
-        let budget =
-            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?;
-        let single_logits = super::prompt_logits::supported(self.graph, self.weights);
-        let mut arena = if single_logits {
-            ActivationArena::new_prompt(self.device, self.graph, self.width, budget)?
-        } else {
-            ActivationArena::new_batched(self.device, self.graph, self.width, budget)?
-        };
-        let mut prompt_row = if single_logits {
-            Some(
-                api::zeros::<f32>(&[1, self.external.size()])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            )
-        } else {
-            None
-        };
+        let (mut arena, mut prompt_row) = self.prompt_arena()?;
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
@@ -565,7 +565,7 @@ impl BatchBuilder<'_> {
             state_prefill,
             restore: Vec::new(),
             _partials: partials,
-            _prompt_row: prompt_row,
+            prompt_row,
             _recurrent: recurrent,
             _fusion: fusion,
             prefill_info: Some(prefill_info),
@@ -627,6 +627,106 @@ impl BatchBuilder<'_> {
         Ok(partials)
     }
 
+    /// Verification lanes append their rows, then attend in one grouped launch that reads each
+    /// KV block once for all three lanes. False when this node keeps the per-lane path.
+    fn record_verify_attention(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        lanes: &mut [Lane],
+        prefill: Option<bool>,
+    ) -> std::result::Result<bool, DeviceError> {
+        let width = lanes.len();
+        let TensorOp::Attention {
+            query_heads,
+            kv_heads,
+            head_dim,
+            window,
+        } = node.op
+        else {
+            return Ok(false);
+        };
+        let Some(&id) = node.states.first() else {
+            return Ok(false);
+        };
+        let eligible = prefill.is_none()
+            && width == super::attention_decode::VERIFY_LANES
+            && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
+            && self.attention.supports_verify(query_heads, head_dim)
+            && !self.weights.constants.contains_key(&node.inputs[0])
+            && self.fp8_states.contains_key(&id)
+            && lanes.iter().all(|lane| !lane.checkpoints.contains_key(&id));
+        if !eligible {
+            return Ok(false);
+        }
+        for (index, lane) in lanes.iter_mut().enumerate() {
+            Capture {
+                scope,
+                arena: &mut lane.arena,
+                weights: self.weights,
+                nvfp4: self.nvfp4,
+                attention: self.attention,
+                states: self.states,
+                fp8_states: self.fp8_states,
+                metadata: &lane.metadata,
+                table: &self.tables[0],
+                external: &self.lane_external[index],
+                capacity: self.capacity,
+                fusion: &mut self.lane_fusion[index],
+                mode: CaptureMode::Flat,
+            }
+            .record_attention_append(node)?;
+        }
+        let (keys, values) = self
+            .fp8_states
+            .remove(&id)
+            .ok_or_else(|| error("verification FP8 state"))?;
+        let mut outputs = Vec::with_capacity(width);
+        for lane in lanes.iter_mut() {
+            let slot = lane.arena.slot(node.outputs[0]).map_err(error)?;
+            let output = lane.arena.buffers[slot]
+                .take()
+                .ok_or_else(|| error("verification attention output"))?;
+            let shape = output
+                .shape()
+                .iter()
+                .map(|&dim| usize::try_from(dim).map_err(error))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            outputs.push((slot, shape, output.reshape(&[query_heads, head_dim])?));
+        }
+        let recorded = {
+            let queries = lanes
+                .iter()
+                .map(|lane| {
+                    lane.arena
+                        .get(node.inputs[0])
+                        .map_err(error)?
+                        .view(&[query_heads, head_dim])
+                        .map_err(error)
+                })
+                .collect::<std::result::Result<Vec<_>, DeviceError>>()?;
+            let [first, second, third] = outputs.as_mut_slice() else {
+                return Err(error("verification lanes"));
+            };
+            self.attention.record_verify(
+                scope,
+                [&mut first.2, &mut second.2, &mut third.2],
+                [&queries[0], &queries[1], &queries[2]],
+                [&lanes[0].metadata, &lanes[1].metadata, &lanes[2].metadata],
+                (&keys, &values, &self.tables[0]),
+                (query_heads, kv_heads, head_dim),
+                i32::try_from(window.unwrap_or(0)).map_err(error)?,
+                self.weights.kv_scales[&id],
+            )
+        };
+        self.fp8_states.insert(id, (keys, values));
+        for ((slot, shape, output), lane) in outputs.into_iter().zip(lanes.iter_mut()) {
+            lane.arena.buffers[slot] = Some(output.reshape(&shape)?);
+        }
+        recorded?;
+        Ok(true)
+    }
+
     fn capture(
         &mut self,
         lanes: &mut [Lane],
@@ -634,8 +734,9 @@ impl BatchBuilder<'_> {
         prefill: Option<bool>,
     ) -> Result<CudaGraph<()>> {
         let width = lanes.len();
+        let device = self.device;
         self.nvfp4.end_quant_capture();
-        let result = CudaGraph::scope(&self.device.stream, |scope| {
+        let result = CudaGraph::scope(&device.stream, |scope| {
             for node in &self.graph.nodes {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 if logits && prefill == Some(false) {
@@ -652,88 +753,7 @@ impl BatchBuilder<'_> {
                     )?;
                     continue;
                 }
-                // Verification lanes append their rows, then attend in one grouped launch that
-                // reads each KV block once for all three lanes.
-                if let TensorOp::Attention {
-                    query_heads,
-                    kv_heads,
-                    head_dim,
-                    window,
-                } = node.op
-                    && prefill.is_none()
-                    && width == super::attention_decode::VERIFY_LANES
-                    && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
-                    && self.attention.supports_verify(query_heads, head_dim)
-                    && !self.weights.constants.contains_key(&node.inputs[0])
-                    && let Some(&id) = node.states.first()
-                    && self.fp8_states.contains_key(&id)
-                    && lanes.iter().all(|lane| !lane.checkpoints.contains_key(&id))
-                {
-                    for (index, lane) in lanes.iter_mut().enumerate() {
-                        Capture {
-                            scope,
-                            arena: &mut lane.arena,
-                            weights: self.weights,
-                            nvfp4: self.nvfp4,
-                            attention: self.attention,
-                            states: self.states,
-                            fp8_states: self.fp8_states,
-                            metadata: &lane.metadata,
-                            table: &self.tables[0],
-                            external: &self.lane_external[index],
-                            capacity: self.capacity,
-                            fusion: &mut self.lane_fusion[index],
-                            mode: CaptureMode::Flat,
-                        }
-                        .record_attention_append(node)?;
-                    }
-                    let (keys, values) = self
-                        .fp8_states
-                        .remove(&id)
-                        .ok_or_else(|| error("verification FP8 state"))?;
-                    let mut outputs = Vec::with_capacity(width);
-                    for lane in lanes.iter_mut() {
-                        let slot = lane.arena.slot(node.outputs[0]).map_err(error)?;
-                        let output = lane.arena.buffers[slot]
-                            .take()
-                            .ok_or_else(|| error("verification attention output"))?;
-                        let shape = output
-                            .shape()
-                            .iter()
-                            .map(|&dim| usize::try_from(dim).map_err(error))
-                            .collect::<std::result::Result<Vec<_>, _>>()?;
-                        outputs.push((slot, shape, output.reshape(&[query_heads, head_dim])?));
-                    }
-                    let recorded = {
-                        let queries = lanes
-                            .iter()
-                            .map(|lane| {
-                                lane.arena
-                                    .get(node.inputs[0])
-                                    .map_err(error)?
-                                    .view(&[query_heads, head_dim])
-                                    .map_err(error)
-                            })
-                            .collect::<std::result::Result<Vec<_>, DeviceError>>()?;
-                        let [first, second, third] = outputs.as_mut_slice() else {
-                            return Err(error("verification lanes"));
-                        };
-                        self.attention.record_verify(
-                            scope,
-                            [&mut first.2, &mut second.2, &mut third.2],
-                            [&queries[0], &queries[1], &queries[2]],
-                            [&lanes[0].metadata, &lanes[1].metadata, &lanes[2].metadata],
-                            (&keys, &values, &self.tables[0]),
-                            (query_heads, kv_heads, head_dim),
-                            i32::try_from(window.unwrap_or(0)).map_err(error)?,
-                            self.weights.kv_scales[&id],
-                        )
-                    };
-                    self.fp8_states.insert(id, (keys, values));
-                    for ((slot, shape, output), lane) in outputs.into_iter().zip(lanes.iter_mut()) {
-                        lane.arena.buffers[slot] = Some(output.reshape(&shape)?);
-                    }
-                    recorded?;
+                if self.record_verify_attention(scope, node, lanes, prefill)? {
                     continue;
                 }
                 for (index, lane) in lanes.iter_mut().enumerate() {
@@ -1167,6 +1187,20 @@ pub(super) fn dispatch32(node: &TensorNode, weights: &ProgramWeights) -> Dispatc
     }
 }
 
+/// Enqueue a prompt replay with nothing to read back: the host stages the next chunk while this
+/// one runs instead of idling the GPU for a sync per chunk.
+#[expect(
+    unsafe_code,
+    reason = "Audited detached replay of a readback-free prompt chunk on the single engine stream"
+)]
+fn launch_detached(device: &CudaDevice, graph: &CudaGraph<()>) -> Result<()> {
+    // SAFETY: single engine stream; this replay follows its staged metadata and uploads
+    // (pageable copies and graph updates, both stream-ordered and host-safe on return) and
+    // precedes every later replay. The graph owns every buffer it touches, and the next
+    // readback, device read or drain on this device waits for it.
+    unsafe { graph.launch().async_on(&device.stream) }.map_err(device_error)
+}
+
 pub(super) fn take_result(
     arena: &mut ActivationArena,
     id: Option<TensorId>,
@@ -1431,10 +1465,6 @@ impl BatchGraph {
     }
 
     /// Batched slots read back in one copy each; per-lane rows are split on host.
-    #[expect(
-        unsafe_code,
-        reason = "Audited detached replay of a readback-free prompt chunk on the single engine stream"
-    )]
     fn run32(
         &mut self,
         device: &CudaDevice,
@@ -1494,12 +1524,8 @@ impl BatchGraph {
         )?;
         let hidden_dim = self.hidden[0].size() / self.width;
         // A one-row logits slot already holds the final lane.
-        let single_logits = self._prompt_row.is_some();
-        let vocabulary = if single_logits {
-            self.logits[0].size()
-        } else {
-            self.logits[0].size() / self.width
-        };
+        let single_logits = self.prompt_row.is_some();
+        let vocabulary = self.logits[0].size() / if single_logits { 1 } else { self.width };
         let sources = [
             read_hidden.then(|| ReadbackSource {
                 tensor: Arc::clone(&self.hidden[0]),
@@ -1517,14 +1543,10 @@ impl BatchGraph {
             }),
         ];
         if sources.iter().all(Option::is_none) && self.profile.is_none() {
-            // Nothing is read back, so the host only needs the replay enqueued: it stages the next
-            // chunk while this one runs instead of idling the GPU for a sync per chunk.
-            // SAFETY: single engine stream; this replay follows its staged metadata and uploads
-            // (pageable copies and graph updates, both stream-ordered and host-safe on return)
-            // and precedes every later replay. The graph owns every buffer it touches, and the
-            // next readback, device read or drain on this device waits for it.
-            unsafe { graph.launch().async_on(&device.stream) }.map_err(device_error)?;
-            return Ok((0..tokens.len()).map(|_| (Vec::new(), Vec::new())).collect());
+            launch_detached(device, graph)?;
+            return Ok((0..tokens.len())
+                .map(|_| (Vec::new(), Vec::new()))
+                .collect());
         }
         let rows = self.readbacks.run(device, graph, &sources);
         if rows.is_ok()

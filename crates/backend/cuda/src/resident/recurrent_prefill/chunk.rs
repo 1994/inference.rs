@@ -9,7 +9,7 @@
 //! [`kernels::chunk_prepare`] evaluates every chunk independently into BF16 factors (BF16
 //! products, TF32 for the triangular inverse);
 //! [`kernels::chunk_scan`] then carries the F32 state across chunks with four BF16 products per
-//! chunk, as the FLA and FlashInfer kernels do.
+//! chunk, as the FLA and `FlashInfer` kernels do.
 use crate::device::{CudaDevice, device_error};
 use cutile::{half::bf16, prelude::*};
 use infer_core::Result;
@@ -88,9 +88,8 @@ pub(super) mod kernels {
             let row_block = rows / width;
             let column_block = columns / width;
             let middle = row_block * width + half.broadcast(shape![64, 64]);
-            let cross = eq_tile(row_block, column_block)
-                & ge_tile(rows, middle)
-                & lt_tile(columns, middle);
+            let cross =
+                eq_tile(row_block, column_block) & ge_tile(rows, middle) & lt_tile(columns, middle);
             let coupling = select(cross, interactions, zero);
             let left: Tile<f32, { [64, 64] }> = tf32_product(inverse, coupling, zero);
             let merged: Tile<f32, { [64, 64] }> = tf32_product(left, inverse, zero);
@@ -253,12 +252,8 @@ pub(super) mod kernels {
         let pid = get_tile_block_id();
         let head = pid.0;
         let key = head / (VH / KH);
-        let count: i32 = tile_to_scalar(
-            metadata
-                .partition(shape![1])
-                .load([1i32])
-                .reshape(shape![]),
-        );
+        let count: i32 =
+            tile_to_scalar(metadata.partition(shape![1]).load([1i32]).reshape(shape![]));
         let mut old = state.load_like(state).reshape(shape![128, 32]);
         let zero_block: Tile<f32, { [64, 32] }> = constant(0.0f32, shape![64, 32]);
         let wp = w.partition(shape![1, 64, 128]);
@@ -269,7 +264,8 @@ pub(super) mod kernels {
         for chunk in 0i32..((count + 63i32) / 64i32) {
             let g: Tile<f32, { [64] }> = gp.load([head, chunk]).reshape(shape![64]);
             let g_last: Tile<f32, { [1] }> = extract(g, [63i32.broadcast(shape![])]);
-            let wb: Tile<bf16, { [64, 128] }> = wp.load([head, chunk, 0i32]).reshape(shape![64, 128]);
+            let wb: Tile<bf16, { [64, 128] }> =
+                wp.load([head, chunk, 0i32]).reshape(shape![64, 128]);
             let wc: Tile<f32, { [64, 128] }> = convert_tile(wb);
             let predicted: Tile<f32, { [64, 32] }> = bf16_product(wc, old, zero_block);
             let target: Tile<bf16, { [64, 32] }> = u
@@ -278,7 +274,8 @@ pub(super) mod kernels {
                 .reshape(shape![64, 32]);
             let target: Tile<f32, { [64, 32] }> = convert_tile(target);
             let updates = target - predicted;
-            let qb: Tile<bf16, { [64, 128] }> = qp.load([key, chunk, 0i32]).reshape(shape![64, 128]);
+            let qb: Tile<bf16, { [64, 128] }> =
+                qp.load([key, chunk, 0i32]).reshape(shape![64, 128]);
             let qf: Tile<f32, { [64, 128] }> = convert_tile(qb);
             let qc = qf * exp(g).reshape(shape![64, 1]).broadcast(shape![64, 128]);
             let pb: Tile<bf16, { [64, 64] }> = pp.load([head, chunk, 0i32]).reshape(shape![64, 64]);
@@ -287,7 +284,8 @@ pub(super) mod kernels {
             let output: Tile<f32, { [64, 32] }> = bf16_product(pc, updates, carried);
             out.partition_mut(shape![1, 64, 32])
                 .store(output.reshape(shape![1, 64, 32]), [0i32, chunk, 0i32]);
-            let kb: Tile<bf16, { [64, 128] }> = kp.load([key, chunk, 0i32]).reshape(shape![64, 128]);
+            let kb: Tile<bf16, { [64, 128] }> =
+                kp.load([key, chunk, 0i32]).reshape(shape![64, 128]);
             let kf: Tile<f32, { [64, 128] }> = convert_tile(kb);
             let remaining = exp(g_last.broadcast(shape![64]) - g);
             let kc = kf * remaining.reshape(shape![64, 1]).broadcast(shape![64, 128]);
@@ -349,10 +347,6 @@ pub(super) fn enabled(dim: usize, lanes: usize) -> bool {
 }
 
 /// Record the chunked recurrence; `betas` and `decays` come from the shared gate kernel.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the recurrence names its state, output, inputs and geometry"
-)]
 pub(super) fn record(
     scope: &Scope,
     scratch: &mut Scratch,

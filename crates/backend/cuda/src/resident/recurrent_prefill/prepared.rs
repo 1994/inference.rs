@@ -88,7 +88,10 @@ pub(super) fn required_bytes(
                 .checked_mul(2)
                 .and_then(|x| x.checked_mul(dim))
                 .and_then(|x| x.checked_mul(normalized_rows))
-                .and_then(|x| vh.checked_mul(2 * lanes).and_then(|gates| x.checked_add(gates)))
+                .and_then(|x| {
+                    vh.checked_mul(2 * lanes)
+                        .and_then(|gates| x.checked_add(gates))
+                })
                 .and_then(|x| x.checked_mul(crate::constants::F32_BYTES))
                 .and_then(|x| x.checked_add(extra))
                 .and_then(|x| u64::try_from(x).ok())

@@ -242,6 +242,29 @@ fn draft(
     Ok(Draft { graph, weights })
 }
 
+/// Load one draft projection. BF16 draft projections are re-encoded as FP8 channels with
+/// per-token activations, which halves the bytes each proposal step streams; the target still
+/// verifies every token. `INFER_CUDA_DRAFT_FP8=0` keeps them in BF16.
+fn draft_projection(
+    device: &CudaDevice,
+    package: &mut QuantizedPackage,
+    source: &infer_models::DeviceWeight,
+    weights: &mut ProgramWeights,
+    id: TensorId,
+) -> Result<ProjectionWeight> {
+    let projection = if source.encoding == infer_models::WeightEncoding::Float
+        && std::env::var("INFER_CUDA_DRAFT_FP8").map_or(true, |value| value != "0")
+    {
+        weights.fp8_inputs.insert(id);
+        let values = floats(package, &source.data)?;
+        Projection::quantize_fp8(device, &values, &source.shape)?.resident()
+    } else {
+        Projection::load(device, package, source)?.resident()
+    };
+    bind_activation(package, source, weights, id)?;
+    Ok(projection)
+}
+
 /// Bind draft weights, sharing the target embedding and vocabulary projection by slot.
 fn draft_weights(
     device: &CudaDevice,
@@ -343,8 +366,7 @@ fn draft_weights(
             return Err(Error::invalid("MTP weight shapes"));
         }
         if linear_inputs.contains(&tensor.id) {
-            let projection = Projection::load(device, package, &source)?.resident();
-            bind_activation(package, &source, &mut weights, tensor.id)?;
+            let projection = draft_projection(device, package, &source, &mut weights, tensor.id)?;
             weights.tiling.insert(
                 tensor.id,
                 crate::tuning::select_tiling(device, &projection, profile, tiling_source, report)?,

@@ -2,11 +2,11 @@
 #[cutile::module]
 pub(crate) mod kernels {
     use cutile::core::{
-        BroadcastScalar, ElementType, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2,
-        Shape_4, Tensor_4, bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, exp,
-        ftz, ge_tile, get_tile_block_id, iota, le_tile, max_tile, mmaf, predicate, reduce_max,
-        reduce_sum, rsqrt, select, tile_to_scalar,
+        BroadcastScalar, ElementType, Reshape, Shape_0, Shape_1, Shape_2, Shape_3, Shape_4,
+        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tensor_4, Tile_0, Tile_1, Tile_2,
+        bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, exp, ftz, ge_tile,
+        get_tile_block_id, iota, le_tile, max_tile, mmaf, predicate, reduce_max, reduce_sum, rsqrt,
+        select, tile_to_scalar,
     };
     #[expect(
         clippy::useless_let_if_seq,
@@ -122,6 +122,11 @@ pub(crate) mod kernels {
         clippy::too_many_arguments,
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
+    #[expect(
+        clippy::useless_let_if_seq,
+        clippy::similar_names,
+        reason = "cuTile DSL uses statement control flow; lane 0 names mirror the three-lane kernel"
+    )]
     #[cutile::entry()]
     fn partial_gqa<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
         out0: &mut Tensor<f32, { [1, 16, D] }>,
@@ -147,14 +152,20 @@ pub(crate) mod kernels {
         let zero_scores: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
         let zero_rows: Tile<f32, { [16, D] }> = constant(0.0f32, shape![16, D]);
         let masked: Tile<f32, { [16, 32] }> = constant(-1.0e30f32, shape![16, 32]);
-        let position0: i32 =
-            tile_to_scalar(metadata0.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let position0: i32 = tile_to_scalar(
+            metadata0
+                .partition(shape![1])
+                .load([2i32])
+                .reshape(shape![]),
+        );
         let mut start0 = 0i32;
         if window > 0 && position0 + 1i32 > window {
             start0 = position0 + 1i32 - window;
         }
-        let query0: Tile<f32, { [16, D] }> =
-            q0.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query0: Tile<f32, { [16, D] }> = q0
+            .partition(shape![1, 16, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![16, D]);
         let query0: Tile<bf16, { [16, D] }> = convert_tile(query0);
         let mut numerator0 = zero_rows;
         let mut denominator0: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
@@ -201,8 +212,7 @@ pub(crate) mod kernels {
             let sum0: Tile<f32, { [16] }> = reduce_sum(p0, 1i32);
             let w0: Tile<bf16, { [16, 32] }> = convert_tile(p0);
             let c0: Tile<f32, { [16, D] }> = mmaf(w0, value, zero_rows);
-            numerator0 =
-                numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
+            numerator0 = numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
             denominator0 = denominator0 * old0 + sum0;
             maximum0 = next0;
         }
@@ -217,7 +227,13 @@ pub(crate) mod kernels {
         clippy::too_many_arguments,
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
-    #[expect(clippy::similar_names, reason = "per-lane accumulators differ only by lane index")]
+    #[expect(
+        clippy::similar_names,
+        clippy::useless_let_if_seq,
+        clippy::too_many_lines,
+        reason = "cuTile DSL uses statement control flow and has no closures, so the three lanes' \
+                  accumulators are spelled out with matching names"
+    )]
     #[cutile::entry()]
     fn partial_gqa3<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
         out0: &mut Tensor<f32, { [1, 16, D] }>,
@@ -253,38 +269,56 @@ pub(crate) mod kernels {
         let zero_scores: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
         let zero_rows: Tile<f32, { [16, D] }> = constant(0.0f32, shape![16, D]);
         let masked: Tile<f32, { [16, 32] }> = constant(-1.0e30f32, shape![16, 32]);
-        let position0: i32 =
-            tile_to_scalar(metadata0.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let position0: i32 = tile_to_scalar(
+            metadata0
+                .partition(shape![1])
+                .load([2i32])
+                .reshape(shape![]),
+        );
         let mut start0 = 0i32;
         if window > 0 && position0 + 1i32 > window {
             start0 = position0 + 1i32 - window;
         }
-        let query0: Tile<f32, { [16, D] }> =
-            q0.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query0: Tile<f32, { [16, D] }> = q0
+            .partition(shape![1, 16, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![16, D]);
         let query0: Tile<bf16, { [16, D] }> = convert_tile(query0);
         let mut numerator0 = zero_rows;
         let mut denominator0: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
         let mut maximum0: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
-        let position1: i32 =
-            tile_to_scalar(metadata1.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let position1: i32 = tile_to_scalar(
+            metadata1
+                .partition(shape![1])
+                .load([2i32])
+                .reshape(shape![]),
+        );
         let mut start1 = 0i32;
         if window > 0 && position1 + 1i32 > window {
             start1 = position1 + 1i32 - window;
         }
-        let query1: Tile<f32, { [16, D] }> =
-            q1.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query1: Tile<f32, { [16, D] }> = q1
+            .partition(shape![1, 16, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![16, D]);
         let query1: Tile<bf16, { [16, D] }> = convert_tile(query1);
         let mut numerator1 = zero_rows;
         let mut denominator1: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
         let mut maximum1: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
-        let position2: i32 =
-            tile_to_scalar(metadata2.partition(shape![1]).load([2i32]).reshape(shape![]));
+        let position2: i32 = tile_to_scalar(
+            metadata2
+                .partition(shape![1])
+                .load([2i32])
+                .reshape(shape![]),
+        );
         let mut start2 = 0i32;
         if window > 0 && position2 + 1i32 > window {
             start2 = position2 + 1i32 - window;
         }
-        let query2: Tile<f32, { [16, D] }> =
-            q2.partition(shape![1, 16, D]).load([kv, 0i32, 0i32]).reshape(shape![16, D]);
+        let query2: Tile<f32, { [16, D] }> = q2
+            .partition(shape![1, 16, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![16, D]);
         let query2: Tile<bf16, { [16, D] }> = convert_tile(query2);
         let mut numerator2 = zero_rows;
         let mut denominator2: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
@@ -343,8 +377,7 @@ pub(crate) mod kernels {
             let sum0: Tile<f32, { [16] }> = reduce_sum(p0, 1i32);
             let w0: Tile<bf16, { [16, 32] }> = convert_tile(p0);
             let c0: Tile<f32, { [16, D] }> = mmaf(w0, value, zero_rows);
-            numerator0 =
-                numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
+            numerator0 = numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
             denominator0 = denominator0 * old0 + sum0;
             maximum0 = next0;
             let raw1: Tile<f32, { [16, 32] }> = mmaf(query1, key_t, zero_scores);
@@ -362,8 +395,7 @@ pub(crate) mod kernels {
             let sum1: Tile<f32, { [16] }> = reduce_sum(p1, 1i32);
             let w1: Tile<bf16, { [16, 32] }> = convert_tile(p1);
             let c1: Tile<f32, { [16, D] }> = mmaf(w1, value, zero_rows);
-            numerator1 =
-                numerator1 * old1.reshape(shape![16, 1]).broadcast(shape![16, D]) + c1;
+            numerator1 = numerator1 * old1.reshape(shape![16, 1]).broadcast(shape![16, D]) + c1;
             denominator1 = denominator1 * old1 + sum1;
             maximum1 = next1;
             let raw2: Tile<f32, { [16, 32] }> = mmaf(query2, key_t, zero_scores);
@@ -381,8 +413,7 @@ pub(crate) mod kernels {
             let sum2: Tile<f32, { [16] }> = reduce_sum(p2, 1i32);
             let w2: Tile<bf16, { [16, 32] }> = convert_tile(p2);
             let c2: Tile<f32, { [16, D] }> = mmaf(w2, value, zero_rows);
-            numerator2 =
-                numerator2 * old2.reshape(shape![16, 1]).broadcast(shape![16, D]) + c2;
+            numerator2 = numerator2 * old2.reshape(shape![16, 1]).broadcast(shape![16, D]) + c2;
             denominator2 = denominator2 * old2 + sum2;
             maximum2 = next2;
         }
@@ -474,7 +505,7 @@ pub(crate) mod kernels {
 mod tests;
 
 mod workspace;
-pub(crate) use workspace::VERIFY_LANES;
+pub use workspace::VERIFY_LANES;
 pub use workspace::Workspace;
 
 #[cfg(test)]

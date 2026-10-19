@@ -141,7 +141,11 @@ fn arena_budget(total_memory_bytes: u64) -> u64 {
 fn arena_budget_override() -> Option<u64> {
     static BYTES: OnceLock<Option<u64>> = OnceLock::new();
     *BYTES.get_or_init(|| {
-        let mib: u64 = std::env::var("INFER_CUDA_ARENA_MIB").ok()?.trim().parse().ok()?;
+        let mib: u64 = std::env::var("INFER_CUDA_ARENA_MIB")
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
         (mib > 0).then(|| mib * MIB)
     })
 }

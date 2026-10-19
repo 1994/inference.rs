@@ -198,14 +198,17 @@ fn program_price(
         .into_iter()
         .filter(|width| *width > 0)
         .try_fold(0usize, |sum, width| {
-            crate::resident::prompt_logits::required_bytes(graph, weights, width)
-                .and_then(|bytes| {
+            crate::resident::prompt_logits::required_bytes(graph, weights, width).and_then(
+                |bytes| {
                     sum.checked_add(bytes)
                         .ok_or_else(|| Error::invalid("activation budget"))
-                })
+                },
+            )
         })?;
-    let other_arenas =
-        crate::resident::arena::ActivationArena::required_bytes(graph, lanes - geometry.prompt_lanes())?;
+    let other_arenas = crate::resident::arena::ActivationArena::required_bytes(
+        graph,
+        lanes - geometry.prompt_lanes(),
+    )?;
     bytes = add(
         bytes,
         u64::try_from(
@@ -252,21 +255,7 @@ fn program_price(
         bytes = add(bytes, amount)?;
     }
     bytes = add(bytes, projection_workspace(graph, weights, geometry)?)?;
-    // External hidden buffers keep the configured lane allocation even when capture omits
-    // the wide prompt arena.
-    // Fused draft programs additionally retain embedding and two normalized rows per lane.
-    // Batched prompt fusion leaves only decode and verification lanes with their own rows.
-    let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
-    let external_lanes = 1 + width;
-    let fused_lanes = if weights.fusion.is_none() {
-        0
-    } else if crate::resident::fusion_batch::batched(weights, weights.prefill_width, profile) {
-        1 + weights.batch_width.max(1) as u64
-    } else {
-        external_lanes
-    };
-    let rows = external_lanes + fused_lanes * (crate::constants::MTP_FUSION_ROWS - 1);
-    bytes = add(bytes, mul(mul(hidden as u64, rows)?, F32)?)?;
+    bytes = add(bytes, external_bytes(weights, hidden, profile)?)?;
     // Pinned readback is allocated on demand and capped per batch (device/readback.rs), so
     // charge what a step actually stages: one decode lane, the verification batch when it is
     // private, and the last prompt lane (prompt modes read only the last logits row).
@@ -284,6 +273,23 @@ fn program_price(
 }
 /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
 /// Charge the supported upper bound (16 partitions), independent of device tuning.
+/// External hidden rows for every lane; fused draft programs also retain embedding and two
+/// normalized rows per lane, except where batched prompt fusion covers the prompt graph and only
+/// decode and verification lanes keep their own.
+fn external_bytes(weights: &ProgramWeights, hidden: usize, profile: &DeviceProfile) -> Result<u64> {
+    let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
+    let external_lanes = 1 + width;
+    let fused_lanes = if weights.fusion.is_none() {
+        0
+    } else if crate::resident::fusion_batch::batched(weights, weights.prefill_width, profile) {
+        1 + weights.batch_width.max(1) as u64
+    } else {
+        external_lanes
+    };
+    let rows = external_lanes + fused_lanes * (crate::constants::MTP_FUSION_ROWS - 1);
+    mul(mul(hidden as u64, rows)?, F32)
+}
+
 /// Partial rows per KV head of the grouped decode kernel: 64 splits of 16 query rows for each of
 /// the three verification lanes.
 const GROUPED_DECODE_ROWS: usize = 3 * 64 * 16;

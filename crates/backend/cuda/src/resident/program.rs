@@ -297,14 +297,18 @@ fn allocate_lane_fusion(
     let fused = fused_lanes(device, weights)?;
     let mut fusion = Vec::with_capacity(width);
     for lane in 0..width {
-        fusion.push(FusionWorkspace::allocate(device, hidden, enabled && lane < fused)?);
+        fusion.push(FusionWorkspace::allocate(
+            device,
+            hidden,
+            enabled && lane < fused,
+        )?);
     }
     Ok((owner, external, fusion))
 }
 
 /// Lanes that need their own fusion workspace: every lane, unless batched prompt fusion covers
 /// the prompt graph and only decode and verification lanes record the fusion per lane.
-pub(crate) fn fused_lanes(device: &CudaDevice, weights: &ProgramWeights) -> Result<usize> {
+pub fn fused_lanes(device: &CudaDevice, weights: &ProgramWeights) -> Result<usize> {
     let width = weights.prefill_width.max(weights.batch_width).max(1);
     Ok(
         if super::fusion_batch::batched(weights, weights.prefill_width, device.profile()?) {

@@ -33,7 +33,7 @@ const ROW_TILE: usize = 256;
 
 /// Whether a prompt graph of these weights can keep a one-row logits slot: the vocabulary
 /// projection must take the quantized single-row GEMM, and its input row must tile evenly.
-pub(crate) fn supported(graph: &infer_ir::DataflowGraph, weights: &ProgramWeights) -> bool {
+pub fn supported(graph: &infer_ir::DataflowGraph, weights: &ProgramWeights) -> bool {
     let Some(logits) = graph.logits else {
         return false;
     };
@@ -56,7 +56,7 @@ pub(crate) fn supported(graph: &infer_ir::DataflowGraph, weights: &ProgramWeight
 /// Prompt arena bytes at `lanes` rows: one logits row when [`supported`], every row otherwise.
 /// # Errors
 /// Rejects invalid graphs or overflowing sizes.
-pub(crate) fn required_bytes(
+pub fn required_bytes(
     graph: &infer_ir::DataflowGraph,
     weights: &ProgramWeights,
     lanes: usize,

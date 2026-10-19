@@ -420,7 +420,8 @@ impl Workspace {
             if !reuse && rows.is_multiple_of(SWIGLU_ROWS) {
                 scope.record(
                     kernels::quantize_rows(
-                        (&mut *q).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
+                        (&mut *q)
+                            .partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
                         (&mut *qs)
                             .partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_SCALES_TILE[1]]),
                         input,

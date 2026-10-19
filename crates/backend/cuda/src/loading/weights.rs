@@ -44,7 +44,76 @@ pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<V
         .collect())
 }
 
+/// Finite non-negative E4M3 values in code order (codes 0..=126; 127 is NaN).
+fn e4m3_magnitudes() -> Vec<f32> {
+    (0u8..127)
+        .map(|code| {
+            let exponent = i32::from(code >> 3);
+            let mantissa = f32::from(code & 7);
+            if exponent == 0 {
+                mantissa / 8.0 * 2f32.powi(-6)
+            } else {
+                (1.0 + mantissa / 8.0) * 2f32.powi(exponent - 7)
+            }
+        })
+        .collect()
+}
+
+/// Round to the nearest E4M3 code (ties to the even code), saturating at +-448.
+fn e4m3_code(value: f32, magnitudes: &[f32]) -> u8 {
+    let magnitude = value.abs().min(448.0);
+    let upper = magnitudes.partition_point(|&m| m < magnitude);
+    let code = if upper == 0 {
+        0
+    } else if upper >= magnitudes.len() {
+        magnitudes.len() - 1
+    } else {
+        let below = magnitude - magnitudes[upper - 1];
+        let above = magnitudes[upper] - magnitude;
+        match below.total_cmp(&above) {
+            std::cmp::Ordering::Less => upper - 1,
+            std::cmp::Ordering::Equal if (upper - 1) % 2 == 0 => upper - 1,
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal => upper,
+        }
+    };
+    let sign = if value.is_sign_negative() && code != 0 {
+        0x80
+    } else {
+        0
+    };
+    u8::try_from(code).unwrap_or(126) | sign
+}
+
 impl Projection {
+    /// Per-output-channel FP8 encoding of a dense `[rows, columns]` weight: each row is scaled by
+    /// its largest magnitude over 448, matching the checkpoint's own FP8-channel projections.
+    /// # Errors
+    /// Rejects malformed shapes or failed CUDA allocations.
+    pub fn quantize_fp8(device: &CudaDevice, values: &[f32], shape: &[usize]) -> Result<Self> {
+        let [rows, columns] = shape else {
+            return Err(Error::invalid("FP8 projection rank"));
+        };
+        if rows * columns != values.len() || *columns == 0 {
+            return Err(Error::invalid("FP8 projection shape"));
+        }
+        let magnitudes = e4m3_magnitudes();
+        let mut codes = Vec::with_capacity(values.len());
+        let mut scales = Vec::with_capacity(*rows);
+        for row in values.chunks(*columns) {
+            let largest = row.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
+            let scale = if largest > 0.0 { largest / 448.0 } else { 1.0 };
+            scales.push(scale);
+            codes.extend(
+                row.iter()
+                    .map(|v| f8e4m3fn(e4m3_code(v / scale, &magnitudes))),
+            );
+        }
+        Ok(Self::Fp8(
+            device.upload(codes, shape)?,
+            device.upload(scales, &[*rows])?,
+        ))
+    }
+
     #[must_use]
     pub fn resident(&self) -> crate::mlp::ProjectionWeight {
         use crate::mlp::ProjectionWeight;

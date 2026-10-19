@@ -28,24 +28,26 @@ impl Capture<'_> {
             .ok_or_else(|| error("missing FP8 attention state"))?;
         let mut keys = keys.reshape(&[kv_heads, self.capacity, head_dim])?;
         let mut values = values.reshape(&[kv_heads, self.capacity, head_dim])?;
-        let result = self.scope.record(
-            attention::append(
-                (&mut keys).partition([1, self.capacity, head_dim]),
-                (&mut values).partition([1, self.capacity, head_dim]),
-                &self.input(node.inputs[1])?.view(&[kv_heads, head_dim])?,
-                &self.input(node.inputs[2])?.view(&[kv_heads, head_dim])?,
-                self.metadata,
-                scales[0],
-                scales[1],
+        let result = self
+            .scope
+            .record(
+                attention::append(
+                    (&mut keys).partition([1, self.capacity, head_dim]),
+                    (&mut values).partition([1, self.capacity, head_dim]),
+                    &self.input(node.inputs[1])?.view(&[kv_heads, head_dim])?,
+                    &self.input(node.inputs[2])?.view(&[kv_heads, head_dim])?,
+                    self.metadata,
+                    scales[0],
+                    scales[1],
+                )
+                .generics(vec![
+                    cuda_core::f8e4m3fn::DTYPE.as_str().into(),
+                    head_dim.to_string(),
+                    self.capacity.to_string(),
+                    "1".into(),
+                ]),
             )
-            .generics(vec![
-                cuda_core::f8e4m3fn::DTYPE.as_str().into(),
-                head_dim.to_string(),
-                self.capacity.to_string(),
-                "1".into(),
-            ]),
-        )
-        .map(|_| ());
+            .map(|_| ());
         self.fp8_states.insert(id, (keys, values));
         result
     }

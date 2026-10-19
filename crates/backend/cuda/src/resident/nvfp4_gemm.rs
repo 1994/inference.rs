@@ -121,14 +121,13 @@ pub(crate) mod kernels {
             max_tile(normalized, (-6.0f32).broadcast(shape![16, 32, 16])),
             6.0f32.broadcast(shape![16, 32, 16]),
         );
-        let values: Tile<f4e2m1fn, { [16, 512] }> =
-            convert_tile(clipped.reshape(shape![16, 512]));
+        let values: Tile<f4e2m1fn, { [16, 512] }> = convert_tile(clipped.reshape(shape![16, 512]));
         out.store(values.pack(shape![16, 256]));
         scales.store(encoded);
     }
 
     /// `silu(gate) * up` quantized like [`quantize`], so a gated MLP's down projection reads its
-    /// activation codes without materializing the SiLU and product rows. The SiLU and product
+    /// activation codes without materializing the `SiLU` and product rows. The `SiLU` and product
     /// keep the element-wise kernels' arithmetic: `g / (1 + exp(-g))`, then one multiply. Each
     /// block covers sixteen rows of one 512-column window.
     #[cutile::entry()]

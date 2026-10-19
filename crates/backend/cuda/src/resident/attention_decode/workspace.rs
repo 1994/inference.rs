@@ -15,7 +15,7 @@ const GQA_PARTS: usize = 64;
 /// Query rows one grouped decode CTA scores: the group's heads, padded for the MMA shape.
 const GQA_ROWS: usize = 16;
 /// Lanes of one MTP verification step that share a three-lane grouped launch.
-pub(crate) const VERIFY_LANES: usize = 3;
+pub const VERIFY_LANES: usize = 3;
 
 /// Whether decode attention of this geometry takes the grouped tensor-core kernel.
 fn grouped(heads: usize, kv_heads: usize) -> bool {
@@ -586,7 +586,9 @@ impl Workspace {
             .get_mut(&(heads, dim))
             .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
         let (Some(groups), [second, third]) = (work.grouped, work.verify.as_mut_slice()) else {
-            return Err(super::super::capture::error("grouped verification workspace"));
+            return Err(super::super::capture::error(
+                "grouped verification workspace",
+            ));
         };
         let parts = work.parts;
         scope.record(

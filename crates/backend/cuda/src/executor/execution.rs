@@ -829,8 +829,7 @@ impl Sequence {
             let last = offset + count == tokens.len();
             let read_logits = last && readout != OutputReadout::None;
             let device_prime = speculate && count > 1 && self.readout != OutputReadout::Full;
-            let read_hidden =
-                self.readout == OutputReadout::Full || (speculate && !device_prime);
+            let read_hidden = self.readout == OutputReadout::Full || (speculate && !device_prime);
             let results = if count > 1 {
                 super::profiling::phase("prefill_chunk", || {
                     self.program.prefill_batch_readout(
@@ -870,25 +869,7 @@ impl Sequence {
                 })?]
             };
             if device_prime {
-                let rows = self
-                    .program
-                    .prompt_hidden(count)
-                    .ok_or_else(|| Error::invariant("target prompt hidden rows"))?;
-                let spec = self
-                    .speculation
-                    .as_mut()
-                    .ok_or_else(|| Error::invariant("draft priming"))?;
-                // A host-held row (from decode or a previous host-primed chunk) seeds the draft
-                // once; afterwards the draft keeps the previous row on the device.
-                let previous = std::mem::take(&mut spec.last_hidden);
-                super::profiling::phase("prime_draft", || {
-                    spec.program.prime_from_target(
-                        &tokens[offset..offset + count],
-                        position,
-                        &rows,
-                        (!previous.is_empty()).then_some(previous.as_slice()),
-                    )
-                })?;
+                self.prime_chunk(&tokens[offset..offset + count], position)?;
                 device_primed = true;
             }
             for (lane, (hidden, row_logits)) in results.into_iter().enumerate() {
@@ -920,6 +901,29 @@ impl Sequence {
                 vec![]
             },
             tokens: Vec::new(),
+        })
+    }
+
+    /// Prime the draft with the device hidden rows the target's prompt chunk just wrote.
+    fn prime_chunk(&mut self, tokens: &[u32], position: usize) -> Result<()> {
+        let rows = self
+            .program
+            .prompt_hidden(tokens.len())
+            .ok_or_else(|| Error::invariant("target prompt hidden rows"))?;
+        let spec = self
+            .speculation
+            .as_mut()
+            .ok_or_else(|| Error::invariant("draft priming"))?;
+        // A host-held row (from decode or a previous host-primed chunk) seeds the draft once;
+        // afterwards the draft keeps the previous row on the device.
+        let previous = std::mem::take(&mut spec.last_hidden);
+        super::profiling::phase("prime_draft", || {
+            spec.program.prime_from_target(
+                tokens,
+                position,
+                &rows,
+                (!previous.is_empty()).then_some(previous.as_slice()),
+            )
         })
     }
 
