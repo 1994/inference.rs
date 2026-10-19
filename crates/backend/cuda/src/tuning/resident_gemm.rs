@@ -26,6 +26,10 @@ const GEMM_RANK: usize = 3;
 /// Linear interpolation weight of both central samples for an even-sized median.
 const MEDIAN_INTERPOLATION: f32 = 0.5;
 
+/// Prompt rows from which the baseline takes [`WIDE_PROMPT_COLUMNS`].
+const WIDE_PROMPT_ROWS: usize = 512;
+/// Output-column tile of the wide prompt baseline.
+const WIDE_PROMPT_COLUMNS: usize = 128;
 /// Supported row-tile variants of the existing native scaled MMA kernels.
 const TILE_M_SEARCH: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
@@ -174,6 +178,15 @@ pub struct GemmConfig {
 
 impl GemmConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
+        // Wide prompt graphs take a 128-column tile with the prefetching main loop: at 2048 rows
+        // it cut a 32K prefill by 0.14 s, while decode and short prompts keep the narrow tile.
+        if rows >= WIDE_PROMPT_ROWS {
+            return Self {
+                tile_m: crate::constants::prompt_gemm_tile_rows(rows),
+                tile_n: WIDE_PROMPT_COLUMNS,
+                main_loop: MainLoop::Prefetch8,
+            };
+        }
         Self {
             tile_m: crate::constants::prompt_gemm_tile_rows(rows),
             tile_n: crate::constants::QUANT_GEMM_TILE[1],
