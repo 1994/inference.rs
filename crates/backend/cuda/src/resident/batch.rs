@@ -701,12 +701,17 @@ impl BatchBuilder<'_> {
             .then(|| super::prefill_demand::StateDemand::new(self.graph));
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
         let pairs = gdn_ba_pairs(self.graph, self.weights);
+        let swiglu = super::prefill_projection::swiglu_plan(self.graph, self.weights);
+        let absorbed: std::collections::BTreeSet<usize> = swiglu
+            .values()
+            .flat_map(|&(silu, multiply, ..)| [silu, multiply])
+            .collect();
         self.nvfp4.begin_quant_capture();
         let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
             let mut fused_second = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
-                if fused_second == Some(index) {
+                if fused_second == Some(index) || absorbed.contains(&index) {
                     continue;
                 }
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
@@ -748,6 +753,19 @@ impl BatchBuilder<'_> {
                         fused_second = Some(second);
                         continue;
                     }
+                }
+                if let Some(&(.., gate, up)) = swiglu.get(&index) {
+                    if !super::prefill_projection::record_swiglu(
+                        scope,
+                        node,
+                        (gate, up),
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                    )? {
+                        return Err(error("fused SwiGLU projection"));
+                    }
+                    continue;
                 }
                 self.record_prompt_node(
                     scope,

@@ -17,15 +17,13 @@ use std::collections::BTreeMap;
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 /// Keyed by `(rows, columns, activation-scale columns)`.
 type Fp8Key = (usize, usize, usize);
+type StrategyKey = (crate::tuning::resident_gemm::WeightKey, usize, usize, usize);
 /// Quantized activation and its per-token scales.
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
     quant_reuse: CaptureQuantReuse,
-    strategies: BTreeMap<
-        (crate::tuning::resident_gemm::WeightKey, usize, usize, usize),
-        crate::tuning::resident_gemm::GemmConfig,
-    >,
+    strategies: BTreeMap<StrategyKey, crate::tuning::resident_gemm::GemmConfig>,
     buffers: BTreeMap<(usize, usize), Quantized>,
     fp8_strategies: BTreeMap<
         (crate::tuning::fp8_gemm::WeightKey, usize, usize, usize),
@@ -428,10 +426,82 @@ impl Workspace {
                     .generics(vec![columns.to_string()]),
                 )?;
             }
+            Self::record_quantized_gemm(
+                &self.strategies,
+                scope,
+                weight,
+                scale,
+                (&*q, &*qs),
+                output,
+                (rows, columns),
+            )
+        };
+        let result = record();
+        self.quant_reuse.finish(ticket, result.is_ok());
+        result
+    }
+
+    /// Down projection of a gated MLP: quantize `silu(gate) * up` straight into the activation
+    /// codes, then run the same row-tiled W4A4 GEMM as [`Self::record_input`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The fused quantizer names both MLP halves next to the projection contract"
+    )]
+    pub(crate) fn record_swiglu_input(
+        &mut self,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        scale: f32,
+        gate: &TensorView<'_, f32>,
+        up: &TensorView<'_, f32>,
+        output: &mut Tensor<f32>,
+        columns: usize,
+    ) -> std::result::Result<(), DeviceError> {
+        let ProjectionWeight::Fp4(..) = weight else {
+            return Err(super::super::capture::error("FP4 workspace weight"));
+        };
+        let rows = output.size()
+            / usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+        // The fused codes overwrite the shared quantization buffers; no reuse permit may span it.
+        self.quant_reuse.clear();
+        let (q, qs) = self
+            .buffers
+            .get_mut(&(rows, columns))
+            .ok_or_else(|| super::super::capture::error("FP4 quantization workspace missing"))?;
+        scope.record(
+            kernels::swiglu_quantize(
+                (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
+                (&mut *qs).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
+                gate,
+                up,
+                scale,
+            )
+            .generics(vec![columns.to_string()]),
+        )?;
+        Self::record_quantized_gemm(
+            &self.strategies,
+            scope,
+            weight,
+            scale,
+            (&*q, &*qs),
+            output,
+            (rows, columns),
+        )
+    }
+
+    fn record_quantized_gemm(
+        strategies: &BTreeMap<StrategyKey, crate::tuning::resident_gemm::GemmConfig>,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        scale: f32,
+        (q, qs): (&Tensor<f4e2m1fnx2>, &Tensor<f8e4m3fn>),
+        output: &mut Tensor<f32>,
+        (rows, columns): (usize, usize),
+    ) -> std::result::Result<(), DeviceError> {
+        {
             let outputs =
                 usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
-            let mut config = self
-                .strategies
+            let mut config = strategies
                 .get(&(
                     crate::tuning::resident_gemm::WeightKey::new(weight, scale)
                         .map_err(super::super::capture::error)?,
@@ -454,12 +524,9 @@ impl Workspace {
                     crate::tuning::resident_gemm::MainLoop::Plain
                 };
             }
-            config.record(scope, weight, scale, &*q, &*qs, output, columns)?;
+            config.record(scope, weight, scale, q, qs, output, columns)?;
             Ok(())
-        };
-        let result = record();
-        self.quant_reuse.finish(ticket, result.is_ok());
-        result
+        }
     }
     pub(super) fn record_fp8_input(
         &mut self,
