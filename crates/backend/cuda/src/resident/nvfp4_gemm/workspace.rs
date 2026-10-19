@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 /// Keyed by `(rows, columns, activation-scale columns)`.
 type Fp8Key = (usize, usize, usize);
+/// Rows one fused SwiGLU quantization block covers; a one-row block reached ~0.6 TB/s.
+const SWIGLU_ROWS: usize = 16;
 type StrategyKey = (crate::tuning::resident_gemm::WeightKey, usize, usize, usize);
 /// Quantized activation and its per-token scales.
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
@@ -468,10 +470,13 @@ impl Workspace {
             .buffers
             .get_mut(&(rows, columns))
             .ok_or_else(|| super::super::capture::error("FP4 quantization workspace missing"))?;
+        if !rows.is_multiple_of(SWIGLU_ROWS) {
+            return Err(super::super::capture::error("fused SwiGLU row tile"));
+        }
         scope.record(
             kernels::swiglu_quantize(
-                (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
-                (&mut *qs).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
+                (&mut *q).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
+                (&mut *qs).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_SCALES_TILE[1]]),
                 gate,
                 up,
                 scale,
