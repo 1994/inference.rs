@@ -1,10 +1,23 @@
 //! Captured vision-encoder programs.
 use super::{VisionWeights, kernels, weights::half_tile};
+#[cfg(test)]
+use crate::attention::benchmark::REPEATS;
+#[cfg(test)]
+use crate::attention::benchmark::measure;
+use crate::attention::kernels::sdpa::attention as sdpa_attention;
+use crate::attention::tile_rows;
 use crate::device::{CudaDevice, device_error};
 use cutile::half::bf16;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use infer_models::vision::head_dim;
+use infer_models::vision::merge_unit;
+use infer_models::vision::merged_width;
+use infer_models::vision::position_ids;
+use infer_models::vision::rope_frequencies;
+use infer_models::vision::row_tile;
 use infer_spi::ModalityEncoder;
+use std::env::var;
 use std::sync::Arc;
 
 /// Token tile of every vision projection, matching the prompt GEMM.
@@ -339,7 +352,7 @@ pub fn layernorm(
     rows: usize,
 ) -> Result<Vec<f32>> {
     let hidden = encoder.hidden_size;
-    let tile = infer_models::vision::row_tile(encoder)?;
+    let tile = row_tile(encoder)?;
     if rows == 0 || input.len() != rows * hidden {
         return Err(Error::invalid("vision layernorm shape"));
     }
@@ -388,7 +401,7 @@ pub fn layernorm(
     reason = "Head widths are tiny exact integers"
 )]
 fn attention_scale(encoder: &ModalityEncoder) -> Result<f32> {
-    let head = infer_models::vision::head_dim(encoder)?;
+    let head = head_dim(encoder)?;
     if head == 0 {
         return Err(Error::invalid("encoder head width must be nonzero"));
     }
@@ -410,10 +423,10 @@ fn rope_tables(
     grid: (usize, usize, usize),
     padded: usize,
 ) -> Result<(Vec<f32>, Vec<f32>)> {
-    let ids = infer_models::vision::position_ids(grid, encoder)?;
-    let frequencies = infer_models::vision::rope_frequencies(encoder)?;
+    let ids = position_ids(grid, encoder)?;
+    let frequencies = rope_frequencies(encoder)?;
     let half = half_tile(encoder)?;
-    let real = infer_models::vision::head_dim(encoder)? / 2;
+    let real = head_dim(encoder)? / 2;
     if !real.is_multiple_of(2) || real / 2 > frequencies.len() {
         return Err(Error::invalid("RoPE axis geometry"));
     }
@@ -457,7 +470,7 @@ impl AttentionMode {
     /// Mode selected by `INFER_ATTENTION_MODE`, defaulting to the streaming form.
     #[must_use]
     pub fn from_environment() -> Self {
-        match std::env::var("INFER_ATTENTION_MODE").as_deref() {
+        match var("INFER_ATTENTION_MODE").as_deref() {
             Ok("exact") => Self::Exact,
             _ => Self::Online,
         }
@@ -571,7 +584,7 @@ pub fn attention_with(
             )?;
         }
         scope.record(
-            crate::attention::kernels::sdpa::attention(
+            sdpa_attention(
                 (&mut attended).partition([tiles[0], width]),
                 &rotated_query,
                 &rotated_key,
@@ -716,8 +729,8 @@ pub fn merger(
     tokens: usize,
 ) -> Result<Vec<f32>> {
     let hidden = encoder.hidden_size;
-    let merged = infer_models::vision::merged_width(encoder)?;
-    let unit = infer_models::vision::merge_unit(encoder)?;
+    let merged = merged_width(encoder)?;
+    let unit = merge_unit(encoder)?;
     if tokens == 0 || !tokens.is_multiple_of(unit) || hidden_states.len() != tokens * hidden {
         return Err(Error::invalid("vision merger input shape"));
     }
@@ -834,11 +847,7 @@ pub fn attention_kernel(
     let scale = attention_scale_from_width(real_width);
     let tokens = i32::try_from(tokens).map_err(device_error)?;
     let graph = CudaGraph::scope(&device.stream, |scope| {
-        let repeats = if profile {
-            crate::attention::benchmark::REPEATS
-        } else {
-            1
-        };
+        let repeats = if profile { REPEATS } else { 1 };
         for _ in 0..repeats {
             for (input, output) in [(&query, &mut rotated_query), (&key, &mut rotated_key)] {
                 scope.record(
@@ -852,7 +861,7 @@ pub fn attention_kernel(
                 )?;
             }
             scope.record(
-                crate::attention::kernels::sdpa::attention(
+                sdpa_attention(
                     (&mut output).partition([tiles[0], width]),
                     &rotated_query,
                     &rotated_key,
@@ -876,7 +885,7 @@ pub fn attention_kernel(
         .sync_on(&device.stream)
         .map_err(device_error)?;
     if profile {
-        crate::attention::benchmark::measure(device, &graph, tokens, heads, real_width, tiles)?;
+        measure(device, &graph, tokens, heads, real_width, tiles)?;
     }
     let values = device.read(&Arc::new(output))?;
     Ok(values[..expected].to_vec())
@@ -905,6 +914,6 @@ fn attention_generics(
 
 /// Measured crossover for compensated full-head attention. Pipelining did not improve timings.
 pub const fn attention_tiles(tokens: usize) -> [usize; ATTENTION_CONFIG_FIELDS] {
-    let tile = crate::attention::tile_rows(tokens);
+    let tile = tile_rows(tokens);
     [tile, tile, 0]
 }

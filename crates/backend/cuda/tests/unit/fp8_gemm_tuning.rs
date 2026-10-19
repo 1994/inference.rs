@@ -1,4 +1,13 @@
 use super::*;
+use crate::constants::PROMPT_GEMM_TILE_ROWS;
+use crate::constants::QUANT_GEMM_TILE;
+use crate::constants::prompt_gemm_tile_rows;
+use std::env::temp_dir;
+use std::fs::remove_file;
+use std::fs::write;
+use std::process::id as process_id;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 fn key() -> Key {
     Key {
@@ -191,16 +200,16 @@ fn fp8_exact_gate_detects_single_bit_signed_zero_and_nonfinite_outputs() -> Resu
 }
 #[test]
 fn fp8_table_atomic_updates_preserve_scalar_and_nvfp4_sections() -> Result<()> {
-    let path = std::env::temp_dir().join(format!(
+    let path = temp_dir().join(format!(
         "fp8-tuning-test-{}-{}.json",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process_id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map_err(device_error)?
             .as_nanos()
     ));
     let initial = TilingTable::default();
-    std::fs::write(
+    write(
         &path,
         serde_json::to_string(&initial).map_err(device_error)?,
     )
@@ -216,7 +225,7 @@ fn fp8_table_atomic_updates_preserve_scalar_and_nvfp4_sections() -> Result<()> {
     assert_eq!(loaded.devices.len(), 2);
     assert_eq!(loaded.resident_fp8_gemm.len(), 1);
     assert!(loaded.resident_fp8_gemm[0].valid());
-    std::fs::remove_file(path).map_err(device_error)?;
+    remove_file(path).map_err(device_error)?;
     Ok(())
 }
 #[test]
@@ -322,20 +331,20 @@ fn fp8_row_tile_128_is_accepted_and_enumerated_after_the_contract_bump() {
     assert!(choices.iter().any(|choice| {
         matches!(choice, Choice::Native(config)
             if config.tile_m == 128
-                && config.tile_n == crate::constants::QUANT_GEMM_TILE[1])
+                && config.tile_n == QUANT_GEMM_TILE[1])
     }));
     assert_ne!(choices, [] as [Choice; 0]);
     // The 64-row tile stays a search candidate even though the wide tile is now the prompt
     // baseline, so an autotune can still demote it on a shape where 64 measures faster.
-    assert!(ROW_TILES.contains(&crate::constants::PROMPT_GEMM_TILE_ROWS));
+    assert!(ROW_TILES.contains(&PROMPT_GEMM_TILE_ROWS));
     // The baseline is row-dependent: decode and tails keep 16/64, only full chunks take 128.
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(1), 16);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(16), 16);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(17), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(64), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(127), 64);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(128), 128);
-    assert_eq!(crate::constants::prompt_gemm_tile_rows(256), 128);
+    assert_eq!(prompt_gemm_tile_rows(1), 16);
+    assert_eq!(prompt_gemm_tile_rows(16), 16);
+    assert_eq!(prompt_gemm_tile_rows(17), 64);
+    assert_eq!(prompt_gemm_tile_rows(64), 64);
+    assert_eq!(prompt_gemm_tile_rows(127), 64);
+    assert_eq!(prompt_gemm_tile_rows(128), 128);
+    assert_eq!(prompt_gemm_tile_rows(256), 128);
     assert_eq!(NativeConfig::baseline(256).tile_m, 128);
     assert_eq!(NativeConfig::baseline(64).tile_m, 64);
 }

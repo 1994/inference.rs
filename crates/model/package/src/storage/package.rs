@@ -1,3 +1,6 @@
+use crate::constants::CONFIG_MAX_BYTES;
+use crate::constants::F32_BYTES_U64;
+use crate::constants::MIB_U64;
 use crate::{
     HostTensor, ModelRegistry, SafetensorsFile, SafetensorsIndex, TensorDtype, default_registry,
 };
@@ -6,6 +9,8 @@ use infer_ir::{DataflowGraph, TensorStorage};
 use infer_spi::{ImportedModel, ModelProvider};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::path::Component;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,
@@ -14,7 +19,7 @@ use std::{
 };
 
 /// Maximum accepted `model.safetensors.index.json` size.
-const INDEX_MAX_BYTES: u64 = 16 * crate::constants::MIB_U64;
+const INDEX_MAX_BYTES: u64 = 16 * MIB_U64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeightBinding {
@@ -49,8 +54,7 @@ pub struct ModelPackage {
 /// Former name of [`ModelPackage`], kept while backends migrate to the provider-neutral type.
 pub type QwenPackage = ModelPackage;
 pub fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
+    let file = File::open(path).map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
     if file
         .metadata()
         .map_err(|e| Error::invalid(e.to_string()))?
@@ -84,7 +88,7 @@ pub fn package_path(root: &Path, name: &str) -> Result<PathBuf> {
         || name.contains('\\')
         || Path::new(name)
             .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            .any(|c| !matches!(c, Component::Normal(_)))
     {
         return Err(Error::invalid("escaping package path"));
     }
@@ -150,10 +154,7 @@ impl ModelPackage {
             .as_ref()
             .canonicalize()
             .map_err(|e| Error::invalid(e.to_string()))?;
-        let config = read_bounded(
-            &package_path(&root, "config.json")?,
-            crate::constants::CONFIG_MAX_BYTES,
-        )?;
+        let config = read_bounded(&package_path(&root, "config.json")?, CONFIG_MAX_BYTES)?;
         let provider = registry.resolve(&config)?;
         let imported = provider.import(id, &config)?;
         let graph = provider.graph(&imported.model)?;
@@ -315,7 +316,7 @@ fn bind_weights(
             .checked_add(header.byte_len())
             .ok_or_else(|| Error::invalid("package size overflow"))?;
         let host = (spec.elements()? as u64)
-            .checked_mul(crate::constants::F32_BYTES_U64)
+            .checked_mul(F32_BYTES_U64)
             .ok_or_else(|| Error::invalid("host size overflow"))?;
         host_bytes = host_bytes
             .checked_add(host)

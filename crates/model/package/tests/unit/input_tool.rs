@@ -1,4 +1,5 @@
 use super::*;
+use std::iter::once;
 
 #[test]
 fn the_reasoning_markers_match_the_served_package_tokens() {
@@ -121,7 +122,7 @@ fn an_undeclared_name_is_left_as_text_instead_of_published() {
         "<tool_call>{\"name\":\"declared\",\"arguments\":{}}</tool_call>",
         "<tool_call>{\"name\":\"invented\",\"arguments\":{}}</tool_call>"
     );
-    let declared = std::iter::once("declared".to_string()).collect();
+    let declared = once("declared".to_string()).collect();
     let parsed = parse_with(text, ToolDialect::JsonBlock, Some(&declared)).unwrap();
     assert_eq!(
         parsed

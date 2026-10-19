@@ -1,10 +1,25 @@
 //! Capture-time split-KV planning and reusable scratch, independent of model identity.
 use super::kernels;
+use crate::constants::ATTENTION_SPLIT_MAX_PARTS;
+use crate::constants::ATTENTION_SPLIT_THRESHOLD;
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::{CudaDevice, device_error};
+use crate::tuning::attention::Choice;
+use crate::tuning::attention::Shape;
+use crate::tuning::attention::enabled as attention_enabled;
+use crate::tuning::attention::exact::select;
+use crate::tuning::attention::mma::select as mma_select;
+use crate::tuning::attention::mma_f32::select as mma_f32_select;
+use crate::tuning::attention::select as attention_select;
+use crate::tuning::attention::shared::select as shared_select;
+use crate::tuning::attention::vector::select as vector_select;
+use crate::tuning::attention::vector_combined::select as vector_combined_select;
 use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::result::Result as StdResult;
 
 #[cfg(test)]
 #[path = "../../../tests/unit/resident_attention_prefill_taps.rs"]
@@ -28,18 +43,18 @@ pub struct Workspace {
     #[cfg(test)]
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
-    prefill: BTreeMap<(TensorId, usize), crate::tuning::attention::Choice>,
+    prefill: BTreeMap<(TensorId, usize), Choice>,
 }
 
 /// A hardware/window-scoped partition count gives private and pooled sequences the same
 /// F32 reduction tree. Reserved KV capacity only changes storage, never arithmetic.
 fn partitions(heads: usize, window: Option<usize>, multiprocessors: usize) -> usize {
-    if window.is_some_and(|tokens| tokens < crate::constants::ATTENTION_SPLIT_THRESHOLD) {
+    if window.is_some_and(|tokens| tokens < ATTENTION_SPLIT_THRESHOLD) {
         return 1;
     }
     let limit = multiprocessors
         .div_ceil(heads)
-        .clamp(1, crate::constants::ATTENTION_SPLIT_MAX_PARTS);
+        .clamp(1, ATTENTION_SPLIT_MAX_PARTS);
     1 << limit.ilog2()
 }
 
@@ -189,7 +204,7 @@ impl Workspace {
         weights: &super::super::ProgramWeights,
         lanes: usize,
     ) {
-        let enabled = crate::tuning::attention::enabled();
+        let enabled = attention_enabled();
         #[cfg(test)]
         let enabled = enabled || taps::forced_choice().is_some();
         if !enabled && !self.oxide_available && self.mma.is_none() && self.mma_f16.is_none() {
@@ -228,10 +243,8 @@ impl Workspace {
                     window.unwrap_or(0),
                 );
             if f16_route {
-                self.prefill.insert(
-                    (node.outputs[0], lanes),
-                    crate::tuning::attention::Choice::MmaF16,
-                );
+                self.prefill
+                    .insert((node.outputs[0], lanes), Choice::MmaF16);
                 continue;
             }
             // The target experimental profiles are limited to FP8-packed KV. Only the draft
@@ -240,7 +253,7 @@ impl Workspace {
             if !fp8 && (self.mma.is_none() || weights.fusion.is_none()) {
                 continue;
             }
-            let shape = crate::tuning::attention::Shape {
+            let shape = Shape {
                 heads: query_heads,
                 kv_heads,
                 dim: head_dim,
@@ -251,12 +264,7 @@ impl Workspace {
                 if fp8 {
                     self.fp8_prefill_choice(device, shape, weights)
                 } else {
-                    crate::tuning::attention::mma_f32::select(
-                        device,
-                        shape,
-                        false,
-                        &weights.resident_tuning,
-                    )
+                    mma_f32_select(device, shape, false, &weights.resident_tuning)
                 }
             });
             #[cfg(test)]
@@ -270,53 +278,31 @@ impl Workspace {
     fn fp8_prefill_choice(
         &self,
         device: &CudaDevice,
-        shape: crate::tuning::attention::Shape,
+        shape: Shape,
         weights: &super::super::ProgramWeights,
-    ) -> crate::tuning::attention::Choice {
+    ) -> Choice {
         let baseline = if self.oxide_available {
-            let baseline = crate::tuning::attention::exact::select(
-                device,
-                shape,
-                weights.autotune,
-                &weights.resident_tuning,
-            );
-            crate::tuning::attention::shared::select(
+            let baseline = select(device, shape, weights.autotune, &weights.resident_tuning);
+            shared_select(
                 device,
                 shape,
                 weights.autotune,
                 &weights.resident_tuning,
                 baseline,
             )
-        } else if crate::tuning::attention::enabled() {
-            crate::tuning::attention::select(
-                device,
-                shape,
-                weights.autotune,
-                &weights.resident_tuning,
-            )
+        } else if attention_enabled() {
+            attention_select(device, shape, weights.autotune, &weights.resident_tuning)
         } else {
-            crate::tuning::attention::Choice::Simt
+            Choice::Simt
         };
-        let baseline = crate::tuning::attention::vector::select(
-            device,
-            shape,
-            false,
-            &weights.resident_tuning,
-            baseline,
-        );
-        let baseline = crate::tuning::attention::vector_combined::select(device, shape, baseline);
+        let baseline = vector_select(device, shape, false, &weights.resident_tuning, baseline);
+        let baseline = vector_combined_select(device, shape, baseline);
         #[cfg(test)]
         if taps::forced_choice().is_some() {
             return baseline;
         }
         if self.mma.is_some() {
-            crate::tuning::attention::mma::select(
-                device,
-                shape,
-                false,
-                &weights.resident_tuning,
-                baseline,
-            )
+            mma_select(device, shape, false, &weights.resident_tuning, baseline)
         } else {
             baseline
         }
@@ -328,22 +314,22 @@ impl Workspace {
                 .prefill
                 .values()
                 .filter_map(|choice| {
-                    if let crate::tuning::attention::Choice::Mma { variant } = choice {
+                    if let Choice::Mma { variant } = choice {
                         Some(*variant)
                     } else {
                         None
                     }
                 })
-                .collect::<std::collections::BTreeSet<_>>();
+                .collect::<BTreeSet<_>>();
             for variant in variants {
                 if let Err(error) = mma.support.prepare_variant(device, variant) {
                     tracing::warn!(target:"infer::tuning",%error,?variant,"MMA launch module unavailable: canonical fallback");
                     for choice in self.prefill.values_mut() {
-                        if *choice == (crate::tuning::attention::Choice::Mma { variant }) {
+                        if *choice == (Choice::Mma { variant }) {
                             *choice = if self.oxide_available {
-                                crate::tuning::attention::Choice::RustSimt
+                                Choice::RustSimt
                             } else {
-                                crate::tuning::attention::Choice::Simt
+                                Choice::Simt
                             };
                         }
                     }
@@ -368,7 +354,7 @@ impl Workspace {
                     self.oxide_available = false;
                     for choice in self.prefill.values_mut() {
                         if choice.uses_oxide() {
-                            *choice = crate::tuning::attention::Choice::Simt;
+                            *choice = Choice::Simt;
                         }
                     }
                 }
@@ -381,9 +367,7 @@ impl Workspace {
             && self.prefill.values().any(|choice| {
                 matches!(
                     choice,
-                    crate::tuning::attention::Choice::SharedKv
-                        | crate::tuning::attention::Choice::VectorSharedKv
-                        | crate::tuning::attention::Choice::VectorSharedKvCombined
+                    Choice::SharedKv | Choice::VectorSharedKv | Choice::VectorSharedKvCombined
                 )
             })
         {
@@ -392,8 +376,8 @@ impl Workspace {
                 result => {
                     tracing::warn!(target:"infer::tuning",error=?result.err(),"shared KV module unavailable: exact fallback");
                     for choice in self.prefill.values_mut() {
-                        if *choice == crate::tuning::attention::Choice::SharedKv {
-                            *choice = crate::tuning::attention::Choice::RustSimt;
+                        if *choice == Choice::SharedKv {
+                            *choice = Choice::RustSimt;
                         }
                     }
                 }
@@ -406,8 +390,7 @@ impl Workspace {
             && self.prefill.values().any(|choice| {
                 matches!(
                     choice,
-                    crate::tuning::attention::Choice::VectorSharedKv
-                        | crate::tuning::attention::Choice::VectorSharedKvCombined
+                    Choice::VectorSharedKv | Choice::VectorSharedKvCombined
                 )
             })
         {
@@ -416,12 +399,12 @@ impl Workspace {
                 result => {
                     tracing::warn!(target:"infer::tuning",error=?result.err(),"vector shared module unavailable: qualified shared fallback");
                     let fallback = if self.shared.is_some() {
-                        crate::tuning::attention::Choice::SharedKv
+                        Choice::SharedKv
                     } else {
-                        crate::tuning::attention::Choice::RustSimt
+                        Choice::RustSimt
                     };
                     for choice in self.prefill.values_mut() {
-                        if *choice == crate::tuning::attention::Choice::VectorSharedKv {
+                        if *choice == Choice::VectorSharedKv {
                             *choice = fallback;
                         }
                     }
@@ -435,21 +418,21 @@ impl Workspace {
             && self
                 .prefill
                 .values()
-                .any(|choice| *choice == crate::tuning::attention::Choice::VectorSharedKvCombined)
+                .any(|choice| *choice == Choice::VectorSharedKvCombined)
         {
             match super::super::attention_oxide::Support::load_combined(device) {
                 Ok(Some(module)) => self.combined = Some(module),
                 result => {
                     tracing::warn!(target:"infer::tuning",error=?result.err(),"vector combined module unavailable: qualified vector fallback");
                     let fallback = if self.vector.is_some() {
-                        crate::tuning::attention::Choice::VectorSharedKv
+                        Choice::VectorSharedKv
                     } else if self.shared.is_some() {
-                        crate::tuning::attention::Choice::SharedKv
+                        Choice::SharedKv
                     } else {
-                        crate::tuning::attention::Choice::RustSimt
+                        Choice::RustSimt
                     };
                     for choice in self.prefill.values_mut() {
-                        if *choice == crate::tuning::attention::Choice::VectorSharedKvCombined {
+                        if *choice == Choice::VectorSharedKvCombined {
                             *choice = fallback;
                         }
                     }
@@ -467,10 +450,8 @@ impl Workspace {
         super::super::attention_mma::catalog::Variant,
     )> {
         match *self.prefill.get(&(output, lanes))? {
-            crate::tuning::attention::Choice::Mma { variant } => {
-                Some((&mut self.mma.as_mut()?.support, variant))
-            }
-            crate::tuning::attention::Choice::MmaF16 => Some((
+            Choice::Mma { variant } => Some((&mut self.mma.as_mut()?.support, variant)),
+            Choice::MmaF16 => Some((
                 &mut self.mma_f16.as_mut()?.support,
                 super::super::attention_mma::catalog::Variant::Sm120,
             )),
@@ -484,12 +465,10 @@ impl Workspace {
         lanes: usize,
     ) -> Option<&super::super::attention_oxide::Support> {
         match self.prefill.get(&(output, lanes)) {
-            Some(crate::tuning::attention::Choice::RustSimt) => self.oxide.as_ref(),
-            Some(crate::tuning::attention::Choice::SharedKv) => self.shared.as_ref(),
-            Some(crate::tuning::attention::Choice::VectorSharedKv) => self.vector.as_ref(),
-            Some(crate::tuning::attention::Choice::VectorSharedKvCombined) => {
-                self.combined.as_ref()
-            }
+            Some(Choice::RustSimt) => self.oxide.as_ref(),
+            Some(Choice::SharedKv) => self.shared.as_ref(),
+            Some(Choice::VectorSharedKv) => self.vector.as_ref(),
+            Some(Choice::VectorSharedKvCombined) => self.combined.as_ref(),
             _ => None,
         }
     }
@@ -530,7 +509,7 @@ impl Workspace {
         dim: usize,
         window: i32,
         scales: [f32; 2],
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let work = self
             .buffers
             .get_mut(&(heads, dim))
@@ -555,7 +534,7 @@ impl Workspace {
                 dim.to_string(),
                 (heads / kv_heads).to_string(),
                 parts.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         scope.record(

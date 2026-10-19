@@ -1,7 +1,9 @@
 //! Exact finite F32 greedy selection; only token IDs and validation flags leave the GPU.
 use crate::device::{CudaDevice, device_error};
+use cutile::error::tensor_error;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use std::result::Result as StdResult;
 
 /// Candidates to measure per device and row/vocabulary geometry before production selection.
 pub const TILE_SEARCH: [usize; 4] = [256, 512, 1024, 2048];
@@ -43,11 +45,7 @@ impl Greedy {
                 .map_err(device_error)?,
         })
     }
-    pub fn record(
-        &mut self,
-        scope: &Scope,
-        logits: &Tensor<f32>,
-    ) -> std::result::Result<(), DeviceError> {
+    pub fn record(&mut self, scope: &Scope, logits: &Tensor<f32>) -> StdResult<(), DeviceError> {
         self.record_partials(scope, logits)?;
         scope.record(
             kernels::finish(
@@ -72,13 +70,13 @@ impl Greedy {
         logits: &Tensor<f32>,
         output: &mut Tensor<i32>,
         offset: usize,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         if !output.size().is_multiple_of(2)
             || offset
                 .checked_add(self.rows)
                 .is_none_or(|end| end > output.size() / 2)
         {
-            return Err(cutile::error::tensor_error("greedy output row range").into());
+            return Err(tensor_error("greedy output row range").into());
         }
         self.record_partials(scope, logits)?;
         scope.record(
@@ -102,7 +100,7 @@ impl Greedy {
         &mut self,
         scope: &Scope,
         logits: &Tensor<f32>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let input = logits.view(&[self.rows, self.vocabulary])?;
         scope.record(
             kernels::partials(

@@ -1,8 +1,10 @@
 use super::{Completion, Shared};
+use infer_core::set::BoundedSet;
 use infer_core::{Error, Result, StateId};
 use infer_gpu_api::BatchLease;
 use infer_ir::ExecutionProgram;
 use infer_spi::BackendProvider;
+use std::thread::park_timeout;
 use std::{sync::Arc, sync::atomic::Ordering, sync::mpsc, time::Duration};
 
 /// Control commands serviced before a pending compute submission is allowed to launch.
@@ -25,7 +27,7 @@ struct Flight<T> {
 }
 pub(super) struct Worker<B: BackendProvider> {
     pub backend: B,
-    pub states: infer_core::set::BoundedSet<StateId>,
+    pub states: BoundedSet<StateId>,
     program: Arc<ExecutionProgram>,
     pub shared: Arc<Shared>,
     receiver: mpsc::Receiver<Job>,
@@ -44,7 +46,7 @@ impl<B: BackendProvider> Worker<B> {
         receiver: mpsc::Receiver<Job>,
         submissions: infer_gpu_api::Consumer<BatchLease>,
         completions: infer_gpu_api::Producer<BatchLease>,
-        states: infer_core::set::BoundedSet<StateId>,
+        states: BoundedSet<StateId>,
     ) -> Self {
         let config = shared.config;
         Self {
@@ -296,7 +298,7 @@ impl<B: BackendProvider> Worker<B> {
                 }
                 break;
             }
-            std::thread::park_timeout(if self.flight.is_some() {
+            park_timeout(if self.flight.is_some() {
                 Duration::from_micros(poll_us)
             } else {
                 Duration::from_secs(1)

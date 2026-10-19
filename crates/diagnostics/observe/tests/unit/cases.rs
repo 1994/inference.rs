@@ -1,7 +1,10 @@
 use super::*;
+use infer_core::event::event_ring;
 use infer_core::{RequestId, Result, event::EventKind, event::ObjectKind, event::SemanticEvent};
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 const fn event(kind: EventKind, id: u64, clock: u64, arg0: u64, arg1: u64) -> SemanticEvent {
     SemanticEvent {
@@ -60,7 +63,7 @@ fn filtered_cursor_discloses_eviction_and_remains_non_destructive() {
 #[test]
 fn metric_collection_survives_trace_ring_overflow() {
     let mut metrics = RuntimeMetrics::default();
-    let (mut writer, mut reader) = infer_core::event::event_ring(1);
+    let (mut writer, mut reader) = event_ring(1);
     for record in [
         event(EventKind::Accepted, 1, 0, 0, 0),
         event(EventKind::FirstToken, 1, 5, 5, 0),
@@ -182,7 +185,7 @@ fn prometheus_histograms_are_cumulative_and_labels_have_bounded_cardinality() {
 fn shared_window_survives_tail_mutation_and_multiple_page_evictions() -> Result<()> {
     for capacity in [1, 2, 127, 128, 129, 257] {
         let mut store = ObservationStore::new(capacity)?;
-        let mut oracle = std::collections::VecDeque::new();
+        let mut oracle = VecDeque::new();
         for sequence in 1..=512_u64 {
             let record = event(EventKind::Accepted, sequence % 7 + 1, sequence, 0, 0);
             store.record(record);
@@ -193,7 +196,7 @@ fn shared_window_survives_tail_mutation_and_multiple_page_evictions() -> Result<
         }
         let window = store.snapshot(true);
         let shared = store.snapshot(true);
-        assert!(std::sync::Arc::ptr_eq(
+        assert!(Arc::ptr_eq(
             &window.events.pages[0],
             &shared.events.pages[0]
         ));

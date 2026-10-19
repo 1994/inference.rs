@@ -1,6 +1,7 @@
 //! Delta-updated request projections and a bounded, reusable candidate window.
 use infer_core::{Error, ErrorCode, RequestId, Result};
 use infer_ir::{CostEstimate, CostQuery, ExecutionRole, ReadyWork};
+use std::ops::Deref;
 
 /// Inline capacity reserved for a placeholder tenant identity.
 const PLACEHOLDER_TENANT_CAPACITY: usize = 256;
@@ -93,7 +94,7 @@ impl ReadyWindow {
         &self.storage[..self.count]
     }
 }
-impl std::ops::Deref for ReadyWindow {
+impl Deref for ReadyWindow {
     type Target = [ReadyWork];
     fn deref(&self) -> &[ReadyWork] {
         self.as_slice()

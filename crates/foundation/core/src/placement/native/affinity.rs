@@ -1,5 +1,7 @@
 use super::mask::Mask;
+use crate::constants::MAX_TOPOLOGY_CPUS;
 use crate::{Error, Result};
+use std::io::Error as IoError;
 
 /// Bits in the legacy `cpu_set_t` bitmap that seeds the affinity probe.
 const CPU_SETSIZE_BITS: usize = 1024;
@@ -13,9 +15,8 @@ pub(super) fn current() -> Result<Mask> {
         if unsafe { libc::sched_getaffinity(0, mask.bytes(), mask.pointer_mut().cast()) } == 0 {
             return Ok(mask);
         }
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EINVAL) || bits >= crate::constants::MAX_TOPOLOGY_CPUS
-        {
+        let error = IoError::last_os_error();
+        if error.raw_os_error() != Some(libc::EINVAL) || bits >= MAX_TOPOLOGY_CPUS {
             return Err(Error::invalid(format!("read CPU affinity: {error}")));
         }
         bits *= 2;

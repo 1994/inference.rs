@@ -1,5 +1,6 @@
 //! Bounded CPU conversion for targets without a native FP4 element type.
 //! This expands stored NVFP4 weights; it cannot recover the pre-quantization model.
+use crate::constants::NVFP4_GROUP_SIZE;
 use infer_core::{Error, Result};
 
 /// E4M3 block scales above this code are non-finite.
@@ -51,10 +52,10 @@ pub fn to_bf16(
         .ok_or_else(|| Error::invalid("NVFP4 decoded shape overflow"))?;
     if rows == 0
         || columns == 0
-        || !columns.is_multiple_of(crate::constants::NVFP4_GROUP_SIZE)
+        || !columns.is_multiple_of(NVFP4_GROUP_SIZE)
         || elements.checked_mul(2).is_none_or(|n| n > byte_budget)
         || packed.len() != elements / 2
-        || scales.len() != elements / crate::constants::NVFP4_GROUP_SIZE
+        || scales.len() != elements / NVFP4_GROUP_SIZE
         || !global.is_finite()
         || global <= 0.0
     {

@@ -1,17 +1,30 @@
 //! Actual-weight W4A4 graph tuning. Every candidate preserves quantization and K order.
 use super::{MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, TilingTable, WARMUP_MS};
+use crate::constants::NVFP4_GROUP_SIZE;
+use crate::constants::NVFP4_QUANT_CODES_TILE;
+use crate::constants::NVFP4_QUANT_SCALES_TILE;
+use crate::constants::PROMPT_GEMM_TILE_ROWS;
+use crate::constants::QUANT_GEMM_TILE;
+use crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS;
+use crate::constants::prompt_gemm_tile_rows;
 use crate::resident::nvfp4_gemm::kernels;
 use crate::{
     device::{CudaDevice, DeviceProfile, device_error},
     mlp::ProjectionWeight,
 };
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::env::var_os;
+use std::fs::read_to_string;
+use std::path::Path;
+use std::result::Result as StdResult;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock, Weak},
@@ -28,15 +41,12 @@ const MEDIAN_INTERPOLATION: f32 = 0.5;
 
 /// Supported row-tile variants of the existing native scaled MMA kernels.
 const TILE_M_SEARCH: [usize; 3] = [
-    crate::constants::QUANT_GEMM_TILE[0],
-    crate::constants::PROMPT_GEMM_TILE_ROWS,
-    crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS,
+    QUANT_GEMM_TILE[0],
+    PROMPT_GEMM_TILE_ROWS,
+    WIDE_PROMPT_GEMM_TILE_ROWS,
 ];
 /// Supported output-column tile variants; the first is the conservative baseline.
-const TILE_N_SEARCH: [usize; 2] = [
-    crate::constants::QUANT_GEMM_TILE[1],
-    crate::constants::QUANT_GEMM_TILE[1] * 2,
-];
+const TILE_N_SEARCH: [usize; 2] = [QUANT_GEMM_TILE[1], QUANT_GEMM_TILE[1] * 2];
 /// The existing native K loop has plain and eight-stage compiler-prefetch variants.
 const LOOP_SEARCH: [MainLoop; 2] = [MainLoop::Plain, MainLoop::Prefetch8];
 /// Deterministic signed activation pattern used with the real loaded checkpoint weights.
@@ -141,7 +151,7 @@ impl ResidentGemmKey {
         kernel_fingerprint: String,
     ) -> Result<Self> {
         let [m, n, k] = shape;
-        let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+        let compile = CompileOptions::default();
         Ok(Self {
             hardware: serde_json::to_string(profile).map_err(device_error)?,
             driver_version,
@@ -175,8 +185,8 @@ pub struct GemmConfig {
 impl GemmConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
-            tile_n: crate::constants::QUANT_GEMM_TILE[1],
+            tile_m: prompt_gemm_tile_rows(rows),
+            tile_n: QUANT_GEMM_TILE[1],
             main_loop: MainLoop::Plain,
         }
     }
@@ -199,7 +209,7 @@ impl GemmConfig {
         qs: &Tensor<f8e4m3fn>,
         out: &mut Tensor<f32>,
         columns: usize,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let ProjectionWeight::Fp4(w, s, global) = weight else {
             return Err(DeviceError::Launch(
                 "resident tuning requires FP4 weights".into(),
@@ -428,7 +438,7 @@ fn verifications() -> &'static Verifications {
 
 /// Read the installed driver release/build rather than its supported CUDA API version.
 fn driver_build() -> Option<String> {
-    let version = std::fs::read_to_string("/proc/driver/nvidia/version").ok()?;
+    let version = read_to_string("/proc/driver/nvidia/version").ok()?;
     version
         .lines()
         .find(|line| line.starts_with("NVRM version:"))
@@ -446,15 +456,15 @@ fn kernel_fingerprint(
     use cutile::cutile_compiler::cuda_tile_runtime_utils as compiler;
     type Fingerprints = Mutex<BTreeMap<(String, [usize; GEMM_RANK]), String>>;
     static FINGERPRINTS: OnceLock<Fingerprints> = OnceLock::new();
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     let environment = format!(
         "{}:{}:{:?}:{:?}:{:?}:{:?}",
         device.profile()?.architecture,
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         compile,
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS"),
     );
     let memo = FINGERPRINTS.get_or_init(|| Mutex::new(BTreeMap::new()));
     let cached = memo
@@ -477,13 +487,13 @@ fn kernel_fingerprint(
     let mut packed = api::meta::<f4e2m1fnx2>(&[m, k / 2])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let mut scales = api::meta::<f8e4m3fn>(&[m, k / crate::constants::NVFP4_GROUP_SIZE])
+    let mut scales = api::meta::<f8e4m3fn>(&[m, k / NVFP4_GROUP_SIZE])
         .sync_on(&device.stream)
         .map_err(device_error)?;
     let weight = api::meta::<f4e2m1fnx2>(&[n, k / 2])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let weight_scales = api::meta::<f8e4m3fn>(&[n, k / crate::constants::NVFP4_GROUP_SIZE])
+    let weight_scales = api::meta::<f8e4m3fn>(&[n, k / NVFP4_GROUP_SIZE])
         .sync_on(&device.stream)
         .map_err(device_error)?;
     let mut output = api::meta::<f32>(&[m, n])
@@ -491,8 +501,8 @@ fn kernel_fingerprint(
         .map_err(device_error)?;
     let mut identities = vec![
         kernels::quantize(
-            (&mut packed).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
-            (&mut scales).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
+            (&mut packed).partition(NVFP4_QUANT_CODES_TILE),
+            (&mut scales).partition(NVFP4_QUANT_SCALES_TILE),
             &input,
             1.0,
         )
@@ -651,7 +661,7 @@ pub(crate) fn select(
     session: &ResidentTuningSession,
 ) -> GemmConfig {
     let baseline = GemmConfig::baseline(shape[0]);
-    if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
+    if var_os("INFER_CUDA_QUANT_TILE").is_some() {
         tracing::info!(target: "infer::tuning", ?shape, "manual quant tile override: excluded from tuning evidence");
         return baseline;
     }
@@ -727,7 +737,7 @@ fn selected_config(
     key: &ResidentGemmKey,
     table: Option<&TilingTable>,
     session: &ResidentTuningSession,
-    (autotune, path): (bool, Option<&std::path::Path>),
+    (autotune, path): (bool, Option<&Path>),
 ) -> Result<Option<(GemmConfig, &'static str)>> {
     let selected = match decision(table, key, autotune)? {
         Decision::Cached(config) => {
@@ -764,7 +774,7 @@ fn measured_config(
     scale: f32,
     key: &ResidentGemmKey,
     session: &ResidentTuningSession,
-    path: Option<&std::path::Path>,
+    path: Option<&Path>,
 ) -> Result<Option<GemmConfig>> {
     let baseline = GemmConfig::baseline(key.m);
     let entry = match tune(device, weight, scale, key.clone(), session) {
@@ -846,7 +856,7 @@ impl Captured {
         let mut packed = api::zeros::<f4e2m1fnx2>(&[m, k / 2])
             .sync_on(&device.stream)
             .map_err(device_error)?;
-        let mut scales = api::zeros::<f8e4m3fn>(&[m, k / crate::constants::NVFP4_GROUP_SIZE])
+        let mut scales = api::zeros::<f8e4m3fn>(&[m, k / NVFP4_GROUP_SIZE])
             .sync_on(&device.stream)
             .map_err(device_error)?;
         let mut output = api::zeros::<f32>(&[m, n])
@@ -855,8 +865,8 @@ impl Captured {
         let graph = CudaGraph::scope(&device.stream, |scope| {
             scope.record(
                 kernels::quantize(
-                    (&mut packed).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
-                    (&mut scales).partition(crate::constants::NVFP4_QUANT_SCALES_TILE),
+                    (&mut packed).partition(NVFP4_QUANT_CODES_TILE),
+                    (&mut scales).partition(NVFP4_QUANT_SCALES_TILE),
                     &input,
                     scale,
                 )
@@ -941,7 +951,7 @@ fn measure(
             .graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (first, second) = match order {
         MeasurementOrder::BaselineFirst => (baseline, candidate),
@@ -1005,7 +1015,7 @@ fn tune(
     key: ResidentGemmKey,
     session: &ResidentTuningSession,
 ) -> Result<Option<ResidentGemmEntry>> {
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if cfg!(debug_assertions)
         || compile.device_debug
         || compile.opt_level.is_some_and(|opt| opt != JIT_OPT_LEVEL)

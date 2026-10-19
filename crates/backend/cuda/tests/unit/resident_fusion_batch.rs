@@ -1,4 +1,6 @@
 use super::*;
+use std::panic::catch_unwind;
+use std::panic::resume_unwind;
 
 #[test]
 fn capability_limits_scratch_to_validated_layout() -> Result<()> {
@@ -46,8 +48,7 @@ fn row_reference_is_nested_and_unwind_safe() {
         assert!(DISABLED.get());
     });
     assert!(!DISABLED.get());
-    let unwind =
-        std::panic::catch_unwind(|| with_row_reference(|| std::panic::resume_unwind(Box::new(()))));
+    let unwind = catch_unwind(|| with_row_reference(|| resume_unwind(Box::new(()))));
     assert!(unwind.is_err());
     assert!(!DISABLED.get());
 }

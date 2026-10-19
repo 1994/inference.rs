@@ -1,4 +1,5 @@
 use infer_core::Result;
+use infer_core::credits::CreditPool;
 use infer_ir::{ExecutionInput, OutputReadout, TokenBuffer};
 
 #[test]
@@ -85,7 +86,7 @@ fn generated_suffix_publishes_intermediate_page_boundaries() -> Result<()> {
 }
 #[test]
 fn shared_results_keep_byte_credit_and_wire_shape_until_last_reader() -> Result<()> {
-    let pool = infer_core::credits::CreditPool::new(1, 16)?;
+    let pool = CreditPool::new(1, 16)?;
     let mut output = infer_ir::SharedOutput::from(vec![1.0f32, 2.0]);
     output.attach_credit(pool.reserve(8)?);
     let other = output.clone();

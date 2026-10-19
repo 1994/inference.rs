@@ -6,6 +6,8 @@ use crate::{
 };
 use infer_core::{Error, ModelId, Result};
 use serde_json::json;
+use std::env::var;
+use std::fs::read;
 
 fn greedy(logits: &[f32]) -> Result<u32> {
     assert_ne!(logits.len(), 0);
@@ -172,11 +174,10 @@ fn trajectory(
 #[ignore = "requires CUDA/checkpoint/failing52token inputs/safe-run; GPUselected versus full logits/crosscapacity join"]
 fn original_private_pool_gpu_greedy_lifecycle() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let model = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let path =
-        std::env::var("INFER_TEST_ROUTE_CASES").map_err(|e| Error::invalid(e.to_string()))?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_ROUTE_CASES").map_err(|e| Error::invalid(e.to_string()))?;
     let inputs: Vec<Vec<u32>> =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
+        serde_json::from_slice(&read(path).map_err(|e| Error::invalid(e.to_string()))?)
             .map_err(|e| Error::invalid(e.to_string()))?;
     assert_eq!(inputs.len(), 4);
     assert!(inputs.iter().all(|t| t.len() == 52));

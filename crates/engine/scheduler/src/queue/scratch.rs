@@ -1,6 +1,8 @@
 //! Preallocated candidate membership marks and the transient tenant merge heap.
 use super::FairKey;
 use infer_core::{Error, ErrorCode, Result};
+use std::collections::TryReserveError;
+use std::mem::replace;
 use std::{cmp::Reverse, collections::BinaryHeap};
 
 #[derive(Debug)]
@@ -13,9 +15,7 @@ impl CandidateScratch {
     pub fn new(capacity: usize) -> Result<Self> {
         let mut seen = Vec::new();
         let mut frontier = BinaryHeap::new();
-        let error = |error: std::collections::TryReserveError| {
-            Error::new(ErrorCode::Capacity, error.to_string())
-        };
+        let error = |error: TryReserveError| Error::new(ErrorCode::Capacity, error.to_string());
         seen.try_reserve_exact(capacity).map_err(error)?;
         frontier.try_reserve_exact(capacity).map_err(error)?;
         seen.resize(capacity, 0);
@@ -35,7 +35,7 @@ impl CandidateScratch {
         }
     }
     pub fn visit(&mut self, slot: usize) -> bool {
-        let previous = std::mem::replace(&mut self.seen[slot], self.generation);
+        let previous = replace(&mut self.seen[slot], self.generation);
         previous != self.generation
     }
     pub fn validate(&self, capacity: usize) -> Result<()> {

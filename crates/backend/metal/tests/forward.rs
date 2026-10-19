@@ -5,26 +5,36 @@ use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
 use infer_models::{ModelPackage, SafetensorsFile, TensorDtype, TensorHeader};
 use infer_spi::BackendProvider;
+use std::env::temp_dir;
+use std::error::Error;
+use std::fs::copy;
+use std::fs::create_dir_all;
+use std::fs::read;
+use std::fs::remove_dir_all;
+use std::fs::write;
+use std::process::id as process_id;
+use std::result::Result as StdResult;
+use std::thread::sleep;
 use std::{
     collections::BTreeMap, path::Path, path::PathBuf, sync::atomic::AtomicU64,
     sync::atomic::Ordering, time::Duration, time::Instant,
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
-type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = StdResult<T, Box<dyn Error>>;
 fn original(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples")
         .join(name)
 }
 fn fixture(name: &str, dtype: TensorDtype) -> TestResult<PathBuf> {
-    let root = std::env::temp_dir().join(format!(
+    let root = temp_dir().join(format!(
         "infer-native-{}-{}",
-        std::process::id(),
+        process_id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&root)?;
-    std::fs::copy(original(name).join("config.json"), root.join("config.json"))?;
+    create_dir_all(&root)?;
+    copy(original(name).join("config.json"), root.join("config.json"))?;
     let mut source = SafetensorsFile::open(original(name).join("model.safetensors"))?;
     let tensors = source.tensors.clone();
     let mut shards = [BTreeMap::new(), BTreeMap::new()];
@@ -56,10 +66,10 @@ fn fixture(name: &str, dtype: TensorDtype) -> TestResult<PathBuf> {
         let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
         bytes.extend(header);
         bytes.extend(payload);
-        std::fs::write(root.join(format!("weights-{at}.safetensors")), bytes)?;
+        write(root.join(format!("weights-{at}.safetensors")), bytes)?;
     }
     let index = serde_json::json!({"metadata":{"total_size":payloads.iter().map(Vec::len).sum::<usize>()},"weight_map":weight_map});
-    std::fs::write(
+    write(
         root.join("model.safetensors.index.json"),
         serde_json::to_vec(&index)?,
     )?;
@@ -144,7 +154,7 @@ fn execute(
             return Ok(outputs.remove(0).output);
         }
         assert!(Instant::now() < limit, "GPU completion timeout");
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
 }
 fn compare(expected: &ModelOutput, actual: &ModelOutput) -> TestResult {
@@ -208,7 +218,7 @@ fn sharded_bf16_and_f16_remain_native_and_match_f32_execution() -> TestResult {
                 &execute(&mut independent, &program, &tokens, tokens.len())?,
                 &execute(&mut fresh, &program, &tokens, tokens.len())?,
             )?;
-            std::fs::remove_dir_all(root)?;
+            remove_dir_all(root)?;
         }
     }
     Ok(())
@@ -220,7 +230,7 @@ fn layer_major_chunks_match_official_golden_and_reduce_dispatches() -> TestResul
     }
     for name in ["qwen-hybrid-tiny", "qwen-hybrid-grouped"] {
         let golden: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(original(name).join("golden.json"))?)?;
+            serde_json::from_slice(&read(original(name).join("golden.json"))?)?;
         let prefix = &golden["prefixes"][5];
         let tokens: Vec<u32> = serde_json::from_value(prefix["tokens"].clone())?;
         let expected = ModelOutput {

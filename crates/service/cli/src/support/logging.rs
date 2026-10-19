@@ -5,6 +5,7 @@
 //! machine-readable. The default level is `info`; `INFER_LOG` (or `RUST_LOG`) selects more
 //! detail, for example `INFER_LOG=infer=debug` adds per-weight load progress and per-request
 //! detail. A second `init` is ignored, so a re-entrant path cannot replace its own reporting.
+use std::io::stderr;
 use std::io::{IsTerminal, Write};
 use tracing_subscriber::EnvFilter;
 
@@ -15,15 +16,15 @@ pub fn init() {
         .unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_writer(stderr)
         .with_target(true)
-        .with_ansi(std::io::stderr().is_terminal())
+        .with_ansi(stderr().is_terminal())
         .try_init();
 }
 
 /// Flush stderr before a hard exit, so a reported failure is never lost to buffering.
 pub fn flush() {
-    let _ = std::io::stderr().flush();
+    let _ = stderr().flush();
 }
 
 /// MiB in one GiB, for sizes that round below a GiB.

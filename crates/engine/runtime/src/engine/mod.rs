@@ -3,7 +3,14 @@ mod diagnostics;
 mod history;
 mod inspection;
 mod invariants;
+use crate::cpu::storage::HostStorage;
+use crate::observation::Observations;
+use crate::pipeline::completion::cpu::OutputFlights;
+use crate::resource::ResourceWaiters;
+use crate::stages::worker::OutputCredit;
+use crate::stages::worker::OutputWorker;
 use crate::{RequestRecord, RuntimeConfig};
+use infer_core::map::BoundedMap;
 use infer_core::{
     Error, FinishReason, IdAllocator, ModelId, ProgramId, RequestId, StepId, event::EventReader,
     event::EventWriter,
@@ -19,6 +26,7 @@ use infer_spi::{
 };
 use infer_state::{SequenceStateManager, StateSnapshot};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{collections::BTreeSet, collections::VecDeque};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,12 +91,12 @@ pub struct EngineFault {
     pub since_us: u64,
 }
 pub struct InFlight<T> {
-    pub step: std::sync::Arc<StepPlan>,
+    pub step: Arc<StepPlan>,
     pub ticket: T,
     pub submitted_us: u64,
     pub launch_acked: bool,
     pub cost_queries: infer_ir::SharedOutput<CostQuery>,
-    pub(crate) output_credit: Option<crate::stages::worker::OutputCredit>,
+    pub(crate) output_credit: Option<OutputCredit>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantService {
@@ -104,10 +112,10 @@ pub struct Engine<B: BackendProvider, P: SchedulingPolicy = CostAwarePolicy> {
     pub(crate) backend: B,
     pub(crate) policy: P,
     pub(crate) planning_workspace: P::Workspace,
-    pub(crate) host: crate::cpu::storage::HostStorage,
-    pub(crate) output_worker: Option<crate::stages::worker::OutputWorker>,
-    pub(crate) output_pending: crate::pipeline::completion::cpu::OutputFlights,
-    pub(crate) output_owners: infer_core::map::BoundedMap<RequestId, StepId>,
+    pub(crate) host: HostStorage,
+    pub(crate) output_worker: Option<OutputWorker>,
+    pub(crate) output_pending: OutputFlights,
+    pub(crate) output_owners: BoundedMap<RequestId, StepId>,
     pub(crate) workloads: Box<dyn WorkloadProvider + Send + Sync>,
     pub(crate) costs: Box<dyn CostModelProvider + Send + Sync>,
     pub(crate) admission_policy: Box<dyn AdmissionPolicy + Send + Sync>,
@@ -120,12 +128,12 @@ pub struct Engine<B: BackendProvider, P: SchedulingPolicy = CostAwarePolicy> {
     /// Single-sequence length limits resolved once from the model ceiling and service settings.
     pub(crate) limits: crate::ResolvedLengthLimits,
     pub(crate) state: SequenceStateManager,
-    pub(crate) resources_pending: crate::resource::ResourceWaiters,
+    pub(crate) resources_pending: ResourceWaiters,
     pub(crate) resource_epoch: u64,
     pub(crate) backend_resource_epoch: u64,
     pub(crate) seen_requests: BTreeSet<RequestId>,
     pub(crate) retired_request_floor: u64,
-    pub(crate) tenants: infer_core::map::BoundedMap<std::sync::Arc<str>, TenantService>,
+    pub(crate) tenants: BoundedMap<Arc<str>, TenantService>,
     pub(crate) ids: IdAllocator,
     pub(crate) inflight: Option<InFlight<B::Ticket>>,
     pub(crate) global_progress_epoch: u64,
@@ -138,5 +146,5 @@ pub struct Engine<B: BackendProvider, P: SchedulingPolicy = CostAwarePolicy> {
     pub(crate) dropped_actions: u64,
     pub(crate) diagnostic_snapshot: Option<crate::RuntimeSnapshot>,
     pub(crate) fault: Option<EngineFault>,
-    pub(crate) observations: crate::observation::Observations,
+    pub(crate) observations: Observations,
 }

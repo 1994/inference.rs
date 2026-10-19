@@ -2,6 +2,7 @@
 use infer_core::KernelId;
 use infer_ir::{BackendKind, CapabilityRequirements, DType, Operation, PrecisionPlan};
 use infer_spi::{KernelProvider, KernelRegistration, SourceLocation};
+use std::num::NonZeroU64;
 
 /// First kernel id assigned to this provider's operation registrations.
 const KERNEL_ID_BASE: u64 = 3000;
@@ -33,7 +34,7 @@ impl KernelProvider for CudaKernels {
         .map(|(i, operation)| KernelRegistration {
             backend: BackendKind::Cuda,
             id: KernelId::from_nonzero(
-                std::num::NonZeroU64::MIN.saturating_add((KERNEL_ID_BASE + i as u64) - 1),
+                NonZeroU64::MIN.saturating_add((KERNEL_ID_BASE + i as u64) - 1),
             ),
             operation,
             precision: PrecisionPlan::f32(),

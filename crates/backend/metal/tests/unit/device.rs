@@ -1,10 +1,11 @@
 use super::*;
+use objc::rc::autoreleasepool;
 #[test]
 fn tiled_prefill_and_decode_cover_partial_rows_columns_and_k_tiles() -> Result<()> {
     if Device::system_default().is_none() {
         return Ok(());
     }
-    objc::rc::autoreleasepool(|| {
+    autoreleasepool(|| {
         let gpu = MetalDevice::open()?;
         let dummy = gpu.zeros(1)?;
         for inner in [31, 32, 33, 63, 64, 65] {

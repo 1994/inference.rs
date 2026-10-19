@@ -12,6 +12,9 @@ mod state;
 #[path = "../../tests/unit/executor_state_tests.rs"]
 mod state_tests;
 mod submission;
+use crate::constants::F32_BYTES_U64;
+use crate::constants::MIB;
+use crate::constants::MIB_U64;
 use crate::{MetalKernels, device::MetalDevice};
 use forward::ForwardNode;
 use infer_core::{Error, ErrorCode, OpId, RequestId, Result, StateId, StepId, TensorId};
@@ -25,15 +28,15 @@ use std::{collections::BTreeMap, collections::VecDeque, sync::Arc, time::Instant
 /// Default token rows in a layer-major prefill chunk.
 const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
 /// Default temporary upload staging budget (4 MiB).
-const DEFAULT_STAGING_BYTES: usize = 4 * crate::constants::MIB;
+const DEFAULT_STAGING_BYTES: usize = 4 * MIB;
 /// Default device memory budget (512 MiB).
-const DEFAULT_MEMORY_BYTES: u64 = 512 * crate::constants::MIB_U64;
+const DEFAULT_MEMORY_BYTES: u64 = 512 * MIB_U64;
 /// Default tokens covered by one KV page.
 const DEFAULT_PAGE_TOKENS: usize = 16;
 /// Default op-trace ring capacity.
 const DEFAULT_TRACE_CAPACITY: usize = 8192;
 /// Default prefix-cache budget (16 MiB).
-const DEFAULT_PREFIX_CACHE_BYTES: u64 = 16 * crate::constants::MIB_U64;
+const DEFAULT_PREFIX_CACHE_BYTES: u64 = 16 * MIB_U64;
 /// Cap on the automatically sized KV pool when no block count is configured.
 const MAX_AUTO_KV_BLOCKS: u64 = 1024;
 
@@ -203,7 +206,7 @@ pub struct MetalBackend {
 }
 fn bytes(n: usize) -> Result<u64> {
     (n as u64)
-        .checked_mul(crate::constants::F32_BYTES_U64)
+        .checked_mul(F32_BYTES_U64)
         .ok_or_else(|| Error::invalid("Metal tensor size overflow"))
 }
 fn u32_size(n: usize) -> Result<u32> {

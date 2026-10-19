@@ -2,6 +2,7 @@ mod support;
 
 use infer_kernel_api::KernelRegistry;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::collections::BTreeMap;
 use support::ProtocolBackend;
 
 use infer_core::*;
@@ -54,7 +55,7 @@ fn request(id: u64, workload: Workload) -> CanonicalRequest {
             seed: 13,
             ..Default::default()
         },
-        extensions: std::collections::BTreeMap::new(),
+        extensions: BTreeMap::new(),
     }
 }
 fn workloads() -> Vec<CanonicalRequest> {

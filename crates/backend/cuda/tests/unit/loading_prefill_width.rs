@@ -1,5 +1,6 @@
 //! Real checkpoint, one weight upload, distinct prompt captures and exact state/readout gates.
 use super::{LoadOptions, LoadedModel};
+use crate::tuning::table_path;
 use crate::{
     device::{CudaDevice, device_error},
     resident::{BatchOutput, DeviceProgram},
@@ -8,6 +9,9 @@ use cuda_core::f8e4m3fn;
 use cutile::prelude::*;
 use infer_core::{Error, ModelId, Result};
 use serde_json::{Value, json};
+use std::env::var;
+use std::env::var_os;
+use std::fs::read;
 
 const NARROW: usize = 64;
 const WIDE: usize = 256;
@@ -291,7 +295,7 @@ fn exact_profile() -> Result<()> {
         "INFER_CUDA_FP8_LT_AUTOTUNE",
         "INFER_CUBLAS_PROJECTIONS",
     ] {
-        if std::env::var_os(variable).is_some() {
+        if var_os(variable).is_some() {
             return Err(Error::invalid(format!(
                 "exact width test rejects {variable}"
             )));
@@ -302,9 +306,9 @@ fn exact_profile() -> Result<()> {
 
 fn prompt() -> Result<(String, Vec<u32>)> {
     let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|error| Error::invalid(error.to_string()))?;
+        var("INFER_TEST_TOKENS").map_err(|error| Error::invalid(error.to_string()))?;
     let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(&tokens_path).map_err(|error| Error::invalid(error.to_string()))?,
+        &read(&tokens_path).map_err(|error| Error::invalid(error.to_string()))?,
     )
     .map_err(|error| Error::invalid(error.to_string()))?;
     if tokens.len() != PROMPT_TOKENS {
@@ -319,12 +323,11 @@ fn prompt() -> Result<(String, Vec<u32>)> {
 #[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS"]
 fn checkpoint_prefill_64_and_256_match_every_bit() -> Result<()> {
     exact_profile()?;
-    let path =
-        std::env::var("INFER_TEST_MODEL").map_err(|error| Error::invalid(error.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|error| Error::invalid(error.to_string()))?;
     let (tokens_path, tokens) = prompt()?;
-    let cache_path = crate::tuning::table_path()
+    let cache_path = table_path()
         .ok_or_else(|| Error::invalid("exact width test requires a frozen tuning table"))?;
-    let cache = std::fs::read(&cache_path).map_err(|error| Error::invalid(error.to_string()))?;
+    let cache = read(&cache_path).map_err(|error| Error::invalid(error.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -363,8 +366,7 @@ fn checkpoint_prefill_64_and_256_match_every_bit() -> Result<()> {
     let mut agreement = Agreement::default();
     compare_prompt(&loaded, &tokens, &mut wide, &mut narrow, &mut agreement)?;
     compare_continuation(&loaded, &tokens, &mut wide, &mut narrow, &mut agreement)?;
-    let cache_after =
-        std::fs::read(&cache_path).map_err(|error| Error::invalid(error.to_string()))?;
+    let cache_after = read(&cache_path).map_err(|error| Error::invalid(error.to_string()))?;
     agreement.report("final");
     assert!(
         cache == cache_after,

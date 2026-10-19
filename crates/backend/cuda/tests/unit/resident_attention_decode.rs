@@ -1,14 +1,16 @@
 use super::kernels;
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::CudaDevice;
 use cuda_core::f8e4m3fn;
+use cutile::bench::BenchOptions as CutileBenchOptions;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error;
 
 /// Identity block table for a KV arena of `capacity` tokens.
-fn block_table(
-    device: &CudaDevice,
-    capacity: usize,
-) -> Result<Arc<Tensor<i32>>, Box<dyn std::error::Error>> {
-    let blocks = capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS);
+fn block_table(device: &CudaDevice, capacity: usize) -> Result<Arc<Tensor<i32>>, Box<dyn Error>> {
+    let blocks = capacity.div_ceil(KV_BLOCK_TOKENS);
     let values: Vec<i32> = (0..blocks)
         .map(|b| i32::try_from(b).unwrap_or(i32::MAX))
         .collect();
@@ -22,8 +24,7 @@ fn decoded(code: u8) -> f32 {
 }
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn split_kv_matches_independent_causal_window_reference() -> Result<(), Box<dyn std::error::Error>>
-{
+fn split_kv_matches_independent_causal_window_reference() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (heads, kv_heads, dim) in [(4, 2, 32), (8, 8, 64), (16, 8, 128), (24, 4, 256)] {
@@ -37,7 +38,7 @@ fn check_geometry(
     heads: usize,
     kv_heads: usize,
     dim: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let capacity = 1024;
     let scale = f64::from(u32::try_from(dim)?).sqrt();
     let query: Vec<f32> = (0..heads * dim)
@@ -130,7 +131,7 @@ fn run<E: DType>(
     position: i32,
     window: i32,
     parts: usize,
-) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+) -> Result<Vec<f32>, Box<dyn Error>> {
     let heads = usize::try_from(q.shape()[0])?;
     let dim = usize::try_from(q.shape()[1])?;
     let kv_heads = usize::try_from(k.shape()[0])?;
@@ -158,7 +159,7 @@ fn run<E: DType>(
         dim.to_string(),
         (heads / kv_heads).to_string(),
         parts.to_string(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     let output = kernels::merge(
@@ -176,13 +177,13 @@ fn run<E: DType>(
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn split_kv_performance() -> Result<(), Box<dyn std::error::Error>> {
+fn split_kv_performance() -> Result<(), Box<dyn Error>> {
     use cutile::bench::BenchOptions;
     use std::time::Duration;
     if cfg!(debug_assertions) {
         return Err("performance requires release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|x| x != 3) {
         return Err("performance requires CUDA O3".into());
     }
@@ -203,11 +204,11 @@ fn split_kv_performance() -> Result<(), Box<dyn std::error::Error>> {
 
 fn bench_case(
     device: &CudaDevice,
-    options: &cutile::bench::BenchOptions,
+    options: &CutileBenchOptions,
     heads: usize,
     kv_heads: usize,
     dim: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     use cutile::bench::do_bench_paired;
     for capacity in [128, 512, 4096, 16384] {
         let q = device.upload(vec![0.125_f32; heads * dim], &[heads, dim])?;
@@ -240,7 +241,7 @@ fn bench_case(
                     f32::DTYPE.as_str().into(),
                     dim.to_string(),
                     (heads / kv_heads).to_string(),
-                    crate::constants::KV_BLOCK_TOKENS.to_string(),
+                    KV_BLOCK_TOKENS.to_string(),
                 ]),
             )?;
             Ok(())
@@ -269,7 +270,7 @@ fn bench_case(
                         dim.to_string(),
                         (heads / kv_heads).to_string(),
                         parts.to_string(),
-                        crate::constants::KV_BLOCK_TOKENS.to_string(),
+                        KV_BLOCK_TOKENS.to_string(),
                     ]),
                 )?;
                 scope.record(
@@ -290,13 +291,13 @@ fn bench_case(
                     baseline
                         .launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
                 |_| {
                     candidate
                         .launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
             )?;
             println!(

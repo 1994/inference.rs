@@ -10,6 +10,8 @@ pub const DEFAULT_TILE_COLUMNS: usize = 256;
 /// Device-only geometry and budget constants; empty without the `cuda` feature.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 mod device {
+    use std::env::var;
+    use std::sync::OnceLock;
     /// Middle prompt capture bucket, including quantized recurrent models.
     pub const MID_PREFILL_LANES: usize = 64;
     /// Head-major KV cache axes: heads, capacity, head dimension.
@@ -85,9 +87,9 @@ mod device {
     /// can move the prompt tile the decode sweep in §11.7 never covered. Capture-time read, once
     /// per process, exactly like the other experiment switches.
     fn quant_gemm_tile_override() -> Option<[usize; 2]> {
-        static TILE: std::sync::OnceLock<Option<[usize; 2]>> = std::sync::OnceLock::new();
+        static TILE: OnceLock<Option<[usize; 2]>> = OnceLock::new();
         *TILE.get_or_init(|| {
-            let value = std::env::var("INFER_CUDA_QUANT_TILE").ok()?;
+            let value = var("INFER_CUDA_QUANT_TILE").ok()?;
             let (rows, columns) = value.split_once(',')?;
             let tile = [rows.trim().parse().ok()?, columns.trim().parse().ok()?];
             (tile[0] > 0 && tile[1] > 0).then_some(tile)

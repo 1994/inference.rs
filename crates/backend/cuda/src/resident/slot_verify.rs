@@ -6,11 +6,18 @@ use super::{
     fp8_cache::Fp8Caches,
     profile,
 };
+use crate::constants::CB_DECODE_SLOTS;
+use crate::constants::F32_BYTES;
+use crate::constants::INACTIVE_LANE_STATE_POSITION;
+use crate::constants::MAX_VERIFICATION_WIDTH;
+use crate::constants::METADATA_FIELDS;
 use crate::constants::MIB;
+use crate::device::Readbacks;
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_ir::{StateKind, TensorOp, TensorStorage};
+use std::slice::from_ref;
 
 /// Pooled speculation graph: `slots` state sets × `verify` contiguous candidate lanes each,
 /// flattened into one batched arena so every weight still loads once per replay. Lane
@@ -25,7 +32,7 @@ pub(super) struct SlotVerifyGraph {
     /// `restore[slot][accepted]` reinstates the conv/delta snapshot taken after that many
     /// candidate lanes of the slot committed; a fully accepted chain never restores.
     restore: Vec<Vec<CudaGraph<()>>>,
-    readbacks: crate::device::Readbacks,
+    readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
     metadata: Vec<Tensor<i32>>,
     hidden: Arc<Tensor<f32>>,
@@ -76,7 +83,7 @@ impl BatchBuilder<'_> {
                     {
                         bytes = source
                             .size()
-                            .checked_mul(crate::constants::F32_BYTES)
+                            .checked_mul(F32_BYTES)
                             .and_then(|n| bytes.checked_add(n))
                             .ok_or_else(|| Error::invalid("slot verify checkpoint overflow"))?;
                         if bytes > budget {
@@ -220,8 +227,8 @@ impl BatchBuilder<'_> {
         let lanes = slots
             .checked_mul(verify)
             .ok_or_else(|| Error::invalid("slot verify width overflow"))?;
-        if !(2..=crate::constants::CB_DECODE_SLOTS).contains(&slots)
-            || !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&verify)
+        if !(2..=CB_DECODE_SLOTS).contains(&slots)
+            || !(2..=MAX_VERIFICATION_WIDTH).contains(&verify)
             || lane_fp8.len() != slots
             || self.lane_external.len() < lanes
             || self.lane_fusion.len() < lanes
@@ -238,7 +245,7 @@ impl BatchBuilder<'_> {
         let mut metadata = Vec::with_capacity(lanes);
         for _ in 0..lanes {
             metadata.push(
-                api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+                api::zeros::<i32>(&[METADATA_FIELDS])
                     .sync_on(&self.device.stream)
                     .map_err(device_error)?,
             );
@@ -280,7 +287,7 @@ impl BatchBuilder<'_> {
         let logits = take_result(&mut arena, self.graph.logits)?;
         let token_readout = super::token_readout::TokenReadout::new(
             self.device,
-            std::slice::from_ref(&logits),
+            from_ref(&logits),
             slots * verify,
             logits.size() / (slots * verify),
             self.weights,
@@ -289,7 +296,7 @@ impl BatchBuilder<'_> {
             token_readout,
             graph,
             restore,
-            readbacks: crate::device::Readbacks::default(),
+            readbacks: Readbacks::default(),
             metadata,
             hidden,
             logits,
@@ -332,7 +339,7 @@ impl SlotVerifyGraph {
                     i32::try_from(state_pos).map_err(device_error)?,
                     0,
                 ],
-                None => [0, 0, crate::constants::INACTIVE_LANE_STATE_POSITION, 0],
+                None => [0, 0, INACTIVE_LANE_STATE_POSITION, 0],
             };
             super::metadata::update(&self.graph, metadata, values)?;
         }

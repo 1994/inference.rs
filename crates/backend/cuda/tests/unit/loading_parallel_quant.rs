@@ -7,6 +7,8 @@ use crate::{
     },
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
+use std::fs::read;
 fn equal(a: &[f32], b: &[f32], field: &str) {
     assert_eq!(a.len(), b.len(), "{field}");
     assert!(a.iter().chain(b).all(|x| x.is_finite()), "{field}");
@@ -53,13 +55,13 @@ fn states(loaded: &LoadedModel, a: &DeviceProgram, b: &DeviceProgram, label: &st
 #[ignore = "requires CUDA/checkpoint/frozen511tokens/safe-run; actual parallel quantization and complete state equivalence"]
 fn full_model_parallel_quantization_census() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let model = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let path = std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens: Vec<u32> =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
+        serde_json::from_slice(&read(path).map_err(|e| Error::invalid(e.to_string()))?)
             .map_err(|e| Error::invalid(e.to_string()))?;
     assert_eq!(tokens.len(), 511);
-    let width = std::env::var("INFER_TEST_PREFILL_WIDTH")
+    let width = var("INFER_TEST_PREFILL_WIDTH")
         .unwrap_or_else(|_| "64".into())
         .parse::<usize>()
         .map_err(|e| Error::invalid(e.to_string()))?;

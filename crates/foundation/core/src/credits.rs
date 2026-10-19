@@ -1,5 +1,9 @@
 //! Fixed leases keep host credits charged until the last request, worker, or output reader ends.
 use crate::{Error, ErrorCode, Result};
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::fmt::Result as FmtResult;
+use std::process::abort;
 use std::{
     sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::AtomicU32,
     sync::atomic::AtomicUsize, sync::atomic::Ordering,
@@ -113,7 +117,7 @@ impl Clone for CreditLease {
     fn clone(&self) -> Self {
         let readers = self.slot.readers.fetch_add(1, Ordering::Relaxed);
         if readers > usize::MAX / 2 {
-            std::process::abort();
+            abort();
         }
         Self {
             slot: self.slot.clone(),
@@ -148,8 +152,8 @@ impl Drop for CreditLease {
         }
     }
 }
-impl std::fmt::Debug for CreditLease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for CreditLease {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("CreditLease")
             .field("generation", &self.generation)
             .field("units", &self.slot.units.load(Ordering::Acquire))

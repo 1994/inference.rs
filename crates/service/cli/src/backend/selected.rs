@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 use super::metal;
 use super::{BackendChoice, Selection, cuda, cuda_available, metal_available, resolve};
+use crate::constants::MIB_U64;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use infer_backend_cuda::{
     executor::{CudaBackend, CudaTicket},
@@ -15,6 +16,8 @@ use infer_ir::{
 };
 use infer_kernel_api::KernelRegistry;
 use infer_spi::BackendProvider;
+use std::path::Path;
+use std::sync::Arc;
 
 pub enum SelectedBackend {
     #[cfg(all(target_os = "linux", feature = "cuda"))]
@@ -262,7 +265,7 @@ impl BackendProvider for SelectedBackend {
     fn tracks_reservation_intent(&self) -> bool {
         forward!(self, tracks_reservation_intent)
     }
-    fn set_waker(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+    fn set_waker(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
         forward!(self, set_waker, wake);
     }
 
@@ -406,18 +409,14 @@ impl BackendProvider for SelectedBackend {
         }
     }
 }
-pub fn load(
-    path: &std::path::Path,
-    memory_mib: u64,
-    selection: &Selection,
-) -> Result<SelectedBackend> {
+pub fn load(path: &Path, memory_mib: u64, selection: &Selection) -> Result<SelectedBackend> {
     let choice = resolve(selection.kind, cuda_available(), metal_available())?;
     // Zero means "derive the budget from the device"; every backend resolves it locally.
     let memory_bytes = if memory_mib == 0 {
         0
     } else {
         memory_mib
-            .checked_mul(crate::constants::MIB_U64)
+            .checked_mul(MIB_U64)
             .ok_or_else(|| Error::invalid("device budget overflow"))?
     };
     match choice {

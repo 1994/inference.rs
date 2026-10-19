@@ -1,4 +1,5 @@
 use super::*;
+use std::thread::spawn;
 
 /// Arbitrary prefix token count sent through a pooled reply cell.
 const PREFIX_TOKEN_COUNT: usize = 8;
@@ -49,7 +50,7 @@ fn acknowledgement_and_cancel_races_never_reuse_a_live_cell() -> Result<()> {
     let pool = ResourcePool::new(1)?;
     for _ in 0..100 {
         let (ticket, reply) = pool.channel()?;
-        let owner = std::thread::spawn(move || {
+        let owner = spawn(move || {
             let _ = reply.send(Ok(ResourceReply::Reserved));
         });
         drop(ticket);

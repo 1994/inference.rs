@@ -1,5 +1,6 @@
 mod support;
 
+use infer_core::event::CpuStage;
 use infer_core::{Error, ErrorCode, ModelId, RequestId, Result};
 use infer_ir::{CanonicalRequest, PrecisionPlan, WorkloadOutput};
 use infer_kernel_api::KernelRegistry;
@@ -139,7 +140,7 @@ fn cpu_stage_service_is_exported_separately_from_device_execution() -> Result<()
     let mut output = Vec::with_capacity(4);
     drain(&mut engine, &mut output)?;
     let metrics = engine.prometheus();
-    for stage in infer_core::event::CpuStage::LABELS {
+    for stage in CpuStage::LABELS {
         assert!(metrics.contains(&format!("infer_cpu_{stage}_seconds_count")));
     }
     Ok(())

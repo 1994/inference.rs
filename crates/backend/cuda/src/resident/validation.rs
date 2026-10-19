@@ -1,7 +1,9 @@
 use super::ProgramWeights;
+use crate::constants::MAX_HIDDEN_SIZE;
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, TensorOp, TensorStorage};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// `GatedNorm` binds activation, gate and norm weight inputs.
 const GATED_NORM_INPUTS: usize = 3;
@@ -87,7 +89,7 @@ pub(super) fn validate(graph: &DataflowGraph, weights: &ProgramWeights) -> Resul
             }
         }
     }
-    let bank_ids: std::collections::BTreeSet<_> = graph
+    let bank_ids: BTreeSet<_> = graph
         .nodes
         .iter()
         .filter(|node| matches!(node.op, TensorOp::ExpertLinear { .. }))
@@ -114,7 +116,7 @@ fn validate_norm(
     offset: f32,
 ) -> Result<()> {
     if dimension == 0
-        || dimension > crate::constants::MAX_HIDDEN_SIZE
+        || dimension > MAX_HIDDEN_SIZE
         || input != output
         || !input.is_multiple_of(dimension)
         || !epsilon.is_finite()

@@ -4,8 +4,12 @@ use super::{
     capture_state::value_block,
     recurrent_checkpoint::checkpoint,
 };
+use crate::constants::CONV_KERNEL_SIZE;
+use crate::constants::CONV_KERNEL_TILE;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
+#[cfg(test)]
+use std::cell::Cell;
 
 impl Capture<'_> {
     /// Record only a conv/delta row that has a rollback snapshot. Other row captures
@@ -73,7 +77,7 @@ impl Capture<'_> {
         let output = match node.op {
             TensorOp::Conv {
                 channels,
-                kernel: crate::constants::CONV_KERNEL_SIZE,
+                kernel: CONV_KERNEL_SIZE,
             } => self.checkpoint_conv(node, output, &mut state, snapshot, channels)?,
             TensorOp::Delta {
                 key_heads,
@@ -108,17 +112,17 @@ impl Capture<'_> {
             return Err(error("checkpoint convolution snapshot layout"));
         };
         self.scope.record(checkpoint::conv4_checkpoint(
-            (&mut output).partition([crate::constants::CONV_KERNEL_TILE]),
-            h0.partition([crate::constants::CONV_KERNEL_TILE]),
-            h1.partition([crate::constants::CONV_KERNEL_TILE]),
-            h2.partition([crate::constants::CONV_KERNEL_TILE]),
-            c0.partition([crate::constants::CONV_KERNEL_TILE]),
-            c1.partition([crate::constants::CONV_KERNEL_TILE]),
-            c2.partition([crate::constants::CONV_KERNEL_TILE]),
+            (&mut output).partition([CONV_KERNEL_TILE]),
+            h0.partition([CONV_KERNEL_TILE]),
+            h1.partition([CONV_KERNEL_TILE]),
+            h2.partition([CONV_KERNEL_TILE]),
+            c0.partition([CONV_KERNEL_TILE]),
+            c1.partition([CONV_KERNEL_TILE]),
+            c2.partition([CONV_KERNEL_TILE]),
             &self.input(node.inputs[0])?,
             &self
                 .input(node.inputs[1])?
-                .view(&[channels, crate::constants::CONV_KERNEL_SIZE])?,
+                .view(&[channels, CONV_KERNEL_SIZE])?,
             self.metadata,
         ))?;
         Ok(output)
@@ -182,8 +186,8 @@ pub(super) fn flat_checkpoint_enabled() -> bool {
 
 #[cfg(test)]
 thread_local! {
-    pub(super) static LEGACY_FLAT_CAPTURE: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
+    pub(super) static LEGACY_FLAT_CAPTURE: Cell<bool> =
+        const { Cell::new(false) };
 }
 
 #[cfg(test)]

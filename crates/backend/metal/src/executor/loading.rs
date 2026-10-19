@@ -1,17 +1,26 @@
 use super::{MetalBackend, MetalConfig, MetalDevice, allocate_kv, bytes};
+use crate::constants::COMPLETION_POOL_SIZE;
+use crate::constants::F32_BYTES;
+use crate::constants::F32_BYTES_U64;
+use crate::constants::MAX_PREFIX_ENTRIES;
+use crate::constants::MAX_TICKET_TASKS;
+use crate::constants::MIB;
 use infer_core::{Error, ErrorCode, Result, TensorId};
 use infer_ir::{DataflowGraph, ModelIr, TensorStorage};
+use infer_model_recipes::decoder::lower;
 use infer_models::{
     HostTensor, LoadOptions, ModelPackage, TensorDtype, TensorLoadPlan, WeightLoadPlan,
     WeightStorage, WeightTarget, load_weights,
 };
+use infer_state::blocks::BlockLease;
 use infer_state::{kv::KvCacheConfig, kv::KvCacheManager};
 use metal::Buffer;
+use objc::rc::autoreleasepool;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, collections::VecDeque, sync::Arc, time::Instant};
 
 /// Largest weight-upload chunk streamed into a staging buffer.
-const MAX_UPLOAD_CHUNK_BYTES: usize = 4 * crate::constants::MIB;
+const MAX_UPLOAD_CHUNK_BYTES: usize = 4 * MIB;
 /// Capacity of the backend resource pool, sized for admission fan-out.
 const RESOURCE_POOL_CAPACITY: usize = 260;
 
@@ -62,7 +71,7 @@ fn retained_bytes(graph: &DataflowGraph, weights: u64, config: &MetalConfig) -> 
         .into_iter()
         .try_fold(
             weights
-                .checked_add(crate::constants::F32_BYTES_U64)
+                .checked_add(F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("Metal retained size overflow"))?,
             |n, elements| {
                 n.checked_add(bytes(elements)?)
@@ -83,7 +92,7 @@ fn preflight(
         || config.block_size == 0
         || config.trace_capacity == 0
         || config.prefill_chunk_tokens == 0
-        || config.upload_staging_bytes < crate::constants::F32_BYTES
+        || config.upload_staging_bytes < F32_BYTES
     {
         return Err(Error::invalid("invalid Metal load/execution configuration"));
     }
@@ -131,7 +140,7 @@ impl MetalBackend {
         package.validate_weight_bindings()?;
         let model = package.imported.model.clone();
         let graph = package.graph.clone();
-        let gpu = objc::rc::autoreleasepool(MetalDevice::open)?;
+        let gpu = autoreleasepool(MetalDevice::open)?;
         preflight(&gpu, &graph, package.manifest.weights_bytes, &config)?;
         let options = LoadOptions {
             storage: WeightStorage::Native,
@@ -185,8 +194,8 @@ impl MetalBackend {
         weights: BTreeMap<String, HostTensor>,
         config: MetalConfig,
     ) -> Result<Self> {
-        let graph = infer_model_recipes::decoder::lower(&model)?;
-        let gpu = objc::rc::autoreleasepool(MetalDevice::open)?;
+        let graph = lower(&model)?;
+        let gpu = autoreleasepool(MetalDevice::open)?;
         let resident = graph
             .tensors
             .iter()
@@ -237,16 +246,16 @@ impl MetalBackend {
             blocks: kv.blocks,
             bytes_per_block: kv.block_bytes,
             prefix_bytes: config.prefix_cache_bytes,
-            max_prefixes: crate::constants::MAX_PREFIX_ENTRIES,
+            max_prefixes: MAX_PREFIX_ENTRIES,
         })?;
         let dummy = gpu.zeros(1)?;
         let state_recipe = infer_ir::StateRecipe::compile(
             &model,
             &graph,
             config.block_size,
-            crate::constants::F32_BYTES,
+            F32_BYTES,
             config.probe_bytes > 0,
-            size_of::<infer_state::blocks::BlockLease>(),
+            size_of::<BlockLease>(),
         )?;
         let mut backend = Self {
             owner: Arc::new(()),
@@ -268,9 +277,9 @@ impl MetalBackend {
             busy: None,
             inflight_states: vec![],
             inflight_pins: vec![],
-            ticket_work: Vec::with_capacity(crate::constants::MAX_TICKET_TASKS),
-            completion_pool: (0..crate::constants::COMPLETION_POOL_SIZE)
-                .map(|_| Vec::with_capacity(crate::constants::MAX_TICKET_TASKS))
+            ticket_work: Vec::with_capacity(MAX_TICKET_TASKS),
+            completion_pool: (0..COMPLETION_POOL_SIZE)
+                .map(|_| Vec::with_capacity(MAX_TICKET_TASKS))
                 .collect(),
             tokens_executed: 0,
             prefix_hits: 0,
@@ -309,7 +318,7 @@ fn upload_host(
     let mut formats = BTreeMap::new();
     let mut tensors = Vec::new();
     let mut resident_bytes = 0u64;
-    let chunk_elements = config.upload_staging_bytes / crate::constants::F32_BYTES;
+    let chunk_elements = config.upload_staging_bytes / F32_BYTES;
     let mut staging_bytes = 0;
     for spec in &graph.tensors {
         let TensorStorage::Weight { slot } = &spec.storage else {
@@ -335,7 +344,7 @@ fn upload_host(
             digest.update(&input);
             MetalDevice::write_bytes_idle(
                 &buffer,
-                (at * chunk_elements * crate::constants::F32_BYTES) as u64,
+                (at * chunk_elements * F32_BYTES) as u64,
                 &input,
             )?;
             staging_bytes = staging_bytes.max(input.len());
@@ -358,7 +367,7 @@ fn upload_host(
         source_bytes: resident_bytes,
         resident_bytes,
         staging_bytes,
-        chunk_bytes: chunk_elements * crate::constants::F32_BYTES,
+        chunk_bytes: chunk_elements * F32_BYTES,
     };
     Ok(ResidentWeights {
         buffers,

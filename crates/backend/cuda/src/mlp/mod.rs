@@ -3,11 +3,14 @@ mod kernels;
 mod pdl;
 mod pdl_consumers;
 mod projection;
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::MAX_HIDDEN_SIZE;
 use crate::{
     device::{CudaDevice, device_error},
     strategy::LinearTiling,
 };
 use cutile::prelude::*;
+use cutile::tile_kernel::validate_programmatic_dependent_launch;
 use infer_core::{Error, Result};
 use kernels::fused;
 pub use projection::ProjectionWeight;
@@ -47,15 +50,13 @@ impl MlpGraph {
     pub fn new(device: &CudaDevice, config: &MlpConfig, weights: &MlpWeights) -> Result<Self> {
         let d = config.hidden;
         if config.pdl {
-            cutile::tile_kernel::validate_programmatic_dependent_launch(
-                device.stream.device().ordinal(),
-            )
-            .map_err(device_error)?;
+            validate_programmatic_dependent_launch(device.stream.device().ordinal())
+                .map_err(device_error)?;
         }
         let n = config.intermediate;
         if d == 0
             || n == 0
-            || d > crate::constants::MAX_HIDDEN_SIZE
+            || d > MAX_HIDDEN_SIZE
             || n > MAX_INTERMEDIATE_SIZE
             || !config.epsilon.is_finite()
             || config.epsilon <= 0.0
@@ -113,24 +114,16 @@ impl MlpGraph {
                 )?;
             } else {
                 scope.record(
-                    fused::silu_mul(
-                        (&mut activated).partition([crate::constants::AUX_KERNEL_TILE]),
-                        &gate,
-                        &up,
-                    )
-                    .generics(vec![crate::constants::AUX_KERNEL_TILE.to_string()]),
+                    fused::silu_mul((&mut activated).partition([AUX_KERNEL_TILE]), &gate, &up)
+                        .generics(vec![AUX_KERNEL_TILE.to_string()]),
                 )?;
                 weights
                     .down
                     .record(scope, &mut down, &activated, n, config.tiling)?;
             }
             scope.record(
-                fused::residual(
-                    (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
-                    &down,
-                    &input,
-                )
-                .generics(vec![crate::constants::AUX_KERNEL_TILE.to_string()]),
+                fused::residual((&mut output).partition([AUX_KERNEL_TILE]), &down, &input)
+                    .generics(vec![AUX_KERNEL_TILE.to_string()]),
             )?;
             Ok(())
         })

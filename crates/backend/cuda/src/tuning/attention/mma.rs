@@ -5,6 +5,14 @@ use super::{
     capture::Captured,
     reference::{self, Fixture},
 };
+use crate::device::device_error;
+use crate::resident::ProgramWeights;
+use crate::resident::attention_oxide::shared_identity;
+use crate::resident::attention_oxide::vector_identity;
+use crate::tuning::MIN_CONFIRM_SPEEDUP;
+use crate::tuning::resolve_table;
+use crate::tuning::table_path;
+use crate::tuning::update_table;
 use crate::{
     device::CudaDevice,
     resident::attention_mma::{
@@ -16,6 +24,7 @@ use crate::{
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -38,7 +47,7 @@ impl Case {
         let minimum = if self.history == 0 {
             1.0 / MAX_SHORT_REGRESSION
         } else {
-            crate::tuning::MIN_CONFIRM_SPEEDUP
+            MIN_CONFIRM_SPEEDUP
         };
         self.cold.valid()
             && self.warm.valid()
@@ -151,7 +160,7 @@ fn memo() -> &'static Memo {
 pub(crate) fn prepare(
     device: &CudaDevice,
     graph: &infer_ir::DataflowGraph,
-    weights: &crate::resident::ProgramWeights,
+    weights: &ProgramWeights,
 ) -> Result<()> {
     let architecture = &device.profile()?.architecture;
     // A target FP16 program never consults the BF16 target search. The draft program and the
@@ -164,7 +173,7 @@ pub(crate) fn prepare(
         schema = if target_f16 { attention_mma::f16::SCHEMA } else { SCHEMA },
         "attention numerical profile"
     );
-    let mut shapes = std::collections::BTreeSet::new();
+    let mut shapes = BTreeSet::new();
     for lanes in weights.prompt_widths() {
         let mma_eligible = attention_mma::eligible(architecture, graph, weights, lanes);
         for node in &graph.nodes {
@@ -300,10 +309,10 @@ fn resolve(
         Sha256::digest(format!(
             "{}:{}:{}:{}:{}",
             key.fingerprint,
-            crate::resident::attention_oxide::shared_identity(),
-            crate::resident::attention_oxide::vector_identity(),
+            shared_identity(),
+            vector_identity(),
             attention_mma::artifact_identity(),
-            serde_json::to_string(&baseline).map_err(crate::device::device_error)?
+            serde_json::to_string(&baseline).map_err(device_error)?
         ))
     );
     if let Some(entry) = memo()
@@ -313,9 +322,9 @@ fn resolve(
     {
         return Ok(entry.selected);
     }
-    let path = crate::tuning::table_path();
+    let path = table_path();
     let table = if key.driver_build.is_some() {
-        crate::tuning::resolve_table(path.as_deref())?
+        resolve_table(path.as_deref())?
     } else {
         None
     };
@@ -342,7 +351,7 @@ fn resolve(
         return Ok(baseline);
     };
     let cached = key.driver_build.is_some()
-        && crate::tuning::update_table(path.as_deref(), |table| {
+        && update_table(path.as_deref(), |table| {
             table.resident_mma_attention.retain(|e| e.key != key);
             table.resident_mma_attention.push(entry.clone());
         });

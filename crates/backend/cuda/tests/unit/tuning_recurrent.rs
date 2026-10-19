@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 fn entry() -> Entry {
     let times = Times {
         baseline_ms: vec![2.0; MIN_REPS],
@@ -94,7 +95,7 @@ fn hardware_search_passes_independent_reference_and_reverse_confirmation() -> Re
         .ok_or_else(|| Error::invalid("hardware search did not complete evidence"))?;
     assert_eq!(entry.selected, selected);
     assert!(entry.valid());
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for _ in 0..48 {
         assert_eq!(
             select(&device, shape, false, &ResidentTuningSession::default()),

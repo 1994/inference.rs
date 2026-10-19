@@ -1,6 +1,25 @@
 //! Native model loading independent of diagnostic runners and CPU reference execution.
 mod kv_scales;
 mod weights;
+use crate::constants::FUSED_VERIFY_LANES;
+use crate::constants::MAX_MTP_DEPTH;
+use crate::constants::MAX_PREFILL_LANES;
+use crate::constants::MAX_VERIFICATION_WIDTH;
+use crate::constants::MID_PREFILL_LANES;
+use crate::constants::PREFILL_LANES;
+use crate::constants::WIDE_PREFILL_LANES;
+use crate::device::DeviceProfile;
+use crate::mlp::ProjectionWeight;
+use crate::resident::arena::ActivationArena;
+use crate::resident::slot_batch::SlotPool;
+use crate::tuning::attention::mma::prepare;
+use crate::vision::VisionWeights;
+use crate::vision::merger;
+use crate::vision::patch_embed;
+use crate::vision::patch_width;
+use crate::vision::tower;
+use infer_models::vision::gather_positions;
+use infer_models::vision::position_taps;
 pub use kv_scales::load as load_kv_scales;
 mod bindings;
 mod budget;
@@ -70,21 +89,21 @@ impl LoadOptions {
         if ![
             0,
             1,
-            crate::constants::FUSED_VERIFY_LANES,
-            crate::constants::PREFILL_LANES,
-            crate::constants::MID_PREFILL_LANES,
-            crate::constants::MAX_PREFILL_LANES,
-            crate::constants::WIDE_PREFILL_LANES,
+            FUSED_VERIFY_LANES,
+            PREFILL_LANES,
+            MID_PREFILL_LANES,
+            MAX_PREFILL_LANES,
+            WIDE_PREFILL_LANES,
         ]
         .contains(&self.prefill_width)
-            || self.verification_width > crate::constants::MAX_VERIFICATION_WIDTH
+            || self.verification_width > MAX_VERIFICATION_WIDTH
             || self.verification_width == 1
-            || (self.prefill_width == crate::constants::FUSED_VERIFY_LANES
-                && ![0, crate::constants::FUSED_VERIFY_LANES].contains(&self.verification_width))
+            || (self.prefill_width == FUSED_VERIFY_LANES
+                && ![0, FUSED_VERIFY_LANES].contains(&self.verification_width))
         {
             return Err(Error::invalid("CUDA model prefill/verification widths"));
         }
-        if self.mtp_depth > crate::constants::MAX_MTP_DEPTH {
+        if self.mtp_depth > MAX_MTP_DEPTH {
             return Err(Error::invalid("CUDA MTP draft depth"));
         }
         Ok(())
@@ -101,7 +120,7 @@ struct Draft {
 /// Mutable Conv/GDN/KV and activations are allocated separately for each request.
 pub struct LoadedModel {
     device: CudaDevice,
-    profile: crate::device::DeviceProfile,
+    profile: DeviceProfile,
     model: ModelIr,
     graph: DataflowGraph,
     weights: ProgramWeights,
@@ -121,7 +140,7 @@ pub struct LoadedModel {
 /// Encoding runs the real kernels; a family without an image encoder simply has no `LoadedVision`,
 /// so a caller holding one can never silently skip encoding.
 pub struct LoadedVision {
-    weights: crate::vision::VisionWeights,
+    weights: VisionWeights,
     encoder: infer_spi::ModalityEncoder,
 }
 
@@ -139,7 +158,7 @@ impl LoadedVision {
         let Some(encoder) = declared else {
             return Ok(None);
         };
-        let weights = crate::vision::VisionWeights::load(device, package, &encoder)?;
+        let weights = VisionWeights::load(device, package, &encoder)?;
         Ok(Some(Self { weights, encoder }))
     }
 
@@ -165,19 +184,15 @@ impl LoadedVision {
         if patches == 0 {
             return Err(Error::invalid("image patch grid is empty"));
         }
-        let width = crate::vision::patch_width(&self.encoder)?;
+        let width = patch_width(&self.encoder)?;
         if image.pixels.len() != patches * width {
             return Err(Error::invalid("image pixels do not match the patch grid"));
         }
         // The position contribution is a host-side gather of the learned table, then the tower
         // consumes patch embeddings and the merger folds each merge group back into text width.
-        let taps = infer_models::vision::position_taps(image.grid, &self.encoder)?;
-        let positions = infer_models::vision::gather_positions(
-            self.weights.position_table(),
-            &self.encoder,
-            &taps,
-        )?;
-        let embedded = crate::vision::patch_embed(
+        let taps = position_taps(image.grid, &self.encoder)?;
+        let positions = gather_positions(self.weights.position_table(), &self.encoder, &taps)?;
+        let embedded = patch_embed(
             device,
             &self.encoder,
             &self.weights,
@@ -185,7 +200,7 @@ impl LoadedVision {
             &positions,
             patches,
         )?;
-        let hidden = crate::vision::tower(
+        let hidden = tower(
             device,
             &self.weights,
             &self.encoder,
@@ -193,7 +208,7 @@ impl LoadedVision {
             image.grid,
             patches,
         )?;
-        crate::vision::merger(device, &self.weights, &self.encoder, &hidden, patches)
+        merger(device, &self.weights, &self.encoder, &hidden, patches)
     }
 }
 
@@ -241,14 +256,14 @@ impl LoadedModel {
             }));
         let automatic_prefill = options.prefill_width == 0;
         if automatic_prefill {
-            options.prefill_width = crate::constants::PREFILL_LANES;
+            options.prefill_width = PREFILL_LANES;
         }
         let mtp_depth = options.mtp_depth;
         let (mut weights, draft, tuning) =
             bindings::load(&device, &profile, &mut package, &options)?;
         if automatic_prefill
             && !weights.projections.iter().any(|(id, weight)| {
-                matches!(weight, crate::mlp::ProjectionWeight::Fp4(..))
+                matches!(weight, ProjectionWeight::Fp4(..))
                     && !weights.input_scales.contains_key(id)
             })
         {
@@ -320,11 +335,9 @@ impl LoadedModel {
     }
     fn prepare_attention(&self) -> Result<()> {
         let phase = phase::Phase::start("attention_tuning", "preparing hardware attention choices");
-        crate::tuning::attention::mma::prepare(&self.device, &self.graph, &self.weights)
-            .map_err(|e| phase.fail(&e))?;
+        prepare(&self.device, &self.graph, &self.weights).map_err(|e| phase.fail(&e))?;
         if let Some(draft) = &self.draft {
-            crate::tuning::attention::mma::prepare(&self.device, &draft.graph, &draft.weights)
-                .map_err(|e| phase.fail(&e))?;
+            prepare(&self.device, &draft.graph, &draft.weights).map_err(|e| phase.fail(&e))?;
         }
         phase.finish();
         Ok(())
@@ -364,7 +377,7 @@ impl LoadedModel {
         &self.graph
     }
     #[must_use]
-    pub const fn profile(&self) -> &crate::device::DeviceProfile {
+    pub const fn profile(&self) -> &DeviceProfile {
         &self.profile
     }
     #[must_use]
@@ -424,7 +437,7 @@ impl LoadedModel {
         &self,
         width: usize,
         capacity: usize,
-    ) -> Result<Option<crate::resident::slot_batch::SlotPool>> {
+    ) -> Result<Option<SlotPool>> {
         self.validate_capacity(capacity)?;
         let Some(draft) = &self.draft else {
             return Ok(None);
@@ -442,7 +455,7 @@ impl LoadedModel {
         {
             return Ok(None);
         }
-        crate::resident::slot_batch::SlotPool::new(
+        SlotPool::new(
             &self.device,
             &draft.graph,
             &draft.weights,
@@ -459,13 +472,9 @@ impl LoadedModel {
     /// graph is the pooled speculation graph of `mtp_depth + 1` candidate lanes per slot.
     /// # Errors
     /// Rejects invalid geometry, exceeded device budgets or CUDA capture failures.
-    pub(crate) fn slot_pool(
-        &self,
-        width: usize,
-        capacity: usize,
-    ) -> Result<crate::resident::slot_batch::SlotPool> {
+    pub(crate) fn slot_pool(&self, width: usize, capacity: usize) -> Result<SlotPool> {
         self.validate_capacity(capacity)?;
-        crate::resident::slot_batch::SlotPool::new(
+        SlotPool::new(
             &self.device,
             &self.graph,
             &self.weights,
@@ -502,35 +511,29 @@ fn select_prompt_width(
     weights: &mut ProgramWeights,
 ) -> Result<()> {
     let recurrent_limit = if quantized_recurrent {
-        crate::constants::MID_PREFILL_LANES
+        MID_PREFILL_LANES
     } else {
-        crate::constants::MAX_PREFILL_LANES
+        MAX_PREFILL_LANES
     };
     let mut selected = 0usize;
-    for width in [
-        crate::constants::MAX_PREFILL_LANES,
-        crate::constants::MID_PREFILL_LANES,
-    ]
-    .into_iter()
-    .filter(|&width| width <= recurrent_limit)
+    for width in [MAX_PREFILL_LANES, MID_PREFILL_LANES]
+        .into_iter()
+        .filter(|&width| width <= recurrent_limit)
     {
-        let needed = crate::resident::arena::ActivationArena::required_bytes(graph, width)?;
+        let needed = ActivationArena::required_bytes(graph, width)?;
         if needed as u64 <= arena_budget {
             selected = width;
             break;
         }
     }
-    if selected != 0 && selected < crate::constants::MAX_PREFILL_LANES {
+    if selected != 0 && selected < MAX_PREFILL_LANES {
         let rungs: &[usize] = if quantized_recurrent {
-            &[
-                crate::constants::WIDE_PREFILL_LANES,
-                crate::constants::MAX_PREFILL_LANES,
-            ]
+            &[WIDE_PREFILL_LANES, MAX_PREFILL_LANES]
         } else {
-            &[crate::constants::MAX_PREFILL_LANES]
+            &[MAX_PREFILL_LANES]
         };
         for &wide in rungs {
-            let needed = crate::resident::arena::ActivationArena::required_bytes(graph, wide)?;
+            let needed = ActivationArena::required_bytes(graph, wide)?;
             if needed as u64 <= arena_budget {
                 weights.narrow_prefill_width = selected;
                 selected = wide;

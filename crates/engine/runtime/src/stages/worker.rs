@@ -1,7 +1,11 @@
 //! Persistent completion cells and reader-counted leases bound compute, CPU work and acknowledgements.
 use super::{output::OutputAcknowledgement, output::OutputJob};
+use infer_core::placement::ThreadPlacement;
 use infer_core::{Error, ErrorCode, Result};
 use infer_spi::WorkloadProvider;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
+use std::time::Instant;
 use std::{
     sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::AtomicU8,
     sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc,
@@ -135,18 +139,13 @@ pub struct OutputWorker {
 impl OutputWorker {
     #[cfg(test)]
     pub fn new(workloads: &Arc<dyn WorkloadProvider + Send + Sync>, batch: usize) -> Result<Self> {
-        Self::placed(
-            workloads,
-            batch,
-            0,
-            &infer_core::placement::ThreadPlacement::default(),
-        )
+        Self::placed(workloads, batch, 0, &ThreadPlacement::default())
     }
     pub fn placed(
         workloads: &Arc<dyn WorkloadProvider + Send + Sync>,
         batch: usize,
         vocabulary: usize,
-        placement: &infer_core::placement::ThreadPlacement,
+        placement: &ThreadPlacement,
     ) -> Result<Self> {
         placement.scope(|| Self::initialize(workloads, batch, vocabulary, placement))
     }
@@ -154,7 +153,7 @@ impl OutputWorker {
         workloads: &Arc<dyn WorkloadProvider + Send + Sync>,
         batch: usize,
         vocabulary: usize,
-        placement: &infer_core::placement::ThreadPlacement,
+        placement: &ThreadPlacement,
     ) -> Result<Self> {
         if batch == 0 || batch > infer_gpu_api::MAX_SUBMISSION_BATCH {
             return Err(Error::invalid("output batch must fit completion bitset"));
@@ -200,11 +199,11 @@ impl OutputWorker {
             else {
                 break;
             };
-            let started = std::time::Instant::now();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                input.process(workloads, &mut scratch)
-            }))
-            .unwrap_or_else(|_| Err(Error::new(ErrorCode::Backend, "output provider panicked")));
+            let started = Instant::now();
+            let result = catch_unwind(AssertUnwindSafe(|| input.process(workloads, &mut scratch)))
+                .unwrap_or_else(|_| {
+                    Err(Error::new(ErrorCode::Backend, "output provider panicked"))
+                });
             credit.lease.publish(
                 index,
                 OutputAcknowledgement {

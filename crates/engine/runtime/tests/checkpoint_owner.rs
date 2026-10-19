@@ -4,6 +4,7 @@ use infer_core::{Error, ModelId, RequestId, Result};
 use infer_ir::{CanonicalRequest, PrecisionPlan};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig, RuntimeSnapshot};
+use std::thread::sleep;
 use std::{time::Duration, time::Instant};
 
 fn fixture() -> Result<(support::ProtocolBackend, KernelRegistry)> {
@@ -20,7 +21,7 @@ fn wait(limit: Instant) -> Result<()> {
     if Instant::now() >= limit {
         return Err(Error::invariant("checkpoint owner did not converge"));
     }
-    std::thread::sleep(Duration::from_micros(100));
+    sleep(Duration::from_micros(100));
     Ok(())
 }
 #[test]

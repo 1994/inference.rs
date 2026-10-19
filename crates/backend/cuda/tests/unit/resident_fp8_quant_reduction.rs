@@ -1,12 +1,14 @@
 use super::kernels;
 use crate::{device::CudaDevice, resident::fp8_gemm};
 use cuda_core::f8e4m3fn;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
+use std::error::Error;
 use std::time::Duration;
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 struct Case {
     rows: usize,
@@ -162,7 +164,7 @@ fn bits_and_cost() -> TestResult {
                     let run = |g: &CudaGraph<()>| {
                         g.launch()
                             .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                            .map_err(|e| tensor_error(&e.to_string()))
                     };
                     let (first, second) = if reverse { (&new, &old) } else { (&old, &new) };
                     let (a, b) =

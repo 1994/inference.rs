@@ -4,6 +4,11 @@ use crate::device::device_error;
 use cuda_core::sys::{CUdeviceptr, CUstream};
 use infer_core::{Error, Result};
 use sha2::{Digest, Sha256};
+use std::env::temp_dir;
+use std::env::var_os;
+use std::process::id;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::c_void,
@@ -36,18 +41,18 @@ pub struct Api {
     _runtime: libloading::Library,
 }
 fn cache_file(name: &str, bytes: &[u8]) -> Result<PathBuf> {
-    let directory = std::env::var_os("XDG_CACHE_HOME")
+    let directory = var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
+        .or_else(|| var_os("HOME").map(|p| PathBuf::from(p).join(".cache")))
+        .unwrap_or_else(temp_dir)
         .join("inference.rs/fa4");
     fs::create_dir_all(&directory).map_err(device_error)?;
     let digest = format!("{:x}", Sha256::digest(bytes));
     let path = directory.join(format!("{name}-{digest}.so"));
     if !path.exists() {
-        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let temporary = directory.join(format!(".{digest}-{}-{sequence}.tmp", std::process::id()));
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = directory.join(format!(".{digest}-{}-{sequence}.tmp", id()));
         let result = (|| {
             let mut file = OpenOptions::new()
                 .write(true)

@@ -3,6 +3,8 @@ use super::{
     super::{Choice, Shape},
     reference::{self, Fixture},
 };
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::METADATA_FIELDS;
 use crate::{
     device::{CudaDevice, device_error},
     resident::{attention_mma, attention_prefill::kernels},
@@ -12,6 +14,8 @@ use cutile::{
     prelude::*,
 };
 use infer_core::{Error, Result};
+use std::env::var_os;
+use std::result::Result as StdResult;
 struct Operands {
     query: Arc<Tensor<f32>>,
     append_keys: Arc<Tensor<f32>>,
@@ -34,7 +38,7 @@ impl Operands {
             query: device.upload(f.query.clone(), &[s.lanes, s.heads * s.dim])?,
             append_keys: device.upload(f.append_keys.clone(), &[s.lanes, s.kv_heads, s.dim])?,
             append_values: device.upload(f.append_values.clone(), &[s.lanes, s.kv_heads, s.dim])?,
-            metadata: device.upload(f.metadata.clone(), &[crate::constants::METADATA_FIELDS])?,
+            metadata: device.upload(f.metadata.clone(), &[METADATA_FIELDS])?,
             table: device.upload(f.table.clone(), &[f.table.len()])?,
             keys: copy(f.keys.clone())?
                 .reshape(&[s.kv_heads, f.capacity, s.dim])
@@ -53,7 +57,7 @@ impl Operands {
         f: &Fixture,
         choice: Choice,
         support: Option<&mut attention_mma::Support>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let s = f.shape;
         scope.record(
             kernels::append(
@@ -114,7 +118,7 @@ fn append_generics(s: Shape, capacity: usize) -> Vec<String> {
         s.dim.to_string(),
         capacity.to_string(),
         "0".into(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ]
 }
 fn compute_generics(s: Shape) -> Vec<String> {
@@ -123,7 +127,7 @@ fn compute_generics(s: Shape) -> Vec<String> {
         s.dim.to_string(),
         (s.heads / s.kv_heads).to_string(),
         s.heads.to_string(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ]
 }
 pub(super) struct Captured {
@@ -244,7 +248,7 @@ impl Captured {
 }
 pub(super) fn fingerprint(device: &CudaDevice, s: Shape) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let cap = (s.lanes * 2).next_multiple_of(crate::constants::KV_BLOCK_TOKENS);
+    let cap = (s.lanes * 2).next_multiple_of(KV_BLOCK_TOKENS);
     let mut keys = api::meta::<f32>(&[s.kv_heads, cap, s.dim])
         .sync_on(&device.stream)
         .map_err(device_error)?;
@@ -260,10 +264,10 @@ pub(super) fn fingerprint(device: &CudaDevice, s: Shape) -> Result<String> {
     let kv = api::meta::<f32>(&[s.lanes, s.kv_heads, s.dim])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let meta = api::meta::<i32>(&[crate::constants::METADATA_FIELDS])
+    let meta = api::meta::<i32>(&[METADATA_FIELDS])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let table = api::meta::<i32>(&[cap / crate::constants::KV_BLOCK_TOKENS])
+    let table = api::meta::<i32>(&[cap / KV_BLOCK_TOKENS])
         .sync_on(&device.stream)
         .map_err(device_error)?;
     let append = kernels::append(
@@ -305,8 +309,8 @@ pub(super) fn fingerprint(device: &CudaDevice, s: Shape) -> Result<String> {
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         format!("{:?}", CompileOptions::default()),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS"),
     ))
     .map_err(device_error)?;
     Ok(format!("{:x}", Sha256::digest(payload)))

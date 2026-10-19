@@ -1,4 +1,5 @@
 use super::{CachedPrefix, MetalBackend, MetalDevice};
+use crate::constants::MAX_PREFIX_ENTRIES;
 use infer_core::{Error, Result, StateId};
 use infer_ir::{ExecutionProgram, ExecutionTask, StepPlan};
 use infer_state::blocks::BlockLease;
@@ -80,7 +81,7 @@ impl MetalBackend {
                 let s = &self.sequences[&task.state];
                 if end.is_multiple_of(self.config.block_size)
                     && pending_bytes < self.config.prefix_cache_bytes
-                    && pending_cache.len() < crate::constants::MAX_PREFIX_ENTRIES
+                    && pending_cache.len() < MAX_PREFIX_ENTRIES
                     && let Some(cached) = self.cache_boundary(
                         command,
                         s,

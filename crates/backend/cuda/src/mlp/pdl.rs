@@ -4,6 +4,8 @@
     reason = "Audited PDL boundary: producer signals after stores; every consumer waits with a token before loads and graph owns all storage"
 )]
 use super::{ProjectionWeight, pdl_consumers::consumers};
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::NVFP4_GROUP_SIZE;
 use crate::strategy::LinearTiling;
 use cutile::{half::bf16, prelude::*};
 
@@ -35,7 +37,7 @@ pub(super) fn record_product(
     up: &Tensor<f32>,
 ) -> Result<(), DeviceError> {
     scope.record(producer::silu_mul(
-        output.partition([crate::constants::AUX_KERNEL_TILE]),
+        output.partition([AUX_KERNEL_TILE]),
         gate,
         up,
     ))?;
@@ -77,7 +79,7 @@ pub(super) fn record_down(
         ProjectionWeight::Fp4(w, s, global) => {
             generics.extend([
                 (tile.columns() / 2).to_string(),
-                (tile.columns() / crate::constants::NVFP4_GROUP_SIZE).to_string(),
+                (tile.columns() / NVFP4_GROUP_SIZE).to_string(),
             ]);
             let launch =
                 consumers::nvfp4(output.partition([tile.rows()]), input, w, s, global.recip())

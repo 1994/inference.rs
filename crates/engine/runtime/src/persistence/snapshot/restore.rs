@@ -1,5 +1,8 @@
 //! Restore responsibilities.
 use super::{Engine, ReplayAction, RequestRecord, RuntimeSnapshot};
+use crate::preparation::generation_capacity;
+use crate::preparation::retained_bytes;
+use crate::preparation::retained_tokens;
 use infer_core::{Error, Result};
 use infer_kernel_api::KernelRegistry;
 use infer_scheduler::{CalibratedCosts, CostAwarePolicy, ResourceAdmission};
@@ -152,18 +155,18 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
             ));
         }
         record.context.prompt = prompt.clone();
-        let capacity = crate::preparation::generation_capacity(&record.request);
+        let capacity = generation_capacity(&record.request);
         let credit = self
             .host
             .credits
-            .reserve(crate::preparation::retained_tokens(&record.plan, capacity)?)?;
+            .reserve(retained_tokens(&record.plan, capacity)?)?;
         let mut generated = Vec::with_capacity(capacity);
         generated.extend_from_slice(&record.generated);
         record.generated = generated.into();
         record.generated.attach_credit(credit.clone());
         record.context.prompt.attach_credit(credit.clone());
         record.host_lease = Some(credit);
-        let bytes = crate::preparation::retained_bytes(
+        let bytes = retained_bytes(
             &record.request,
             &record.plan,
             &self.model,

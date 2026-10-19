@@ -1,16 +1,19 @@
 //! Same weights, width, convolution and GEMM policy; only Delta capture differs.
+use crate::resident::DeviceProgram;
 use crate::{
     device::CudaDevice,
     loading::{LoadOptions, LoadedModel},
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
+use std::fs::read;
 
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)"]
 fn checkpoint_ordered_recurrence_matches_scalar_bits() -> Result<()> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = checkpoint_tokens()?;
-    let width = std::env::var("INFER_TEST_PREFILL_WIDTH")
+    let width = var("INFER_TEST_PREFILL_WIDTH")
         .ok()
         .map(|value| {
             value
@@ -114,12 +117,10 @@ fn checkpoint_ordered_recurrence_matches_scalar_bits() -> Result<()> {
 }
 
 fn checkpoint_tokens() -> Result<Vec<u32>> {
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     if tokens.is_empty() {
         return Err(Error::invalid("empty checkpoint test prompt"));
     }
@@ -143,8 +144,8 @@ fn compare(a: &[f32], b: &[f32], label: &str) {
 
 fn compare_all_states(
     loaded: &LoadedModel,
-    candidate: &crate::resident::DeviceProgram,
-    scalar: &crate::resident::DeviceProgram,
+    candidate: &DeviceProgram,
+    scalar: &DeviceProgram,
     label: &str,
 ) {
     assert_eq!(candidate.states().len(), scalar.states().len());
@@ -179,8 +180,8 @@ fn compare_all_states(
 
 fn compare_fp8_states(
     loaded: &LoadedModel,
-    candidate: &crate::resident::DeviceProgram,
-    scalar: &crate::resident::DeviceProgram,
+    candidate: &DeviceProgram,
+    scalar: &DeviceProgram,
     label: &str,
 ) {
     assert_eq!(candidate.fp8_states().len(), scalar.fp8_states().len());

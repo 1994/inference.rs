@@ -25,11 +25,15 @@ pub(crate) mod kernels {
     }
 }
 
+use crate::constants::CB_DECODE_SLOTS;
 use crate::{mlp::ProjectionWeight, strategy::LinearTiling};
+use cutile::half::bf16;
 use cutile::prelude::*;
+#[cfg(test)]
+use std::cell::Cell;
 const MAX_SMALL_OUTPUTS: usize = 128;
 const MIN_SMALL_COLUMNS: usize = 4096;
-const MAX_POOL_ROWS: usize = crate::constants::CB_DECODE_SLOTS;
+const MAX_POOL_ROWS: usize = CB_DECODE_SLOTS;
 pub(super) fn record(
     scope: &Scope,
     weight: &ProjectionWeight,
@@ -55,7 +59,7 @@ pub(super) fn record(
     };
     scope.record(
         kernels::dense(output.partition([1, tile.rows()]), input, weight).generics(vec![
-            cutile::half::bf16::DTYPE.as_str().into(),
+            bf16::DTYPE.as_str().into(),
             tile.rows().to_string(),
             tile.columns().to_string(),
             columns.to_string(),
@@ -71,16 +75,16 @@ const fn enabled() -> bool {
 }
 #[cfg(test)]
 std::thread_local! {
-    static ENABLED:std::cell::Cell<bool> = const {std::cell::Cell::new(true)};
-    static CAPTURES:std::cell::Cell<usize> = const {std::cell::Cell::new(0)};
+    static ENABLED:Cell<bool> = const {Cell::new(true)};
+    static CAPTURES:Cell<usize> = const {Cell::new(0)};
 }
 #[cfg(test)]
 fn enabled() -> bool {
-    ENABLED.with(std::cell::Cell::get)
+    ENABLED.with(Cell::get)
 }
 #[cfg(test)]
 pub fn captures() -> usize {
-    CAPTURES.with(std::cell::Cell::get)
+    CAPTURES.with(Cell::get)
 }
 #[cfg(test)]
 pub fn with_pool_gemv<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

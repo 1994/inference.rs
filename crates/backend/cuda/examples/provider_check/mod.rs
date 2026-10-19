@@ -1,6 +1,7 @@
 mod engine;
 mod lifecycle;
 mod pool;
+use cutile::jit_cache::enable_default;
 use infer_backend_cuda::{
     device::CudaDevice,
     executor::CudaBackend,
@@ -11,12 +12,15 @@ use infer_core::{Error, ModelId, ProgramId, RequestId, StateId};
 use infer_ir::{ExecutionInput, ExecutionTask, OutputReadout};
 use infer_models::{ChatMessage, ChatOptions, TextAssets};
 use infer_spi::BackendProvider;
+use std::env::args as env_args;
+use std::error::Error as StdError;
+use std::time::Instant;
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::args()
+pub fn run() -> Result<(), Box<dyn StdError>> {
+    let root = env_args()
         .nth(1)
         .ok_or_else(|| Error::invalid("model path required"))?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let assets = TextAssets::open(&root, 4096)?;
     let prompt = prompt(&assets)?;
     let loaded = LoadedModel::open(
@@ -24,9 +28,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         &root,
         ModelId::ONE,
         LoadOptions {
-            fp8_kv: std::env::args()
-                .any(|arg| arg == "--fp8-kv")
-                .then_some(true),
+            fp8_kv: env_args().any(|arg| arg == "--fp8-kv").then_some(true),
             prefill_width: 32,
             mtp_depth: mtp_depth(),
             ..Default::default()
@@ -102,7 +104,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             "passed": true, "model": root, "backend": identity, "capabilities": capabilities,
             "nodes": program.operations.len(), "requests": 2, "token_ids": sequences[0], "text": text,
             "state_admission_bytes": estimate, "prefill_width": 32, "pool": pool,
-            "fp8_kv": std::env::args().any(|arg| arg == "--fp8-kv"),
+            "fp8_kv": env_args().any(|arg| arg == "--fp8-kv"),
             "device_profile": profile,
             // Compiled ops are the per-step dispatch census the fusion estimate rests on.
             "operations": program.operations.len(),
@@ -110,7 +112,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             "graph_nodes": program.dataflow.nodes.len(),
             "mtp_depth": mtp_depth(), "prompt_tokens": prompt.len(),
             "draft_prime": draft_prime.map(|(steps, micros)| serde_json::json!({"steps": steps, "micros": micros})),
-            "pool_budget_pressure": std::env::args().any(|arg| arg == "--pool-budget-pressure"),
+            "pool_budget_pressure": env_args().any(|arg| arg == "--pool-budget-pressure"),
             "checks": ["readout", "state isolation", "cursor rejection", "kernel rejection", "duplicate reservation", "capacity rejection", "completion ownership", "one-shot poll", "reset replay", "release", "Engine two-request scheduling"],
             "scope": "synchronous BackendProvider actual-model acceptance, greedy functional check; not throughput baseline or continuous batching"
         }))?
@@ -197,7 +199,7 @@ fn prime_draft(
     if hidden.len() != prompt.len() {
         return Err(Error::invariant("MTP priming hidden rows"));
     }
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let mut steps = 0;
     for (position, token) in prompt.iter().enumerate().skip(1) {
         draft.step(
@@ -231,7 +233,7 @@ fn op_census(program: &infer_ir::ExecutionProgram) -> serde_json::Value {
 
 /// `--mtp-depth N` selects the speculative draft depth; absent or unparsable means disabled.
 fn mtp_depth() -> usize {
-    let mut args = std::env::args();
+    let mut args = env_args();
     while let Some(arg) = args.next() {
         if arg == "--mtp-depth" {
             return args

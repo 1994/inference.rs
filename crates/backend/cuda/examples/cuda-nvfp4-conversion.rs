@@ -1,11 +1,17 @@
 //! Exercise Hopper's weight conversion on an actual model matrix without loading the full model.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use infer_backend_cuda::nvfp4::to_bf16;
+#[cfg(target_os = "linux")]
+use std::env::args;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use cutile::half::bf16;
     use infer_backend_cuda::{device::CudaDevice, strategy::LinearTiling};
     use infer_core::{Error, ModelId};
     use infer_models::{QuantizedPackage, WeightEncoding, convert_float_bytes};
-    let root = std::env::args()
+    let root = args()
         .nth(1)
         .ok_or_else(|| Error::invalid("model path is required"))?;
     let mut package = QuantizedPackage::open(&root, ModelId::ONE)?;
@@ -32,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let global = package.read(global_source, 16)?;
     let global = convert_float_bytes(&global, global_source.dtype)?;
     let global: [u8; 4] = global.as_slice().try_into()?;
-    let converted = infer_backend_cuda::nvfp4::to_bf16(
+    let converted = to_bf16(
         &packed,
         &scales,
         f32::from_le_bytes(global),

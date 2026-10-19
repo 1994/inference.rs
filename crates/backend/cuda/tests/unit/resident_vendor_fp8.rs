@@ -1,13 +1,21 @@
 //! Opt-in vendor FP8 pilot: unchanged checkpoint codes, unchanged token quantizer, F32 output.
 //! These ignored tests execute CUDA only when the serial safe-run owner invokes them.
 use super::super::fp8_gemm::kernels;
+use crate::constants::quant_gemm_tile;
 use crate::device::{CudaDevice, vendor_fp8::Support};
+use crate::tuning::fp8_gemm::Choice as Fp8GemmChoice;
 use cuda_core::f8e4m3fn;
+use cutile::bench::BenchOptions;
+use cutile::bench::do_bench_paired;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
 use infer_models::{DeviceWeight, QuantizedPackage, WeightEncoding, convert_float_bytes};
+use std::env::var;
+use std::error::Error;
 use std::{sync::Arc, time::Duration};
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const STAGING: u64 = 2 * 1024 * 1024 * 1024;
 const ORACLE_SAMPLES: usize = 32;
 const ROWS: [usize; 4] = [1, 12, 64, 128];
@@ -162,7 +170,7 @@ impl<'a> Inputs<'a> {
                 ));
             }
         } else {
-            let tile = crate::constants::quant_gemm_tile(self.rows);
+            let tile = quant_gemm_tile(self.rows);
             scope.record(
                 kernels::matmul(
                     output.partition(tile),
@@ -429,7 +437,7 @@ fn device(performance: bool) -> TestResult<CudaDevice> {
         if cfg!(debug_assertions) {
             return Err("performance requires release build".into());
         }
-        let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+        let compile = CompileOptions::default();
         if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
             return Err("performance requires CUDA JIT O3 without device debug".into());
         }
@@ -473,39 +481,38 @@ fn vendor_fp8_synthetic_performance_comparison() -> TestResult {
 #[test]
 #[ignore = "requires CUDA and INFER_TEST_MODEL; run release serially inside safe-run"]
 fn vendor_fp8_checkpoint_comparison() -> TestResult {
-    let root = std::env::var("INFER_TEST_MODEL")?;
+    let root = var("INFER_TEST_MODEL")?;
     let package = QuantizedPackage::open(root, infer_core::ModelId::ONE)?;
-    let selected: Vec<(String, DeviceWeight)> =
-        if let Ok(names) = std::env::var("INFER_TEST_FP8_WEIGHTS") {
-            names
-                .split(',')
-                .map(|name| {
-                    package
-                        .weights
-                        .get(name)
-                        .cloned()
-                        .map(|source| (name.to_owned(), source))
-                        .ok_or_else(|| format!("unknown canonical checkpoint weight {name}"))
-                })
-                .collect::<Result<_, _>>()?
-        } else {
-            let mut selected = Vec::new();
-            for family in ["in_proj_qkv", "mlp.gate_proj", "mlp.down_proj", "lm_head"] {
-                let (name, source) = package
+    let selected: Vec<(String, DeviceWeight)> = if let Ok(names) = var("INFER_TEST_FP8_WEIGHTS") {
+        names
+            .split(',')
+            .map(|name| {
+                package
                     .weights
-                    .iter()
-                    .find(|(_, source)| {
-                        source.encoding == WeightEncoding::Fp8Channel
-                            && source.fp8_token_input
-                            && source.data.name.contains(family)
-                    })
-                    .ok_or_else(|| {
-                        format!("no checkpoint FP8 token/channel projection matching {family}")
-                    })?;
-                selected.push((name.clone(), source.clone()));
-            }
-            selected
-        };
+                    .get(name)
+                    .cloned()
+                    .map(|source| (name.to_owned(), source))
+                    .ok_or_else(|| format!("unknown canonical checkpoint weight {name}"))
+            })
+            .collect::<Result<_, _>>()?
+    } else {
+        let mut selected = Vec::new();
+        for family in ["in_proj_qkv", "mlp.gate_proj", "mlp.down_proj", "lm_head"] {
+            let (name, source) = package
+                .weights
+                .iter()
+                .find(|(_, source)| {
+                    source.encoding == WeightEncoding::Fp8Channel
+                        && source.fp8_token_input
+                        && source.data.name.contains(family)
+                })
+                .ok_or_else(|| {
+                    format!("no checkpoint FP8 token/channel projection matching {family}")
+                })?;
+            selected.push((name.clone(), source.clone()));
+        }
+        selected
+    };
     let device = device(true)?;
     for (name, source) in selected {
         let weight = Weight::checkpoint(&device, &package, &name, &source)?;
@@ -526,8 +533,7 @@ fn vendor_fp8_verified_chooser_checkpoint_comparison() -> TestResult {
             resident_gemm::ResidentTuningSession,
         },
     };
-    let package =
-        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
+    let package = QuantizedPackage::open(var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
     let device = device(true)?;
     let session = ResidentTuningSession::default();
     for family in ["mlp.gate_proj", "mlp.down_proj", "in_proj_qkv", "lm_head"] {
@@ -706,14 +712,14 @@ fn measure_graphs(
     rows: usize,
     graphs: [GraphPair<'_>; 2],
 ) -> TestResult {
-    let rounds = std::env::var("INFER_TEST_FP8_ROUNDS")
+    let rounds = var("INFER_TEST_FP8_ROUNDS")
         .ok()
         .map(|s| s.parse())
         .transpose()?
         .unwrap_or(3_usize);
     for round in 0..rounds {
         for clear_l2 in [true, false] {
-            let options = cutile::bench::BenchOptions {
+            let options = BenchOptions {
                 warmup: Duration::from_millis(50),
                 rep: Duration::from_millis(100),
                 min_reps: 30,
@@ -721,19 +727,19 @@ fn measure_graphs(
                 clear_l2,
             };
             for (scope, left, right) in graphs {
-                let (base, candidate) = cutile::bench::do_bench_paired(
+                let (base, candidate) = do_bench_paired(
                     &device.stream,
                     &options,
                     |_| {
                         left.launch()
                             .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                            .map_err(|e| tensor_error(&e.to_string()))
                     },
                     |_| {
                         right
                             .launch()
                             .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                            .map_err(|e| tensor_error(&e.to_string()))
                     },
                 )?;
                 println!(
@@ -741,7 +747,7 @@ fn measure_graphs(
                     serde_json::json!({
                         "kind": "performance", "weight": weight.name, "shape": [rows, weight.n, weight.k],
                         "round": round, "clear_l2": clear_l2, "scope": scope,
-                        "native_tile": crate::constants::quant_gemm_tile(rows), "vendor_workspace_bytes": 0,
+                        "native_tile": quant_gemm_tile(rows), "vendor_workspace_bytes": 0,
                         "native_ms": base.median_ms(), "vendor_ms": candidate.median_ms(),
                         "speedup": base.median_ms() / candidate.median_ms(),
                         "native_p95_ms": base.quantile_ms(0.95), "vendor_p95_ms": candidate.quantile_ms(0.95),
@@ -759,31 +765,31 @@ fn measure_choice(
     name: &str,
     weight: &Weight,
     rows: usize,
-    choice: &crate::tuning::fp8_gemm::Choice,
+    choice: &Fp8GemmChoice,
     base: &CudaGraph<()>,
     candidate: &CudaGraph<()>,
 ) -> TestResult {
     for clear_l2 in [true, false] {
-        let options = cutile::bench::BenchOptions {
+        let options = BenchOptions {
             warmup: Duration::from_millis(50),
             rep: Duration::from_millis(100),
             min_reps: 10,
             max_reps: 30,
             clear_l2,
         };
-        let (a, b) = cutile::bench::do_bench_paired(
+        let (a, b) = do_bench_paired(
             &device.stream,
             &options,
             |_| {
                 base.launch()
                     .sync_on(&device.stream)
-                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+                    .map_err(|error| tensor_error(&error.to_string()))
             },
             |_| {
                 candidate
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+                    .map_err(|error| tensor_error(&error.to_string()))
             },
         )?;
         println!(

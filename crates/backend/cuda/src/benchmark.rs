@@ -1,14 +1,19 @@
 //! Reproducible paired measurements of the synchronous dense launch path.
+use crate::target::CudaTarget;
 use crate::{
     device::{CudaDevice, device_error},
     strategy::{LinearStrategy, LinearTiling},
 };
+use cutile::error::Error as CutileError;
+use cutile::error::tensor_error;
+use cutile::half::bf16;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
 use serde::Serialize;
+use std::result::Result as StdResult;
 use std::{sync::Arc, time::Duration};
 
 /// Synthetic matrices stay below this many elements.
@@ -53,7 +58,7 @@ pub struct Baseline {
     pub schema_version: u32,
     pub debug_assertions: bool,
     pub gpu: String,
-    pub target: crate::target::CudaTarget,
+    pub target: CudaTarget,
     pub measurement: &'static str,
     pub dtype: &'static str,
     pub rows: usize,
@@ -86,8 +91,8 @@ pub fn dense_baseline(
     let vector: Vec<f32> = (0..columns)
         .map(|i| sample(i, VECTOR_SAMPLE_SEED))
         .collect();
-    let values: Vec<cutile::half::bf16> = (0..count)
-        .map(|i| cutile::half::bf16::from_f32(sample(i, WEIGHT_SAMPLE_SEED)))
+    let values: Vec<bf16> = (0..count)
+        .map(|i| bf16::from_f32(sample(i, WEIGHT_SAMPLE_SEED)))
         .collect();
     let expected: Vec<f32> = values
         .chunks_exact(columns)
@@ -151,19 +156,19 @@ fn sample(i: usize, multiplier: usize) -> f32 {
 fn launch(
     device: &CudaDevice,
     x: &Arc<Tensor<f32>>,
-    w: &Arc<Tensor<cutile::half::bf16>>,
+    w: &Arc<Tensor<bf16>>,
     tiling: LinearTiling,
-) -> std::result::Result<(), cutile::error::Error> {
+) -> StdResult<(), CutileError> {
     device
         .matvec_tiled(x.clone(), w.clone(), tiling)
         .map(|_| ())
-        .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+        .map_err(|error| tensor_error(&error.to_string()))
 }
 
 fn verify(
     device: &CudaDevice,
     x: &Arc<Tensor<f32>>,
-    w: &Arc<Tensor<cutile::half::bf16>>,
+    w: &Arc<Tensor<bf16>>,
     tiling: LinearTiling,
     expected: &[f32],
 ) -> Result<()> {

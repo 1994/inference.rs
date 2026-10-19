@@ -1,4 +1,6 @@
 use super::*;
+use crate::tuning::MIN_REPS;
+use crate::tuning::TilingTable;
 fn shape() -> Shape {
     Shape {
         heads: 24,
@@ -15,12 +17,12 @@ fn entry() -> Entry {
             .map(|fixture| Case {
                 fixture,
                 cold: Times {
-                    baseline_ms: vec![2.0; crate::tuning::MIN_REPS],
-                    candidate_ms: vec![1.0; crate::tuning::MIN_REPS],
+                    baseline_ms: vec![2.0; MIN_REPS],
+                    candidate_ms: vec![1.0; MIN_REPS],
                 },
                 warm: Times {
-                    baseline_ms: vec![2.0; crate::tuning::MIN_REPS],
-                    candidate_ms: vec![1.0; crate::tuning::MIN_REPS],
+                    baseline_ms: vec![2.0; MIN_REPS],
+                    candidate_ms: vec![1.0; MIN_REPS],
                 },
             })
             .collect()
@@ -53,8 +55,8 @@ fn cache_rejects_missing_bit_proof_history_and_reverse_confirmation() {
             1 => bad.verified_fixtures -= 1,
             2 => bad.reverse.clear(),
             3 => bad.forward[1].fixture = 0,
-            4 => bad.reverse[1].cold.candidate_ms = vec![2.0; crate::tuning::MIN_REPS],
-            5 => bad.forward[0].warm.candidate_ms = vec![f32::NAN; crate::tuning::MIN_REPS],
+            4 => bad.reverse[1].cold.candidate_ms = vec![2.0; MIN_REPS],
+            5 => bad.forward[0].warm.candidate_ms = vec![f32::NAN; MIN_REPS],
             6 => bad.max_f64_error = super::super::MAX_ERROR,
             7 => bad.key.schema = "stale-contract".into(),
             8 => bad.key.fingerprint = "missing-artifact".into(),
@@ -66,18 +68,18 @@ fn cache_rejects_missing_bit_proof_history_and_reverse_confirmation() {
 }
 #[test]
 fn legacy_tables_and_exact_fallback_evidence_round_trip() -> Result<()> {
-    let old: crate::tuning::TilingTable = serde_json::from_str("{}").map_err(device_error)?;
+    let old: TilingTable = serde_json::from_str("{}").map_err(device_error)?;
     assert!(old.resident_exact_attention.is_empty());
     let mut fallback = entry();
     fallback.selected = Choice::Simt;
-    fallback.reverse[0].cold.candidate_ms = vec![2.0; crate::tuning::MIN_REPS];
+    fallback.reverse[0].cold.candidate_ms = vec![2.0; MIN_REPS];
     assert!(fallback.valid());
-    let table = crate::tuning::TilingTable {
+    let table = TilingTable {
         resident_exact_attention: vec![fallback],
         ..Default::default()
     };
     let text = serde_json::to_string(&table).map_err(device_error)?;
-    let restored: crate::tuning::TilingTable = serde_json::from_str(&text).map_err(device_error)?;
+    let restored: TilingTable = serde_json::from_str(&text).map_err(device_error)?;
     assert!(restored.resident_exact_attention[0].valid());
     Ok(())
 }

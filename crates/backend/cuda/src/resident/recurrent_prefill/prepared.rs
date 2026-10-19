@@ -1,5 +1,7 @@
 //! Per-token/head F32 normalization and gating shared across independent state columns.
 use super::{ORDERED_DIM, ORDERED_WIDTHS, kernels, oxide};
+use crate::constants::F32_BYTES;
+use crate::constants::GDN_PROJECTED_INPUTS;
 use crate::{
     device::{CudaDevice, device_error},
     resident::ProgramWeights,
@@ -8,6 +10,7 @@ use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::{BTreeMap, BTreeSet};
+use std::result::Result as StdResult;
 
 const INPUT_BINDINGS: usize = 5;
 type Geometry = (usize, usize, usize);
@@ -37,7 +40,7 @@ fn geometries(graph: &DataflowGraph, weights: &ProgramWeights, lanes: usize) -> 
             && key_heads > 0
             && value_heads > 0
             && value_heads.is_multiple_of(key_heads)
-            && node.inputs[..crate::constants::GDN_PROJECTED_INPUTS]
+            && node.inputs[..GDN_PROJECTED_INPUTS]
                 .iter()
                 .all(|id| !weights.constants.contains_key(id))
         {
@@ -81,7 +84,7 @@ pub(super) fn required_bytes(
                 .and_then(|x| x.checked_mul(dim))
                 .and_then(|x| vh.checked_mul(2).and_then(|gates| x.checked_add(gates)))
                 .and_then(|x| x.checked_mul(lanes))
-                .and_then(|x| x.checked_mul(crate::constants::F32_BYTES))
+                .and_then(|x| x.checked_mul(F32_BYTES))
                 .and_then(|x| u64::try_from(x).ok())
                 .ok_or_else(|| Error::invalid("CUDA recurrent preparation size overflow"))?;
             total
@@ -113,7 +116,7 @@ impl Inputs {
         [state, output]: [&mut Tensor<f32>; 2],
         metadata: &Tensor<i32>,
         (kh, vh, dim, lanes, block): (usize, usize, usize, usize, usize),
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let qkv = qkv_storage.view(&[lanes, 2 * kh + vh, dim])?;
         let beta = beta.view(&[lanes, vh])?;
         let alpha = alpha.view(&[lanes, vh])?;

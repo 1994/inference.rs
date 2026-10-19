@@ -1,6 +1,8 @@
 use infer_core::*;
 use infer_ir::*;
 use infer_state::{SequenceStateManager, blocks::BlockPool, cache::PrefixCache};
+use std::iter::empty;
+use std::iter::once;
 
 #[test]
 fn pool_capacity_stale_leases_and_cow_have_exact_ownership() {
@@ -25,7 +27,7 @@ fn pool_capacity_stale_leases_and_cow_have_exact_ownership() {
     assert_eq!(p.free_blocks(), 3);
     let new = p.allocate(3).unwrap();
     assert!(p.retain(&[old]).is_err());
-    p.check_owners(std::iter::once(new.as_slice())).unwrap();
+    p.check_owners(once(new.as_slice())).unwrap();
     p.release(&new).unwrap();
 }
 #[test]
@@ -69,10 +71,8 @@ fn cache_pressure_never_recycles_pages_pinned_by_an_active_sequence() {
         for evicted in cache.insert(vec![id, id], pages, 4).unwrap() {
             pool.release(&evicted).unwrap();
         }
-        pool.check_owners(
-            std::iter::once(active.as_slice()).chain(cache.values().map(Vec::as_slice)),
-        )
-        .unwrap();
+        pool.check_owners(once(active.as_slice()).chain(cache.values().map(Vec::as_slice)))
+            .unwrap();
         assert!(pool.references(active[0]).is_ok());
     }
     while let Some(v) = cache.evict_oldest() {
@@ -124,7 +124,7 @@ fn fixed_page_output_rejects_capacity_and_duplicate_tables_before_reference_chan
     assert_eq!(pool.references(leases[0])?, 2);
     pool.release(&leases)?;
     pool.release(&leases)?;
-    pool.check_owners(std::iter::empty())?;
+    pool.check_owners(empty())?;
     assert_eq!(pool.free_blocks(), 4);
     Ok(())
 }

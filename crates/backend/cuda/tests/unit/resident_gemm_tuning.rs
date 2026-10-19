@@ -1,5 +1,13 @@
 use super::*;
+use crate::constants::QUANT_GEMM_TILE;
 use crate::resident::ProgramGeometry;
+use crate::strategy::LinearTiling;
+use std::env::temp_dir;
+use std::fs::remove_file;
+use std::fs::write;
+use std::process::id;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 fn profile() -> DeviceProfile {
     DeviceProfile {
@@ -264,11 +272,11 @@ fn bitwise_gate_checks_all_outputs_lengths_finiteness_and_signed_zero() -> Resul
 
 #[test]
 fn scalar_and_resident_sections_round_trip_and_share_atomic_updates() -> Result<()> {
-    let path = std::env::temp_dir().join(format!(
+    let path = temp_dir().join(format!(
         "resident-tuning-test-{}-{}.json",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map_err(device_error)?
             .as_nanos()
     ));
@@ -284,7 +292,7 @@ fn scalar_and_resident_sections_round_trip_and_share_atomic_updates() -> Result<
         }],
     );
     let encoded = serde_json::to_string(&scalar).map_err(device_error)?;
-    std::fs::write(&path, encoded).map_err(device_error)?;
+    write(&path, encoded).map_err(device_error)?;
     let resident = entry(key()?);
     assert!(super::super::update_table(Some(&path), |table| table
         .resident_gemm
@@ -304,9 +312,9 @@ fn scalar_and_resident_sections_round_trip_and_share_atomic_updates() -> Result<
     assert_eq!(loaded.resident_gemm.len(), 1);
     assert_eq!(
         loaded.tiling_for("scalar-device", "nvfp4", 67, 272)?,
-        Some(crate::strategy::LinearTiling::new(4, 128)?)
+        Some(LinearTiling::new(4, 128)?)
     );
-    std::fs::remove_file(&path).map_err(device_error)?;
+    remove_file(&path).map_err(device_error)?;
     Ok(())
 }
 
@@ -420,7 +428,7 @@ fn tile_m_128_is_accepted_and_enumerated_after_the_schema_bump() {
     }
     assert!(candidates.iter().any(|config| {
         config.tile_m == 128
-            && config.tile_n == crate::constants::QUANT_GEMM_TILE[1]
+            && config.tile_n == QUANT_GEMM_TILE[1]
             && config.main_loop == MainLoop::Plain
     }));
     assert_ne!(candidates, [] as [GemmConfig; 0]);

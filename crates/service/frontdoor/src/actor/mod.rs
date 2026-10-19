@@ -5,11 +5,20 @@ mod delivery;
 mod driver;
 mod handle;
 mod startup;
+use crate::constants::GENERATED_TOKEN_STAGING_BYTES;
+use crate::constants::TOKEN_STAGING_BYTES;
+use crate::cpu::CpuConfig;
+use crate::cpu::CpuPool;
+use crate::cpu::Credit;
+use crate::ingress::Pending;
+use crate::ingress::Registry;
 use infer_core::{Error, RequestId, Result};
 use infer_ir::CanonicalRequest;
 use infer_observe::{ObservationQuery, trace::TraceContext};
 use infer_runtime::{Engine, EngineOutput, RuntimeInspection};
 use infer_spi::BackendProvider;
+use std::sync::atomic::AtomicU64;
+use std::thread::Thread;
 use std::{
     collections::BTreeMap, collections::VecDeque, sync::Arc, sync::atomic::AtomicBool,
     sync::atomic::Ordering, sync::mpsc, sync::mpsc::SyncSender, time::Instant,
@@ -34,7 +43,7 @@ const OBSERVATION_HEADROOM_BYTES: usize = 64 << 10;
 enum Command {
     Submit {
         request: Box<infer_runtime::PreparedRequest>,
-        pending: Arc<crate::ingress::Pending>,
+        pending: Arc<Pending>,
         trace: Option<TraceContext>,
         output: OutputChannel,
         reply: oneshot::Sender<Result<()>>,
@@ -49,8 +58,8 @@ enum Command {
     },
     Observe {
         query: ObservationQuery,
-        credit: crate::cpu::Credit,
-        reply: oneshot::Sender<Result<(infer_runtime::ObservationSnapshot, crate::cpu::Credit)>>,
+        credit: Credit,
+        reply: oneshot::Sender<Result<(infer_runtime::ObservationSnapshot, Credit)>>,
     },
     Stop {
         reply: oneshot::Sender<Result<()>>,
@@ -64,18 +73,18 @@ struct Subscriber {
 pub struct RuntimeHandle {
     commands: Arc<SyncSender<Command>>,
     control: Arc<SyncSender<Command>>,
-    wake: std::thread::Thread,
+    wake: Thread,
     stop: Arc<AtomicBool>,
     preparer: infer_runtime::RequestPreparer,
-    cpu: crate::cpu::CpuPool,
-    delivery: crate::cpu::CpuPool,
-    observation: crate::cpu::CpuPool,
+    cpu: CpuPool,
+    delivery: CpuPool,
+    observation: CpuPool,
     observation_bytes: usize,
-    config: crate::cpu::CpuConfig,
-    ingress: Arc<crate::ingress::Registry>,
+    config: CpuConfig,
+    ingress: Arc<Registry>,
     clock_started: Instant,
     clock_origin_us: u64,
-    request_ids: Arc<std::sync::atomic::AtomicU64>,
+    request_ids: Arc<AtomicU64>,
 }
 
 struct RuntimeActor<B: BackendProvider> {
@@ -130,10 +139,10 @@ fn preparation_bytes(request: &CanonicalRequest) -> Result<usize> {
         0
     };
     tokens
-        .checked_mul(crate::constants::TOKEN_STAGING_BYTES)
+        .checked_mul(TOKEN_STAGING_BYTES)
         .and_then(|n| {
             generated
-                .checked_mul(crate::constants::GENERATED_TOKEN_STAGING_BYTES)
+                .checked_mul(GENERATED_TOKEN_STAGING_BYTES)
                 .and_then(|tail| n.checked_add(tail))
         })
         .ok_or_else(|| Error::invalid("preparation byte size overflow"))

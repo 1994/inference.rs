@@ -1,13 +1,14 @@
 //! Workload extension contract.
 use infer_core::Result;
 use infer_ir::{CanonicalRequest, ModelIr, ModelOutput, Workload, WorkloadOutput, WorkloadPlan};
+use std::any::type_name;
 
 pub trait WorkloadProvider {
     fn fork(&self) -> Option<Box<dyn WorkloadProvider + Send + Sync>> {
         None
     }
     fn identity(&self) -> &str {
-        std::any::type_name::<Self>()
+        type_name::<Self>()
     }
     fn supports(&self, workload: &Workload) -> bool;
     /// # Errors

@@ -2,6 +2,7 @@
 use super::{SequenceState, SequenceStateManager, StateSnapshot};
 use infer_core::{Error, ErrorCode, Result, StateId, StatePageId};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 impl SequenceStateManager {
     #[must_use]
@@ -66,7 +67,7 @@ impl SequenceStateManager {
             }
         }
         let mut actual = BTreeMap::<StatePageId, usize>::new();
-        let mut owners = std::collections::BTreeSet::new();
+        let mut owners = BTreeSet::new();
         for sequence in self.sequences.values() {
             if !owners.insert(sequence.owner)
                 || sequence.capacity_tokens == 0
@@ -76,7 +77,7 @@ impl SequenceStateManager {
             {
                 return Err(Error::invariant("invalid sequence ownership/cursor"));
             }
-            let mut seen = std::collections::BTreeSet::new();
+            let mut seen = BTreeSet::new();
             for page in &sequence.pages {
                 if !seen.insert(page) {
                     return Err(Error::invariant("duplicate sequence page"));
@@ -84,7 +85,7 @@ impl SequenceStateManager {
                 *actual.entry(*page).or_default() += 1;
             }
         }
-        let mut keys = std::collections::BTreeSet::new();
+        let mut keys = BTreeSet::new();
         for (key, pages) in &self.prefixes {
             if !keys.insert(key)
                 || key.tokens.is_empty()

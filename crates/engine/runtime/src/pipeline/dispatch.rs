@@ -1,9 +1,15 @@
 //! The dispatch transaction separates planner output, reservation, and executor ownership.
+use crate::stages::decode::prepare;
+use crate::stages::prefill::prepare as prefill_prepare;
+use crate::stages::worker::OutputWorker;
 use crate::{Engine, EngineOutput, InFlight};
+use infer_core::event::CpuStage;
 use infer_core::{Error, RequestStatus, Result, event::EventKind, event::ObjectKind};
 use infer_ir::{CostQuery, ExecutionRole, ExecutionTask, ReadyWork, StepPlan};
 use infer_observe::DiagnosticCode;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::sync::Arc;
+use std::time::Instant;
 
 pub struct PreparedDispatch {
     tasks: Vec<ExecutionTask>,
@@ -58,9 +64,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 ));
             }
             let tokens = if work.role == ExecutionRole::Decode {
-                crate::stages::decode::prepare(record, work.token_count)?
+                prepare(record, work.token_count)?
             } else {
-                crate::stages::prefill::prepare(record, work.token_count)?
+                prefill_prepare(record, work.token_count)?
             };
             let tenant = self
                 .tenants
@@ -94,7 +100,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         step: &mut StepPlan,
         ready: &[ReadyWork],
     ) -> Result<Vec<EngineOutput>> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let step = match self.host.steps.seal(step) {
             Ok(step) => step,
             Err(error) if error.code == infer_core::ErrorCode::Capacity => return Ok(Vec::new()),
@@ -110,23 +116,18 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .and_then(|()| self.dispatch_prepared_step(&step, &prepared));
         prepared.clear();
         self.host.dispatch = Some(prepared);
-        self.cpu_stage(
-            infer_core::event::CpuStage::Dispatch,
-            step.id.get(),
-            start,
-            step.work.len(),
-        );
+        self.cpu_stage(CpuStage::Dispatch, step.id.get(), start, step.work.len());
         result
     }
     fn dispatch_prepared_step(
         &mut self,
-        step: &std::sync::Arc<StepPlan>,
+        step: &Arc<StepPlan>,
         prepared: &PreparedDispatch,
     ) -> Result<Vec<EngineOutput>> {
         let output_credit = self
             .output_worker
             .as_ref()
-            .map(crate::stages::worker::OutputWorker::reserve)
+            .map(OutputWorker::reserve)
             .transpose()?;
         let cost_queries = match self.host.queries.seal(&prepared.cost_queries) {
             Ok(queries) => queries,

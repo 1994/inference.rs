@@ -2,8 +2,11 @@ use super::{
     capture::{Capture, error},
     recurrent::recurrent,
 };
+use crate::constants::CONV_KERNEL_SIZE;
+use crate::constants::CONV_KERNEL_TILE;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
+use std::env::var;
 
 /// Value-dimension blocks per head for the per-lane Delta, requested by
 /// `INFER_CUDA_RECURRENT_VALUE_SPLIT`.
@@ -11,7 +14,7 @@ use infer_ir::{TensorNode, TensorOp};
 /// One is the established behaviour: one block per value head, each moving the whole state. The
 /// split is read once at capture time, so a run's graphs and its report agree.
 fn value_split() -> usize {
-    std::env::var("INFER_CUDA_RECURRENT_VALUE_SPLIT")
+    var("INFER_CUDA_RECURRENT_VALUE_SPLIT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1)
@@ -38,14 +41,14 @@ impl Capture<'_> {
             return Err(error("convolution state layout"));
         };
         self.scope.record(recurrent::conv4(
-            output.partition([crate::constants::CONV_KERNEL_TILE]),
-            h0.partition([crate::constants::CONV_KERNEL_TILE]),
-            h1.partition([crate::constants::CONV_KERNEL_TILE]),
-            h2.partition([crate::constants::CONV_KERNEL_TILE]),
+            output.partition([CONV_KERNEL_TILE]),
+            h0.partition([CONV_KERNEL_TILE]),
+            h1.partition([CONV_KERNEL_TILE]),
+            h2.partition([CONV_KERNEL_TILE]),
             &self.input(node.inputs[0])?,
             &self
                 .input(node.inputs[1])?
-                .view(&[channels, crate::constants::CONV_KERNEL_SIZE])?,
+                .view(&[channels, CONV_KERNEL_SIZE])?,
             self.metadata,
         ))?;
         Ok(())
@@ -73,7 +76,7 @@ impl Capture<'_> {
         match node.op {
             TensorOp::Conv {
                 channels,
-                kernel: crate::constants::CONV_KERNEL_SIZE,
+                kernel: CONV_KERNEL_SIZE,
             } => {
                 self.conv(node, &mut output, &mut state, channels)?;
             }

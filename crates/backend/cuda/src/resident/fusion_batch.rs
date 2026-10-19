@@ -4,6 +4,8 @@ use super::{
     batch::BatchBuilder,
     capture::{Capture, CaptureMode, error},
 };
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::METADATA_FIELDS;
 use crate::{
     device::{CudaDevice, DeviceProfile, device_error},
     mlp::ProjectionWeight,
@@ -12,6 +14,9 @@ use crate::{
 use cutile::{half::bf16, prelude::*};
 use infer_core::Result;
 use infer_ir::{TensorNode, TensorOp};
+#[cfg(test)]
+use std::cell::Cell;
+use std::result::Result as StdResult;
 
 const ROWS: usize = 128;
 const HIDDEN: usize = 5120;
@@ -98,7 +103,7 @@ impl Workspace {
         scope: &Scope,
         lane: usize,
         normalized: &Tensor<f32>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let matrix = self
             .input
             .take()
@@ -120,7 +125,7 @@ pub(super) fn record(
     metadata: &[Tensor<i32>],
     metadata_batch: &Tensor<i32>,
     workspace: &mut Workspace,
-) -> std::result::Result<bool, DeviceError> {
+) -> StdResult<bool, DeviceError> {
     #[cfg(test)]
     if DISABLED.get() {
         return Ok(false);
@@ -142,7 +147,7 @@ pub(super) fn record(
         .shape()
         .iter()
         .map(|&dim| usize::try_from(dim).map_err(error))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .collect::<StdResult<Vec<_>, _>>()?;
     let mut output = output.reshape(&[ROWS, HIDDEN])?;
     let Some(super::program::FusionWeights {
         projection: ProjectionWeight::Dense(weight),
@@ -162,14 +167,11 @@ pub(super) fn record(
         .ok_or_else(|| error("fusion batch gather"))?;
     scope.record(
         super::attention::attention::embedding_batch(
-            (&mut gathered).partition([1, crate::constants::AUX_KERNEL_TILE]),
+            (&mut gathered).partition([1, AUX_KERNEL_TILE]),
             embedding_weight,
             metadata_batch,
         )
-        .generics(vec![
-            HIDDEN.to_string(),
-            crate::constants::METADATA_FIELDS.to_string(),
-        ]),
+        .generics(vec![HIDDEN.to_string(), METADATA_FIELDS.to_string()]),
     )?;
     for (lane, meta) in metadata.iter().enumerate().take(ROWS) {
         // The owned row tensor keeps the gather allocation anchored until it is put back;
@@ -224,8 +226,8 @@ pub(super) fn record(
 
 #[cfg(test)]
 thread_local! {
-    static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DISABLED: Cell<bool> = const { Cell::new(false) };
+    static CAPTURES: Cell<usize> = const { Cell::new(0) };
 }
 #[cfg(test)]
 pub fn captures() -> usize {

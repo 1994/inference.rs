@@ -1,5 +1,15 @@
 //! Validate and prepare the entire request before reserving execution state.
+use crate::preparation::generation_capacity;
+use crate::preparation::generation_storage;
+use crate::preparation::retained_bytes;
+use crate::preparation::retained_tokens;
+use crate::preparation::validate_input;
+use crate::preparation::validate_plan;
+use crate::resource::PendingResource;
+use crate::resource::ResourcePhase;
+use crate::stages::prefill::retained_readout;
 use crate::{Engine, RequestRecord, TenantService};
+use infer_core::credits::CreditLease;
 use infer_core::{
     Error, ErrorCode, RequestId, RequestStatus, Result, StateId, event::EventKind,
     event::ObjectKind,
@@ -7,6 +17,7 @@ use infer_core::{
 use infer_ir::{AdmissionDecision, CanonicalRequest, RequestInput, StateKind, WorkloadPlan};
 use infer_observe::{DiagnosticCode, trace::TraceContext};
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 enum ReservationQuote {
@@ -14,8 +25,8 @@ enum ReservationQuote {
     Acknowledged(Option<u64>),
 }
 struct PreparedAdmission {
-    request: std::sync::Arc<CanonicalRequest>,
-    tenant: std::sync::Arc<str>,
+    request: Arc<CanonicalRequest>,
+    tenant: Arc<str>,
     plan: WorkloadPlan,
     admission: AdmissionDecision,
     context: infer_ir::TokenBuffer,
@@ -26,8 +37,8 @@ impl PreparedAdmission {
         mut self,
         state: StateId,
         now_us: u64,
-        credit: infer_core::credits::CreditLease,
-        byte_credit: infer_core::credits::CreditLease,
+        credit: CreditLease,
+        byte_credit: CreditLease,
     ) -> RequestRecord {
         self.generated.attach_credit(credit.clone());
         self.generated.attach_byte_credit(byte_credit.clone());
@@ -135,7 +146,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         self.backend
             .begin_resource(infer_spi::ResourceCommand::ReservationBytes {
                 capacity: prepared.plan.reserved_tokens,
-                readout: crate::stages::prefill::retained_readout(&prepared.request.workload),
+                readout: retained_readout(&prepared.request.workload),
             })
     }
     /// Admit with the already acknowledged sizing quote, while rechecking live quotas/resources.
@@ -215,15 +226,15 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     fn submit_inner(
         &mut self,
-        request: std::sync::Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+        request: Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
     ) -> Result<()> {
         self.submit_inner_quoted(request, plan, ReservationQuote::Query)
     }
     fn submit_inner_quoted(
         &mut self,
-        request: std::sync::Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+        request: Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
         quote: ReservationQuote,
     ) -> Result<()> {
         if self.fault.is_some() {
@@ -233,12 +244,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             ));
         }
         let prepared = self.prepare_admission(request, plan, quote)?;
-        let tokens = crate::preparation::retained_tokens(
-            &prepared.plan,
-            crate::preparation::generation_capacity(&prepared.request),
-        )?;
+        let tokens = retained_tokens(&prepared.plan, generation_capacity(&prepared.request))?;
         let credit = self.host.credits.reserve(tokens)?;
-        let bytes = crate::preparation::retained_bytes(
+        let bytes = retained_bytes(
             &prepared.request,
             &prepared.plan,
             &self.model,
@@ -278,8 +286,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     fn prepare_admission(
         &mut self,
-        request: std::sync::Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, std::sync::Arc<str>)>,
+        request: Arc<CanonicalRequest>,
+        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
         quote: ReservationQuote,
     ) -> Result<PreparedAdmission> {
         self.apply_cost_feedback()?;
@@ -298,8 +306,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             self.validate_workload_plan(&request, &plan)?;
             (
                 plan,
-                crate::preparation::generation_storage(&request)?,
-                std::sync::Arc::from(request.qos.tenant.as_str()),
+                generation_storage(&request)?,
+                Arc::from(request.qos.tenant.as_str()),
             )
         };
         let admission = match quote {
@@ -309,7 +317,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             ReservationQuote::Query => {
                 self.backend.prepare_state_reservation(
                     plan.reserved_tokens,
-                    crate::stages::prefill::retained_readout(&request.workload),
+                    retained_readout(&request.workload),
                 )?;
                 self.check_admission(&request, &plan)?
             }
@@ -356,14 +364,14 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         Ok(())
     }
     fn validate_input_budget(&self, input: &RequestInput) -> Result<()> {
-        crate::preparation::validate_input(input, &self.config, &self.limits)
+        validate_input(input, &self.config, &self.limits)
     }
     fn validate_workload_plan(
         &self,
         request: &CanonicalRequest,
         plan: &WorkloadPlan,
     ) -> Result<()> {
-        crate::preparation::validate_plan(
+        validate_plan(
             request,
             plan,
             &self.model,
@@ -383,7 +391,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .begin_resource(infer_spi::ResourceCommand::Reserve {
                 state,
                 capacity: prepared.plan.reserved_tokens,
-                readout: crate::stages::prefill::retained_readout(&prepared.request.workload),
+                readout: retained_readout(&prepared.request.workload),
             })
             .and_then(|mut ticket| match ticket.poll() {
                 Ok(Some(infer_spi::ResourceReply::Reserved)) => Ok(None),
@@ -397,17 +405,17 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     if error.code == ErrorCode::Capacity
                         && self.backend.tracks_reservation_intent() =>
                 {
-                    Ok(Some(crate::resource::PendingResource {
+                    Ok(Some(PendingResource {
                         ticket: None,
-                        phase: crate::resource::ResourcePhase::Reserve,
+                        phase: ResourcePhase::Reserve,
                         retry_epoch: Some(self.resource_epoch),
                         started: self.now_us,
                     }))
                 }
                 Err(error) => Err(error),
-                Ok(None) => Ok(Some(crate::resource::PendingResource {
+                Ok(None) => Ok(Some(PendingResource {
                     ticket: Some(ticket),
-                    phase: crate::resource::ResourcePhase::Reserve,
+                    phase: ResourcePhase::Reserve,
                     retry_epoch: Some(self.resource_epoch),
                     started: self.now_us,
                 })),
@@ -436,7 +444,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     fn register_tenant(
         &mut self,
         request: &CanonicalRequest,
-        name: std::sync::Arc<str>,
+        name: Arc<str>,
         plan: &WorkloadPlan,
     ) -> Result<()> {
         let floor = self.host.queues.virtual_time();
@@ -472,7 +480,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         if let Some(recipe) = self.backend.state_recipe() {
             recipe.visit(
                 prepared.plan.reserved_tokens,
-                crate::stages::prefill::retained_readout(&prepared.request.workload),
+                retained_readout(&prepared.request.workload),
                 |region| {
                     // Numerical readbacks and their row headers are already charged by retained_bytes.
                     if region.region.memory == infer_ir::StateMemory::HostMirror

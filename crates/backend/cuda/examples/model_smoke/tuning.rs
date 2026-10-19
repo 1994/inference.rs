@@ -5,6 +5,8 @@ use infer_backend_cuda::{
 };
 use infer_core::{Error, Result};
 use serde_json::Value;
+use std::fs::metadata;
+use std::fs::read;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -43,7 +45,7 @@ pub fn run(model: &Model, draft: Option<&Mtp>) -> Result<()> {
 }
 
 pub fn load(path: &Path, model: &Model) -> Result<BTreeMap<String, LinearTiling>> {
-    if std::fs::metadata(path)
+    if metadata(path)
         .map_err(|e| Error::invalid(e.to_string()))?
         .len()
         > 16 * 1024 * 1024
@@ -51,7 +53,7 @@ pub fn load(path: &Path, model: &Model) -> Result<BTreeMap<String, LinearTiling>
         return Err(Error::invalid("tuning report exceeds 16 MiB"));
     }
     let report: Value =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
+        serde_json::from_slice(&read(path).map_err(|e| Error::invalid(e.to_string()))?)
             .map_err(|e| Error::invalid(e.to_string()))?;
     if report["schema"] != 1 {
         return Err(Error::invalid("unsupported tuning schema"));

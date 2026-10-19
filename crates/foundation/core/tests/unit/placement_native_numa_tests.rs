@@ -3,6 +3,8 @@ use crate::{
     Error, Result,
     placement::{CpuTopology, NumaPolicy, ThreadPlacement},
 };
+use std::ptr::null;
+use std::ptr::null_mut;
 struct Pages {
     pointer: *mut libc::c_void,
     bytes: usize,
@@ -12,7 +14,7 @@ impl Pages {
         // SAFETY: anonymous private mapping, no file descriptor; returned address is checked before use.
         let pointer = unsafe {
             libc::mmap(
-                std::ptr::null_mut(),
+                null_mut(),
                 bytes,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
@@ -51,7 +53,7 @@ impl Pages {
                 0i32,
                 pointers.len(),
                 pointers.as_ptr(),
-                std::ptr::null::<i32>(),
+                null::<i32>(),
                 status.as_mut_ptr(),
                 0i32,
             )

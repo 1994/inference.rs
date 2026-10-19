@@ -6,6 +6,7 @@ use infer_kernel_api::KernelRegistry;
 use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
+use std::thread::sleep;
 use std::{path::Path, time::Duration, time::Instant};
 
 fn backend(cache: u64) -> Result<MetalBackend> {
@@ -50,7 +51,7 @@ fn finish(engine: &mut Engine<MetalBackend>, id: RequestId) -> Result<Option<Wor
             return Err(Error::invariant("Metal retention test stalled"));
         }
         engine.tick(engine.now_us() + 1)?;
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
     Ok(engine.take_completed(id)?.and_then(|done| done.output))
 }

@@ -1,6 +1,7 @@
 //! Independent, nonuniform fixtures exercise row/column layout and block scale indexing.
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
 use cutile::half::bf16;
+use infer_backend_cuda::nvfp4::to_bf16;
 use infer_backend_cuda::{device::CudaDevice, mlp::ProjectionWeight};
 use infer_core::{Error, Result};
 
@@ -67,14 +68,7 @@ pub fn make(
                 .flat_map(|r| (0..columns / 16).map(move |g| scale_bits[(r + g) % 4]))
                 .collect();
             if encoding == 3 {
-                let converted = infer_backend_cuda::nvfp4::to_bf16(
-                    &values,
-                    &scales,
-                    3.0,
-                    rows,
-                    columns,
-                    rows * columns * 2,
-                )?;
+                let converted = to_bf16(&values, &scales, 3.0, rows, columns, rows * columns * 2)?;
                 ProjectionWeight::Dense(device.upload(
                     converted.into_iter().map(bf16::from_bits).collect(),
                     &[rows, columns],

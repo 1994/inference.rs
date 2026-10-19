@@ -4,6 +4,7 @@ use super::capture::Captured;
 use crate::device::CudaDevice;
 use infer_core::{Error, Result};
 use sha2::{Digest, Sha256};
+use std::env::var_os;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -18,8 +19,8 @@ pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; SHAPE_RANK]) -> Re
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         CompileOptions::default(),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS")
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS")
     );
     let key = (shape, context.clone());
     let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));

@@ -1,7 +1,10 @@
 use crate::{Engine, RequestRecord};
+use infer_core::event::CpuStage;
 use infer_core::{Error, RequestId, Result};
 use infer_ir::{ExecutionRole, PageGrowth, ReadyWork, Workload};
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
+use std::time::Instant;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     fn sync_ready_deltas(&mut self) -> Result<()> {
@@ -14,11 +17,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         result
     }
     pub(crate) fn ready_work_into(&mut self, ready: &mut super::index::ReadyWindow) -> Result<()> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         self.sync_ready_deltas()?;
         self.fill_candidate_ids()?;
         ready.count = 0;
-        let candidates = std::mem::take(&mut self.host.ready_index.candidates);
+        let candidates = take(&mut self.host.ready_index.candidates);
         let result = candidates.iter().copied().try_for_each(|id| {
             if self.preemption_focus.is_some_and(|focus| focus != id) {
                 return Ok(());
@@ -31,7 +34,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             if self.host.ready_index.versions[slot] != self.host.cost_epoch {
                 let tenant = self.host.ready_index.rows[slot]
                     .as_mut()
-                    .map(|r| std::mem::take(&mut r.tenant))
+                    .map(|r| take(&mut r.tenant))
                     .unwrap_or_default();
                 let row = self.ready_request_with_tenant(
                     id,
@@ -61,7 +64,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             Ok(())
         });
         self.host.ready_index.candidates = candidates;
-        self.cpu_stage(infer_core::event::CpuStage::Ready, 0, start, ready.count);
+        self.cpu_stage(CpuStage::Ready, 0, start, ready.count);
         result
     }
     pub(crate) fn fill_candidate_ids(&mut self) -> Result<()> {
@@ -245,7 +248,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         if self.host.ready_index.priority_cursor.is_none() {
             self.host.ready_index.priority_sweep_epoch = self.host.cost_epoch;
         }
-        let mut ids = std::mem::take(&mut self.host.wake_buffer);
+        let mut ids = take(&mut self.host.wake_buffer);
         ids.clear();
         ids.extend(
             self.host

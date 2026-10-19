@@ -1,5 +1,6 @@
 use super::super::{PlacementReport, ThreadPlacement, ThreadQos};
 use crate::{Error, Result};
+use std::thread::available_parallelism;
 
 /// Darwin `QOS_CLASS_UTILITY` class passed to `pthread_set_qos_class_self_np`.
 const QOS_CLASS_UTILITY: u32 = 0x11;
@@ -21,7 +22,7 @@ unsafe extern "C" {
     fn pthread_get_qos_class_np(thread: libc::pthread_t, qos: *mut u32, priority: *mut i32) -> i32;
 }
 pub(in crate::placement) fn allowed_cpus() -> Result<Vec<usize>> {
-    Ok((0..std::thread::available_parallelism()
+    Ok((0..available_parallelism()
         .map_err(|error| Error::invalid(error.to_string()))?
         .get())
         .collect())

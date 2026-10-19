@@ -5,9 +5,13 @@ pub mod dispatch;
 pub mod lifecycle;
 pub mod scheduling;
 use crate::{Engine, EngineOutput};
+use infer_core::event::CpuStage;
+use infer_core::event::EventKind;
+use infer_core::event::ObjectKind;
 use infer_core::{Error, Result};
 use infer_observe::DiagnosticCode;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::time::Instant;
 
 #[derive(Clone, Copy)]
 enum DriveMode {
@@ -87,8 +91,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 return Ok((events, None));
             }
             self.event(
-                infer_core::event::EventKind::CheckpointCaptured,
-                infer_core::event::ObjectKind::Program,
+                EventKind::CheckpointCaptured,
+                ObjectKind::Program,
                 self.program.id.get(),
                 0,
                 self.global_progress_epoch,
@@ -114,15 +118,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         mode: DriveMode,
         emitted: &mut Vec<EngineOutput>,
     ) -> Result<()> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let initial = emitted.len();
         let result = self.drive_owner(now_us, mode, emitted);
-        self.cpu_stage(
-            infer_core::event::CpuStage::Owner,
-            0,
-            start,
-            emitted.len() - initial,
-        );
+        self.cpu_stage(CpuStage::Owner, 0, start, emitted.len() - initial);
         result
     }
     fn drive_owner(

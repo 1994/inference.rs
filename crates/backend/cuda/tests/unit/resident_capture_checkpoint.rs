@@ -6,6 +6,8 @@ use crate::{
     resident::{BatchOutput, DeviceProgram},
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
+use std::fs::read;
 
 fn assert_bits(actual: &[f32], expected: &[f32], label: &str) {
     assert_eq!(actual.len(), expected.len(), "{label} length");
@@ -70,13 +72,11 @@ fn compare_states(
 }
 
 fn checkpoint_input() -> Result<(String, Vec<u32>)> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     if tokens.is_empty() {
         return Err(Error::invalid("empty checkpoint test prompt"));
     }

@@ -3,6 +3,10 @@ use super::{
     Model,
     weights::{Projection, floats},
 };
+use infer_backend_cuda::resident::DeviceProgram;
+use infer_backend_cuda::resident::FusionWeights;
+use infer_backend_cuda::strategy::default_tiling;
+use infer_backend_cuda::tuning::projection_key;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::TensorOp;
 use infer_models::QuantizedPackage;
@@ -85,14 +89,14 @@ impl Mtp {
         norms.extend_from_slice(&self.hidden_norm);
         let config = &self.model.package.imported.model;
         let projection = self.fc.resident();
-        let (key, _, _) = infer_backend_cuda::tuning::projection_key(&projection)?;
+        let (key, _, _) = projection_key(&projection)?;
         let tiling = self
             .model
             .tuning
             .get(&key)
             .copied()
-            .unwrap_or(infer_backend_cuda::strategy::default_tiling()?);
-        let fusion = infer_backend_cuda::resident::FusionWeights {
+            .unwrap_or(default_tiling()?);
+        let fusion = FusionWeights {
             projection,
             tiling,
             norms: self.model.device.upload(norms, &[2, config.hidden_size])?,
@@ -144,11 +148,7 @@ impl Mtp {
     pub fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             host: self.model.state.clone(),
-            device_position: self
-                .model
-                .resident
-                .as_ref()
-                .map(infer_backend_cuda::resident::DeviceProgram::position),
+            device_position: self.model.resident.as_ref().map(DeviceProgram::position),
         }
     }
 

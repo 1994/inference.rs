@@ -1,3 +1,4 @@
+use crate::constants::MICROSECONDS_PER_SECOND;
 use crate::{LATENCY_BOUNDS_US, LatencyHistogram, ObservationStore, RuntimeMetrics};
 use infer_core::event::EventKind;
 use serde::Serialize;
@@ -177,7 +178,7 @@ fn histogram_lines(
         cumulative = cumulative.saturating_add(histogram.buckets[index]);
         lines.push(format!(
             "{name}_bucket{{backend=\"{backend}\",le=\"{}\"}} {cumulative}",
-            *bound as f64 / crate::constants::MICROSECONDS_PER_SECOND
+            *bound as f64 / MICROSECONDS_PER_SECOND
         ));
     }
     lines.push(format!(
@@ -186,7 +187,7 @@ fn histogram_lines(
     ));
     lines.push(format!(
         "{name}_sum{{backend=\"{backend}\"}} {}",
-        histogram.sum_us as f64 / crate::constants::MICROSECONDS_PER_SECOND
+        histogram.sum_us as f64 / MICROSECONDS_PER_SECOND
     ));
     lines.push(format!(
         "{name}_count{{backend=\"{backend}\"}} {}",

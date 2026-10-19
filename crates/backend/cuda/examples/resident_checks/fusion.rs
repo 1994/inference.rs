@@ -1,4 +1,6 @@
 use cutile::half::bf16;
+use infer_backend_cuda::strategy::default_tiling;
+use infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession;
 use infer_backend_cuda::{
     device::CudaDevice,
     mlp::ProjectionWeight,
@@ -7,6 +9,8 @@ use infer_backend_cuda::{
 use infer_core::{Error, OpId, Result, TensorId};
 use infer_ir::{DType, DataflowGraph, TensorNode, TensorOp, TensorSpec, TensorStorage};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 pub fn run(device: &CudaDevice) -> Result<()> {
     let d = 48;
@@ -91,9 +95,7 @@ fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights
     Ok(ProgramWeights {
         mrope: false,
         autotune: false,
-        resident_tuning: std::sync::Arc::new(
-            infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
-        ),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
@@ -106,12 +108,12 @@ fn weights(device: &CudaDevice, d: usize, id: TensorId) -> Result<ProgramWeights
                 device.upload(vec![bf16::from_f32(0.03125); d * 2 * d], &[d, 2 * d])?,
             ),
             // This synthetic check measures nothing, so it uses the hardware-independent tile.
-            tiling: infer_backend_cuda::strategy::default_tiling()?,
+            tiling: default_tiling()?,
             norms: device.upload(vec![0.0; 2 * d], &[2, d])?,
             epsilon: 1e-6,
             offset: 1.0,
         }),
-        fp8_inputs: std::collections::BTreeSet::new(),
+        fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         expert_banks: BTreeMap::new(),

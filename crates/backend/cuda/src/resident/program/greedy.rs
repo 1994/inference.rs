@@ -1,28 +1,34 @@
 //! Draft readout and external-hidden reuse on the program's owned CUDA stream.
 use super::{CudaDevice, DeviceProgram, ExternalInput, ProgramWeights, device_error};
+use crate::resident::ActivationArena;
+use crate::resident::batch::take_result;
 use crate::resident::greedy::Greedy;
+use crate::resident::token_readout::TokenReadout;
+use crate::tuning::greedy::select;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use infer_models::mrope::ROTARY_AXES;
+use std::env::var;
 
 pub(super) struct ProgramReadouts {
     pub greedy: Option<DeviceGreedy>,
-    pub token_readout: Option<crate::resident::token_readout::TokenReadout>,
+    pub token_readout: Option<TokenReadout>,
     pub hidden: Arc<Tensor<f32>>,
     pub logits: Arc<Tensor<f32>>,
 }
 impl ProgramReadouts {
     pub(super) fn new(
         device: &CudaDevice,
-        arena: &mut crate::resident::ActivationArena,
+        arena: &mut ActivationArena,
         graph: &infer_ir::DataflowGraph,
         weights: &ProgramWeights,
         vocabulary: usize,
     ) -> Result<Self> {
-        let hidden = crate::resident::batch::take_result(arena, graph.hidden)?;
-        let logits = crate::resident::batch::take_result(arena, graph.logits)?;
+        let hidden = take_result(arena, graph.hidden)?;
+        let logits = take_result(arena, graph.logits)?;
         let greedy = DeviceGreedy::new(device, &logits, vocabulary, weights)?;
         let token_readout = if logits.size() == vocabulary {
-            crate::resident::token_readout::TokenReadout::contiguous(device, &logits, 1, weights)?
+            TokenReadout::contiguous(device, &logits, 1, weights)?
         } else {
             None
         };
@@ -50,10 +56,10 @@ impl DeviceGreedy {
             return Ok(None);
         }
         // A diagnostic switch permits matched baseline/candidate runs with one binary.
-        if std::env::var("INFER_CUDA_DEVICE_GREEDY").is_ok_and(|v| v == "0") {
+        if var("INFER_CUDA_DEVICE_GREEDY").is_ok_and(|v| v == "0") {
             return Ok(None);
         }
-        let tile = crate::tuning::greedy::select(
+        let tile = select(
             device,
             1,
             vocabulary,
@@ -87,7 +93,7 @@ impl DeviceProgram {
             external.map_or_else(|| ExternalInput::Device(&previous), ExternalInput::Host);
         self.prepare_step(
             token,
-            [position; infer_models::mrope::ROTARY_AXES],
+            [position; ROTARY_AXES],
             kv_position,
             Some(external),
             true,

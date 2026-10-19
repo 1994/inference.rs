@@ -1,3 +1,9 @@
+use crate::constants::DEFAULT_TILE_COLUMNS;
+use crate::constants::DEFAULT_TILE_ROWS;
+use crate::constants::F32_BYTES;
+use crate::constants::GIB;
+use crate::mlp::ProjectionWeight as MlpProjectionWeight;
+use crate::nvfp4::to_bf16;
 use crate::{device::CudaDevice, strategy::LinearTiling};
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
 use cutile::{half::bf16, prelude::*};
@@ -10,7 +16,7 @@ use std::sync::Arc;
 
 const STAGING: u64 = 2 * 1024 * 1024 * 1024;
 /// Decoded BF16 byte budget for one NVFP4 projection falling back to host decoding.
-const NVFP4_DECODE_BUDGET: usize = crate::constants::GIB;
+const NVFP4_DECODE_BUDGET: usize = GIB;
 
 #[derive(Clone)]
 pub enum Projection {
@@ -37,7 +43,7 @@ pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<V
     };
     let converted = convert_float_bytes(bytes, source.dtype)?;
     Ok(converted
-        .as_chunks::<{ crate::constants::F32_BYTES }>()
+        .as_chunks::<{ F32_BYTES }>()
         .0
         .iter()
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
@@ -46,7 +52,7 @@ pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<V
 
 impl Projection {
     #[must_use]
-    pub fn resident(&self) -> crate::mlp::ProjectionWeight {
+    pub fn resident(&self) -> MlpProjectionWeight {
         use crate::mlp::ProjectionWeight;
         match self {
             Self::Dense(w) => ProjectionWeight::Dense(w.clone()),
@@ -167,7 +173,7 @@ impl Projection {
             let [rows, columns] = weight.shape.as_slice() else {
                 return Err(Error::invalid("NVFP4 projection must be a matrix"));
             };
-            let decoded = crate::nvfp4::to_bf16(
+            let decoded = to_bf16(
                 values,
                 scaling,
                 *global,
@@ -186,10 +192,7 @@ impl Projection {
     /// Rejects incompatible projection dimensions or failed CUDA execution.
     pub fn apply(&self, device: &CudaDevice, input: &[f32]) -> Result<Vec<f32>> {
         let vector = device.upload(input.to_vec(), &[input.len()])?;
-        let tile = LinearTiling::new(
-            crate::constants::DEFAULT_TILE_ROWS,
-            crate::constants::DEFAULT_TILE_COLUMNS,
-        )?;
+        let tile = LinearTiling::new(DEFAULT_TILE_ROWS, DEFAULT_TILE_COLUMNS)?;
         let output = match self {
             Self::Dense(weights) => device.matvec_tiled(vector, weights.clone(), tile)?,
             Self::Fp8(weights, scales) => {

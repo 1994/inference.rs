@@ -1,10 +1,11 @@
 use super::*;
 use infer_ir::{OutputReadout, StateMemory};
 use infer_spi::BackendProvider;
+use std::path::Path;
 #[test]
 fn physical_recipe_matches_real_buffers_and_reset_keeps_allocations() -> Result<()> {
     let mut package = infer_models::ModelPackage::open(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny"),
         infer_core::ModelId::ONE,
     )?;
     let mut backend = MetalBackend::from_package(

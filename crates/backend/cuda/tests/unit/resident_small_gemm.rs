@@ -1,10 +1,15 @@
 use super::kernels;
 use crate::device::CudaDevice;
+use crate::kernels::linear::dense;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{half::bf16, prelude::*};
+use std::env::var;
+use std::error::Error;
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn small_mma_matches_f64_oracle() -> Result<(), Box<dyn std::error::Error>> {
+fn small_mma_matches_f64_oracle() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (m, n, k) in [(2, 65, 144), (4, 32, 256), (12, 129, 512), (17, 33, 128)] {
@@ -43,13 +48,13 @@ fn small_mma_matches_f64_oracle() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn small_mma_performance() -> Result<(), Box<dyn std::error::Error>> {
+fn small_mma_performance() -> Result<(), Box<dyn Error>> {
     use cutile::bench::{BenchOptions, do_bench_paired};
     use std::time::Duration;
     if cfg!(debug_assertions) {
         return Err("performance requires release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|x| x != 3) {
         return Err("performance requires CUDA O3".into());
     }
@@ -96,12 +101,12 @@ fn small_mma_performance() -> Result<(), Box<dyn std::error::Error>> {
                 |_| {
                     old.launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
                 |_| {
                     new.launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
             )?;
             println!(
@@ -117,7 +122,7 @@ fn small_mma_performance() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn small_scaled_mma_matches_f64_oracle() -> Result<(), Box<dyn std::error::Error>> {
+fn small_scaled_mma_matches_f64_oracle() -> Result<(), Box<dyn Error>> {
     use cuda_core::f8e4m3fn;
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
@@ -241,7 +246,7 @@ fn checkpoint_small_outputs(
     input: &[f32],
     outputs: usize,
     columns: usize,
-) -> Result<CheckpointDenseOutputs, Box<dyn std::error::Error>> {
+) -> Result<CheckpointDenseOutputs, Box<dyn Error>> {
     let matrix = device.upload(input.to_vec(), &[4, columns])?;
     let single = device.upload(input[..columns].to_vec(), &[1, columns])?;
     let vector = device.upload(input[..columns].to_vec(), &[columns])?;
@@ -263,7 +268,7 @@ fn checkpoint_small_outputs(
     .first()
     .unpartition()
     .sync_on(&device.stream)?;
-    let gemv = crate::kernels::linear::dense(
+    let gemv = dense(
         api::zeros::<f32>(&[outputs]).partition([16]),
         &vector,
         weight,
@@ -293,7 +298,7 @@ fn checkpoint_small_outputs_f32(
     input: &[f32],
     outputs: usize,
     columns: usize,
-) -> Result<CheckpointDenseOutputs, Box<dyn std::error::Error>> {
+) -> Result<CheckpointDenseOutputs, Box<dyn Error>> {
     let matrix = device.upload(input.to_vec(), &[4, columns])?;
     let single = device.upload(input[..columns].to_vec(), &[1, columns])?;
     let vector = device.upload(input[..columns].to_vec(), &[columns])?;
@@ -325,7 +330,7 @@ fn checkpoint_small_outputs_f32(
     .first()
     .unpartition()
     .sync_on(&device.stream)?;
-    let gemv = crate::kernels::linear::dense(
+    let gemv = dense(
         api::zeros::<f32>(&[outputs]).partition([16]),
         &vector,
         weight,
@@ -351,13 +356,13 @@ fn checkpoint_small_outputs_f32(
 
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL, safe-run; all 96 real GDN small weights, full unchanged F64 gate"]
-fn checkpoint_small_dense_full_f64_and_row_equivalence() -> Result<(), Box<dyn std::error::Error>> {
+fn checkpoint_small_dense_full_f64_and_row_equivalence() -> Result<(), Box<dyn Error>> {
     checkpoint_small_reference(false)
 }
 
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL, safe-run; existing native F32 GEMV, all real weights and complete outputs"]
-fn checkpoint_small_f32_full_f64_and_row_equivalence() -> Result<(), Box<dyn std::error::Error>> {
+fn checkpoint_small_f32_full_f64_and_row_equivalence() -> Result<(), Box<dyn Error>> {
     checkpoint_small_reference(true)
 }
 
@@ -372,7 +377,7 @@ impl CheckpointDenseWeight {
         device: &CudaDevice,
         package: &infer_models::QuantizedPackage,
         source: &infer_models::DeviceWeight,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn Error>> {
         use infer_models::{TensorDtype, WeightEncoding};
         assert_eq!(source.encoding, WeightEncoding::Float);
         assert_eq!(source.data.dtype, TensorDtype::BF16);
@@ -406,12 +411,11 @@ impl CheckpointDenseWeight {
     }
 }
 
-fn checkpoint_small_reference(native: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn checkpoint_small_reference(native: bool) -> Result<(), Box<dyn Error>> {
     use infer_models::QuantizedPackage;
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let package =
-        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
+    let package = QuantizedPackage::open(var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
     let selected: Vec<_> = package
         .weights
         .values()
@@ -493,7 +497,7 @@ fn checkpoint_pool_outputs(
     input: &[f32],
     outputs: usize,
     columns: usize,
-) -> Result<(Vec<f32>, Vec<f32>), Box<dyn std::error::Error>> {
+) -> Result<(Vec<f32>, Vec<f32>), Box<dyn Error>> {
     let vectors = input
         .chunks_exact(columns)
         .map(|row| device.upload(row.to_vec(), &[columns]))
@@ -521,7 +525,7 @@ fn checkpoint_pool_outputs(
     let fused = device.read_borrowed(&result)?;
     let mut private = Vec::new();
     for vector in &vectors {
-        let reference = crate::kernels::linear::dense(
+        let reference = dense(
             api::zeros::<f32>(&[outputs]).partition([16]),
             vector,
             weight,
@@ -542,13 +546,11 @@ fn checkpoint_pool_outputs(
 
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL, safe-run; four slot matrix rows, all 96 weights and complete original F64/bit gates"]
-fn checkpoint_pool_four_dense_full_f64_and_private_bits() -> Result<(), Box<dyn std::error::Error>>
-{
+fn checkpoint_pool_four_dense_full_f64_and_private_bits() -> Result<(), Box<dyn Error>> {
     use infer_models::QuantizedPackage;
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let package =
-        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
+    let package = QuantizedPackage::open(var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
     let selected: Vec<_> = package
         .weights
         .values()
@@ -610,21 +612,20 @@ fn checkpoint_pool_four_dense_full_f64_and_private_bits() -> Result<(), Box<dyn 
 
 #[test]
 #[ignore = "requires CUDA/checkpoint/release/safe-run; CI first, original frozen tile; projection-only cost diagnostic"]
-fn checkpoint_pool_small_f32_projection_cost() -> Result<(), Box<dyn std::error::Error>> {
+fn checkpoint_pool_small_f32_projection_cost() -> Result<(), Box<dyn Error>> {
     use cutile::bench::{BenchOptions, do_bench_paired};
     use infer_models::QuantizedPackage;
     use std::time::Duration;
     if cfg!(debug_assertions) {
         return Err("cost diagnostic requires release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
         return Err("cost diagnostic requires CUDA O3".into());
     }
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let package =
-        QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
+    let package = QuantizedPackage::open(var("INFER_TEST_MODEL")?, infer_core::ModelId::ONE)?;
     let weights = package
         .weights
         .values()
@@ -689,13 +690,13 @@ fn checkpoint_pool_small_f32_projection_cost() -> Result<(), Box<dyn std::error:
                 baseline
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+                    .map_err(|error| tensor_error(&error.to_string()))
             },
             |_| {
                 candidate
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|error| cutile::error::tensor_error(&error.to_string()))
+                    .map_err(|error| tensor_error(&error.to_string()))
             },
         )?;
         println!(

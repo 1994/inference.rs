@@ -8,14 +8,34 @@
 //! Both sides run with deepstack disabled, so this measures the shared path rather than the
 //! released checkpoint's feature set.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::device::CudaDevice;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::loading::LoadOptions;
+#[cfg(target_os = "linux")]
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::env::var_os;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+use std::fs::read;
+#[cfg(target_os = "linux")]
+use std::ops::Range;
+#[cfg(target_os = "linux")]
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::slice::from_ref;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{loading::LoadedModel, vision};
     use infer_core::{Error, ModelId};
     use infer_ir::Modality;
     use infer_models::{TextAssets, prepare};
 
     let (root, reference_path) = paths()?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let loaded = LoadedModel::open(device_of(&root)?, &root, ModelId::ONE, load_options())?;
     let imported = loaded.imported().clone();
     let vision = loaded
@@ -31,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &processor,
         &imported,
         &reference.text,
-        std::slice::from_ref(&reference.image),
+        from_ref(&reference.image),
         &Modality::Image,
     )?;
 
@@ -39,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tokens_match = prepared.tokens == reference.ids;
 
     // 2. Encoded media and 3. final prompt logits.
-    let official_pixels = std::env::var_os("INFER_PARITY_OFFICIAL_PIXELS").is_some();
+    let official_pixels = var_os("INFER_PARITY_OFFICIAL_PIXELS").is_some();
     let official = infer_models::PromptImage {
         pixels: reference.pixels,
         grid: reference.grid,
@@ -90,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "prompt_tokens": prepared.tokens.len(),
             "reference_prompt_tokens": reference.ids.len(),
             "tokens_match": tokens_match,
-            "media_tokens": prepared.spans.iter().map(std::ops::Range::len).sum::<usize>(),
+            "media_tokens": prepared.spans.iter().map(Range::len).sum::<usize>(),
             "first_token": mine,
             "reference_first_token": theirs,
             "vision_max_abs": vision_abs,
@@ -120,26 +140,24 @@ const VISION_TOLERANCE: f32 = 1e-2;
 
 /// Open the device that runs the parity check.
 #[cfg(target_os = "linux")]
-fn device_of(
-    _root: &str,
-) -> Result<infer_backend_cuda::device::CudaDevice, Box<dyn std::error::Error>> {
-    Ok(infer_backend_cuda::device::CudaDevice::new(0)?)
+fn device_of(_root: &str) -> Result<CudaDevice, Box<dyn StdError>> {
+    Ok(CudaDevice::new(0)?)
 }
 
 /// Loading options for a parity run: autotuning would add measurement noise to the comparison.
 #[cfg(target_os = "linux")]
-fn load_options() -> infer_backend_cuda::loading::LoadOptions {
-    infer_backend_cuda::loading::LoadOptions {
+fn load_options() -> LoadOptions {
+    LoadOptions {
         // Fused prompt chunks: the media prefill must exercise the path the engine uses.
         prefill_width: 0,
         autotune: false,
-        ..infer_backend_cuda::loading::LoadOptions::default()
+        ..LoadOptions::default()
     }
 }
 
 /// Decode the reference `(temporal, height, width)` patch grid.
 #[cfg(target_os = "linux")]
-fn decode_grid(bytes: &[u8]) -> Result<(usize, usize, usize), Box<dyn std::error::Error>> {
+fn decode_grid(bytes: &[u8]) -> Result<(usize, usize, usize), Box<dyn StdError>> {
     use infer_core::Error;
     let values: Vec<i64> = bytes
         .as_chunks::<8>()
@@ -147,7 +165,7 @@ fn decode_grid(bytes: &[u8]) -> Result<(usize, usize, usize), Box<dyn std::error
         .iter()
         .map(|chunk| i64::from_le_bytes(*chunk))
         .collect();
-    let axis = |index: usize| -> Result<usize, Box<dyn std::error::Error>> {
+    let axis = |index: usize| -> Result<usize, Box<dyn StdError>> {
         usize::try_from(values[index]).map_err(|_| Error::invalid("reference patch grid").into())
     };
     Ok((axis(0)?, axis(1)?, axis(2)?))
@@ -210,7 +228,7 @@ struct Reference {
 
 /// Read the reference dump written by the Python reference runner.
 #[cfg(target_os = "linux")]
-fn load_reference(path: &str) -> Result<Reference, Box<dyn std::error::Error>> {
+fn load_reference(path: &str) -> Result<Reference, Box<dyn StdError>> {
     use infer_core::Error;
     use infer_models::SafetensorsFile;
 
@@ -265,16 +283,16 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
-fn image_processor(root: &str) -> Result<infer_models::ImageProcessor, Box<dyn std::error::Error>> {
-    Ok(infer_models::ImageProcessor::from_json(&std::fs::read(
-        std::path::Path::new(root).join("preprocessor_config.json"),
+fn image_processor(root: &str) -> Result<infer_models::ImageProcessor, Box<dyn StdError>> {
+    Ok(infer_models::ImageProcessor::from_json(&read(
+        Path::new(root).join("preprocessor_config.json"),
     )?)?)
 }
 
 #[cfg(target_os = "linux")]
-fn paths() -> Result<(String, String), Box<dyn std::error::Error>> {
+fn paths() -> Result<(String, String), Box<dyn StdError>> {
     use infer_core::Error;
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let root = args
         .next()
         .ok_or_else(|| Error::invalid("model package path required"))?;

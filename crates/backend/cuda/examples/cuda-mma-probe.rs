@@ -1,5 +1,11 @@
 //! Capability/accuracy probe, deliberately not a performance benchmark.
 #[cfg(target_os = "linux")]
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::device::CudaDevice;
+#[cfg(target_os = "linux")]
+use std::error::Error;
+#[cfg(target_os = "linux")]
 #[cutile::module]
 mod probe {
     use cutile::core::{
@@ -32,12 +38,10 @@ mod probe {
 }
 
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     use cutile::prelude::*;
-    cutile::jit_cache::enable_default()?;
-    let target = infer_backend_cuda::device::CudaDevice::new(0)?
-        .target()
-        .clone();
+    enable_default()?;
+    let target = CudaDevice::new(0)?.target().clone();
     let device = Device::new(0)?;
     let stream = device.new_stream()?;
     let mut results = Vec::new();

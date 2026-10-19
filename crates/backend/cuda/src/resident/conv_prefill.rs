@@ -105,6 +105,8 @@ pub(crate) mod kernels {
 }
 
 use super::{ActivationArena, ProgramWeights, batch::States, capture::error};
+use crate::constants::CONV_KERNEL_SIZE;
+use crate::constants::CONV_KERNEL_TILE;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 
@@ -123,7 +125,7 @@ pub(super) fn record(
     }
     let TensorOp::Conv {
         channels,
-        kernel: crate::constants::CONV_KERNEL_SIZE,
+        kernel: CONV_KERNEL_SIZE,
     } = node.op
     else {
         return Ok(false);
@@ -156,10 +158,10 @@ pub(super) fn record(
         .constants
         .get(&node.inputs[1])
         .ok_or_else(|| error("prefill convolution weight"))?
-        .view(&[channels, crate::constants::CONV_KERNEL_SIZE])
+        .view(&[channels, CONV_KERNEL_SIZE])
         .map_err(error)?;
     scope.record(kernels::forward(
-        (&mut output).partition([1, crate::constants::CONV_KERNEL_TILE]),
+        (&mut output).partition([1, CONV_KERNEL_TILE]),
         &*h0,
         &*h1,
         &*h2,
@@ -168,9 +170,9 @@ pub(super) fn record(
         metadata,
     ))?;
     scope.record(kernels::commit(
-        h0.partition([crate::constants::CONV_KERNEL_TILE]),
-        h1.partition([crate::constants::CONV_KERNEL_TILE]),
-        h2.partition([crate::constants::CONV_KERNEL_TILE]),
+        h0.partition([CONV_KERNEL_TILE]),
+        h1.partition([CONV_KERNEL_TILE]),
+        h2.partition([CONV_KERNEL_TILE]),
         &input,
         metadata,
     ))?;

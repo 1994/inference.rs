@@ -1,5 +1,6 @@
 //! Capture responsibilities.
 use super::{Checkpoint, MetalBackend, MetalDevice, SavedSequence, Sequence};
+use crate::constants::F32_BYTES_U64;
 use infer_core::{Error, ErrorCode, Result};
 use infer_ir::{StateKind, TensorStorage};
 use metal::MTLCommandBufferStatus;
@@ -14,7 +15,7 @@ impl MetalBackend {
         let count = self.hidden_elements(s.tokens.len(), s.readout)?;
         let data = MetalDevice::read_idle(
             buffer,
-            usize::try_from(buffer.length() / crate::constants::F32_BYTES_U64)
+            usize::try_from(buffer.length() / F32_BYTES_U64)
                 .map_err(|_| Error::invalid("hidden buffer exceeds address space"))?,
         )?;
         if s.pending_prefix
@@ -36,7 +37,7 @@ impl MetalBackend {
                     *id,
                     MetalDevice::read_idle(
                         b,
-                        usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
+                        usize::try_from(b.length() / F32_BYTES_U64)
                             .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                     )?,
                 ))
@@ -60,7 +61,7 @@ impl MetalBackend {
                     .ok_or_else(|| Error::invariant("KV pool missing"))?;
                 let pool = MetalDevice::read_idle(
                     buffer,
-                    usize::try_from(buffer.length() / crate::constants::F32_BYTES_U64)
+                    usize::try_from(buffer.length() / F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
                 let plane = self.kv.capacity() * self.config.block_size * width;

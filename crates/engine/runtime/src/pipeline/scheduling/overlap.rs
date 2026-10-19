@@ -4,6 +4,7 @@ use crate::{Engine, EngineOutput};
 use infer_core::{Error, RequestStatus, Result};
 use infer_ir::SchedulingDecision;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
 
 pub struct PreparedNext {
     ready: ReadyWindow,
@@ -46,7 +47,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         });
         match result {
             Ok(Some(decision)) if decision.step.is_some() => {
-                let mut versions = std::mem::take(&mut self.host.prepare_versions);
+                let mut versions = take(&mut self.host.prepare_versions);
                 versions.clear();
                 for row in ready.iter() {
                     versions.push(self.host.requests.known(row.request)?.progress_epoch);

@@ -1,5 +1,6 @@
 use super::*;
 use crate::PromptImage;
+use std::iter::once;
 
 #[test]
 fn frequency_axes_match_interleaved_and_contiguous_sections() {
@@ -27,7 +28,7 @@ fn frequency_axes_match_interleaved_and_contiguous_sections() {
 fn image_axes_and_decode_position_are_independent_of_kv_length() {
     let prompt = PreparedPrompt {
         tokens: vec![0; 95],
-        spans: std::iter::once(4..81).collect(),
+        spans: once(4..81).collect(),
         images: vec![PromptImage {
             pixels: vec![],
             grid: (1, 14, 22),

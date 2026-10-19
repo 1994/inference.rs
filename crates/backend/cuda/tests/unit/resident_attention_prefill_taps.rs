@@ -1,8 +1,12 @@
 //! Test-only copies around the unchanged attention kernels; allocations precede capture.
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::METADATA_FIELDS;
+use crate::device::device_error;
 use crate::{device::CudaDevice, resident::ProgramWeights, tuning::attention::Choice};
 use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
+use std::result::Result as StdResult;
 use std::{cell::Cell, collections::BTreeMap};
 thread_local! {
     static FORCED: Cell<Option<Choice>> = const { Cell::new(None) };
@@ -70,7 +74,7 @@ impl Taps {
             let allocate = |size| {
                 api::zeros::<f32>(&[size])
                     .sync_on(&device.stream)
-                    .map_err(crate::device::device_error)
+                    .map_err(device_error)
             };
             let entry = Entry {
                 state,
@@ -84,12 +88,12 @@ impl Taps {
                 keys: allocate(lanes * kv_heads * head_dim)?,
                 values: allocate(lanes * kv_heads * head_dim)?,
                 output: allocate(lanes * query_heads * head_dim)?,
-                metadata: api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+                metadata: api::zeros::<i32>(&[METADATA_FIELDS])
                     .sync_on(&device.stream)
-                    .map_err(crate::device::device_error)?,
-                table: api::zeros::<i32>(&[capacity / crate::constants::KV_BLOCK_TOKENS])
+                    .map_err(device_error)?,
+                table: api::zeros::<i32>(&[capacity / KV_BLOCK_TOKENS])
                     .sync_on(&device.stream)
-                    .map_err(crate::device::device_error)?,
+                    .map_err(device_error)?,
             };
             self.buffers.insert((node.outputs[0], lanes), entry);
         }
@@ -101,7 +105,7 @@ impl Taps {
         key: (TensorId, usize),
         input: [&Tensor<f32>; 3],
         bindings: (&Tensor<i32>, &Tensor<i32>),
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         if let Some(tap) = self.buffers.get_mut(&key) {
             for (out, input) in [
                 (&mut tap.query, input[0]),
@@ -120,7 +124,7 @@ impl Taps {
         scope: &Scope,
         key: (TensorId, usize),
         output: &Tensor<f32>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         if let Some(tap) = self.buffers.get_mut(&key) {
             scope.record(api::memcpy(&mut tap.output, output))?;
         }

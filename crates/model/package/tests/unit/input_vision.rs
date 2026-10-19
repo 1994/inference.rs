@@ -1,6 +1,11 @@
 use super::*;
 use crate::QwenProvider;
 use infer_core::ModelId;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::env::var;
+use std::fs::read;
+use std::path::PathBuf;
 
 fn declared() -> ModalityEncoder {
     let imported = QwenProvider
@@ -23,11 +28,11 @@ fn inventory_matches_the_package_index_exactly() -> Result<()> {
     let index = crate::SafetensorsIndex::parse(include_bytes!(
         "../../../../../examples/qwen3.8-27b/model.safetensors.index.json"
     ))?;
-    let declared: std::collections::BTreeSet<_> = slots(&encoder)?
+    let declared: BTreeSet<_> = slots(&encoder)?
         .into_iter()
         .map(|slot| slot.tensor)
         .collect();
-    let packaged: std::collections::BTreeSet<_> = index
+    let packaged: BTreeSet<_> = index
         .weight_map
         .keys()
         .filter(|name| name.starts_with(&encoder.prefix))
@@ -48,22 +53,22 @@ fn inventory_matches_the_package_index_exactly() -> Result<()> {
 /// Skipped when `INFER_VISION_PACKAGE` is unset, so the portable gate stays host-independent.
 #[test]
 fn inventory_shapes_match_the_real_checkpoint() -> Result<()> {
-    let Ok(root) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(root) = var("INFER_VISION_PACKAGE") else {
         return Ok(());
     };
-    let root = std::path::PathBuf::from(root);
+    let root = PathBuf::from(root);
     let encoder = declared();
     let index = crate::SafetensorsIndex::parse(
-        &std::fs::read(root.join("model.safetensors.index.json"))
+        &read(root.join("model.safetensors.index.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
-    let shards: std::collections::BTreeSet<_> = index
+    let shards: BTreeSet<_> = index
         .weight_map
         .iter()
         .filter(|(name, _)| name.starts_with(&encoder.prefix))
         .map(|(_, shard)| shard.clone())
         .collect();
-    let mut headers = std::collections::BTreeMap::new();
+    let mut headers = BTreeMap::new();
     for shard in shards {
         let file = crate::SafetensorsFile::open(root.join(&shard))?;
         for (name, header) in file.tensors {
@@ -103,7 +108,7 @@ fn geometry_matches_the_published_configuration() -> Result<()> {
 /// Skipped when `INFER_VISION_GOLDEN` is unset.
 #[test]
 fn position_taps_match_the_reference() -> Result<()> {
-    let Ok(path) = std::env::var("INFER_VISION_GOLDEN") else {
+    let Ok(path) = var("INFER_VISION_GOLDEN") else {
         return Ok(());
     };
     let encoder = declared();
@@ -146,16 +151,14 @@ fn position_taps_match_the_reference() -> Result<()> {
 /// Skipped unless both the package and the golden are provided.
 #[test]
 fn gathered_positions_match_the_reference() -> Result<()> {
-    let (Ok(package), Ok(golden)) = (
-        std::env::var("INFER_VISION_PACKAGE"),
-        std::env::var("INFER_VISION_GOLDEN"),
-    ) else {
+    let (Ok(package), Ok(golden)) = (var("INFER_VISION_PACKAGE"), var("INFER_VISION_GOLDEN"))
+    else {
         return Ok(());
     };
     let encoder = declared();
-    let package = std::path::PathBuf::from(package);
+    let package = PathBuf::from(package);
     let index = crate::SafetensorsIndex::parse(
-        &std::fs::read(package.join("model.safetensors.index.json"))
+        &read(package.join("model.safetensors.index.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let name = format!("{}pos_embed.weight", encoder.prefix);
@@ -192,7 +195,7 @@ fn gathered_positions_match_the_reference() -> Result<()> {
 /// Axial grid coordinates must match the reference ordering exactly.
 #[test]
 fn position_ids_match_the_reference() -> Result<()> {
-    let Ok(golden) = std::env::var("INFER_VISION_GOLDEN") else {
+    let Ok(golden) = var("INFER_VISION_GOLDEN") else {
         return Ok(());
     };
     let encoder = declared();

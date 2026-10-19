@@ -733,6 +733,8 @@ pub mod oxide;
 mod prepared;
 mod workspace;
 pub use budget::required_bytes;
+#[cfg(test)]
+use std::cell::Cell;
 pub use workspace::Workspace;
 
 #[cfg(test)]
@@ -749,10 +751,10 @@ mod model_check;
 
 #[cfg(test)]
 thread_local! {
-    pub(super) static ORDERED_CAPTURE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static LEGACY_CAPTURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static ORDERED_CAPTURE_COUNT: Cell<usize> = const { Cell::new(0) };
+    pub(super) static LEGACY_CAPTURE: Cell<bool> = const { Cell::new(false) };
     // Keep convolution identical when comparing only the Delta capture policy.
-    pub(super) static LEGACY_DELTA_CAPTURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static LEGACY_DELTA_CAPTURE: Cell<bool> = const { Cell::new(false) };
 }
 
 #[cfg(test)]

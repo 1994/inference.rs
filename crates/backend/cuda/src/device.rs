@@ -1,7 +1,26 @@
 //! Safe CUDA memory and kernel launch boundary.
+use crate::constants::MATVEC_TILE_COLUMNS;
+use crate::constants::MATVEC_TILE_ROWS;
+use crate::kernels::linear::dense;
+use crate::strategy::LinearTiling;
+use crate::target::CudaTarget;
+use cuda_core::sys::CUdevice_attribute;
+use cuda_core::sys::CUresult;
+use cuda_core::sys::cuDeviceGetAttribute;
+use cuda_core::sys::cuDriverGetVersion;
+use cuda_core::sys::cuMemGetInfo_v2;
+use cuda_core::sys::cuMemcpyDtoDAsync_v2;
+use cuda_core::sys::cuMemcpyDtoH_v2;
+use cuda_core::sys::cuMemcpyHtoDAsync_v2;
+use cuda_core::sys::cudaError_enum_CUDA_SUCCESS;
+use cutile::cuda_async::device_context::with_default_device_policy;
+use cutile::cuda_async::device_future::DeviceFuture;
+use cutile::jit_cache::enable_default;
 use cutile::prelude::*;
 use infer_core::{Error as InferError, ErrorCode, Result};
 use serde::Serialize;
+use std::fmt::Display;
+use std::result::Result as StdResult;
 use std::sync::{Arc, OnceLock};
 
 /// One MiB in bytes, for human-readable identities.
@@ -159,12 +178,12 @@ pub(crate) use readback::{ReadbackSource, Readbacks};
 #[derive(Clone)]
 pub struct CudaDevice {
     pub(crate) stream: Arc<cuda_core::Stream>,
-    target: crate::target::CudaTarget,
+    target: CudaTarget,
     profile: Arc<OnceLock<DeviceProfile>>,
     ordinal: usize,
 }
 
-pub(crate) fn device_error(error: impl std::fmt::Display) -> InferError {
+pub(crate) fn device_error(error: impl Display) -> InferError {
     InferError::new(ErrorCode::Backend, error.to_string())
 }
 
@@ -173,7 +192,7 @@ impl CudaDevice {
     /// # Errors
     /// Returns cache initialization errors.
     pub fn enable_kernel_cache() -> Result<()> {
-        cutile::jit_cache::enable_default().map_err(device_error)
+        enable_default().map_err(device_error)
     }
     /// # Errors
     /// Fails when the requested CUDA device or stream is unavailable.
@@ -201,7 +220,7 @@ impl CudaDevice {
     }
 
     #[must_use]
-    pub const fn target(&self) -> &crate::target::CudaTarget {
+    pub const fn target(&self) -> &CudaTarget {
         &self.target
     }
 
@@ -226,10 +245,7 @@ impl CudaDevice {
         self.matvec_tiled(
             x,
             w,
-            crate::strategy::LinearTiling::new(
-                crate::constants::MATVEC_TILE_ROWS,
-                crate::constants::MATVEC_TILE_COLUMNS,
-            )?,
+            LinearTiling::new(MATVEC_TILE_ROWS, MATVEC_TILE_COLUMNS)?,
         )
     }
 
@@ -239,12 +255,12 @@ impl CudaDevice {
         &self,
         x: Arc<Tensor<f32>>,
         w: Arc<Tensor<T>>,
-        tiling: crate::strategy::LinearTiling,
+        tiling: LinearTiling,
     ) -> Result<Arc<Tensor<f32>>> {
         let (rows, columns) = dimensions(&x, &w)?;
         let block = columns.min(tiling.columns()).next_power_of_two();
         let out = api::zeros::<f32>(&[rows]).partition([tiling.rows()]);
-        crate::kernels::linear::dense(out, x, w)
+        dense(out, x, w)
             .generics(vec![
                 T::DTYPE.as_str().into(),
                 tiling.rows().to_string(),
@@ -294,7 +310,7 @@ impl CudaDevice {
         // SAFETY: the checked length keeps the write inside the tensor, the source slice is live
         // for the duration of the call, and the stream belongs to this device.
         let status = unsafe {
-            cuda_core::sys::cuMemcpyHtoDAsync_v2(
+            cuMemcpyHtoDAsync_v2(
                 dst.device_pointer().cu_deviceptr(),
                 values.as_ptr().cast(),
                 bytes,
@@ -322,7 +338,7 @@ impl CudaDevice {
         // SAFETY: the device context is current, the tensor owns `size()` T elements and the
         // destination is a live host slice of the same length.
         let status = unsafe {
-            cuda_core::sys::cuMemcpyDtoH_v2(
+            cuMemcpyDtoH_v2(
                 host.as_mut_ptr().cast(),
                 tensor.device_pointer().cu_deviceptr(),
                 bytes,
@@ -337,11 +353,11 @@ impl CudaDevice {
     unsafe_code,
     reason = "Audited read-only CUDA attribute query; the live owned Device supplies a valid driver handle"
 )]
-fn query_target(device: &Device) -> Result<crate::target::CudaTarget> {
+fn query_target(device: &Device) -> Result<CudaTarget> {
     // SAFETY: Device::new initialized CUDA and owns this live device handle.
     let name =
         unsafe { cuda_core::get_device_sm_name(device.cu_device()) }.map_err(device_error)?;
-    Ok(crate::target::CudaTarget::from_sm_name(&name))
+    Ok(CudaTarget::from_sm_name(&name))
 }
 
 fn dimensions<T: DType>(x: &Tensor<f32>, w: &Tensor<T>) -> Result<(usize, usize)> {
@@ -361,15 +377,11 @@ fn dimensions<T: DType>(x: &Tensor<f32>, w: &Tensor<T>) -> Result<(usize, usize)
     reason = "Audited driver queries and stream drain with an owned device and a bound context"
 )]
 impl CudaDevice {
-    pub(crate) fn attribute(&self, attribute: cuda_core::sys::CUdevice_attribute) -> Result<u32> {
+    pub(crate) fn attribute(&self, attribute: CUdevice_attribute) -> Result<u32> {
         let mut value = 0;
         // SAFETY: the owned stream retains this device; value is a live output pointer.
         let status = unsafe {
-            cuda_core::sys::cuDeviceGetAttribute(
-                &raw mut value,
-                attribute,
-                self.stream.device().cu_device(),
-            )
+            cuDeviceGetAttribute(&raw mut value, attribute, self.stream.device().cu_device())
         };
         driver_status(status)?;
         u32::try_from(value).map_err(device_error)
@@ -381,7 +393,7 @@ impl CudaDevice {
     pub(crate) fn driver_version() -> Result<u32> {
         let mut version = 0;
         // SAFETY: version is a live output pointer; this query requires no current context.
-        let status = unsafe { cuda_core::sys::cuDriverGetVersion(&raw mut version) };
+        let status = unsafe { cuDriverGetVersion(&raw mut version) };
         driver_status(status)?;
         u32::try_from(version).map_err(device_error)
     }
@@ -472,7 +484,7 @@ impl CudaDevice {
         // SAFETY: the checked ranges keep both accesses inside live device allocations, and the
         // stream belongs to this device; callers drain it before reusing the buffers.
         let status = unsafe {
-            cuda_core::sys::cuMemcpyDtoDAsync_v2(
+            cuMemcpyDtoDAsync_v2(
                 dst.device_pointer().cu_deviceptr() + dst_bytes,
                 src.device_pointer().cu_deviceptr() + src_bytes,
                 bytes,
@@ -504,7 +516,7 @@ impl CudaDevice {
         // source is not rewritten until the caller's next stream barrier, and the stream
         // belongs to this device.
         let status = unsafe {
-            cuda_core::sys::cuMemcpyHtoDAsync_v2(
+            cuMemcpyHtoDAsync_v2(
                 dst.device_pointer().cu_deviceptr(),
                 src.as_ptr().cast(),
                 bytes,
@@ -523,7 +535,7 @@ impl CudaDevice {
             .map_err(device_error)?;
         let (mut free, mut total) = (0, 0);
         // SAFETY: the owned device's context is current and both outputs are live.
-        let status = unsafe { cuda_core::sys::cuMemGetInfo_v2(&raw mut free, &raw mut total) };
+        let status = unsafe { cuMemGetInfo_v2(&raw mut free, &raw mut total) };
         driver_status(status)?;
         Ok((free as u64, total as u64))
     }
@@ -585,8 +597,8 @@ impl CudaDevice {
     }
 }
 
-fn driver_status(status: cuda_core::sys::CUresult) -> Result<()> {
-    if status == cuda_core::sys::cudaError_enum_CUDA_SUCCESS {
+fn driver_status(status: CUresult) -> Result<()> {
+    if status == cudaError_enum_CUDA_SUCCESS {
         Ok(())
     } else {
         Err(device_error(format!("CUDA driver status {status}")))
@@ -604,7 +616,7 @@ pub(crate) struct GraphUpdate<N>(pub N);
 impl<N: GraphNode> DeviceOp for GraphUpdate<N> {
     type Output = ();
 
-    unsafe fn execute(self, context: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    unsafe fn execute(self, context: &ExecutionContext) -> StdResult<(), DeviceError> {
         // SAFETY: preserve the caller's context and submission lifetime unchanged.
         unsafe { self.0.execute(context) }.map(|_| ())
     }
@@ -613,13 +625,11 @@ impl<N: GraphNode> DeviceOp for GraphUpdate<N> {
 impl<N: GraphNode> GraphNode for GraphUpdate<N> {}
 
 impl<N: GraphNode> IntoFuture for GraphUpdate<N> {
-    type Output = std::result::Result<(), DeviceError>;
-    type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
+    type Output = StdResult<(), DeviceError>;
+    type IntoFuture = DeviceFuture<(), Self>;
 
     fn into_future(self) -> Self::IntoFuture {
-        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-            policy.next_stream()
-        }) {
+        match with_default_device_policy(|policy| policy.next_stream()) {
             Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
             Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
         }
@@ -632,6 +642,10 @@ mod tests;
 
 /// Native memory clearing lives at the audited device submission boundary.
 pub(crate) mod clear {
+    use cuda_core::sys::cuMemsetD8Async;
+    use cuda_core::sys::cudaError_enum_CUDA_SUCCESS;
+    use cutile::cuda_async::device_context::with_default_device_policy;
+    use cutile::cuda_async::device_future::DeviceFuture;
     use cutile::{prelude::*, tensor::KernelOutputStored};
 
     /// Lease partition used when retaining the output allocation for native memset.
@@ -651,14 +665,9 @@ pub(crate) mod clear {
             KernelOutputStored::retain(&self.0.partition([CLEAR_LEASE_TILE_ELEMENTS]), context)?;
             // SAFETY: the tensor owns this exact byte range on the captured stream's device.
             let status = unsafe {
-                cuda_core::sys::cuMemsetD8Async(
-                    pointer,
-                    0,
-                    bytes,
-                    context.get_cuda_stream().cu_stream(),
-                )
+                cuMemsetD8Async(pointer, 0, bytes, context.get_cuda_stream().cu_stream())
             };
-            if status == cuda_core::sys::cudaError_enum_CUDA_SUCCESS {
+            if status == cudaError_enum_CUDA_SUCCESS {
                 Ok(())
             } else {
                 Err(DeviceError::Launch(format!("state clear: {status:?}")))
@@ -669,11 +678,9 @@ pub(crate) mod clear {
 
     impl IntoFuture for Clear<'_> {
         type Output = Result<(), DeviceError>;
-        type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
+        type IntoFuture = DeviceFuture<(), Self>;
         fn into_future(self) -> Self::IntoFuture {
-            match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-                policy.next_stream()
-            }) {
+            match with_default_device_policy(|policy| policy.next_stream()) {
                 Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
                 Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
             }

@@ -1,5 +1,6 @@
 //! Inspection responsibilities.
 use super::MetalBackend;
+use crate::constants::NANOS_PER_MICROSECOND_F64;
 use infer_core::{Error, ErrorCode, Result};
 use infer_ir::{ExecutionStats, LayerProbe, ModelIr, OpTrace};
 use std::collections::VecDeque;
@@ -90,7 +91,7 @@ impl MetalBackend {
         serde_json::json!({"scope":"Metal GPU command-buffer timing; op trace separately measures CPU encoding",
             "traceEvents":self.commands.iter().map(|t|serde_json::json!({"name":format!("step:{}",t.step),
                 "ph":"X","cat":"metal_gpu_command","pid":1,"tid":1,
-                "ts":t.gpu_start_ns.saturating_sub(first) as f64/crate::constants::NANOS_PER_MICROSECOND_F64,"dur":t.gpu_duration_ns as f64/crate::constants::NANOS_PER_MICROSECOND_F64,"args":t})).collect::<Vec<_>>(),
+                "ts":t.gpu_start_ns.saturating_sub(first) as f64/NANOS_PER_MICROSECOND_F64,"dur":t.gpu_duration_ns as f64/NANOS_PER_MICROSECOND_F64,"args":t})).collect::<Vec<_>>(),
             "op_encoding":self.traces,"inspection":self.inspect(),"device":self.device_name(),
             "weight_load":self.load_plan,"execution_layout":{"prefill_chunk_tokens":self.config.prefill_chunk_tokens,
                 "scratch_bytes":self.scratch_bytes,"compute_dtype":"F32","device_depth":1}})

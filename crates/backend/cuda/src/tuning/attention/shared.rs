@@ -4,7 +4,14 @@ use super::{
     capture::Captured,
     reference::{self, Fixture},
 };
+use crate::resident::attention_oxide::shared_identity;
+use crate::tuning::MIN_CONFIRM_SPEEDUP;
+use crate::tuning::resolve_table;
+use crate::tuning::shipped_table;
+use crate::tuning::table_path;
+use crate::tuning::update_table;
 use crate::{device::CudaDevice, tuning::resident_gemm::ResidentTuningSession};
+use cutile::cutile_compiler::hints::CompileOptions;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +42,7 @@ impl Case {
         let minimum = if self.history == 0 {
             1.0 / MAX_SHORT_REGRESSION
         } else {
-            crate::tuning::MIN_CONFIRM_SPEEDUP
+            MIN_CONFIRM_SPEEDUP
         };
         self.cold.speedup() >= minimum && self.warm.speedup() >= minimum
     }
@@ -87,11 +94,7 @@ fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
     let mut key = super::exact::key(device, shape)?;
     key.fingerprint = format!(
         "{:x}",
-        Sha256::digest(format!(
-            "{}:{}",
-            key.fingerprint,
-            crate::resident::attention_oxide::shared_identity(),
-        ))
+        Sha256::digest(format!("{}:{}", key.fingerprint, shared_identity()))
     );
     key.schema = SCHEMA.into();
     Ok(key)
@@ -131,13 +134,13 @@ fn resolve(
     {
         return Ok(entry.selected);
     }
-    let path = crate::tuning::table_path();
+    let path = table_path();
     let local = if key.driver_build.is_some() {
-        crate::tuning::resolve_table(path.as_deref())?
+        resolve_table(path.as_deref())?
     } else {
         None
     };
-    for table in [local.as_ref(), Some(crate::tuning::shipped_table()?)]
+    for table in [local.as_ref(), Some(shipped_table()?)]
         .into_iter()
         .flatten()
     {
@@ -164,7 +167,7 @@ fn resolve(
         return Ok(Choice::RustSimt);
     };
     let cached = key.driver_build.is_some()
-        && crate::tuning::update_table(path.as_deref(), |table| {
+        && update_table(path.as_deref(), |table| {
             table.resident_shared_attention.retain(|old| old.key != key);
             table.resident_shared_attention.push(entry.clone());
         });
@@ -201,7 +204,7 @@ fn cases(
     Ok(Some(result))
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let options = cutile::cutile_compiler::hints::CompileOptions::default();
+    let options = CompileOptions::default();
     if cfg!(debug_assertions)
         || options.device_debug
         || options

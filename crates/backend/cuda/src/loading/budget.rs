@@ -1,14 +1,35 @@
 //! Admission accounting for allocated tensor storage, plus driver graph headroom.
 use super::LoadedModel;
+use crate::constants::ATTENTION_SPLIT_MAX_PARTS;
+use crate::constants::F32_BYTES;
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::MTP_FUSION_ROWS;
+use crate::constants::NVFP4_GROUP_SIZE;
+use crate::constants::PREFILL_LANES;
+use crate::constants::PREFILL_SPLIT_K;
+use crate::mlp::ProjectionWeight;
+use crate::resident::arena::ActivationArena;
+use crate::resident::attention_mma::catalog::DIM;
+use crate::resident::attention_mma::catalog::KV_HEADS;
+use crate::resident::attention_mma::catalog::workspace_bytes;
+use crate::resident::attention_mma::eligible;
+use crate::resident::capacity::for_model;
+use crate::resident::fusion_batch::required_bytes;
+use crate::resident::recurrent_prefill::required_bytes as recurrent_prefill_required_bytes;
 use crate::{
     device::DeviceProfile,
     resident::{ProgramGeometry, ProgramWeights},
 };
+use cutile::half::bf16;
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, OutputReadout, StateKind, TensorOp, TensorStorage};
+use std::array::from_fn;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 /// Bytes per F32 element in u64 budget arithmetic.
-const F32: u64 = crate::constants::F32_BYTES as u64;
+const F32: u64 = F32_BYTES as u64;
 /// Full-history readback stages a device copy and returns a second host copy.
 const READBACK_COPIES: u64 = 2;
 /// Private/shared verification crossed with full/other readout.
@@ -35,17 +56,17 @@ impl SequencePrice {
 }
 
 /// Four bounded, successful prices: private/shared verification × full/other readout.
-pub(super) struct SequencePrices([std::sync::OnceLock<SequencePrice>; PRICE_GEOMETRIES]);
+pub(super) struct SequencePrices([OnceLock<SequencePrice>; PRICE_GEOMETRIES]);
 
 impl Default for SequencePrices {
     fn default() -> Self {
-        Self(std::array::from_fn(|_| std::sync::OnceLock::new()))
+        Self(from_fn(|_| OnceLock::new()))
     }
 }
 
 impl LoadedModel {
     pub(super) fn validate_capacity(&self, capacity: usize) -> Result<usize> {
-        crate::resident::capacity::for_model(capacity, self.model.max_sequence)
+        for_model(capacity, self.model.max_sequence)
     }
 
     /// Upper bound for known tensor storage plus 256 MiB of graph/allocator headroom.
@@ -129,8 +150,7 @@ impl LoadedModel {
 /// One KV block's bytes over the graph's attention states: `columns` per position, keys and
 /// values, packed to one byte where the checkpoint carries fp8 scales.
 fn kv_block_bytes(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64> {
-    let block = u64::try_from(crate::constants::KV_BLOCK_TOKENS)
-        .map_err(|_| Error::invalid("KV block size"))?;
+    let block = u64::try_from(KV_BLOCK_TOKENS).map_err(|_| Error::invalid("KV block size"))?;
     let mut bytes = 0;
     for spec in &graph.tensors {
         if !matches!(
@@ -173,17 +193,14 @@ fn program_price(
     let mut per_token = 0;
     bytes = add(bytes, attention_scratch(graph)?)?;
     let max_prompt = geometry.prompts.into_iter().max().unwrap_or(0);
-    if crate::resident::attention_mma::eligible(&profile.architecture, graph, weights, max_prompt) {
-        let fixed = crate::resident::attention_mma::catalog::workspace_bytes(0, max_prompt)?;
+    if eligible(&profile.architecture, graph, weights, max_prompt) {
+        let fixed = workspace_bytes(0, max_prompt)?;
         bytes = add(
             bytes,
             u64::try_from(fixed).map_err(|_| Error::invalid("MMA scratch budget"))?,
         )?;
         // One BF16 K/V pair shared across every attention layer, not one pair per layer.
-        let token = crate::resident::attention_mma::catalog::KV_HEADS
-            * crate::resident::attention_mma::catalog::DIM
-            * 2
-            * size_of::<cutile::half::bf16>();
+        let token = KV_HEADS * DIM * 2 * size_of::<bf16>();
         per_token = add(
             per_token,
             u64::try_from(token).map_err(|_| Error::invalid("MMA token budget"))?,
@@ -193,21 +210,16 @@ fn program_price(
     // tensor in the graph; charge what the arena will actually allocate.
     bytes = add(
         bytes,
-        u64::try_from(crate::resident::arena::ActivationArena::required_bytes(
-            graph, lanes,
-        )?)
-        .map_err(|_| Error::invalid("activation budget"))?,
+        u64::try_from(ActivationArena::required_bytes(graph, lanes)?)
+            .map_err(|_| Error::invalid("activation budget"))?,
     )?;
     for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
         bytes = add(
             bytes,
-            crate::resident::recurrent_prefill::required_bytes(graph, weights, width)?,
+            recurrent_prefill_required_bytes(graph, weights, width)?,
         )?;
         // One owner per retained prompt graph, shared by hidden and final-logits replays.
-        bytes = add(
-            bytes,
-            crate::resident::fusion_batch::required_bytes(weights, width, profile),
-        )?;
+        bytes = add(bytes, required_bytes(weights, width, profile))?;
     }
     for spec in &graph.tensors {
         let elements = spec.elements()? as u64;
@@ -240,7 +252,7 @@ fn program_price(
     // Fused draft programs additionally retain embedding and two normalized rows per lane.
     let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
     let fusion_rows = if weights.fusion.is_some() {
-        crate::constants::MTP_FUSION_ROWS
+        MTP_FUSION_ROWS
     } else {
         1
     };
@@ -267,7 +279,7 @@ fn program_price(
 /// Charge the supported upper bound (16 partitions), independent of device tuning.
 fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
     let mut bytes = 0;
-    let mut shapes = std::collections::BTreeSet::new();
+    let mut shapes = BTreeSet::new();
     for node in &graph.nodes {
         if let TensorOp::Attention {
             query_heads,
@@ -279,10 +291,7 @@ fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
             bytes = add(
                 bytes,
                 mul(
-                    mul(
-                        query_heads as u64,
-                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
-                    )?,
+                    mul(query_heads as u64, ATTENTION_SPLIT_MAX_PARTS as u64)?,
                     mul(head_dim as u64 + 2, F32)?,
                 )?,
             )?;
@@ -300,15 +309,15 @@ fn projection_workspace(
         .tensors
         .iter()
         .map(|t| Ok((t.id, t.elements()? as u64)))
-        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
-    let mut verification = std::collections::BTreeSet::new();
-    let mut partials = std::collections::BTreeSet::new();
-    let mut quantized = std::collections::BTreeSet::new();
-    let mut fp8_quantized = std::collections::BTreeSet::new();
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut verification = BTreeSet::new();
+    let mut partials = BTreeSet::new();
+    let mut quantized = BTreeSet::new();
+    let mut fp8_quantized = BTreeSet::new();
     let quantized_rows = geometry
         .widths()
         .into_iter()
-        .collect::<std::collections::BTreeSet<_>>()
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .sum::<usize>() as u64;
     let mut bytes = 0;
@@ -330,7 +339,7 @@ fn projection_workspace(
             bytes = add(
                 bytes,
                 mul(
-                    columns / 2 + columns / crate::constants::NVFP4_GROUP_SIZE as u64,
+                    columns / 2 + columns / NVFP4_GROUP_SIZE as u64,
                     quantized_rows,
                 )?,
             )?;
@@ -341,21 +350,17 @@ fn projection_workspace(
                 mul(add(rows, columns)?, geometry.verification as u64 * F32)?,
             )?;
         }
-        if geometry.prompts.contains(&crate::constants::PREFILL_LANES)
+        if geometry.prompts.contains(&PREFILL_LANES)
             && !weights.input_scales.contains_key(&node.inputs[1])
             && matches!(
                 weights.projections.get(&node.inputs[1]),
-                Some(crate::mlp::ProjectionWeight::Fp4(..))
+                Some(ProjectionWeight::Fp4(..))
             )
             && partials.insert(rows)
         {
             bytes = add(
                 bytes,
-                mul(
-                    rows,
-                    (crate::constants::PREFILL_SPLIT_K * crate::constants::PREFILL_LANES) as u64
-                        * F32,
-                )?,
+                mul(rows, (PREFILL_SPLIT_K * PREFILL_LANES) as u64 * F32)?,
             )?;
         }
     }

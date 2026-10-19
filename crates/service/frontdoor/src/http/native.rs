@@ -3,13 +3,17 @@ use super::{
     HttpError, HttpResult, RuntimeHandle, diagnostics, events, metrics, observability, otlp,
     timeline,
 };
+use crate::constants::MAX_REQUEST_BODY_BYTES;
+use axum::extract::rejection::JsonRejection;
 use axum::{
     Json, Router, extract::DefaultBodyLimit, extract::Path, extract::State, http::HeaderMap,
     http::StatusCode, response::IntoResponse, response::Response, response::sse::Event,
     response::sse::KeepAlive, response::sse::Sse, routing::delete, routing::get, routing::post,
 };
+use futures_util::stream::unfold;
 use infer_core::{Error, ErrorCode, RequestId};
 use infer_ir::CanonicalRequest;
+use infer_observe::trace::TraceContext;
 use infer_runtime::{CompletedRequest, EngineOutput, RuntimeInspection};
 use std::convert::Infallible;
 
@@ -26,16 +30,14 @@ pub fn router(handle: RuntimeHandle) -> Router {
         .route("/native/v1/diagnostics", get(diagnostics))
         .route("/native/v1/timeline", get(timeline))
         .route("/native/v1/traces/otlp", get(otlp))
-        .layer(DefaultBodyLimit::max(
-            crate::constants::MAX_REQUEST_BODY_BYTES,
-        ))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(handle)
 }
-pub(super) fn trace_parent(headers: &HeaderMap) -> Option<infer_observe::trace::TraceContext> {
+pub(super) fn trace_parent(headers: &HeaderMap) -> Option<TraceContext> {
     headers
         .get("traceparent")
         .and_then(|value| value.to_str().ok())
-        .and_then(|parent| infer_observe::trace::TraceContext::parse(parent).ok())
+        .and_then(|parent| TraceContext::parse(parent).ok())
 }
 pub(super) async fn health(State(handle): State<RuntimeHandle>) -> HttpResult<Response> {
     let inspection = handle.inspect().await?;
@@ -58,7 +60,7 @@ pub(super) async fn cancel(
 pub(super) async fn infer(
     State(handle): State<RuntimeHandle>,
     headers: HeaderMap,
-    request: Result<Json<CanonicalRequest>, axum::extract::rejection::JsonRejection>,
+    request: Result<Json<CanonicalRequest>, JsonRejection>,
 ) -> HttpResult<Json<CompletedRequest>> {
     let Json(request) = request.map_err(HttpError::from)?;
     let mut receiver = handle
@@ -78,53 +80,52 @@ pub(super) async fn infer(
 pub(super) async fn stream(
     State(handle): State<RuntimeHandle>,
     headers: HeaderMap,
-    request: Result<Json<CanonicalRequest>, axum::extract::rejection::JsonRejection>,
+    request: Result<Json<CanonicalRequest>, JsonRejection>,
 ) -> HttpResult<Response> {
     let Json(request) = request.map_err(HttpError::from)?;
     let receiver = handle
         .submit_with_trace(request, trace_parent(&headers))
         .await?;
-    let events =
-        futures_util::stream::unfold((receiver, false), |(mut receiver, finished)| async move {
-            if finished {
-                return None;
-            }
-            let incoming = receiver.recv().await.unwrap_or_else(|| {
-                Err(Error::new(
-                    ErrorCode::Backend,
-                    "request stream closed before completion",
-                ))
-            });
-            let mut finished = matches!(incoming, Ok(EngineOutput::Finished(_)) | Err(_));
-            Some({
-                let event = incoming;
-                let (name, data) = match event {
-                    Ok(event) => {
-                        let name = if matches!(event, EngineOutput::Finished(_)) {
-                            "finished"
-                        } else {
-                            "token"
-                        };
-                        (name, serde_json::to_string(&event))
-                    }
-                    Err(error) => ("error", serde_json::to_string(&error)),
-                };
-                let (name, data) = match data {
-                    Ok(data) => (name, data),
-                    Err(error) => {
-                        finished = true;
-                        (
-                            "error",
-                            serde_json::json!({"message": error.to_string()}).to_string(),
-                        )
-                    }
-                };
-                (
-                    Ok::<_, Infallible>(Event::default().event(name).data(data)),
-                    (receiver, finished),
-                )
-            })
+    let events = unfold((receiver, false), |(mut receiver, finished)| async move {
+        if finished {
+            return None;
+        }
+        let incoming = receiver.recv().await.unwrap_or_else(|| {
+            Err(Error::new(
+                ErrorCode::Backend,
+                "request stream closed before completion",
+            ))
         });
+        let mut finished = matches!(incoming, Ok(EngineOutput::Finished(_)) | Err(_));
+        Some({
+            let event = incoming;
+            let (name, data) = match event {
+                Ok(event) => {
+                    let name = if matches!(event, EngineOutput::Finished(_)) {
+                        "finished"
+                    } else {
+                        "token"
+                    };
+                    (name, serde_json::to_string(&event))
+                }
+                Err(error) => ("error", serde_json::to_string(&error)),
+            };
+            let (name, data) = match data {
+                Ok(data) => (name, data),
+                Err(error) => {
+                    finished = true;
+                    (
+                        "error",
+                        serde_json::json!({"message": error.to_string()}).to_string(),
+                    )
+                }
+            };
+            (
+                Ok::<_, Infallible>(Event::default().event(name).data(data)),
+                (receiver, finished),
+            )
+        })
+    });
     Ok(Sse::new(events)
         .keep_alive(KeepAlive::default())
         .into_response())

@@ -1,5 +1,8 @@
 //! `BackendProvider` adaptation; lifecycle helpers live alongside their owning subsystem.
 use super::{MetalBackend, MetalTicket};
+use crate::constants::COMPLETION_POOL_SIZE;
+use crate::constants::NANOS_PER_MICROSECOND;
+use crate::device::command_timing;
 use infer_core::{DeviceId, Error, ErrorCode, Result, StateId};
 use infer_ir::{
     DType, DeviceBackend, DeviceCapabilities, ExecutionProgram, ExecutionTask, ExecutionTiming,
@@ -100,9 +103,9 @@ impl BackendProvider for MetalBackend {
         {
             return None;
         }
-        let (_, ns) = crate::device::command_timing(&ticket.command);
+        let (_, ns) = command_timing(&ticket.command);
         (ns > 0).then_some(ExecutionTiming {
-            elapsed_us: ns.div_ceil(crate::constants::NANOS_PER_MICROSECOND),
+            elapsed_us: ns.div_ceil(NANOS_PER_MICROSECOND),
             source: TimingSource::MetalGpu,
         })
     }
@@ -175,7 +178,7 @@ impl BackendProvider for MetalBackend {
     }
     fn recycle_batch(&mut self, mut outputs: Vec<TaskOutput>) -> Result<()> {
         outputs.clear();
-        if self.completion_pool.len() < crate::constants::COMPLETION_POOL_SIZE {
+        if self.completion_pool.len() < COMPLETION_POOL_SIZE {
             self.completion_pool.push(outputs);
         }
         Ok(())

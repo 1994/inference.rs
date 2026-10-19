@@ -1,6 +1,7 @@
 //! Reusable owned decision buffers; immutable readers keep their own bounded storage.
 use infer_core::{Error, ErrorCode, Result};
 use infer_ir::{DeferredWork, PlannedWork, SchedulingDecision, SelectionEvidence};
+use std::mem::take;
 
 #[derive(Default)]
 pub struct DecisionStorage {
@@ -30,7 +31,7 @@ impl DecisionStorage {
         if let Some(step) = decision.step.as_mut() {
             step.work.clear();
             if step.work.capacity() >= self.work.capacity() {
-                self.work = std::mem::take(&mut step.work);
+                self.work = take(&mut step.work);
             }
         }
         decision.selected.clear();

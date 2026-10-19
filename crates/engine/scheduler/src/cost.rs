@@ -1,4 +1,6 @@
 //! Bounded, deterministic calibration keyed by execution phase and batch shape.
+use crate::constants::PARTS_PER_MILLION;
+use crate::constants::PERCENT;
 use infer_core::{Error, Result, map::BoundedMap};
 use infer_ir::{
     CostEstimate, CostModelConfig, CostModelInspection, CostObservation, CostQuery, ExecutionRole,
@@ -6,6 +8,7 @@ use infer_ir::{
 };
 use infer_spi::{BatchCostSummary, CostModelProvider};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 
 /// Largest accepted `CostModelConfig::max_profiles` calibration table size.
 const MAX_PROFILE_CAPACITY: usize = 4096;
@@ -170,7 +173,7 @@ impl CalibratedCosts {
             || config.max_profiles == 0
             || config.max_profiles > MAX_PROFILE_CAPACITY
             || config.ewma_alpha_percent == 0
-            || config.ewma_alpha_percent > crate::constants::PERCENT
+            || config.ewma_alpha_percent > PERCENT
             || config.safety_margin_percent > MAX_SAFETY_MARGIN_PERCENT
         {
             return Err(Error::invalid("invalid cost calibration configuration"));
@@ -182,7 +185,7 @@ impl CalibratedCosts {
                 binding,
                 config,
                 profiles: vec![],
-                ratio_ppm: crate::constants::PARTS_PER_MILLION,
+                ratio_ppm: PARTS_PER_MILLION,
                 observations: 0,
                 evictions: 0,
                 last_source: None,
@@ -195,7 +198,7 @@ impl CalibratedCosts {
         let predicted = candidate.map_or_else(
             || {
                 (u128::from(cost.gpu_us) * u128::from(self.state.ratio_ppm))
-                    .div_ceil(u128::from(crate::constants::PARTS_PER_MILLION))
+                    .div_ceil(u128::from(PARTS_PER_MILLION))
             },
             |p| {
                 (u128::from(cost.gpu_us) * u128::from(p.mean_us))
@@ -205,11 +208,10 @@ impl CalibratedCosts {
         cost.gpu_us = u64::try_from(
             predicted
                 .checked_mul(
-                    u128::from(crate::constants::PERCENT)
-                        + u128::from(self.state.config.safety_margin_percent),
+                    u128::from(PERCENT) + u128::from(self.state.config.safety_margin_percent),
                 )
                 .ok_or_else(|| Error::invalid("calibrated execution cost overflow"))?
-                .div_ceil(u128::from(crate::constants::PERCENT)),
+                .div_ceil(u128::from(PERCENT)),
         )
         .map_err(|_| Error::invalid("calibrated execution cost overflow"))?
         .max(1);
@@ -239,9 +241,9 @@ impl CalibratedCosts {
                         context,
                         batch,
                     }) {
-                        let rank = (distance, std::cmp::Reverse(profile.samples), profile.shape);
+                        let rank = (distance, Reverse(profile.samples), profile.shape);
                         if best.is_none_or(|(old_distance, old)| {
-                            rank < (old_distance, std::cmp::Reverse(old.samples), old.shape)
+                            rank < (old_distance, Reverse(old.samples), old.shape)
                         }) {
                             best = Some((distance, profile));
                         }
@@ -254,9 +256,8 @@ impl CalibratedCosts {
     fn blend(&self, old: u64, new: u64) -> u64 {
         let alpha = u128::from(self.state.config.ewma_alpha_percent);
         u64::try_from(
-            (u128::from(old) * (u128::from(crate::constants::PERCENT) - alpha)
-                + u128::from(new) * alpha)
-                .div_ceil(u128::from(crate::constants::PERCENT)),
+            (u128::from(old) * (u128::from(PERCENT) - alpha) + u128::from(new) * alpha)
+                .div_ceil(u128::from(PERCENT)),
         )
         .unwrap_or(u64::MAX)
     }
@@ -303,8 +304,7 @@ impl CostModelProvider for CalibratedCosts {
             .checked_add(1)
             .ok_or_else(|| Error::invalid("cost observation counter overflow"))?;
         let ratio = u64::try_from(
-            (u128::from(elapsed) * u128::from(crate::constants::PARTS_PER_MILLION))
-                .div_ceil(u128::from(reference)),
+            (u128::from(elapsed) * u128::from(PARTS_PER_MILLION)).div_ceil(u128::from(reference)),
         )
         .unwrap_or(u64::MAX);
         self.state.ratio_ppm = if self.state.observations == 0 {

@@ -4,6 +4,11 @@
 use super::TilingTable;
 use super::resident_gemm::{PairedTimes, ResidentTuningSession};
 use super::{MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS};
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::PROMPT_GEMM_TILE_ROWS;
+use crate::constants::QUANT_GEMM_TILE;
+use crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS;
+use crate::constants::prompt_gemm_tile_rows;
 pub use crate::device::vendor_fp8::{AlgorithmConfig, LibraryIdentity};
 use crate::{
     device::{CudaDevice, device_error, vendor_fp8},
@@ -11,12 +16,20 @@ use crate::{
     resident::fp8_gemm::kernels,
 };
 use cuda_core::f8e4m3fn;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::env::var;
+use std::env::var_os;
+use std::fs::read_to_string;
+use std::iter::once;
+use std::result::Result as StdResult;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock, Weak},
@@ -27,14 +40,11 @@ pub(crate) mod probe_inputs;
 
 const CONTRACT: &str = "fp8-channel-exact-v2:row-pad-pow2:maxabs/448:floor1e-12:clip448:e4m3-rne:mma-k128-f32:lt-scalar32f-scales1:fastaccum0:col-tn:raw*xs*ws:rn-ftz0:align256:workspace0:four-fixtures:exact-native-or-verified-lt-optin:search-ab-confirm-ba:tile-m128";
 const ROW_TILES: [usize; 3] = [
-    crate::constants::QUANT_GEMM_TILE[0],
-    crate::constants::PROMPT_GEMM_TILE_ROWS,
-    crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS,
+    QUANT_GEMM_TILE[0],
+    PROMPT_GEMM_TILE_ROWS,
+    WIDE_PROMPT_GEMM_TILE_ROWS,
 ];
-const COLUMN_TILES: [usize; 2] = [
-    crate::constants::QUANT_GEMM_TILE[1],
-    crate::constants::QUANT_GEMM_TILE[1] * 2,
-];
+const COLUMN_TILES: [usize; 2] = [QUANT_GEMM_TILE[1], QUANT_GEMM_TILE[1] * 2];
 const PERIOD: usize = 131;
 const STRIDE: usize = 17;
 const CENTER: f32 = 65.0;
@@ -58,8 +68,8 @@ pub struct NativeConfig {
 impl NativeConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
-            tile_n: crate::constants::QUANT_GEMM_TILE[1],
+            tile_m: prompt_gemm_tile_rows(rows),
+            tile_n: QUANT_GEMM_TILE[1],
         }
     }
     fn valid(self) -> bool {
@@ -99,7 +109,7 @@ impl Choice {
         xs: &Tensor<f32>,
         ws: &Tensor<f32>,
         columns: usize,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let native = match self {
             Self::Native(config) => config,
             Self::Lt(config) => {
@@ -319,7 +329,7 @@ fn permits(session: &ResidentTuningSession, shape: [usize; GEMM_RANK]) -> bool {
     }
 }
 fn driver_build() -> Option<String> {
-    std::fs::read_to_string("/proc/driver/nvidia/version")
+    read_to_string("/proc/driver/nvidia/version")
         .ok()?
         .lines()
         .find(|line| line.starts_with("NVRM version:"))
@@ -340,9 +350,9 @@ fn fingerprint(
         device.profile()?.architecture,
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
-        cutile::cutile_compiler::hints::CompileOptions::default(),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS")
+        CompileOptions::default(),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS")
     );
     let cache = IDENTITIES.get_or_init(|| Mutex::new(BTreeMap::new()));
     let remembered = cache
@@ -415,13 +425,9 @@ fn fingerprint(
         return Ok(None);
     }
     ids.push(
-        vendor_fp8::kernels::scale(
-            (&mut out).partition([1, crate::constants::AUX_KERNEL_TILE]),
-            &xs,
-            &ws,
-        )
-        .l2_cache_key_on(&device.stream)
-        .map_err(device_error)?,
+        vendor_fp8::kernels::scale((&mut out).partition([1, AUX_KERNEL_TILE]), &xs, &ws)
+            .l2_cache_key_on(&device.stream)
+            .map_err(device_error)?,
     );
     let value = serde_json::to_string(&ids).map_err(device_error)?;
     cache
@@ -671,7 +677,7 @@ fn measure(
             .graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     // Confirmation flips both warm and cold execution order, then maps samples back to their roles.
     let (first, second) = if reverse {
@@ -834,7 +840,7 @@ fn confirm_best(
     for choice in ranked
         .into_iter()
         .map(|trial| trial.choice)
-        .chain(std::iter::once(baseline))
+        .chain(once(baseline))
     {
         if !permits(session, shape) {
             return Ok(None);
@@ -949,7 +955,7 @@ fn tune(
     if !permits(session, shape) {
         return Ok(None);
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if cfg!(debug_assertions)
         || compile.device_debug
         || compile
@@ -1098,7 +1104,7 @@ pub(crate) const fn vendor_autotune_enabled() -> bool {
 }
 #[cfg(test)]
 pub(crate) fn vendor_autotune_enabled() -> bool {
-    std::env::var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
+    var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
 }
 
 /// Resolve every loaded channel weight before its graph capture; failures affect only this weight.

@@ -1,16 +1,26 @@
 use super::*;
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::resident::attention_mma::catalog::DIM;
+use crate::resident::attention_mma::catalog::HEADS;
+use crate::resident::attention_mma::catalog::KV_HEADS;
+use crate::resident::attention_mma::catalog::workspace_bytes;
+use crate::resident::attention_mma::eligible;
+use crate::resident::attention_mma::eligible_with_role;
+use crate::resident::attention_mma::node_eligible;
 use crate::test_support::fixture_graph;
+use crate::tuning::resident_gemm::ResidentTuningSession;
+use cutile::half::bf16;
 use infer_core::{OpId, TensorId};
 use infer_ir::{DType, TensorNode, TensorSpec};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
         mrope: false,
         autotune: false,
-        resident_tuning: std::sync::Arc::new(
-            crate::tuning::resident_gemm::ResidentTuningSession::default(),
-        ),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 32,
@@ -18,7 +28,7 @@ fn fixture_weights() -> ProgramWeights {
         fusion: None,
         attention_profile: crate::AttentionProfile::Canonical,
         projections: BTreeMap::new(),
-        fp8_inputs: std::collections::BTreeSet::new(),
+        fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
@@ -111,7 +121,7 @@ fn kv_block_bytes_counts_attention_states_in_storage_bytes() -> Result<()> {
         dtype: DType::F32,
         storage: TensorStorage::Activation,
     });
-    let block = crate::constants::KV_BLOCK_TOKENS as u64;
+    let block = KV_BLOCK_TOKENS as u64;
     // Unscaled: 2 layers * 32 tokens * 512 columns * (K+V) * f32.
     assert_eq!(kv_block_bytes(&graph, &weights)?, 2 * block * 512 * 2 * F32);
     // An fp8-packed cache stores one byte per element.
@@ -281,10 +291,8 @@ fn attention_graph(lanes: usize) -> Result<(DataflowGraph, TensorId)> {
     let key = TensorId::new(4)?;
     let value = TensorId::new(5)?;
     let output = TensorId::new(6)?;
-    let width = crate::resident::attention_mma::catalog::HEADS
-        * crate::resident::attention_mma::catalog::DIM;
-    let kv_width = crate::resident::attention_mma::catalog::KV_HEADS
-        * crate::resident::attention_mma::catalog::DIM;
+    let width = HEADS * DIM;
+    let kv_width = KV_HEADS * DIM;
     let activation = |id, elements| TensorSpec {
         id,
         shape: vec![elements],
@@ -344,9 +352,9 @@ fn attention_graph(lanes: usize) -> Result<(DataflowGraph, TensorId)> {
                 id: OpId::new(4)?,
                 layer: None,
                 op: TensorOp::Attention {
-                    query_heads: crate::resident::attention_mma::catalog::HEADS,
-                    kv_heads: crate::resident::attention_mma::catalog::KV_HEADS,
-                    head_dim: crate::resident::attention_mma::catalog::DIM,
+                    query_heads: HEADS,
+                    kv_heads: KV_HEADS,
+                    head_dim: DIM,
                     window: None,
                 },
                 inputs: vec![query, key, value],
@@ -385,19 +393,10 @@ fn target_attention_profile_eligibility_matrix_is_explicit() -> Result<()> {
                         crate::AttentionProfile::Fp16 => architecture == "sm_120",
                         crate::AttentionProfile::Canonical => false,
                     };
-                assert_eq!(
-                    crate::resident::attention_mma::eligible(architecture, &graph, &weights, 128,),
-                    target
-                );
+                assert_eq!(eligible(architecture, &graph, &weights, 128,), target);
                 for draft in [false, true] {
                     assert_eq!(
-                        crate::resident::attention_mma::eligible_with_role(
-                            architecture,
-                            &graph,
-                            &weights,
-                            draft,
-                            128,
-                        ),
+                        eligible_with_role(architecture, &graph, &weights, draft, 128,),
                         draft || target
                     );
                 }
@@ -413,13 +412,8 @@ fn target_attention_profile_eligibility_matrix_is_explicit() -> Result<()> {
     if let TensorOp::Attention { query_heads, .. } = &mut unsupported.nodes[3].op {
         *query_heads = 8;
     }
-    assert!(!crate::resident::attention_mma::eligible(
-        "sm_120",
-        &unsupported,
-        &weights,
-        128,
-    ));
-    assert!(!crate::resident::attention_mma::eligible_with_role(
+    assert!(!eligible("sm_120", &unsupported, &weights, 128,));
+    assert!(!eligible_with_role(
         "sm_120",
         &unsupported,
         &weights,
@@ -446,17 +440,15 @@ fn mixed_fp8_and_f32_graph_is_decided_per_attention_node() -> Result<()> {
     weights.prefill_width = 128;
     weights.attention_profile = crate::AttentionProfile::Bf16;
     weights.kv_scales.insert(fp8_state, [1.0, 1.0]);
-    assert!(crate::resident::attention_mma::eligible(
-        "sm_120", &graph, &weights, 128
-    ));
-    assert!(crate::resident::attention_mma::node_eligible(
+    assert!(eligible("sm_120", &graph, &weights, 128));
+    assert!(node_eligible(
         "sm_120",
         &graph.nodes[3],
         &weights,
         false,
         128
     ));
-    assert!(!crate::resident::attention_mma::node_eligible(
+    assert!(!node_eligible(
         "sm_120",
         &graph.nodes[4],
         &weights,
@@ -465,19 +457,13 @@ fn mixed_fp8_and_f32_graph_is_decided_per_attention_node() -> Result<()> {
     ));
     // The draft proposal keeps its existing F32-KV behavior in the same graph.
     for node in &graph.nodes[3..] {
-        assert!(crate::resident::attention_mma::node_eligible(
-            "sm_120", node, &weights, true, 128
-        ));
+        assert!(node_eligible("sm_120", node, &weights, true, 128));
     }
     // Canonical never routes either node to the BF16 target path, even with FP8 KV.
     weights.attention_profile = crate::AttentionProfile::Canonical;
-    assert!(!crate::resident::attention_mma::eligible(
-        "sm_120", &graph, &weights, 128
-    ));
+    assert!(!eligible("sm_120", &graph, &weights, 128));
     for node in &graph.nodes[3..] {
-        assert!(!crate::resident::attention_mma::node_eligible(
-            "sm_120", node, &weights, false, 128
-        ));
+        assert!(!node_eligible("sm_120", node, &weights, false, 128));
     }
     Ok(())
 }
@@ -506,11 +492,8 @@ fn target_bf16_profile_admission_quotes_the_same_eligibility_decision() -> Resul
     let canonical_fp8 = quote(true, crate::AttentionProfile::Canonical)?;
     let bf16_fp8 = quote(true, crate::AttentionProfile::Bf16)?;
     let fp16_fp8 = quote(true, crate::AttentionProfile::Fp16)?;
-    let workspace = crate::resident::attention_mma::catalog::workspace_bytes(0, 128)? as u64;
-    let token = (crate::resident::attention_mma::catalog::KV_HEADS
-        * crate::resident::attention_mma::catalog::DIM
-        * 2
-        * size_of::<cutile::half::bf16>()) as u64;
+    let workspace = workspace_bytes(0, 128)? as u64;
+    let token = (KV_HEADS * DIM * 2 * size_of::<bf16>()) as u64;
     assert_eq!(bf16_fp8 - canonical_fp8, workspace + token * 256);
     // FP16 uses the same 16-bit staging size and the same target-only admission rule.
     assert_eq!(fp16_fp8, bf16_fp8);

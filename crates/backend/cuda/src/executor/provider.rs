@@ -1,4 +1,6 @@
 use super::{CudaBackend, CudaTicket};
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::MTP_KV_OFFSET;
 use infer_core::{Result, StateId};
 use infer_ir::{
     DeviceCapabilities, ExecutionProgram, ExecutionTask, KvCacheInspection, ModelIr, OutputReadout,
@@ -72,7 +74,7 @@ impl BackendProvider for CudaBackend {
     /// isolation check compares against this field.
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         let pool = self.slots.as_ref()?;
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         let per_slot = pool.capacity().div_ceil(block);
         let pool_blocks = pool.width().saturating_mul(per_slot);
         let active_blocks = self
@@ -112,7 +114,7 @@ impl BackendProvider for CudaBackend {
             .states
             .get(&state)
             .ok_or_else(|| infer_core::Error::invalid("unknown CUDA state"))?;
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         let allocated_pages = if sequence.slot.is_some() {
             sequence.history.len().div_ceil(block)
         } else {
@@ -179,7 +181,7 @@ impl BackendProvider for CudaBackend {
                 draft.program.restore(
                     device,
                     &mut spec.program,
-                    matched.saturating_sub(crate::constants::MTP_KV_OFFSET),
+                    matched.saturating_sub(MTP_KV_OFFSET),
                 )?;
                 spec.last_hidden.clone_from(&draft.hidden);
                 spec.prompt_len = None;

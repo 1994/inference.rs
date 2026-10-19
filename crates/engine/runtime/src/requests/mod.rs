@@ -7,6 +7,8 @@ use infer_core::{
 };
 use infer_ir::{ExecutionRole, Workload};
 use std::collections::BTreeMap;
+use std::mem::take;
+use std::sync::Arc;
 
 pub use record::{RequestRecord, TokenContext};
 
@@ -27,7 +29,7 @@ pub struct RequestHotSoA {
     pub computed: Vec<usize>,
     pub reserved: Vec<usize>,
     pub remaining: Vec<usize>,
-    pub tenant: Vec<Option<std::sync::Arc<str>>>,
+    pub tenant: Vec<Option<Arc<str>>>,
     pub weight: Vec<u32>,
     pub deadline: Vec<Option<u64>>,
     pub latency_deadline: Vec<Option<u64>>,
@@ -156,7 +158,7 @@ impl RequestArena {
         self.iter().map(|(id, r)| (*id, r.clone())).collect()
     }
     pub fn take_dirty(&mut self) -> Vec<usize> {
-        std::mem::take(&mut self.dirty)
+        take(&mut self.dirty)
     }
     pub fn restore_dirty(&mut self, mut dirty: Vec<usize>) {
         dirty.clear();

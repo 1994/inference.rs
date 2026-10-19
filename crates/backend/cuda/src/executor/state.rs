@@ -1,6 +1,7 @@
 use super::{CudaBackend, Sequence};
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::OutputReadout;
+use std::collections::BTreeSet;
 impl CudaBackend {
     pub(super) fn available(&self) -> Result<u64> {
         let used = self.active_budget()?;
@@ -325,12 +326,7 @@ impl CudaBackend {
     }
     pub(super) fn ownership(&self, states: &[(StateId, usize, usize)]) -> Result<()> {
         if states.len() != self.states.len()
-            || states
-                .iter()
-                .map(|s| s.0)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                != states.len()
+            || states.iter().map(|s| s.0).collect::<BTreeSet<_>>().len() != states.len()
             || states.iter().any(|(id, capacity, cursor)| {
                 !self.states.get(id).is_some_and(|s| {
                     !s.poisoned

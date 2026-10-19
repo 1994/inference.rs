@@ -1,4 +1,5 @@
 //! Validate BF16 activation rounding after a non-linear F32 operation.
+use cutile::half::bf16;
 use infer_backend_cuda::{
     device::CudaDevice,
     resident::{DeviceProgram, ProgramWeights},
@@ -44,13 +45,13 @@ pub fn run(
     for (token, (hidden, _)) in (1u16..=17).zip(outputs) {
         let nonlinear: Vec<_> = super::values(inputs[0].len(), f32::from(token))
             .into_iter()
-            .map(|x| cutile::half::bf16::from_f32(x).to_f32())
+            .map(|x| bf16::from_f32(x).to_f32())
             .map(|x| x / (1.0 + (-x).exp()))
             .collect();
         let rounded: Vec<_> = nonlinear
             .iter()
             .copied()
-            .map(|x| cutile::half::bf16::from_f32(x).to_f32())
+            .map(|x| bf16::from_f32(x).to_f32())
             .collect();
         if nonlinear == rounded {
             return Err(Error::invariant("rounding fixture is degenerate"));

@@ -1,10 +1,11 @@
 use super::{Model, decode::DecodeResult};
 use infer_core::{Error, Result};
+use std::vec::IntoIter;
 
 pub enum TargetSteps {
     Sequential,
     Batch {
-        outputs: std::vec::IntoIter<(Vec<f32>, Vec<f32>)>,
+        outputs: IntoIter<(Vec<f32>, Vec<f32>)>,
         committed: usize,
     },
 }

@@ -1,4 +1,6 @@
 use infer_core::{ErrorCode, Result};
+use std::iter::empty;
+use std::iter::once;
 
 use infer_state::{blocks::BlockLease, kv::*};
 #[derive(Clone)]
@@ -64,8 +66,8 @@ fn prefix_ownership_attachment_growth_and_cow_use_one_ledger() -> Result<()> {
     manager.release(&table)?;
     manager.release(&child)?;
     manager.release(&sibling)?;
-    manager.check_owners(std::iter::empty())?;
-    assert_eq!(manager.inspect(std::iter::empty()).cached_blocks, 1);
+    manager.check_owners(empty())?;
+    assert_eq!(manager.inspect(empty()).cached_blocks, 1);
     manager.reclaim(5)?;
     assert_eq!(manager.free_blocks(), 5);
     assert_eq!(manager.prefix_count(), 0);
@@ -85,13 +87,13 @@ fn active_pages_cannot_be_evicted_and_recycled_generations_reject_stale_leases()
         Some(ErrorCode::Capacity)
     );
     assert_eq!(manager.free_blocks(), 0);
-    manager.check_owners(std::iter::once(active.as_slice()))?;
+    manager.check_owners(once(active.as_slice()))?;
     manager.release(&active)?;
     let recycled = manager.allocate(2)?;
     assert!(recycled.iter().all(|l| l.generation > 1));
     assert!(manager.retain(&active).is_err());
     assert!(manager.release(&active).is_err());
-    manager.check_owners(std::iter::once(recycled.as_slice()))?;
+    manager.check_owners(once(recycled.as_slice()))?;
     Ok(())
 }
 #[test]
@@ -125,6 +127,6 @@ fn invalid_prefix_and_budget_rejection_do_not_leak_cache_references() -> Result<
     assert_eq!(manager.prefix_count(), 0);
     assert!(manager.attach_prefix(&[1, 2], 2)?.is_none());
     assert!(manager.page_growth(&pages, 0).is_err());
-    manager.check_owners(std::iter::once(pages.as_slice()))?;
+    manager.check_owners(once(pages.as_slice()))?;
     Ok(())
 }

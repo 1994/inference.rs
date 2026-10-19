@@ -1,6 +1,9 @@
 //! Opt-in host-side execution evidence; no token contents are recorded.
 use super::CudaBackend;
 use infer_ir::{ExecutionInput, ExecutionTask};
+use std::collections::BTreeMap;
+use std::env::var_os;
+use std::fs::OpenOptions;
 use std::{
     cell::RefCell,
     io::Write,
@@ -71,7 +74,7 @@ impl StepProfile {
     pub(super) fn start(backend: &CudaBackend, tasks: &[ExecutionTask]) -> Option<Self> {
         let path = OUTPUT
             .get_or_init(|| {
-                std::env::var_os(PROFILE_ENV)
+                var_os(PROFILE_ENV)
                     .filter(|v| !v.is_empty())
                     .map(PathBuf::from)
             })
@@ -112,8 +115,7 @@ impl StepProfile {
         phases: Vec<(&'static str, Duration)>,
     ) {
         let elapsed_us = self.started.elapsed().as_micros();
-        let mut by_phase: std::collections::BTreeMap<&'static str, u64> =
-            std::collections::BTreeMap::new();
+        let mut by_phase: BTreeMap<&'static str, u64> = BTreeMap::new();
         for (name, elapsed) in phases {
             *by_phase.entry(name).or_default() += u64::try_from(elapsed.as_micros()).unwrap_or(0);
         }
@@ -137,7 +139,7 @@ impl StepProfile {
             "successful": outputs.is_some(),
             "accepted_tokens": outputs.map(|rows| rows.iter().map(|row| row.output.tokens.len()).collect::<Vec<_>>()),
         });
-        let result = std::fs::OpenOptions::new()
+        let result = OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.path)
@@ -154,7 +156,7 @@ pub(super) fn pool_failure(kind: &str, width: usize, capacity: usize, error: &in
         return;
     };
     let line = serde_json::json!({"pool_kind": kind, "pool_creation_failed": error.to_string(), "width": width, "capacity": capacity});
-    if let Err(error) = std::fs::OpenOptions::new()
+    if let Err(error) = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)

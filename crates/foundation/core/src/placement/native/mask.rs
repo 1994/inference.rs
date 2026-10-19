@@ -1,10 +1,11 @@
 //! Dynamically sized Linux bitmaps; never truncate a large host to `cpu_set_t`'s 1024 bits.
+use crate::constants::MAX_TOPOLOGY_CPUS;
 use crate::{Error, Result};
 #[derive(Clone)]
 pub(super) struct Mask(Vec<libc::c_ulong>);
 impl Mask {
     pub fn new(bits: usize) -> Result<Self> {
-        if bits == 0 || bits > crate::constants::MAX_TOPOLOGY_CPUS {
+        if bits == 0 || bits > MAX_TOPOLOGY_CPUS {
             return Err(Error::invalid("OS bitmap size outside topology limits"));
         }
         Ok(Self(vec![0; bits.div_ceil(libc::c_ulong::BITS as usize)]))

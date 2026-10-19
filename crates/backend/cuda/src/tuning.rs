@@ -6,18 +6,31 @@ pub mod greedy;
 pub mod recurrent;
 pub mod resident_gemm;
 
+use crate::device::DeviceProfile;
+use crate::strategy::default_tiling;
+use crate::target::CudaTarget;
 use crate::{
     benchmark::Trial,
     device::{CudaDevice, device_error},
     mlp::ProjectionWeight,
     strategy::LinearTiling,
 };
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::env::var_os;
+use std::fs::OpenOptions;
+use std::fs::create_dir_all;
+use std::fs::read_to_string;
+use std::fs::remove_file;
+use std::fs::rename;
+use std::io::Error as IoError;
+use std::io::Result as IoResult;
+use std::process::id;
 use std::{
     collections::BTreeMap,
     io::Write,
@@ -78,7 +91,7 @@ pub struct ProjectionTrial {
     pub rows: usize,
     pub columns: usize,
     pub gpu: String,
-    pub target: crate::target::CudaTarget,
+    pub target: CudaTarget,
     pub baseline: LinearTiling,
     pub selected: LinearTiling,
     pub trials: Vec<Trial>,
@@ -136,7 +149,7 @@ fn key_dtype(key: &str) -> &str {
 /// Rejects numerical divergence, invalid storage or failed CUDA measurements.
 pub fn tune(device: &CudaDevice, weight: &ProjectionWeight) -> Result<ProjectionTrial> {
     let (key, rows, columns) = projection_key(weight)?;
-    let baseline = crate::strategy::default_tiling()?;
+    let baseline = default_tiling()?;
     let (base, expected) = capture(device, weight, rows, columns, baseline)?;
     base.launch()
         .sync_on(&device.stream)
@@ -225,7 +238,7 @@ fn measure(
         graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (a, b) = do_bench_paired(&device.stream, options, |_| run(base), |_| run(candidate))
         .map_err(device_error)?;
@@ -395,7 +408,7 @@ impl TilingTable {
     /// # Errors
     /// Rejects unreadable or malformed table files instead of silently ignoring them.
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
+        let text = read_to_string(path)
             .map_err(|error| Error::invalid(format!("CUDA tuning table: {error}")))?;
         serde_json::from_str(&text)
             .map_err(|error| Error::invalid(format!("CUDA tuning table: {error}")))
@@ -450,13 +463,13 @@ impl TilingTable {
 /// from the user cache directory and the entries inside are keyed by the device identity, so
 /// one file serves every GPU and model on this host.
 pub(crate) fn table_path() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os(TUNING_TABLE_ENV).filter(|value| !value.is_empty()) {
+    if let Some(explicit) = var_os(TUNING_TABLE_ENV).filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(explicit));
     }
-    let root = std::env::var_os("XDG_CACHE_HOME")
+    let root = var_os("XDG_CACHE_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+        .or_else(|| var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
     Some(root.join("infer-cuda").join("tuning.json"))
 }
 
@@ -570,23 +583,23 @@ fn update_table(path: Option<&Path>, update: impl FnOnce(&mut TilingTable)) -> b
 }
 
 /// Replace a cache only after its full contents reach a file in the same directory.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+fn write_atomic(path: &Path, text: &str) -> IoResult<()> {
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
+    create_dir_all(parent)?;
     let filename = path
         .file_name()
-        .ok_or_else(|| std::io::Error::other("CUDA tuning cache has no filename"))?;
+        .ok_or_else(|| IoError::other("CUDA tuning cache has no filename"))?;
     let temporary = parent.join(format!(
         ".{}.{}.{}.tmp",
         filename.to_string_lossy(),
-        std::process::id(),
+        id(),
         NEXT_FILE.fetch_add(1, Ordering::Relaxed)
     ));
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)?;
@@ -594,10 +607,10 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
         .write_all(text.as_bytes())
         .and_then(|()| file.sync_all());
     drop(file);
-    let result = written.and_then(|()| std::fs::rename(&temporary, path));
+    let result = written.and_then(|()| rename(&temporary, path));
     if result.is_err() {
         // Only remove files created by this call, including failed writes or renames.
-        let cleanup = std::fs::remove_file(&temporary);
+        let cleanup = remove_file(&temporary);
         drop(cleanup);
     }
     result
@@ -612,7 +625,7 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 pub(crate) fn select_tiling(
     device: &CudaDevice,
     weight: &ProjectionWeight,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     source: &TilingSource<'_>,
     report: &mut TuningReport,
 ) -> Result<LinearTiling> {
@@ -625,7 +638,7 @@ pub(crate) fn select_tiling(
             return Ok(tiling);
         }
     }
-    let baseline = crate::strategy::default_tiling()?;
+    let baseline = default_tiling()?;
     if !source.autotune {
         return Ok(baseline);
     }

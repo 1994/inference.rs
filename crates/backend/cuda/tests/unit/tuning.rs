@@ -1,4 +1,13 @@
 use super::*;
+use crate::target::CudaTarget;
+use std::env::temp_dir;
+use std::fs::create_dir;
+use std::fs::read_dir;
+use std::fs::read_to_string;
+use std::fs::remove_dir_all;
+use std::fs::write;
+use std::io::Error as IoError;
+use std::process::id;
 
 const DEVICE_A: &str = "test-a|sm_90|81920MiB";
 const DEVICE_B: &str = "test-b|sm_120|32768MiB";
@@ -20,7 +29,7 @@ fn trial(rows: usize, columns: usize, selected: LinearTiling) -> ProjectionTrial
         rows,
         columns,
         gpu: "test GPU".to_owned(),
-        target: crate::target::CudaTarget::Other("test".to_owned()),
+        target: CudaTarget::Other("test".to_owned()),
         baseline: selected,
         selected,
         trials: Vec::new(),
@@ -36,7 +45,7 @@ fn trial(rows: usize, columns: usize, selected: LinearTiling) -> ProjectionTrial
     }
 }
 
-fn filesystem(error: &std::io::Error) -> Error {
+fn filesystem(error: &IoError) -> Error {
     Error::invalid(format!("test filesystem: {error}"))
 }
 
@@ -45,19 +54,19 @@ struct TemporaryDirectory(PathBuf);
 impl TemporaryDirectory {
     fn new() -> Result<Self> {
         static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = temp_dir().join(format!(
             "infer-cuda-tuning-test-{}-{}",
-            std::process::id(),
+            id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir(&path).map_err(|error| filesystem(&error))?;
+        create_dir(&path).map_err(|error| filesystem(&error))?;
         Ok(Self(path))
     }
 }
 
 impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
-        let cleanup = std::fs::remove_dir_all(&self.0);
+        let cleanup = remove_dir_all(&self.0);
         drop(cleanup);
     }
 }
@@ -175,7 +184,7 @@ fn measured_cache_keys_include_device_identity() -> Result<()> {
 fn persist_atomically_migrates_and_retains_multiple_devices() -> Result<()> {
     let directory = TemporaryDirectory::new()?;
     let path = directory.0.join("tuning.json");
-    std::fs::write(&path, TABLE).map_err(|error| filesystem(&error))?;
+    write(&path, TABLE).map_err(|error| filesystem(&error))?;
     let a_tile = LinearTiling::new(4, 128)?;
     let b_tile = LinearTiling::new(8, 256)?;
     assert!(persist(Some(&path), DEVICE_B, &trial(48, 5120, b_tile)));
@@ -186,7 +195,7 @@ fn persist_atomically_migrates_and_retains_multiple_devices() -> Result<()> {
     assert_eq!(table.tiling_for(DEVICE_B, "bf16", 48, 5120)?, Some(b_tile));
     assert_eq!(table.devices[DEVICE_A].len(), 2);
     assert_eq!(
-        std::fs::read_dir(&directory.0)
+        read_dir(&directory.0)
             .map_err(|error| filesystem(&error))?
             .count(),
         1
@@ -208,21 +217,21 @@ fn persist_reports_failures_and_preserves_existing_data() -> Result<()> {
     let path = directory.0.join("tuning.json");
     assert!(!persist(Some(&path), "", &trial));
     assert!(!path.exists());
-    std::fs::write(&path, "malformed table").map_err(|error| filesystem(&error))?;
+    write(&path, "malformed table").map_err(|error| filesystem(&error))?;
     assert!(!persist(Some(&path), DEVICE_A, &trial));
     assert_eq!(
-        std::fs::read_to_string(&path).map_err(|error| filesystem(&error))?,
+        read_to_string(&path).map_err(|error| filesystem(&error))?,
         "malformed table"
     );
     // An existing file cannot serve as a parent directory, independent of test user permissions.
     assert!(!persist(Some(&path.join("child.json")), DEVICE_A, &trial));
     // A rename onto a directory fails after creating a temporary file; that file must be removed.
     let target = directory.0.join("directory.json");
-    std::fs::create_dir(&target).map_err(|error| filesystem(&error))?;
+    create_dir(&target).map_err(|error| filesystem(&error))?;
     assert!(!persist(Some(&target), DEVICE_A, &trial));
     assert!(target.is_dir());
     assert_eq!(
-        std::fs::read_dir(&directory.0)
+        read_dir(&directory.0)
             .map_err(|error| filesystem(&error))?
             .count(),
         2
