@@ -290,8 +290,8 @@ fn external_bytes(weights: &ProgramWeights, hidden: usize, profile: &DeviceProfi
     mul(mul(hidden as u64, rows)?, F32)
 }
 
-/// Partial rows per KV head of the grouped decode kernel: 64 splits of 16 query rows for each of
-/// the three verification lanes.
+/// Partial rows per KV head of the grouped decode kernel: 64 splits of the single-lane kernel's
+/// 16 query rows plus the three-lane kernel's 32 stacked rows.
 const GROUPED_DECODE_ROWS: usize = 3
     * crate::tuning::attention::decode::MAX_GROUPED_PARTS
     * crate::tuning::attention::decode::GROUPED_ROWS;

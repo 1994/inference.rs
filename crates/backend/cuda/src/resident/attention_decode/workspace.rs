@@ -1,7 +1,9 @@
 //! Capture-time split-KV planning and reusable scratch, independent of model identity.
 use super::kernels;
 use crate::device::{CudaDevice, device_error};
-use crate::tuning::attention::decode::{GROUPED_ROWS as GQA_ROWS, grouped_parts, partitions};
+use crate::tuning::attention::decode::{
+    GROUPED_OCCUPANCY, GROUPED_ROWS as GQA_ROWS, grouped_parts, partitions,
+};
 use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
@@ -13,6 +15,10 @@ pub mod taps;
 
 /// Lanes of one MTP verification step that share a three-lane grouped launch.
 pub const VERIFY_LANES: usize = 3;
+/// Rows each verification lane owns in the stacked query tile of the three-lane kernel.
+const STACKED_LANE_ROWS: usize = 8;
+/// Query rows of the stacked three-lane tile: three lanes plus one padding lane.
+const STACKED_ROWS: usize = 32;
 
 struct Buffers {
     /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
@@ -21,8 +27,9 @@ struct Buffers {
     numerator: Tensor<f32>,
     maxima: Tensor<f32>,
     sums: Tensor<f32>,
-    /// Partials of the second and third MTP verification lanes for the three-lane kernel.
-    verify: Vec<Partials>,
+    /// Stacked partials of the three-lane verification kernel, when a KV group fits one lane's
+    /// rows of the stacked query tile.
+    verify: Option<Partials>,
 }
 
 /// One lane's grouped split partials.
@@ -81,14 +88,15 @@ impl Workspace {
             };
             let entry = if let Some(grouped) = grouped_parts(query_heads, kv_heads, sms) {
                 let blocks = kv_heads * grouped;
-                let mut verify = Vec::with_capacity(VERIFY_LANES - 1);
-                for _ in 1..VERIFY_LANES {
-                    verify.push(Partials {
-                        numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
-                        maxima: zeros(&[blocks, GQA_ROWS])?,
-                        sums: zeros(&[blocks, GQA_ROWS])?,
-                    });
-                }
+                let verify = if query_heads / kv_heads <= STACKED_LANE_ROWS {
+                    Some(Partials {
+                        numerator: zeros(&[blocks, STACKED_ROWS, head_dim])?,
+                        maxima: zeros(&[blocks, STACKED_ROWS])?,
+                        sums: zeros(&[blocks, STACKED_ROWS])?,
+                    })
+                } else {
+                    None
+                };
                 Buffers {
                     grouped: Some(kv_heads),
                     parts: grouped,
@@ -100,7 +108,7 @@ impl Workspace {
             } else {
                 Buffers {
                     grouped: None,
-                    verify: Vec::new(),
+                    verify: None,
                     parts,
                     numerator: zeros(&[query_heads * parts, head_dim])?,
                     maxima: zeros(&[query_heads * parts, 1])?,
@@ -538,7 +546,7 @@ impl Workspace {
     pub(crate) fn supports_verify(&self, heads: usize, dim: usize) -> bool {
         self.buffers
             .get(&(heads, dim))
-            .is_some_and(|work| work.grouped.is_some() && work.verify.len() + 1 == VERIFY_LANES)
+            .is_some_and(|work| work.grouped.is_some() && work.verify.is_some())
     }
 
     /// Decode attention of the three lanes of one verification step: one grouped launch reads
@@ -562,7 +570,7 @@ impl Workspace {
             .buffers
             .get_mut(&(heads, dim))
             .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
-        let (Some(groups), [second, third]) = (work.grouped, work.verify.as_mut_slice()) else {
+        let (Some(groups), Some(stacked)) = (work.grouped, work.verify.as_mut()) else {
             return Err(super::super::capture::error(
                 "grouped verification workspace",
             ));
@@ -570,15 +578,9 @@ impl Workspace {
         let parts = work.parts;
         scope.record(
             kernels::partial_gqa3(
-                (&mut work.numerator).partition([1, GQA_ROWS, dim]),
-                (&mut work.maxima).partition([1, GQA_ROWS]),
-                (&mut work.sums).partition([1, GQA_ROWS]),
-                (&mut second.numerator).partition([1, GQA_ROWS, dim]),
-                (&mut second.maxima).partition([1, GQA_ROWS]),
-                (&mut second.sums).partition([1, GQA_ROWS]),
-                (&mut third.numerator).partition([1, GQA_ROWS, dim]),
-                (&mut third.maxima).partition([1, GQA_ROWS]),
-                (&mut third.sums).partition([1, GQA_ROWS]),
+                (&mut stacked.numerator).partition([1, STACKED_ROWS, dim]),
+                (&mut stacked.maxima).partition([1, STACKED_ROWS]),
+                (&mut stacked.sums).partition([1, STACKED_ROWS]),
                 &queries[0].view(&[groups, heads / kv_heads, dim])?,
                 &queries[1].view(&[groups, heads / kv_heads, dim])?,
                 &queries[2].view(&[groups, heads / kv_heads, dim])?,
@@ -597,25 +599,27 @@ impl Workspace {
                 dim.to_string(),
                 parts.to_string(),
                 crate::constants::KV_BLOCK_TOKENS.to_string(),
-            ]),
+            ])
+            .compile_options(grouped_options()),
         )?;
-        let partials = [
-            (&work.numerator, &work.maxima, &work.sums),
-            (&second.numerator, &second.maxima, &second.sums),
-            (&third.numerator, &third.maxima, &third.sums),
-        ];
-        for (output, (numerator, maxima, sums)) in outputs.into_iter().zip(partials) {
+        for (lane, output) in outputs.into_iter().enumerate() {
+            let offset = i32::try_from(lane * STACKED_LANE_ROWS)
+                .map_err(|_| super::super::capture::error("stacked verification row"))?;
             scope.record(
                 kernels::merge_gqa(
                     output.partition([1, dim]),
-                    &numerator.view(&[groups, parts, GQA_ROWS, dim])?,
-                    &maxima.view(&[groups, parts, GQA_ROWS])?,
-                    &sums.view(&[groups, parts, GQA_ROWS])?,
+                    &stacked
+                        .numerator
+                        .view(&[groups, parts, STACKED_ROWS, dim])?,
+                    &stacked.maxima.view(&[groups, parts, STACKED_ROWS])?,
+                    &stacked.sums.view(&[groups, parts, STACKED_ROWS])?,
+                    offset,
                 )
                 .generics(vec![
                     dim.to_string(),
                     parts.to_string(),
                     (heads / kv_heads).to_string(),
+                    STACKED_ROWS.to_string(),
                 ]),
             )?;
         }
@@ -666,7 +670,8 @@ impl Workspace {
                     dim.to_string(),
                     parts.to_string(),
                     crate::constants::KV_BLOCK_TOKENS.to_string(),
-                ]),
+                ])
+                .compile_options(grouped_options()),
             )?;
             scope.record(
                 kernels::merge_gqa(
@@ -674,11 +679,13 @@ impl Workspace {
                     &work.numerator.view(&[groups, parts, GQA_ROWS, dim])?,
                     &work.maxima.view(&[groups, parts, GQA_ROWS])?,
                     &work.sums.view(&[groups, parts, GQA_ROWS])?,
+                    0,
                 )
                 .generics(vec![
                     dim.to_string(),
                     parts.to_string(),
                     (heads / kv_heads).to_string(),
+                    GQA_ROWS.to_string(),
                 ]),
             )?;
             return Ok(());
@@ -716,4 +723,10 @@ impl Workspace {
         )?;
         Ok(())
     }
+}
+
+/// Two CTAs per SM: the measured optimum of both grouped kernels on RTX 5090 at 32K tokens
+/// (the stacked three-lane kernel 150 → 59 µs, the one-lane kernel 53 → 46 µs per layer).
+fn grouped_options() -> cutile::tile_kernel::CompileOptions {
+    cutile::tile_kernel::CompileOptions::default().occupancy(GROUPED_OCCUPANCY)
 }

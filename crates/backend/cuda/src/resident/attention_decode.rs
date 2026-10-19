@@ -2,11 +2,11 @@
 #[cutile::module]
 pub(crate) mod kernels {
     use cutile::core::{
-        BroadcastScalar, ElementType, Reshape, Shape_0, Shape_1, Shape_2, Shape_3, Shape_4,
-        StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tensor_4, Tile_0, Tile_1, Tile_2,
-        bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, exp, ftz, ge_tile,
-        get_tile_block_id, iota, le_tile, max_tile, mmaf, predicate, reduce_max, reduce_sum, rsqrt,
-        select, tile_to_scalar,
+        Array_3, BroadcastScalar, ElementType, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
+        Shape_4, StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tensor_4, Tile_0, Tile_1,
+        Tile_2, bf16, cat, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, exp, ftz,
+        ge_tile, get_tile_block_id, iota, le_tile, max_tile, mmaf, predicate, reduce_max,
+        reduce_sum, rsqrt, select, tile_to_scalar,
     };
     #[expect(
         clippy::useless_let_if_seq,
@@ -185,17 +185,21 @@ pub(crate) mod kernels {
                 last = end;
             }
         }
-        let kp = keys.partition(shape![1, 32, D]);
+        // Keys load already transposed for the score product.
+        let kp = keys.partition_permuted(shape![1, D, 32], const_array![0, 2, 1]);
         let vp = values.partition(shape![1, 32, D]);
         let blocks = table.partition(shape![1]);
         let offsets: Tile<i32, { [32] }> = iota(shape![32]);
         for block in first..last {
             let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
-            let key: Tile<bf16, { [32, D] }> =
-                convert_tile(kp.load([kv, physical, 0i32]).reshape(shape![32, D]));
-            let value: Tile<bf16, { [32, D] }> =
-                convert_tile(vp.load([kv, physical, 0i32]).reshape(shape![32, D]));
-            let key_t: Tile<bf16, { [D, 32] }> = key.transpose();
+            let key_t: Tile<bf16, { [D, 32] }> = convert_tile(
+                kp.load_pipelined::<4>([kv, 0i32, physical])
+                    .reshape(shape![D, 32]),
+            );
+            let value: Tile<bf16, { [32, D] }> = convert_tile(
+                vp.load_pipelined::<4>([kv, physical, 0i32])
+                    .reshape(shape![32, D]),
+            );
             let positions = offsets + (block * 32i32).broadcast(shape![32]);
             let raw0: Tile<f32, { [16, 32] }> = mmaf(query0, key_t, zero_scores);
             let valid0 = ge_tile(positions, start0.broadcast(shape![32]))
@@ -245,35 +249,45 @@ pub(crate) mod kernels {
         )
     }
 
-    fn grouped_query<const D: i32>(
-        q: &Tensor<f32, { [-1, -1, D] }>,
+    /// One query tile for the three verification lanes: lane `l` owns rows `8 l .. 8 l + GROUP`
+    /// and the unused rows are zero.
+    fn stacked_query<const D: i32>(
+        q0: &Tensor<f32, { [-1, -1, D] }>,
+        q1: &Tensor<f32, { [-1, -1, D] }>,
+        q2: &Tensor<f32, { [-1, -1, D] }>,
         kv: i32,
-    ) -> Tile<bf16, { [16, D] }> {
-        let query: Tile<f32, { [16, D] }> = q
-            .partition(shape![1, 16, D])
+    ) -> Tile<bf16, { [32, D] }> {
+        let first: Tile<f32, { [8, D] }> = q0
+            .partition(shape![1, 8, D])
             .load([kv, 0i32, 0i32])
-            .reshape(shape![16, D]);
-        convert_tile(query)
+            .reshape(shape![8, D]);
+        let second: Tile<f32, { [8, D] }> = q1
+            .partition(shape![1, 8, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![8, D]);
+        let third: Tile<f32, { [8, D] }> = q2
+            .partition(shape![1, 8, D])
+            .load([kv, 0i32, 0i32])
+            .reshape(shape![8, D]);
+        let pad: Tile<f32, { [8, D] }> = constant(0.0f32, shape![8, D]);
+        let low: Tile<f32, { [16, D] }> = cat(first, second, 0i32);
+        let high: Tile<f32, { [16, D] }> = cat(third, pad, 0i32);
+        let rows: Tile<f32, { [32, D] }> = cat(low, high, 0i32);
+        convert_tile(rows)
     }
 
-    fn grouped_scores<const D: i32>(
-        query: Tile<bf16, { [16, D] }>,
-        key: Tile<bf16, { [D, 32] }>,
-        positions: Tile<i32, { [32] }>,
-        start: i32,
-        position: i32,
-        scale: f32,
-    ) -> Tile<f32, { [16, 32] }> {
-        let zero: Tile<f32, { [16, 32] }> = constant(0.0f32, shape![16, 32]);
-        let raw: Tile<f32, { [16, 32] }> = mmaf(query, key, zero);
-        let valid = ge_tile(positions, start.broadcast(shape![32]))
-            & le_tile(positions, position.broadcast(shape![32]));
-        let masked: Tile<f32, { [16, 32] }> = constant(-1.0e30f32, shape![16, 32]);
-        select(
-            valid.reshape(shape![1, 32]).broadcast(shape![16, 32]),
-            raw * scale.broadcast(shape![16, 32]),
-            masked,
-        )
+    /// Per-row value of a three-lane quantity in the stacked layout of [`stacked_query`].
+    fn stacked_rows(first: i32, second: i32, third: i32) -> Tile<i32, { [32, 32] }> {
+        let rows: Tile<i32, { [32] }> = iota(shape![32]);
+        let later = ge_tile(rows, 8i32.broadcast(shape![32]));
+        let last = ge_tile(rows, 16i32.broadcast(shape![32]));
+        let early: Tile<i32, { [32] }> = select(
+            later,
+            second.broadcast(shape![32]),
+            first.broadcast(shape![32]),
+        );
+        let value: Tile<i32, { [32] }> = select(last, third.broadcast(shape![32]), early);
+        value.reshape(shape![32, 1]).broadcast(shape![32, 32])
     }
 
     const fn furthest_position(first: i32, second: i32, third: i32) -> i32 {
@@ -298,27 +312,22 @@ pub(crate) mod kernels {
         result
     }
 
-    /// [`partial_gqa`] for the three lanes of an MTP verification step: each KV block is read
-    /// once and scored against every lane's queries, each masked to its own position.
+    /// [`partial_gqa`] for the three lanes of an MTP verification step: the lanes' query heads
+    /// are stacked into one 32-row tile, so each KV block is read once and scored for every lane
+    /// with one product, each row masked to its own lane's position.
     #[expect(
         clippy::too_many_arguments,
         reason = "CUDA entry takes explicit tensor bindings and independent KV scales"
     )]
     #[expect(
         clippy::similar_names,
-        reason = "Matching query and accumulator names identify each of the three verification lanes"
+        reason = "Matching query and position names identify each of the three verification lanes"
     )]
     #[cutile::entry()]
     fn partial_gqa3<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
-        out0: &mut Tensor<f32, { [1, 16, D] }>,
-        maxima0: &mut Tensor<f32, { [1, 16] }>,
-        sums0: &mut Tensor<f32, { [1, 16] }>,
-        out1: &mut Tensor<f32, { [1, 16, D] }>,
-        maxima1: &mut Tensor<f32, { [1, 16] }>,
-        sums1: &mut Tensor<f32, { [1, 16] }>,
-        out2: &mut Tensor<f32, { [1, 16, D] }>,
-        maxima2: &mut Tensor<f32, { [1, 16] }>,
-        sums2: &mut Tensor<f32, { [1, 16] }>,
+        out: &mut Tensor<f32, { [1, 32, D] }>,
+        maxima: &mut Tensor<f32, { [1, 32] }>,
+        sums: &mut Tensor<f32, { [1, 32] }>,
         q0: &Tensor<f32, { [-1, -1, D] }>,
         q1: &Tensor<f32, { [-1, -1, D] }>,
         q2: &Tensor<f32, { [-1, -1, D] }>,
@@ -336,25 +345,21 @@ pub(crate) mod kernels {
         let kv = pid.0 / PARTS;
         let split = pid.0 % PARTS;
         let scale = grouped_scale::<D>(k_scale);
-        let zero_rows: Tile<f32, { [16, D] }> = constant(0.0f32, shape![16, D]);
         let position0 = query_position(metadata0);
-        let start0 = window_start(position0, window);
-        let query0 = grouped_query::<D>(q0, kv);
-        let mut numerator0 = zero_rows;
-        let mut denominator0: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
-        let mut maximum0: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
         let position1 = query_position(metadata1);
-        let start1 = window_start(position1, window);
-        let query1 = grouped_query::<D>(q1, kv);
-        let mut numerator1 = zero_rows;
-        let mut denominator1: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
-        let mut maximum1: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
         let position2 = query_position(metadata2);
+        let start0 = window_start(position0, window);
+        let start1 = window_start(position1, window);
         let start2 = window_start(position2, window);
-        let query2 = grouped_query::<D>(q2, kv);
-        let mut numerator2 = zero_rows;
-        let mut denominator2: Tile<f32, { [16] }> = constant(0.0f32, shape![16]);
-        let mut maximum2: Tile<f32, { [16] }> = constant(-1.0e30f32, shape![16]);
+        let query = stacked_query::<D>(q0, q1, q2, kv);
+        let row_first = stacked_rows(start0, start1, start2);
+        let row_last = stacked_rows(position0, position1, position2);
+        let zero_scores: Tile<f32, { [32, 32] }> = constant(0.0f32, shape![32, 32]);
+        let zero_rows: Tile<f32, { [32, D] }> = constant(0.0f32, shape![32, D]);
+        let masked: Tile<f32, { [32, 32] }> = constant(-1.0e30f32, shape![32, 32]);
+        let mut numerator = zero_rows;
+        let mut denominator: Tile<f32, { [32] }> = constant(0.0f32, shape![32]);
+        let mut maximum: Tile<f32, { [32] }> = constant(-1.0e30f32, shape![32]);
         // Blocks up to the furthest lane; earlier lanes mask the rows past their own position.
         let position = furthest_position(position0, position1, position2);
         let start = earliest_start(start0, start1, start2);
@@ -370,74 +375,55 @@ pub(crate) mod kernels {
                 last = end;
             }
         }
-        let kp = keys.partition(shape![1, 32, D]);
+        // Keys load already transposed for the score product.
+        let kp = keys.partition_permuted(shape![1, D, 32], const_array![0, 2, 1]);
         let vp = values.partition(shape![1, 32, D]);
         let blocks = table.partition(shape![1]);
         let offsets: Tile<i32, { [32] }> = iota(shape![32]);
         for block in first..last {
             let physical: i32 = tile_to_scalar(blocks.load([block]).reshape(shape![]));
-            let key: Tile<bf16, { [32, D] }> =
-                convert_tile(kp.load([kv, physical, 0i32]).reshape(shape![32, D]));
-            let value: Tile<bf16, { [32, D] }> =
-                convert_tile(vp.load([kv, physical, 0i32]).reshape(shape![32, D]));
-            let key_t: Tile<bf16, { [D, 32] }> = key.transpose();
+            let key_t: Tile<bf16, { [D, 32] }> = convert_tile(
+                kp.load_pipelined::<4>([kv, 0i32, physical])
+                    .reshape(shape![D, 32]),
+            );
+            let value: Tile<bf16, { [32, D] }> = convert_tile(
+                vp.load_pipelined::<4>([kv, physical, 0i32])
+                    .reshape(shape![32, D]),
+            );
             let positions = offsets + (block * 32i32).broadcast(shape![32]);
-            let scores0 = grouped_scores::<D>(query0, key_t, positions, start0, position0, scale);
-            let block_max0: Tile<f32, { [16] }> = reduce_max(scores0, 1i32);
-            let next0 = max_tile(block_max0, maximum0);
-            let old0 = exp(maximum0 - next0);
-            let p0 = exp(scores0 - next0.reshape(shape![16, 1]).broadcast(shape![16, 32]));
-            let sum0: Tile<f32, { [16] }> = reduce_sum(p0, 1i32);
-            let w0: Tile<bf16, { [16, 32] }> = convert_tile(p0);
-            let c0: Tile<f32, { [16, D] }> = mmaf(w0, value, zero_rows);
-            numerator0 = numerator0 * old0.reshape(shape![16, 1]).broadcast(shape![16, D]) + c0;
-            denominator0 = denominator0 * old0 + sum0;
-            maximum0 = next0;
-            let scores1 = grouped_scores::<D>(query1, key_t, positions, start1, position1, scale);
-            let block_max1: Tile<f32, { [16] }> = reduce_max(scores1, 1i32);
-            let next1 = max_tile(block_max1, maximum1);
-            let old1 = exp(maximum1 - next1);
-            let p1 = exp(scores1 - next1.reshape(shape![16, 1]).broadcast(shape![16, 32]));
-            let sum1: Tile<f32, { [16] }> = reduce_sum(p1, 1i32);
-            let w1: Tile<bf16, { [16, 32] }> = convert_tile(p1);
-            let c1: Tile<f32, { [16, D] }> = mmaf(w1, value, zero_rows);
-            numerator1 = numerator1 * old1.reshape(shape![16, 1]).broadcast(shape![16, D]) + c1;
-            denominator1 = denominator1 * old1 + sum1;
-            maximum1 = next1;
-            let scores2 = grouped_scores::<D>(query2, key_t, positions, start2, position2, scale);
-            let block_max2: Tile<f32, { [16] }> = reduce_max(scores2, 1i32);
-            let next2 = max_tile(block_max2, maximum2);
-            let old2 = exp(maximum2 - next2);
-            let p2 = exp(scores2 - next2.reshape(shape![16, 1]).broadcast(shape![16, 32]));
-            let sum2: Tile<f32, { [16] }> = reduce_sum(p2, 1i32);
-            let w2: Tile<bf16, { [16, 32] }> = convert_tile(p2);
-            let c2: Tile<f32, { [16, D] }> = mmaf(w2, value, zero_rows);
-            numerator2 = numerator2 * old2.reshape(shape![16, 1]).broadcast(shape![16, D]) + c2;
-            denominator2 = denominator2 * old2 + sum2;
-            maximum2 = next2;
+            let columns: Tile<i32, { [32, 32] }> =
+                positions.reshape(shape![1, 32]).broadcast(shape![32, 32]);
+            let valid = ge_tile(columns, row_first) & le_tile(columns, row_last);
+            let raw: Tile<f32, { [32, 32] }> = mmaf(query, key_t, zero_scores);
+            let scores = select(valid, raw * scale.broadcast(shape![32, 32]), masked);
+            let block_max: Tile<f32, { [32] }> = reduce_max(scores, 1i32);
+            let next = max_tile(block_max, maximum);
+            let old = exp(maximum - next);
+            let p = exp(scores - next.reshape(shape![32, 1]).broadcast(shape![32, 32]));
+            let sum: Tile<f32, { [32] }> = reduce_sum(p, 1i32);
+            let weights: Tile<bf16, { [32, 32] }> = convert_tile(p);
+            let product: Tile<f32, { [32, D] }> = mmaf(weights, value, zero_rows);
+            numerator = numerator * old.reshape(shape![32, 1]).broadcast(shape![32, D]) + product;
+            denominator = denominator * old + sum;
+            maximum = next;
         }
-        out0.store((numerator0 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
-        maxima0.store(maximum0.reshape(shape![1, 16]));
-        sums0.store(denominator0.reshape(shape![1, 16]));
-        out1.store((numerator1 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
-        maxima1.store(maximum1.reshape(shape![1, 16]));
-        sums1.store(denominator1.reshape(shape![1, 16]));
-        out2.store((numerator2 * v_scale.broadcast(shape![16, D])).reshape(shape![1, 16, D]));
-        maxima2.store(maximum2.reshape(shape![1, 16]));
-        sums2.store(denominator2.reshape(shape![1, 16]));
+        out.store((numerator * v_scale.broadcast(shape![32, D])).reshape(shape![1, 32, D]));
+        maxima.store(maximum.reshape(shape![1, 32]));
+        sums.store(denominator.reshape(shape![1, 32]));
     }
 
-    /// Merge grouped splits: head `h` reads row `h % GROUP` of its KV head's partials.
+    /// Merge grouped splits: head `h` reads row `offset + h % GROUP` of its KV head's partials.
     #[cutile::entry()]
-    fn merge_gqa<const D: i32, const PARTS: i32, const GROUP: i32>(
+    fn merge_gqa<const D: i32, const PARTS: i32, const GROUP: i32, const ROWS: i32>(
         out: &mut Tensor<f32, { [1, D] }>,
-        numerator: &Tensor<f32, { [-1, PARTS, 16, D] }>,
-        maxima: &Tensor<f32, { [-1, PARTS, 16] }>,
-        sums: &Tensor<f32, { [-1, PARTS, 16] }>,
+        numerator: &Tensor<f32, { [-1, PARTS, ROWS, D] }>,
+        maxima: &Tensor<f32, { [-1, PARTS, ROWS] }>,
+        sums: &Tensor<f32, { [-1, PARTS, ROWS] }>,
+        offset: i32,
     ) {
         let pid = get_tile_block_id();
         let kv = pid.0 / GROUP;
-        let row = pid.0 % GROUP;
+        let row = offset + pid.0 % GROUP;
         let maxima = maxima
             .partition(shape![1, PARTS, 1])
             .load([kv, 0i32, row])

@@ -2,6 +2,9 @@
 
 /// Padded query rows required by the grouped MMA kernel.
 pub const GROUPED_ROWS: usize = 16;
+/// Compiler occupancy hint of the grouped decode kernels. Without it the compiler spends the whole
+/// register file on one CTA per SM, so the 1.5-wave split grid runs in two waves.
+pub const GROUPED_OCCUPANCY: i32 = 2;
 /// Upper bound shared with admission's scratch reservation.
 pub const MAX_GROUPED_PARTS: usize = 64;
 const WAVE_NUMERATOR: usize = 3;

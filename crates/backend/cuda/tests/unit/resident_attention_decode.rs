@@ -122,6 +122,103 @@ fn check_geometry(
     }
     Ok(())
 }
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn stacked_verification_matches_split_reference() -> Result<(), Box<dyn std::error::Error>> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (heads, kv_heads, dim, capacity, parts) = (24, 4, 256, 1024, 8);
+    let codes: Vec<u8> = (0..kv_heads * capacity * dim)
+        .map(|i| 32 + u8::try_from(i % 31).unwrap() + if i % 3 == 0 { 128 } else { 0 })
+        .collect();
+    let v8 = device.upload(
+        codes.iter().copied().rev().map(f8e4m3fn).collect(),
+        &[kv_heads, capacity, dim],
+    )?;
+    let k8 = device.upload(
+        codes.into_iter().map(f8e4m3fn).collect(),
+        &[kv_heads, capacity, dim],
+    )?;
+    let table = block_table(&device, capacity)?;
+    let queries = (0..3)
+        .map(|lane| {
+            let values: Vec<f32> = (0..heads * dim)
+                .map(|i| (f32::from(u16::try_from((i + 5 * lane) % 15).unwrap()) - 7.0) / 8.0)
+                .collect();
+            device.upload(values, &[heads, dim])
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // The three lanes straddle a KV block boundary, start the context, or end it under a window.
+    for (first, window) in [(0, 0), (30, 0), (510, 0), (1021, 0), (40, 17)] {
+        let positions = [first, first + 1, first + 2];
+        let metadata = positions
+            .iter()
+            .map(|&p| device.upload(vec![p, 0, p, 0], &[4]))
+            .collect::<Result<Vec<_>, _>>()?;
+        let blocks = kv_heads * parts;
+        let mut numerator = api::zeros::<f32>(&[blocks, 32, dim]).sync_on(&device.stream)?;
+        let mut maxima = api::zeros::<f32>(&[blocks, 32]).sync_on(&device.stream)?;
+        let mut sums = api::zeros::<f32>(&[blocks, 32]).sync_on(&device.stream)?;
+        let views = queries
+            .iter()
+            .map(|q| q.view(&[kv_heads, heads / kv_heads, dim]))
+            .collect::<Result<Vec<_>, _>>()?;
+        kernels::partial_gqa3(
+            (&mut numerator).partition([1, 32, dim]),
+            (&mut maxima).partition([1, 32]),
+            (&mut sums).partition([1, 32]),
+            &views[0],
+            &views[1],
+            &views[2],
+            &metadata[0],
+            &metadata[1],
+            &metadata[2],
+            &k8,
+            &v8,
+            &table,
+            window,
+            0.5,
+            2.0,
+        )
+        .generics(vec![
+            f8e4m3fn::DTYPE.as_str().into(),
+            dim.to_string(),
+            parts.to_string(),
+            crate::constants::KV_BLOCK_TOKENS.to_string(),
+        ])
+        .sync_on(&device.stream)?;
+        for (lane, q) in queries.iter().enumerate() {
+            let actual = kernels::merge_gqa(
+                api::zeros::<f32>(&[heads, dim]).partition([1, dim]),
+                &numerator.view(&[kv_heads, parts, 32, dim])?,
+                &maxima.view(&[kv_heads, parts, 32])?,
+                &sums.view(&[kv_heads, parts, 32])?,
+                i32::try_from(lane * 8)?,
+            )
+            .generics(vec![
+                dim.to_string(),
+                parts.to_string(),
+                (heads / kv_heads).to_string(),
+                "32".into(),
+            ])
+            .first()
+            .unpartition()
+            .sync_on(&device.stream)?
+            .to_host_vec()
+            .sync_on(&device.stream)?;
+            let expected = run(&device, q, &k8, &v8, positions[lane], window, 1)?;
+            for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {
+                // BF16 query and probability products against the F32 per-head reference.
+                assert!(
+                    (a - b).abs() <= 2e-2 * b.abs().max(1.0),
+                    "first={first} window={window} lane={lane} index={index}: {a} != {b}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run<E: DType>(
     device: &CudaDevice,
     q: &Tensor<f32>,
@@ -315,28 +412,31 @@ fn bench_case(
 #[test]
 fn grouped_decode_helpers_compile_without_a_device() -> Result<(), Box<dyn std::error::Error>> {
     use cutile::cutile_compiler::compile_api::KernelCompiler;
-    for (entry, lanes) in [("partial_gqa", 1), ("partial_gqa3", 3)] {
+    let single: Vec<(&str, &[i32])> = vec![
+        ("out0", &[4096, 256, 1]),
+        ("maxima0", &[16, 1]),
+        ("sums0", &[16, 1]),
+        ("q0", &[1536, 256, 1]),
+        ("metadata0", &[1]),
+    ];
+    let stacked: Vec<(&str, &[i32])> = vec![
+        ("out", &[8192, 256, 1]),
+        ("maxima", &[32, 1]),
+        ("sums", &[32, 1]),
+        ("q0", &[1536, 256, 1]),
+        ("q1", &[1536, 256, 1]),
+        ("q2", &[1536, 256, 1]),
+        ("metadata0", &[1]),
+        ("metadata1", &[1]),
+        ("metadata2", &[1]),
+    ];
+    for (entry, lanes) in [("partial_gqa", single), ("partial_gqa3", stacked)] {
         let mut strides: Vec<(&str, &[i32])> = vec![
             ("keys", &[32768, 256, 1]),
             ("values", &[32768, 256, 1]),
             ("table", &[1]),
         ];
-        for (out, maxima, sums, query, metadata) in [
-            ("out0", "maxima0", "sums0", "q0", "metadata0"),
-            ("out1", "maxima1", "sums1", "q1", "metadata1"),
-            ("out2", "maxima2", "sums2", "q2", "metadata2"),
-        ]
-        .into_iter()
-        .take(lanes)
-        {
-            strides.extend([
-                (out, &[4096, 256, 1][..]),
-                (maxima, &[16, 1][..]),
-                (sums, &[16, 1][..]),
-                (query, &[1536, 256, 1][..]),
-                (metadata, &[1][..]),
-            ]);
-        }
+        strides.extend(lanes);
         for dtype in [f32::DTYPE.as_str(), f8e4m3fn::DTYPE.as_str()] {
             let compiled = KernelCompiler::new(kernels::__module_ast_self, "kernels", entry)
                 .target("sm_120")
@@ -345,6 +445,22 @@ fn grouped_decode_helpers_compile_without_a_device() -> Result<(), Box<dyn std::
                 .compile()?;
             assert!(compiled.ir_text().contains("mma"));
         }
+    }
+    for rows in ["16", "32"] {
+        let row_stride: i32 = rows.parse()?;
+        let numerator = [64 * row_stride * 256, row_stride * 256, 256, 1];
+        let partials = [64 * row_stride, row_stride, 1];
+        let strides: Vec<(&str, &[i32])> = vec![
+            ("out", &[256, 1]),
+            ("numerator", &numerator),
+            ("maxima", &partials),
+            ("sums", &partials),
+        ];
+        KernelCompiler::new(kernels::__module_ast_self, "kernels", "merge_gqa")
+            .target("sm_120")
+            .generics(vec!["256".into(), "64".into(), "6".into(), rows.into()])
+            .strides(&strides)
+            .compile()?;
     }
     Ok(())
 }
