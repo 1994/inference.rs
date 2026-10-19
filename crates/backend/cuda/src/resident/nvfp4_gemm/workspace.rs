@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 /// Keyed by `(rows, columns, activation-scale columns)`.
 type Fp8Key = (usize, usize, usize);
-/// Rows one fused SwiGLU quantization block covers; a one-row block reached ~0.6 TB/s.
+/// Rows one prompt quantization block covers; a one-row block reached ~0.6 TB/s.
 const SWIGLU_ROWS: usize = 16;
 type StrategyKey = (crate::tuning::resident_gemm::WeightKey, usize, usize, usize);
 /// Quantized activation and its per-token scales.
@@ -417,7 +417,18 @@ impl Workspace {
         );
         let (reuse, ticket) = self.quant_reuse.prepare(key);
         let mut record = || {
-            if !reuse {
+            if !reuse && rows.is_multiple_of(SWIGLU_ROWS) {
+                scope.record(
+                    kernels::quantize_rows(
+                        (&mut *q).partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_CODES_TILE[1]]),
+                        (&mut *qs)
+                            .partition([SWIGLU_ROWS, crate::constants::NVFP4_QUANT_SCALES_TILE[1]]),
+                        input,
+                        scale,
+                    )
+                    .generics(vec![columns.to_string()]),
+                )?;
+            } else if !reuse {
                 scope.record(
                     kernels::quantize(
                         (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),

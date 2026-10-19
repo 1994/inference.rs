@@ -93,6 +93,40 @@ pub(crate) mod kernels {
         scales.store(encoded);
     }
 
+    /// [`quantize`] over sixteen rows of one 512-column window per block, for prompt graphs.
+    #[cutile::entry()]
+    fn quantize_rows<const K: i32>(
+        out: &mut Tensor<f4e2m1fnx2, { [16, 256] }>,
+        scales: &mut Tensor<f8e4m3fn, { [16, 32] }>,
+        input: &Tensor<f32, { [-1, K] }>,
+        input_global: f32,
+    ) {
+        let pid = get_tile_block_id();
+        let x = input.partition(shape![16, 512]).load([pid.0, pid.1]);
+        let groups = x.reshape(shape![16, 32, 16]);
+        let maximum: Tile<f32, { [16, 32] }> = reduce_max(absf(groups), 2i32);
+        let scale = min_tile(
+            maximum * (input_global / 6.0f32).broadcast(shape![16, 32]),
+            448.0f32.broadcast(shape![16, 32]),
+        );
+        let encoded: Tile<f8e4m3fn, { [16, 32] }> = convert_tile(scale);
+        let rounded: Tile<f32, { [16, 32] }> = convert_tile(encoded);
+        let zero = eq_tile(rounded, 0.0f32.broadcast(shape![16, 32]));
+        let denominator = select(zero, 1.0f32.broadcast(shape![16, 32]), rounded);
+        let normalized = groups
+            * (input_global.broadcast(shape![16, 32]) / denominator)
+                .reshape(shape![16, 32, 1])
+                .broadcast(shape![16, 32, 16]);
+        let clipped = min_tile(
+            max_tile(normalized, (-6.0f32).broadcast(shape![16, 32, 16])),
+            6.0f32.broadcast(shape![16, 32, 16]),
+        );
+        let values: Tile<f4e2m1fn, { [16, 512] }> =
+            convert_tile(clipped.reshape(shape![16, 512]));
+        out.store(values.pack(shape![16, 256]));
+        scales.store(encoded);
+    }
+
     /// `silu(gate) * up` quantized like [`quantize`], so a gated MLP's down projection reads its
     /// activation codes without materializing the SiLU and product rows. The SiLU and product
     /// keep the element-wise kernels' arithmetic: `g / (1 + exp(-g))`, then one multiply. Each
