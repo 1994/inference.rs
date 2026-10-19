@@ -229,7 +229,7 @@ pub(crate) mod kernels {
         clippy::useless_let_if_seq,
         reason = "cuTile DSL uses statement control flow for scalar window bounds"
     )]
-    fn window_start(position: i32, window: i32) -> i32 {
+    const fn window_start(position: i32, window: i32) -> i32 {
         let mut start = 0i32;
         if window > 0 && position + 1i32 > window {
             start = position + 1i32 - window;
@@ -295,8 +295,7 @@ pub(crate) mod kernels {
     )]
     #[expect(
         clippy::similar_names,
-        clippy::useless_let_if_seq,
-        reason = "cuTile DSL uses statement control flow and matching names for the three lanes"
+        reason = "Matching query and accumulator names identify each of the three verification lanes"
     )]
     #[cutile::entry()]
     fn partial_gqa3<E: ElementType, const D: i32, const PARTS: i32, const BT: i32>(
