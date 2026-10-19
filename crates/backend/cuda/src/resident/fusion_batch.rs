@@ -21,19 +21,28 @@ const TILE: [usize; 2] = [4, 16];
 const DEPTH: usize = 256;
 const SCRATCH_BYTES: u64 = (5 * 1024 * 1024) + (ROWS as u64 * HIDDEN as u64 * 4);
 
+/// Narrowest prompt width that takes the fully batched path: one gather, one norm launch over
+/// every row, one vendor projection.
+const WIDE_ROWS: usize = 256;
+
+const fn wide(width: usize) -> bool {
+    width >= WIDE_ROWS && width.is_multiple_of(WIDE_ROWS)
+}
+
 fn layout_bytes(
     architecture: &str,
     width: usize,
     shape: Option<&[i32]>,
     tiling: LinearTiling,
 ) -> u64 {
-    if architecture == "sm_120"
-        && width == ROWS
-        && shape == Some(WEIGHT_SHAPE.as_slice())
-        && tiling.rows() == TILE[1]
-        && tiling.columns() == DEPTH
-    {
+    if architecture != "sm_120" || shape != Some(WEIGHT_SHAPE.as_slice()) {
+        return 0;
+    }
+    if width == ROWS && tiling.rows() == TILE[1] && tiling.columns() == DEPTH {
         SCRATCH_BYTES
+    } else if wide(width) {
+        // F32 projection input and gathered embeddings, plus the BF16 copy the vendor GEMM reads.
+        (width * (COLUMNS + HIDDEN) * 4 + width * COLUMNS * 2) as u64
     } else {
         0
     }
@@ -73,14 +82,15 @@ impl Workspace {
         if required_bytes(weights, width, device.profile()?) == 0 {
             return Ok(None);
         }
+        let rows = if wide(width) { width } else { ROWS };
         Ok(Some(Self {
             input: Some(
-                api::zeros::<f32>(&[ROWS, COLUMNS])
+                api::zeros::<f32>(&[rows, COLUMNS])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
             gathered: Some(
-                api::zeros::<f32>(&[ROWS, HIDDEN])
+                api::zeros::<f32>(&[rows, HIDDEN])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
@@ -124,6 +134,9 @@ pub(super) fn record(
     #[cfg(test)]
     if DISABLED.get() {
         return Ok(false);
+    }
+    if node.op == TensorOp::Embedding && node.outputs.len() == 1 && wide(arena.lanes()) {
+        return record_wide(builder, scope, node, arena, metadata_batch, workspace);
     }
     if node.op != TensorOp::Embedding || node.outputs.len() != 1 || arena.lanes() != ROWS {
         return Ok(false);
@@ -220,6 +233,92 @@ pub(super) fn record(
     #[cfg(test)]
     CAPTURES.set(CAPTURES.get() + 1);
     Ok(true)
+}
+
+/// Wide prompt chunk: gather every embedding row, normalize every embedding and external hidden
+/// row in one launch, then project the `[lanes, 2 * hidden]` input with one vendor GEMM.
+fn record_wide(
+    builder: &mut BatchBuilder<'_>,
+    scope: &Scope,
+    node: &TensorNode,
+    arena: &mut ActivationArena,
+    metadata_batch: &Tensor<i32>,
+    workspace: &mut Workspace,
+) -> std::result::Result<bool, DeviceError> {
+    let lanes = arena.lanes();
+    let slot = arena.slot(node.outputs[0]).map_err(error)?;
+    if arena.get(node.outputs[0]).map_err(error)?.size() != lanes * HIDDEN {
+        return Ok(false);
+    }
+    let Some(external) = builder.lane_external_owner else {
+        return Ok(false);
+    };
+    if external.size() < lanes * HIDDEN {
+        return Err(error("fusion batch external rows"));
+    }
+    let Some(super::program::FusionWeights {
+        projection: ProjectionWeight::Dense(weight),
+        norms,
+        epsilon,
+        offset,
+        ..
+    }) = &builder.weights.fusion
+    else {
+        return Err(error("fusion batch dense capability"));
+    };
+    let Some(delegated) = builder.delegated.as_deref_mut() else {
+        return Ok(false);
+    };
+    let embedding_weight = builder
+        .weights
+        .embeddings
+        .get(&node.inputs[0])
+        .ok_or_else(|| error("fusion batch embedding"))?;
+    let mut gathered = workspace
+        .gathered
+        .take()
+        .ok_or_else(|| error("fusion batch gather"))?;
+    scope.record(
+        super::attention::attention::embedding_batch(
+            (&mut gathered).partition([1, crate::constants::AUX_KERNEL_TILE]),
+            embedding_weight,
+            metadata_batch,
+        )
+        .generics(vec![
+            HIDDEN.to_string(),
+            crate::constants::METADATA_FIELDS.to_string(),
+        ]),
+    )?;
+    let input = workspace
+        .input
+        .take()
+        .ok_or_else(|| error("fusion batch input"))?;
+    let mut rows = input.reshape(&[2 * lanes, HIDDEN])?;
+    let block = HIDDEN.next_power_of_two();
+    scope.record(
+        super::kernels::aux::fusion_norm_rows(
+            (&mut rows).partition([1, block]),
+            &gathered.view(&[lanes, HIDDEN]).map_err(error)?,
+            &external.view(&[lanes, HIDDEN]).map_err(error)?,
+            norms,
+            *epsilon,
+            *offset,
+        )
+        .generics(vec![HIDDEN.to_string(), block.to_string()]),
+    )?;
+    workspace.gathered = Some(gathered);
+    let input = rows.reshape(&[lanes * COLUMNS])?;
+    let output = arena.buffers[slot]
+        .take()
+        .ok_or_else(|| error("fusion batch output"))?;
+    let recorded = delegated.record_dense(scope, &input, weight, &output, (lanes, HIDDEN, COLUMNS));
+    workspace.input = Some(input.reshape(&[lanes, COLUMNS])?);
+    arena.buffers[slot] = Some(output);
+    if recorded? {
+        Ok(true)
+    } else {
+        Err(error("fusion batch vendor projection"))
+    }
 }
 
 #[cfg(test)]

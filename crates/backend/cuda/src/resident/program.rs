@@ -392,6 +392,7 @@ impl DeviceProgram {
             fp8_states: &mut self.fp8_states,
             external: &self.external,
             lane_external: &mut self.lane_external,
+            lane_external_owner: Some(&self.lane_external_owner),
             lane_fusion: &mut self.lane_fusion,
             tables: std::slice::from_ref(&self.table),
             capacity: self.capacity,
@@ -541,6 +542,7 @@ impl DeviceProgram {
             fp8_states: &mut fp8_states,
             external: &external,
             lane_external: &mut lane_external,
+            lane_external_owner: Some(&lane_external_owner),
             lane_fusion: &mut lane_fusion,
             tables: std::slice::from_ref(&table),
             capacity,
@@ -1406,7 +1408,9 @@ fn warm_delegated(delegated: &mut crate::device::cublaslt::Support, weights: &Pr
     if !delegated.is_enabled() {
         return;
     }
-    for weight in weights.projections.values() {
+    // The fused draft projection is bound outside `projections` but prompt chunks record it too.
+    let fusion = weights.fusion.as_ref().map(|fusion| &fusion.projection);
+    for weight in weights.projections.values().chain(fusion) {
         let ProjectionWeight::Dense(dense) = weight else {
             continue;
         };

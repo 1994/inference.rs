@@ -213,6 +213,7 @@ impl SlotPool {
                 fp8_states: &mut placeholder_fp8,
                 external: &external,
                 lane_external: &mut lane_external,
+                lane_external_owner: None,
                 lane_fusion: &mut lane_fusion,
                 tables: &tables,
                 capacity,

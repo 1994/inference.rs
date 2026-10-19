@@ -244,7 +244,7 @@ impl LoadedModel {
             options.prefill_width = crate::constants::PREFILL_LANES;
         }
         let mtp_depth = options.mtp_depth;
-        let (mut weights, draft, tuning) =
+        let (mut weights, mut draft, tuning) =
             bindings::load(&device, &profile, &mut package, &options)?;
         if automatic_prefill
             && !weights.projections.iter().any(|(id, weight)| {
@@ -281,6 +281,20 @@ impl LoadedModel {
                 profile.arena_budget_bytes(),
                 &mut weights,
             )?;
+            // The draft primes once per prompt chunk; matching the target width turns a 2048-lane
+            // target chunk into one draft replay instead of sixteen 128-lane ones, whose attention
+            // grid fills a fraction of the device.
+            if let Some(draft) = draft.as_mut()
+                && weights.prefill_width > draft.weights.prefill_width
+                && crate::resident::prompt_logits::required_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    weights.prefill_width,
+                )? as u64
+                    <= profile.arena_budget_bytes()
+            {
+                draft.weights.prefill_width = weights.prefill_width;
+            }
             tracing::info!(
                 target: "infer::load",
                 prefill_width = weights.prefill_width,

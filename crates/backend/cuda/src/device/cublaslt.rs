@@ -335,10 +335,13 @@ pub struct Support {
 }
 
 impl Support {
-    /// Production keeps qualified native projection arithmetic. Unqualified delegation
-    /// is available through the explicit constructor for isolated diagnostics.
+    /// Large BF16 projections delegate to cuBLASLt (BF16 activations, F32 accumulation), which
+    /// wins from 2048x8192 weights upwards. `INFER_CUDA_DENSE_LT=0` keeps the native kernels.
     pub fn new(device: &crate::device::CudaDevice) -> Self {
-        Self::new_with(device, false)
+        Self::new_with(
+            device,
+            std::env::var("INFER_CUDA_DENSE_LT").map_or(true, |value| value != "0"),
+        )
     }
 
     /// Build the support with delegation decided by the caller, for benchmarks and tests that

@@ -114,6 +114,8 @@ pub(super) struct BatchBuilder<'a> {
     pub fp8_states: &'a mut Fp8Caches,
     pub external: &'a Tensor<f32>,
     pub lane_external: &'a mut Vec<Tensor<f32>>,
+    /// Contiguous storage behind `lane_external`, one external hidden row per prompt lane.
+    pub lane_external_owner: Option<&'a Tensor<f32>>,
     pub lane_fusion: &'a mut Vec<Option<super::program::FusionWorkspace>>,
     /// One block table per lane, indexed exactly like `lane_external`; batched and prefill
     /// captures use entry 0 because their operators do not resolve KV positions.
