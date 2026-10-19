@@ -726,7 +726,7 @@ pub(super) const ORDERED_DIM: usize = 128;
 /// Independent value columns per CTA, selected by paired CUDA event measurements.
 pub(super) const ORDERED_BLOCK: usize = 16;
 /// Prompt capture widths covered by exact fixture and checkpoint comparisons.
-pub(super) const ORDERED_WIDTHS: [usize; 2] = [64, 256];
+pub(super) const ORDERED_WIDTHS: [usize; 5] = [64, 256, 512, 1024, 2048];
 
 mod budget;
 pub mod oxide;
