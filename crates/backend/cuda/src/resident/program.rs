@@ -326,6 +326,37 @@ fn arena_budget(device: &CudaDevice) -> Result<usize> {
     usize::try_from(device.profile()?.arena_budget_bytes()).map_err(device_error)
 }
 /// Validate one program request and return the padded capacity it will be captured at.
+/// Copy one state tensor between programs of equal capacity: with `kv = (rows, capacity)` a
+/// head-major `[kv_heads, capacity, head_dim]` cache moves its first `rows` positions per head,
+/// otherwise the tensor moves whole.
+fn copy_prefix<T: DType>(
+    device: &CudaDevice,
+    dst: &mut Tensor<T>,
+    src: &Tensor<T>,
+    kv: Option<(usize, usize)>,
+) -> Result<()> {
+    if dst.shape() != src.shape() {
+        return Err(Error::invariant("program state copy shape"));
+    }
+    if dst.device_pointer().cu_deviceptr() == src.device_pointer().cu_deviceptr() {
+        return Ok(());
+    }
+    let shape = src.shape();
+    if let Some((rows, capacity)) = kv {
+        if shape.len() != 3 || usize::try_from(shape[1]).ok() != Some(capacity) {
+            return Err(Error::invariant("program KV copy layout"));
+        }
+        let heads = usize::try_from(shape[0]).map_err(device_error)?;
+        let dim = usize::try_from(shape[2]).map_err(device_error)?;
+        for head in 0..heads {
+            let offset = head * capacity * dim;
+            device.copy_d2d_at(dst, src, offset, offset, rows * dim)?;
+        }
+        return Ok(());
+    }
+    device.copy_d2d(dst, src, src.size())
+}
+
 fn program_capacity(
     graph: &DataflowGraph,
     weights: &ProgramWeights,
@@ -446,7 +477,15 @@ impl DeviceProgram {
         hidden: usize,
         vocabulary: usize,
     ) -> Result<Self> {
-        Self::new_impl(device, graph, weights, (capacity, hidden, vocabulary), true, None)
+        let geometry = ProgramGeometry::new(weights, true);
+        Self::new_impl(
+            device,
+            graph,
+            weights,
+            (capacity, hidden, vocabulary),
+            geometry,
+            None,
+        )
     }
 
     /// A sequence that will verify through the shared slot pool skips its private
@@ -462,7 +501,71 @@ impl DeviceProgram {
         hidden: usize,
         vocabulary: usize,
     ) -> Result<Self> {
-        Self::new_impl(device, graph, weights, (capacity, hidden, vocabulary), false, None)
+        let geometry = ProgramGeometry::new(weights, false);
+        Self::new_impl(
+            device,
+            graph,
+            weights,
+            (capacity, hidden, vocabulary),
+            geometry,
+            None,
+        )
+    }
+
+    /// A pooled program with the wide prompt graph that prompts for slot-resident sequences:
+    /// a sequence's state moves in ([`Self::copy_state_from`]), a wide chunk replays, and the
+    /// state moves back to its slot. One worker replaces a wide graph per slot.
+    /// # Errors
+    /// Rejects invalid capacity or CUDA graph capture failures.
+    pub(crate) fn new_worker(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        geometry: (usize, usize, usize),
+    ) -> Result<Self> {
+        let wide = ProgramGeometry::from_flags(
+            weights.batch_width,
+            weights.prefill_width,
+            weights.narrow_prefill_width,
+            false,
+            true,
+        );
+        Self::new_impl(device, graph, weights, geometry, wide, None)
+    }
+
+    /// Copy `source`'s recurrent states and its first `rows` KV positions into this program,
+    /// whose capacity must match, and continue from `rows`.
+    /// # Errors
+    /// Rejects mismatched capacities or state layouts and driver copy failures.
+    pub(crate) fn copy_state_from(&mut self, source: &Self, rows: usize) -> Result<()> {
+        if source.capacity != self.capacity || rows > self.capacity {
+            return Err(Error::invalid("program state copy geometry"));
+        }
+        let device = &self.device;
+        for (id, tensors) in &mut self.states {
+            let from = source
+                .states
+                .get(id)
+                .ok_or_else(|| Error::invariant("program state copy source"))?;
+            if from.len() != tensors.len() {
+                return Err(Error::invariant("program state copy layout"));
+            }
+            // Recurrent and unscaled caches move whole: only FP8 caches are known to be KV.
+            for (dst, src) in tensors.iter_mut().zip(from) {
+                copy_prefix(device, dst, src, None)?;
+            }
+        }
+        for (id, (keys, values)) in &mut self.fp8_states {
+            let (from_keys, from_values) = source
+                .fp8_states
+                .get(id)
+                .ok_or_else(|| Error::invariant("program state copy source"))?;
+            copy_prefix(device, keys, from_keys, Some((rows, self.capacity)))?;
+            copy_prefix(device, values, from_values, Some((rows, self.capacity)))?;
+        }
+        self.next_position = rows;
+        self.last_batch = None;
+        Ok(())
     }
 
     /// A pooled program whose recurrent states and KV caches are `slot`, one slot pool slot's
@@ -477,12 +580,21 @@ impl DeviceProgram {
         (capacity, hidden, vocabulary): (usize, usize, usize),
         slot: (super::batch::States, super::fp8_cache::Fp8Caches),
     ) -> Result<Self> {
+        // Every prompt chunk runs on the prompt worker, so a slot's programs capture no prompt
+        // graph: the draft's wide one alone retained 160 MB of projection scratch per slot.
+        let narrow = ProgramGeometry::from_flags(
+            weights.batch_width,
+            weights.prefill_width,
+            0,
+            false,
+            false,
+        );
         Self::new_impl(
             device,
             graph,
             weights,
             (capacity, hidden, vocabulary),
-            false,
+            narrow,
             Some(slot),
         )
     }
@@ -544,10 +656,9 @@ impl DeviceProgram {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         (capacity, hidden, vocabulary): (usize, usize, usize),
-        private_verification: bool,
+        geometry: ProgramGeometry,
         slot: Option<(super::batch::States, super::fp8_cache::Fp8Caches)>,
     ) -> Result<Self> {
-        let geometry = ProgramGeometry::new(weights, private_verification);
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;

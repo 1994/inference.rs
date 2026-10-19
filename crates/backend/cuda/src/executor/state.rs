@@ -102,6 +102,7 @@ impl CudaBackend {
         let pool_width = pool.width();
         let pool_capacity = pool.capacity();
         let before = self.physical_available()?;
+        self.worker = None;
         self.homes.clear();
         drop(self.draft_slots.take());
         drop(self.slots.take());
@@ -346,6 +347,22 @@ impl CudaBackend {
         }
         Ok(())
     }
+    /// Whether a request is served by slot-resident programs when one is free.
+    fn home_eligible(&self, capacity: usize, readout: OutputReadout) -> bool {
+        readout == OutputReadout::Logits
+            && self
+                .slots
+                .as_ref()
+                .is_some_and(|pool| capacity <= pool.capacity())
+            && self.worker.is_some()
+            && (self.states.values().any(|state| state.home.is_some())
+                || self
+                    .homes
+                    .iter()
+                    .flatten()
+                    .any(|home| home.draft.is_some() || self.loaded.mtp_depth() == 0))
+    }
+
     /// Admit a pooled request onto a free slot's resident programs: it prefills straight into
     /// the slot and then decodes from it, so admission captures nothing and the request owns no
     /// private state. False when no such slot is free; the caller admits a private program.
@@ -355,6 +372,16 @@ impl CudaBackend {
         capacity: usize,
         readout: OutputReadout,
     ) -> Result<bool> {
+        // A request that fits a slot waits for one rather than capturing a private program:
+        // that capture holds the engine thread for seconds, and the slot is faster once free.
+        let busy = if self.home_eligible(capacity, readout) {
+            Err(Error::new(
+                ErrorCode::Capacity,
+                "every slot-resident program is in use",
+            ))
+        } else {
+            Ok(false)
+        };
         let Some(pool) = self.slots.as_mut() else {
             return Ok(false);
         };
@@ -365,14 +392,14 @@ impl CudaBackend {
             return Ok(false);
         }
         let Some(slot) = (0..self.homes.len()).find(|&slot| {
-            self.homes[slot].as_ref().is_some_and(|home| {
-                home.draft.is_some() || self.loaded.mtp_depth() == 0
-            })
+            self.homes[slot]
+                .as_ref()
+                .is_some_and(|home| home.draft.is_some() || self.loaded.mtp_depth() == 0)
         }) else {
-            return Ok(false);
+            return busy;
         };
         if !pool.take_slot(slot) {
-            return Ok(false);
+            return busy;
         }
         let Some(mut home) = self.homes[slot].take() else {
             return Ok(false);
