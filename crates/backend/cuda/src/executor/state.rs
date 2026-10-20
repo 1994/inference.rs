@@ -79,6 +79,10 @@ impl CudaBackend {
             && capacity <= previous
         {
             self.idle()?;
+            // Cached private programs retain the old wide scratch. Compatible requests
+            // return to the pool, so retire those idle shells before planning its storage.
+            while self.pool.evict() {}
+            self.loaded.reclaim_idle_prompt_scratch()?;
             self.warm_slot_pool_at(previous);
         }
         let Some(pool) = &self.slots else {

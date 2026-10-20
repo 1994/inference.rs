@@ -588,3 +588,42 @@ fn pending_prompt_scratch_prices_only_uncached_captured_widths() -> Result<()> {
     );
     Ok(())
 }
+
+/// Physical-page budgeting must preserve useful per-slot capacity and round to whole pages.
+#[test]
+fn funded_kv_rounds_down_without_changing_logical_capacity() -> Result<()> {
+    let width = 16;
+    let capacity = 8192;
+    let maximum = width * 6144;
+    let fixed = 5_200_689_152;
+    let block_bytes = 1_048_576;
+    let envelope = 7_569_557_647;
+    let tokens = funded_kv_tokens(width, capacity, maximum, block_bytes, fixed, envelope)?
+        .ok_or_else(|| Error::invariant("funded fixture"))?;
+    assert_eq!(tokens, 72_288);
+    assert_eq!(tokens % KV_BLOCK_TOKENS, 0);
+    assert!(fixed + (tokens / KV_BLOCK_TOKENS) as u64 * block_bytes <= envelope);
+    assert!(fixed + (tokens / KV_BLOCK_TOKENS + 1) as u64 * block_bytes > envelope);
+    assert!(tokens >= width * (capacity / 2 + KV_BLOCK_TOKENS));
+    // A budget that cannot admit one minimum-bucket request per slot is not useful.
+    assert_eq!(
+        funded_kv_tokens(
+            width,
+            capacity,
+            maximum,
+            block_bytes,
+            fixed,
+            fixed + (width * capacity / 2 / KV_BLOCK_TOKENS) as u64 * block_bytes
+        )?,
+        None
+    );
+    assert_eq!(
+        funded_kv_tokens(width, capacity, maximum, 0, fixed, envelope)?,
+        None
+    );
+    assert_eq!(
+        funded_kv_tokens(width, capacity, maximum, block_bytes, fixed, fixed)?,
+        None
+    );
+    Ok(())
+}

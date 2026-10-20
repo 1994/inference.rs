@@ -80,6 +80,14 @@ fn cacheable_prefix(
     })
 }
 
+/// All storage needed before publishing a load-time pooled serving geometry.
+struct PoolPlan {
+    width: usize,
+    prompt_width: usize,
+    kv_tokens: usize,
+    bytes: u64,
+}
+
 impl CudaBackend {
     pub(super) fn execute(
         &mut self,
@@ -207,7 +215,7 @@ impl CudaBackend {
         // Reserve the configured capture bucket, not the transient number of arrivals seen on
         // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
         let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
-        let Some(pool) = self.create_slot_pool(capacity, maximum) else {
+        let Some(pool) = self.create_slot_pool(capacity, maximum, None) else {
             self.slots_disabled = true;
             // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and
             // the fallback is otherwise silent: a caller only sees steps that never batched.
@@ -274,12 +282,18 @@ impl CudaBackend {
                 return;
             }
         };
-        let Some((planned_width, prompt_width, quoted_bytes)) = selected else {
+        let Some(PoolPlan {
+            width: planned_width,
+            prompt_width,
+            kv_tokens,
+            bytes: quoted_bytes,
+        }) = selected
+        else {
             self.pool_failure_reason = Some(format!("joint pool quote exceeds {envelope} bytes"));
             return;
         };
         tracing::info!(target: "infer::executor", planned_width, prompt_width, quoted_bytes,
-            envelope_bytes = envelope, capacity, "planned pooled CUDA serving storage");
+            envelope_bytes = envelope, capacity, kv_tokens, "planned pooled CUDA serving storage");
         let before_bytes = match self.physical_available() {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -288,7 +302,7 @@ impl CudaBackend {
             }
         };
         super::profiling::memory("before_pool", planned_width, self.loaded.device());
-        let Some(pool) = self.create_slot_pool(capacity, planned_width) else {
+        let Some(pool) = self.create_slot_pool(capacity, planned_width, Some(kv_tokens)) else {
             return;
         };
         let width = pool.width();
@@ -333,7 +347,7 @@ impl CudaBackend {
         capacity: usize,
         maximum: usize,
         envelope: u64,
-    ) -> Result<Option<(usize, usize, u64)>> {
+    ) -> Result<Option<PoolPlan>> {
         let configured = self.loaded.pooled_prompt_width();
         // Preserve wide-prompt throughput: at most one halving, and never cross the
         // delegated projection floor. Deeper shrinking saves memory but adds replays.
@@ -341,14 +355,19 @@ impl CudaBackend {
         for width in (2..=maximum).rev() {
             let mut prompt_width = configured;
             loop {
-                let bytes = self.loaded.pooled_serving_bytes(
+                if let Some((kv_tokens, bytes)) = self.loaded.funded_pooled_serving(
                     width,
                     capacity,
                     paged_tokens(width, capacity),
                     prompt_width,
-                )?;
-                if bytes <= envelope {
-                    return Ok(Some((width, prompt_width, bytes)));
+                    envelope,
+                )? {
+                    return Ok(Some(PoolPlan {
+                        width,
+                        prompt_width,
+                        kv_tokens,
+                        bytes,
+                    }));
                 }
                 if prompt_width <= minimum_prompt {
                     break;
@@ -410,13 +429,19 @@ impl CudaBackend {
     /// Each attempt that fails is followed by a reclaim so the next one is judged against
     /// memory that is actually free; a width that cannot fit is worth more to the server than
     /// no batching at all.
-    fn create_slot_pool(&mut self, capacity: usize, maximum: usize) -> Option<SlotPool> {
+    fn create_slot_pool(
+        &mut self,
+        capacity: usize,
+        maximum: usize,
+        kv_tokens: Option<usize>,
+    ) -> Option<SlotPool> {
         for width in (2..=maximum).rev() {
             loop {
-                match self
-                    .loaded
-                    .slot_pool(width, capacity, Some(paged_tokens(width, capacity)))
-                {
+                match self.loaded.slot_pool(
+                    width,
+                    capacity,
+                    Some(kv_tokens.unwrap_or_else(|| paged_tokens(width, capacity))),
+                ) {
                     Ok(pool) => return Some(pool),
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);

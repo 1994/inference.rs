@@ -280,6 +280,43 @@ impl LoadedModel {
         add(bytes, profile.graph_headroom_bytes())
     }
 
+    /// Fund physical KV pages from the remaining whole-serving budget. Logical slot
+    /// capacity stays unchanged; admission leases pages for each request's actual capacity.
+    pub(crate) fn funded_pooled_serving(
+        &self,
+        width: usize,
+        capacity: usize,
+        maximum_kv_tokens: usize,
+        prompt_width: usize,
+        envelope: u64,
+    ) -> Result<Option<(usize, u64)>> {
+        let capacity = self.validate_capacity(capacity)?;
+        let maximum_kv_tokens = maximum_kv_tokens / KV_BLOCK_TOKENS * KV_BLOCK_TOKENS;
+        let full = self.pooled_serving_bytes(width, capacity, maximum_kv_tokens, prompt_width)?;
+        if full <= envelope {
+            return Ok(Some((maximum_kv_tokens, full)));
+        }
+        let fixed = self.pooled_serving_bytes(width, capacity, 0, prompt_width)?;
+        let blocks = maximum_kv_tokens / KV_BLOCK_TOKENS;
+        if fixed >= envelope || blocks == 0 {
+            return Ok(None);
+        }
+        let block_bytes = full.saturating_sub(fixed) / blocks as u64;
+        let Some(tokens) = funded_kv_tokens(
+            width,
+            capacity,
+            maximum_kv_tokens,
+            block_bytes,
+            fixed,
+            envelope,
+        )?
+        else {
+            return Ok(None);
+        };
+        let bytes = add(fixed, mul((tokens / KV_BLOCK_TOKENS) as u64, block_bytes)?)?;
+        Ok(Some((tokens, bytes)))
+    }
+
     /// Physical scratch a new private program still needs, beyond its affine state quote.
     /// This matters when a narrower pooled worker has not allocated the private prompt width.
     pub(crate) fn pending_prompt_scratch_bytes(&self, private: bool) -> Result<u64> {
@@ -307,6 +344,32 @@ impl LoadedModel {
     pub(crate) const fn pooled_prompt_width(&self) -> usize {
         self.weights.prefill_width
     }
+}
+
+/// A logical power-of-two bucket starts just above half its padded capacity. Keep
+/// enough pages for every resident slot to admit a request from that bucket, instead
+/// of funding many unusable state handles with only a handful of physical KV blocks.
+fn funded_kv_tokens(
+    width: usize,
+    capacity: usize,
+    maximum: usize,
+    block_bytes: u64,
+    fixed: u64,
+    envelope: u64,
+) -> Result<Option<usize>> {
+    if block_bytes == 0 || fixed >= envelope {
+        return Ok(None);
+    }
+    let per_slot = (capacity / 2 / KV_BLOCK_TOKENS + 1) * KV_BLOCK_TOKENS;
+    let minimum = width
+        .checked_mul(per_slot)
+        .ok_or_else(|| Error::invalid("pooled minimum KV overflow"))?;
+    let pages = (envelope - fixed) / block_bytes;
+    let tokens = usize::try_from(pages)
+        .unwrap_or(usize::MAX)
+        .min(maximum / KV_BLOCK_TOKENS)
+        * KV_BLOCK_TOKENS;
+    Ok((tokens >= minimum).then_some(tokens))
 }
 
 fn missing_prompt_scratch_bytes(
