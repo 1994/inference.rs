@@ -540,6 +540,7 @@ impl DeviceProgram {
         weights: &ProgramWeights,
         geometry: (usize, usize, usize),
         kv: Option<super::fp8_cache::Fp8Caches>,
+        prompt_width: usize,
     ) -> Result<Self> {
         // A paged pool's worker reads and writes the shared KV blocks of whichever sequence it
         // runs, through a table it copies from that sequence; its recurrent state is its own.
@@ -554,13 +555,10 @@ impl DeviceProgram {
             }
             None => None,
         };
-        let wide = ProgramGeometry::from_flags(
-            weights.batch_width,
-            weights.prefill_width,
-            weights.narrow_prefill_width,
-            false,
-            true,
-        );
+        let wide = ProgramGeometry::worker(weights, prompt_width);
+        if wide.prompts[0] == 0 {
+            return Err(Error::invalid("prompt worker width"));
+        }
         Self::new_impl(device, graph, weights, geometry, wide, slot)
     }
 

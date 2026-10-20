@@ -369,7 +369,7 @@ pub(super) struct SlotLanes<'a> {
 pub(super) type Staging = BTreeMap<(usize, usize), Vec<[Tensor<f32>; LANES]>>;
 
 /// Activations a covered node's commit re-reads; weights are read in place.
-fn commit_inputs(node: &TensorNode) -> &[TensorId] {
+pub(super) fn commit_inputs(node: &TensorNode) -> &[TensorId] {
     match node.op {
         TensorOp::Conv { .. } => &node.inputs[..1],
         _ => &node.inputs[..GDN_PROJECTED_INPUTS],

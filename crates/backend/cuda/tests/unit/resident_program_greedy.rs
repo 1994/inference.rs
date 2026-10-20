@@ -391,3 +391,67 @@ fn delegated_worker_prewarms_its_actual_prompt_geometry() -> Result<()> {
     assert_eq!(program.prefill_width(), 512);
     Ok(())
 }
+
+/// Eviction must not invalidate another program's captured shared prompt storage.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn prompt_scratch_reclaims_only_after_all_captured_users_drop() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 48;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.fusion = None;
+    weights.prefill_width = 64;
+    weights.narrow_prefill_width = 32;
+    let mut first = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    let mut second = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    let prompt: Vec<_> = (0..64)
+        .map(|i| u32::try_from(i % hidden).unwrap())
+        .collect();
+    let expected = first.prefill_batch(&prompt, 0, true)?;
+    assert!(weights.prompt_scratch.is_allocated(64)?);
+    assert!(weights.prompt_scratch.is_allocated(32)?);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    drop(first);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    let actual = second.prefill_batch(&prompt, 0, true)?;
+    assert_eq!(actual, expected);
+    drop(second);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 2);
+    assert!(!weights.prompt_scratch.is_allocated(64)?);
+    assert!(!weights.prompt_scratch.is_allocated(32)?);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    let mut replacement = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    assert_eq!(replacement.prefill_batch(&prompt, 0, true)?, expected);
+    Ok(())
+}
+
+/// Shrinking pooled workers must leave private/long-context prompt geometry unchanged.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn pooled_worker_width_is_independent_of_private_capture() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 48;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.fusion = None;
+    weights.prefill_width = 64;
+    weights.narrow_prefill_width = 0;
+    let mut worker =
+        DeviceProgram::new_worker(&device, &graph, &weights, (128, hidden, hidden), None, 32)?;
+    let mut private = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    assert_eq!(worker.prefill_width(), 32);
+    assert_eq!(private.prefill_width(), 64);
+    let prompt: Vec<_> = (0..64)
+        .map(|i| u32::try_from(i % hidden).unwrap())
+        .collect();
+    let expected = private.prefill_batch(&prompt, 0, true)?;
+    worker.prefill_batch(&prompt[..32], 0, false)?;
+    assert_eq!(
+        worker.prefill_batch(&prompt[32..], 32, true)?,
+        expected[32..]
+    );
+    Ok(())
+}

@@ -206,6 +206,56 @@ pub struct SlotPool {
 }
 
 impl SlotPool {
+    /// Device staging or rollback storage used by the same recurrent policy as capture.
+    pub(crate) fn rollback_bytes(
+        graph: &DataflowGraph,
+        width: usize,
+        verify: usize,
+    ) -> Result<u64> {
+        let elements = if super::slot_verify::fused_recurrent(graph, verify) {
+            let mut elements = 0_u64;
+            for node in graph
+                .nodes
+                .iter()
+                .filter(|node| super::slot_recurrent::covers(node))
+            {
+                for id in super::slot_recurrent::commit_inputs(node) {
+                    let spec = graph
+                        .tensors
+                        .iter()
+                        .find(|spec| spec.id == *id)
+                        .ok_or_else(|| Error::invariant("pooled staging tensor"))?;
+                    elements = elements
+                        .checked_add(spec.elements()? as u64)
+                        .ok_or_else(|| Error::invalid("pooled staging overflow"))?;
+                }
+            }
+            elements.checked_mul(verify as u64)
+        } else {
+            let elements = graph
+                .tensors
+                .iter()
+                .filter(|spec| {
+                    matches!(
+                        spec.storage,
+                        TensorStorage::State {
+                            kind: StateKind::Conv | StateKind::LinearAttention,
+                            ..
+                        }
+                    )
+                })
+                .try_fold(0_u64, |sum, spec| {
+                    sum.checked_add(spec.elements()? as u64)
+                        .ok_or_else(|| Error::invalid("pooled snapshot overflow"))
+                })?;
+            elements.checked_mul(verify.saturating_sub(1) as u64)
+        }
+        .and_then(|n| n.checked_mul(width as u64))
+        .and_then(|n| n.checked_mul(F32_BYTES as u64))
+        .ok_or_else(|| Error::invalid("pooled rollback overflow"))?;
+        Ok(elements)
+    }
+
     /// Allocate `width` slots of `capacity` tokens each and capture the shared graph.
     /// `verify` ≥ 2 captures the pooled speculation graph with `verify` candidate lanes
     /// per slot; `verify` < 2 captures the plain decode graph.

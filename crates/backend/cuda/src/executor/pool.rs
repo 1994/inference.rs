@@ -104,7 +104,8 @@ impl CudaBackend {
                 .ok_or_else(|| Error::invariant("CUDA reservation accounting overflow"))
         })
     }
-    pub(super) fn make_room(&mut self, needed: u64) -> Result<()> {
+    pub(super) fn make_room(&mut self, needed: u64, scratch: u64) -> Result<()> {
+        let physical_needed = needed.saturating_add(scratch);
         let active = self.active_budget()?;
         while active
             .checked_add(self.pool.bytes)
@@ -112,7 +113,7 @@ impl CudaBackend {
             .and_then(|n| n.checked_add(needed))
             .is_none_or(|n| n > self.budget)
             || self.states.len() + self.pool.entries.len() >= self.maximum_states
-            || needed > self.physical_available()?
+            || physical_needed > self.physical_available()?
         {
             if !self.pool.evict() && !self.prefix.evict() {
                 let physical_available = self.physical_available()?;

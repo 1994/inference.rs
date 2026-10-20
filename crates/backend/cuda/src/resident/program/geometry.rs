@@ -44,6 +44,20 @@ impl ProgramGeometry {
             ],
         }
     }
+    /// Shared workers can trade prompt scratch for more resident decode slots.
+    pub(crate) const fn worker(weights: &ProgramWeights, width: usize) -> Self {
+        let wide = if width < weights.prefill_width {
+            width
+        } else {
+            weights.prefill_width
+        };
+        let narrow = if weights.narrow_prefill_width < wide {
+            weights.narrow_prefill_width
+        } else {
+            wide
+        };
+        Self::from_flags(weights.batch_width, wide, narrow, false, true)
+    }
     pub(crate) const fn prompt_lanes(self) -> usize {
         self.prompts[0] + self.prompts[1]
     }

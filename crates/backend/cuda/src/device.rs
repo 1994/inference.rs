@@ -533,7 +533,9 @@ impl CudaDevice {
     /// Bytes available to this backend, including unused blocks in its CUDA allocation pool.
     /// Driver free memory alone excludes pool reservations even after their tensors are freed.
     /// Live allocations remain charged; other CUDA contexts' pools are never counted.
-    pub(crate) fn allocatable_memory_bytes(&self) -> Result<u64> {
+    /// # Errors
+    /// Returns a driver error if memory or allocation-pool accounting cannot be queried.
+    pub fn allocatable_memory_bytes(&self) -> Result<u64> {
         let (free, total) = self.memory_info()?;
         Ok(free
             .saturating_add(self.pool_reclaimable_bytes()?)

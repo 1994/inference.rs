@@ -83,26 +83,26 @@ fn slot_lanes(
     })
 }
 
-impl BatchBuilder<'_> {
-    /// Whether every recurrent state writer verifies through the fused snapshot-free kernels.
-    fn fused_recurrent(&self, verify: usize) -> bool {
-        verify == super::slot_recurrent::LANES
-            && self.graph.nodes.iter().all(|node| {
-                !node.states.iter().any(|id| {
-                    self.graph.tensors.iter().any(|spec| {
-                        spec.id == *id
-                            && matches!(
-                                spec.storage,
-                                TensorStorage::State {
-                                    kind: StateKind::Conv | StateKind::LinearAttention,
-                                    ..
-                                }
-                            )
-                    })
-                }) || super::slot_recurrent::covers(node)
-            })
-    }
+/// Whether every recurrent writer uses snapshot-free pooled verification.
+pub(super) fn fused_recurrent(graph: &infer_ir::DataflowGraph, verify: usize) -> bool {
+    verify == super::slot_recurrent::LANES
+        && graph.nodes.iter().all(|node| {
+            !node.states.iter().any(|id| {
+                graph.tensors.iter().any(|spec| {
+                    spec.id == *id
+                        && matches!(
+                            spec.storage,
+                            TensorStorage::State {
+                                kind: StateKind::Conv | StateKind::LinearAttention,
+                                ..
+                            }
+                        )
+                })
+            }) || super::slot_recurrent::covers(node)
+        })
+}
 
+impl BatchBuilder<'_> {
     /// Per slot, one graph per committed lane count that applies the accepted prefix of the
     /// snapshot-free recurrent verification to the slot's state.
     fn capture_commits(
@@ -280,7 +280,7 @@ impl BatchBuilder<'_> {
         profile: &mut Option<profile::SlotProfile>,
     ) -> Result<CudaGraph<()>> {
         let (verify, metadata) = geometry;
-        let fused = self.fused_recurrent(verify);
+        let fused = fused_recurrent(self.graph, verify);
         let value_split =
             super::slot_recurrent::value_split(self.device.profile()?.multiprocessors);
         CudaGraph::scope(&self.device.stream, |scope| {
@@ -407,7 +407,7 @@ impl BatchBuilder<'_> {
         {
             return Err(Error::invalid("slot verify lanes"));
         }
-        let fused = self.fused_recurrent(verify);
+        let fused = fused_recurrent(self.graph, verify);
         let mut checkpoints = if fused {
             (0..slots).map(|_| Vec::new()).collect()
         } else {
