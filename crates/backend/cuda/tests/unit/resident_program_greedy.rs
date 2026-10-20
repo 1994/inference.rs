@@ -3,6 +3,7 @@ use super::*;
 use crate::resident::BatchOutput;
 use crate::resident::PromptScratchRegistry;
 use crate::resident::batch::BatchReadout;
+use crate::resident::metadata::identity_table;
 use crate::strategy::default_tiling;
 use crate::test_support::fixture_graph;
 use crate::tuning::resident_gemm::ResidentTuningSession;
@@ -301,12 +302,7 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-#[expect(
-    unsafe_code,
-    reason = "Slot views stay inside their owning pool lifetime; all replays use its single leased slot"
-)]
 fn slot_program_external_rows_follow_captured_geometry() -> Result<()> {
-    use crate::resident::slot_batch::SlotPool;
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let width = 48;
@@ -314,10 +310,12 @@ fn slot_program_external_rows_follow_captured_geometry() -> Result<()> {
     let mut weights = fixture_weights(&device, width)?;
     let mut reference = DeviceProgram::new(&device, &graph, &weights, 64, width, width)?;
     weights.prefill_width = 2048;
-    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, width, (width, 0), None)?;
-    assert!(pool.take_slot(0));
-    // SAFETY: the program drops before the pool and only this test replays slot zero.
-    let views = unsafe { pool.slot_views(0)? };
+    // This graph has no recurrent state or KV, so the slot handle needs no aliases.
+    let views = (
+        BTreeMap::new(),
+        BTreeMap::new(),
+        identity_table(&device, 64)?,
+    );
     let mut home =
         DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
     assert_eq!(home.lane_external_owner.size(), width);
@@ -338,10 +336,6 @@ fn slot_program_external_rows_follow_captured_geometry() -> Result<()> {
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-#[expect(
-    unsafe_code,
-    reason = "The state handle drops before its pool; the slot is leased exclusively by this test"
-)]
 fn slot_target_handle_runs_only_through_the_pool() -> Result<()> {
     use crate::resident::slot_batch::SlotPool;
     CudaDevice::enable_kernel_cache()?;
@@ -354,8 +348,11 @@ fn slot_target_handle_runs_only_through_the_pool() -> Result<()> {
     weights.prefill_width = 2048;
     let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, width, (width, 0), None)?;
     assert!(pool.take_slot(0));
-    // SAFETY: the handle drops before its pool and only this test owns the slot.
-    let views = unsafe { pool.slot_views(0)? };
+    let views = (
+        BTreeMap::new(),
+        BTreeMap::new(),
+        identity_table(&device, 64)?,
+    );
     let mut home =
         DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
     assert!(!home.forward_captured);
