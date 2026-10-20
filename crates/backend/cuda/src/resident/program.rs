@@ -343,7 +343,9 @@ fn copy_prefix<T: DType>(
     }
     let shape = src.shape();
     if let Some((rows, capacity)) = kv {
-        if shape.len() != 3 || usize::try_from(shape[1]).ok() != Some(capacity) {
+        if shape.len() != crate::constants::KV_CACHE_RANK
+            || usize::try_from(shape[1]).ok() != Some(capacity)
+        {
             return Err(Error::invariant("program KV copy layout"));
         }
         let heads = usize::try_from(shape[0]).map_err(device_error)?;

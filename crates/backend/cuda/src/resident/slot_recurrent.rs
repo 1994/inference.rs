@@ -363,7 +363,7 @@ pub(super) type Staging = std::collections::BTreeMap<(usize, usize), Vec<[Tensor
 fn commit_inputs(node: &TensorNode) -> &[TensorId] {
     match node.op {
         TensorOp::Conv { .. } => &node.inputs[..1],
-        _ => &node.inputs[..3],
+        _ => &node.inputs[..crate::constants::GDN_PROJECTED_INPUTS],
     }
 }
 
