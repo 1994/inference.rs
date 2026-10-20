@@ -1,7 +1,9 @@
 use super::kernels;
 use crate::device::CudaDevice;
 use cuda_core::f8e4m3fn;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error;
 
 /// Tile these tests construct their output partition with; the GEMM's `M` and `N` generics and
 /// the partition shape must agree.
@@ -43,7 +45,7 @@ fn quantize(value: f32) -> u8 {
 
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn std::error::Error>> {
+fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (m, n, k) in [
@@ -138,8 +140,7 @@ fn fp8_token_mma_matches_independent_quantization() -> Result<(), Box<dyn std::e
 /// input block), unlike the per-channel path the other tests cover.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn fp8_block_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std::error::Error>>
-{
+fn fp8_block_mma_matches_independent_block_quantization() -> Result<(), Box<dyn Error>> {
     const BLOCK: usize = 128;
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
@@ -234,8 +235,7 @@ fn fp8_block_mma_matches_independent_block_quantization() -> Result<(), Box<dyn 
 /// on the narrow-row geometries the verification path actually runs.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn fp8_small_m_split_k_preserves_values_and_measures_better()
--> Result<(), Box<dyn std::error::Error>> {
+fn fp8_small_m_split_k_preserves_values_and_measures_better() -> Result<(), Box<dyn Error>> {
     use cutile::bench::{BenchOptions, do_bench_paired};
     use std::time::Duration;
     const SPLITS: i32 = 4;
@@ -320,13 +320,13 @@ fn fp8_small_m_split_k_preserves_values_and_measures_better()
                 baseline
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
             |_| {
                 candidate
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
         )?;
         println!(

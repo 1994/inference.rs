@@ -151,6 +151,15 @@ def check_exceptions():
                         # synchronize on the owning stream before releasing storage.
                         ROOT / "crates/backend/cuda/tests/unit/tuning_attention_fp8_convert.rs",
                         ROOT / "crates/backend/cuda/src/resident/batch.rs",
+                        # Slot state aliases: source pools outlive programs and captured
+                        # graphs; only the current lease holder replays on the device stream.
+                        ROOT / "crates/backend/cuda/src/resident/slot_batch.rs",
+                        ROOT / "crates/backend/cuda/src/loading/mod.rs",
+                        # Homes drop before their source pools and clear before pool eviction.
+                        ROOT / "crates/backend/cuda/src/executor/execution.rs",
+                        # Disjoint verification output rows and staged commit inputs retain
+                        # their owning arena for the lifetime of every captured graph.
+                        ROOT / "crates/backend/cuda/src/resident/slot_recurrent.rs",
                         ROOT / "crates/backend/cuda/src/resident/slot_verify.rs",
                         ROOT / "crates/foundation/core/src/placement/mod.rs",
                         ROOT / "tools/bench/cpu/src/main.rs",

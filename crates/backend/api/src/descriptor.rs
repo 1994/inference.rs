@@ -1,5 +1,6 @@
 //! Descriptor contract.
 use super::{MAX_SUBMISSION_BATCH, SUBMISSION_ABI_VERSION};
+use crate::constants::ROLE_MIXED;
 use infer_core::{Error, Result};
 use infer_ir::StepPlan;
 
@@ -64,7 +65,7 @@ impl SubmissionDescriptor {
                     infer_ir::ExecutionRole::Prefill => 0,
                     infer_ir::ExecutionRole::Decode => 1,
                     infer_ir::ExecutionRole::Forward => 2,
-                    infer_ir::ExecutionRole::Mixed => crate::constants::ROLE_MIXED,
+                    infer_ir::ExecutionRole::Mixed => ROLE_MIXED,
                 },
                 readout: 0,
             };

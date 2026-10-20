@@ -2,10 +2,11 @@
 use super::Clear;
 use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
+use std::error::Error;
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn captured_reset_clears_every_state_shape() -> Result<(), Box<dyn std::error::Error>> {
+fn captured_reset_clears_every_state_shape() -> Result<(), Box<dyn Error>> {
     let device = CudaDevice::new(0)?;
     for shape in [vec![257], vec![2, 128, 128], vec![1, 64, 128]] {
         let elements = shape.iter().product();

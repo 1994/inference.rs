@@ -6,7 +6,29 @@
 //! checks that both images occupy their own spans, the clip pair checks that timestamped
 //! temporal groups carry real motion instead of a repeated still.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::loading::LoadedModel as LoadingLoadedModel;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::resident::DeviceProgram;
+#[cfg(target_os = "linux")]
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::env::var;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+use std::fs::read;
+#[cfg(target_os = "linux")]
+use std::ops::Range;
+#[cfg(target_os = "linux")]
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::slice::from_ref;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{
         device::CudaDevice,
         loading::{LoadOptions, LoadedModel},
@@ -15,10 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use infer_models::{ImageProcessor, TextAssets, VideoProcessor};
 
     let (root, budget) = arguments()?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     // A prompt graph turns the media prefill into fused chunks; `INFER_MEDIA_PREFILL_WIDTH=1`
     // selects the per-token fallback so the two paths can be timed against each other.
-    let prefill_width = std::env::var("INFER_MEDIA_PREFILL_WIDTH")
+    let prefill_width = var("INFER_MEDIA_PREFILL_WIDTH")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
@@ -35,11 +57,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hidden = loaded.model().hidden_size;
     let assets = TextAssets::open(&root, 4096)?;
     let images = ImageProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&root).join("preprocessor_config.json"))
+        &read(Path::new(&root).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let video = VideoProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&root).join("video_preprocessor_config.json"))
+        &read(Path::new(&root).join("video_preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let mut program = loaded.sequence(4096)?;
@@ -73,10 +95,10 @@ const MINIMUM_SHIFT: f32 = 1e-3;
 
 /// Model package path and greedy budget from the command line.
 #[cfg(target_os = "linux")]
-fn arguments() -> Result<(String, usize), Box<dyn std::error::Error>> {
+fn arguments() -> Result<(String, usize), Box<dyn StdError>> {
     use infer_core::Error;
 
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let root = args
         .next()
         .ok_or_else(|| Error::invalid("model package path required"))?;
@@ -92,12 +114,12 @@ fn arguments() -> Result<(String, usize), Box<dyn std::error::Error>> {
 /// Two images in one prompt, then the same images in the opposite order.
 #[cfg(target_os = "linux")]
 fn multi_image_case(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
-    loaded: &infer_backend_cuda::loading::LoadedModel,
+    program: &mut DeviceProgram,
+    loaded: &LoadingLoadedModel,
     assets: &infer_models::TextAssets,
     processor: &infer_models::ImageProcessor,
     budget: usize,
-) -> Result<(serde_json::Value, f32), Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, f32), Box<dyn StdError>> {
     use infer_ir::Modality;
     use infer_models::{ChatMessage, ChatOptions, prepare};
 
@@ -152,12 +174,12 @@ fn multi_image_case(
 /// One clip forwards and backwards: identical tokens, different motion.
 #[cfg(target_os = "linux")]
 fn video_case(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
-    loaded: &infer_backend_cuda::loading::LoadedModel,
+    program: &mut DeviceProgram,
+    loaded: &LoadingLoadedModel,
     assets: &infer_models::TextAssets,
     processor: &infer_models::VideoProcessor,
     budget: usize,
-) -> Result<(serde_json::Value, f32), Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, f32), Box<dyn StdError>> {
     use infer_core::Error;
     use infer_ir::Modality;
     use infer_models::{ChatMessage, ChatOptions, prepare_video};
@@ -170,7 +192,7 @@ fn video_case(
         processor,
         loaded.imported(),
         &prompt,
-        std::slice::from_ref(&clip),
+        from_ref(&clip),
         &Modality::Video,
     )?;
     clip.frames.reverse();
@@ -225,12 +247,12 @@ struct Run {
 /// Encode every prepared media item, prefill once and decode greedily.
 #[cfg(target_os = "linux")]
 fn run(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
-    loaded: &infer_backend_cuda::loading::LoadedModel,
+    program: &mut DeviceProgram,
+    loaded: &LoadingLoadedModel,
     prepared: &infer_models::PreparedPrompt,
     modality: &infer_ir::Modality,
     budget: usize,
-) -> Result<Run, Box<dyn std::error::Error>> {
+) -> Result<Run, Box<dyn StdError>> {
     use infer_backend_cuda::vision;
     use infer_core::Error;
 
@@ -242,7 +264,7 @@ fn run(
     for image in &prepared.images {
         encodings.push(tower.encode(loaded.device(), image)?);
     }
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let prefilled = vision::prefill(
         program,
         loaded.imported(),
@@ -266,12 +288,12 @@ fn run(
 /// Number of prompt positions the prepared media occupies.
 #[cfg(target_os = "linux")]
 fn media_tokens(prepared: &infer_models::PreparedPrompt) -> usize {
-    prepared.spans.iter().map(std::ops::Range::len).sum()
+    prepared.spans.iter().map(Range::len).sum()
 }
 
 /// Largest absolute logit difference between two runs of the same token stream.
 #[cfg(target_os = "linux")]
-fn logit_shift(left: &[f32], right: &[f32]) -> Result<f32, Box<dyn std::error::Error>> {
+fn logit_shift(left: &[f32], right: &[f32]) -> Result<f32, Box<dyn StdError>> {
     use infer_core::Error;
 
     if left.len() != right.len() {

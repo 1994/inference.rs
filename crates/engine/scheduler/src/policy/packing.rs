@@ -2,12 +2,16 @@
 use super::{
     Priority, hard_limit, priority, query, service_charge, slack, target, validate_scheduler,
 };
+use crate::constants::PERCENT;
+use crate::cost::update_summary;
 use infer_core::{DecisionId, Error, Result, StepId};
 use infer_ir::{
     CostEstimate, CostQuery, DeferReason, DeferredWork, ExecutionRole, PlannedWork, ReadyWork,
     ResourceSnapshot, SchedulingDecision, SelectionEvidence, SelectionReason, StepPlan,
 };
 use infer_spi::CostModelProvider;
+use std::mem::replace;
+use std::mem::take;
 use std::{cmp::Ordering, collections::BinaryHeap};
 
 struct RequestProgress {
@@ -208,7 +212,7 @@ impl<'a> BatchBuilder<'a> {
         })
     }
     fn urgent_available(&self) -> bool {
-        u128::from(self.urgent_used) * u128::from(crate::constants::PERCENT)
+        u128::from(self.urgent_used) * u128::from(PERCENT)
             < u128::from(self.resources.gpu_budget_us)
                 * u128::from(self.resources.scheduler.urgent_budget_percent)
     }
@@ -400,7 +404,7 @@ impl<'a> BatchBuilder<'a> {
             let previous = self.scratch.progress[index]
                 .selected_slot
                 .map(|slot| self.scratch.queries[slot]);
-            let summary = crate::cost::update_summary(summary, previous, q)?;
+            let summary = update_summary(summary, previous, q)?;
             return self.costs.estimate_summary(&summary)?.ok_or_else(|| {
                 Error::invariant("cost provider advertised unavailable batch summary")
             });
@@ -408,7 +412,7 @@ impl<'a> BatchBuilder<'a> {
         let trial = if let Some(slot) = self.scratch.progress[index].selected_slot {
             QueryTrial::Replaced {
                 slot,
-                previous: std::mem::replace(&mut self.scratch.queries[slot], q),
+                previous: replace(&mut self.scratch.queries[slot], q),
             }
         } else {
             self.scratch.queries.push(q);
@@ -447,7 +451,7 @@ impl<'a> BatchBuilder<'a> {
             let previous = progress
                 .selected_slot
                 .map(|slot| self.scratch.queries[slot]);
-            self.summary = Some(crate::cost::update_summary(summary, previous, q)?);
+            self.summary = Some(update_summary(summary, previous, q)?);
         }
         if let Some(slot) = progress.selected_slot {
             let selection = &mut self.scratch.selections[slot];
@@ -612,7 +616,7 @@ impl<'a> BatchBuilder<'a> {
                     program,
                     role: role
                         .ok_or_else(|| Error::invariant("scheduled batch has no execution role"))?,
-                    work: std::mem::take(&mut output.work),
+                    work: take(&mut output.work),
                     cost: self.predicted,
                     graph,
                     quantum_overrun: self.overrun,
@@ -623,8 +627,8 @@ impl<'a> BatchBuilder<'a> {
             window: None,
             id,
             step: planned,
-            deferred: std::mem::take(&mut output.deferred),
-            selected: std::mem::take(&mut output.selected),
+            deferred: take(&mut output.deferred),
+            selected: take(&mut output.selected),
         })
     }
 }

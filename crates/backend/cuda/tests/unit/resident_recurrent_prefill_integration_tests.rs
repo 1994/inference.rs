@@ -1,12 +1,14 @@
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{
     device::CudaDevice,
     mlp::ProjectionWeight,
-    resident::{DeviceProgram, ProgramWeights},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry},
 };
 use cutile::half::bf16;
 use infer_core::{OpId, Result, TensorId};
 use infer_ir::{DType, DataflowGraph, StateKind, TensorNode, TensorOp, TensorSpec, TensorStorage};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Delta geometry for [`fixture`]: key heads, value heads, head dimension.
 type DeltaGeometry = (usize, usize, usize);
@@ -46,11 +48,9 @@ fn fixture_at(
     )?;
     let weights = ProgramWeights {
         mrope: false,
-        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
-        resident_tuning: std::sync::Arc::new(
-            crate::tuning::resident_gemm::ResidentTuningSession::default(),
-        ),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 1,

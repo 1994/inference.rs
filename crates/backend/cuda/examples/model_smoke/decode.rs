@@ -5,6 +5,7 @@ use infer_workloads::{
     SamplingHistory, Verification, draw_distribution, probabilities, sampling_uniform, verify_draft,
 };
 use serde::Serialize;
+use std::iter::once;
 
 #[derive(Default, Serialize)]
 pub struct DecodeResult {
@@ -72,7 +73,7 @@ pub fn decode(
         let position = prompt.len() + result.tokens.len() - 1;
         let mut steps = super::verification::TargetSteps::new(
             model,
-            std::iter::once(first).chain(proposals.iter().map(|p| p.token)),
+            once(first).chain(proposals.iter().map(|p| p.token)),
             position,
             &mut result,
         )?;

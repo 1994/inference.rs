@@ -1,5 +1,7 @@
 //! Named CLI defaults, byte-size units and device limits shared across subcommands.
 
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use std::time::Duration;
 /// One mebibyte in bytes, for budgets held as `usize`.
 pub const MIB: usize = 1024 * 1024;
 /// One mebibyte in bytes, for byte budgets held as `u64`.
@@ -45,7 +47,7 @@ pub const DEFAULT_KV_PAGE_TOKENS: usize = 16;
 pub const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 32;
 /// Pause between polls while a device step is still in flight.
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
-pub const DEVICE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(100);
+pub const DEVICE_POLL_INTERVAL: Duration = Duration::from_micros(100);
 
 /// Default port for the local inference HTTP server.
 pub const DEFAULT_LISTEN_PORT: u16 = 8080;

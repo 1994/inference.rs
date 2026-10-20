@@ -2,6 +2,8 @@ use super::{
     attention::attention,
     capture::{Capture, CaptureMode, error},
 };
+use crate::constants::ATTENTION_SPLIT_THRESHOLD;
+use crate::constants::KV_BLOCK_TOKENS;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 
@@ -102,7 +104,7 @@ impl Capture<'_> {
         )?;
         let mut output = output.reshape(&[query_heads, head_dim])?;
         if self.attention.supports(query_heads, head_dim)
-            && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
+            && window.is_none_or(|w| w >= ATTENTION_SPLIT_THRESHOLD)
         {
             let query = if let Some(query) = self.weights.constants.get(&node.inputs[0]) {
                 query.view(&[query_heads * head_dim])?
@@ -150,7 +152,7 @@ impl Capture<'_> {
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
                 (query_heads / kv_heads).to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         Ok((output, keys, values))
@@ -195,7 +197,7 @@ impl Capture<'_> {
                 head_dim.to_string(),
                 rows.to_string(),
                 i32::from(E::DTYPE != f32::DTYPE).to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         self.record_prefill_decode(node, output, keys, values, scales)
@@ -312,8 +314,8 @@ impl Capture<'_> {
                     head_dim.to_string(),
                     (query_heads / kv_heads).to_string(),
                     query_tile.to_string(),
-                    crate::constants::KV_BLOCK_TOKENS.to_string(),
-                    crate::constants::KV_BLOCK_TOKENS.to_string(),
+                    KV_BLOCK_TOKENS.to_string(),
+                    KV_BLOCK_TOKENS.to_string(),
                     "1".into(),
                 ]),
             )?;
@@ -342,7 +344,7 @@ impl Capture<'_> {
                 head_dim.to_string(),
                 (query_heads / kv_heads).to_string(),
                 query_heads.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         Ok((output, keys, values))

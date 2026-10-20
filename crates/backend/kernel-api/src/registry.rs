@@ -1,7 +1,9 @@
 use infer_core::{Error, ErrorCode, KernelId, Result};
 use infer_ir::{DeviceCapabilities, OperationIr, PrecisionPlan};
 use infer_spi::{KernelProvider, KernelRegistration};
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 #[derive(Default)]
 pub struct KernelRegistry {
@@ -14,7 +16,7 @@ impl KernelRegistry {
     /// Returns an invalid-input or conflict error for incompatible provider metadata or duplicate registrations.
     pub fn register(&mut self, provider: &impl KernelProvider) -> Result<()> {
         let candidates = provider.kernels();
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
         for kernel in &candidates {
             if self.kernels.contains_key(&kernel.id) || !seen.insert(kernel.id) {
                 return Err(Error::new(ErrorCode::Conflict, "duplicate kernel ID"));
@@ -63,7 +65,7 @@ impl KernelRegistry {
                     && elements <= k.max_shape_elements
                     && k.workspace_bytes <= workspace
             })
-            .min_by_key(|k| (std::cmp::Reverse(k.priority), k.estimated_ns, k.id))
+            .min_by_key(|k| (Reverse(k.priority), k.estimated_ns, k.id))
             .ok_or_else(|| {
                 Error::unsupported(format!(
                     "no compatible kernel for {:?} with {:?}",

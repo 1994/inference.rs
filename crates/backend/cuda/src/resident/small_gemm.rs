@@ -1,5 +1,7 @@
 //! Small batched projections using tensor cores with a two-term BF16 input.
 //! Retaining the input residual avoids reducing F32 activations to one BF16 value.
+#[cfg(test)]
+use std::cell::Cell;
 #[cutile::module]
 pub(crate) mod kernels {
     use cutile::core::{
@@ -109,12 +111,12 @@ mod tests;
 /// Internal A/B selection; failed candidates cannot be enabled in a production build.
 #[cfg(test)]
 pub(super) fn precise_dense_enabled() -> bool {
-    !pool_f32_enabled() && PRECISE_DENSE.with(std::cell::Cell::get)
+    !pool_f32_enabled() && PRECISE_DENSE.with(Cell::get)
 }
 
 #[cfg(test)]
 thread_local! {
-    static PRECISE_DENSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PRECISE_DENSE: Cell<bool> = const { Cell::new(false) };
 }
 #[cfg(test)]
 pub fn with_precise_dense<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
@@ -133,10 +135,10 @@ pub fn with_precise_dense<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
 /// Internal four-slot experiment; never dispatched by a production build.
 #[cfg(test)]
 pub(super) fn pool_f32_enabled() -> bool {
-    POOL_F32.with(std::cell::Cell::get)
+    POOL_F32.with(Cell::get)
 }
 #[cfg(test)]
-thread_local! { static POOL_F32: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static POOL_F32: Cell<bool> = const { Cell::new(false) }; }
 #[cfg(test)]
 pub fn with_pool_f32<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
     struct Restore(bool);
@@ -152,12 +154,12 @@ pub fn with_pool_f32<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
-thread_local! { static POOL_RECORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+thread_local! { static POOL_RECORDS: Cell<usize> = const { Cell::new(0) }; }
 #[cfg(test)]
 pub(super) fn note_pool_record() {
     POOL_RECORDS.with(|count| count.set(count.get().saturating_add(1)));
 }
 #[cfg(test)]
 pub fn pool_f32_capture_records() -> usize {
-    POOL_RECORDS.with(std::cell::Cell::get)
+    POOL_RECORDS.with(Cell::get)
 }

@@ -1,5 +1,7 @@
 //! Read-only memory accounting diagnosis with the production (non-test) CUDA library.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
+use std::error::Error as StdError;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
 mod profile {
     use cuda_core::Device;
     use infer_backend_cuda::{
@@ -11,6 +13,9 @@ mod profile {
     use infer_ir::OutputReadout;
     use serde::Serialize;
     use serde_json::json;
+    use std::env::args as env_args;
+    use std::fs::File;
+    use std::io::Error as IoError;
     use std::{error::Error as StdError, sync::Arc, thread, time::Duration};
 
     type Failure = Box<dyn StdError>;
@@ -68,7 +73,7 @@ mod profile {
             }
             thread::sleep(Duration::from_millis(250));
         }
-        Err(std::io::Error::other("allocator counters did not settle in20samples").into())
+        Err(IoError::other("allocator counters did not settle in20samples").into())
     }
 
     fn allocation(
@@ -168,19 +173,19 @@ mod profile {
     }
 
     fn arguments() -> Result<(String, f64), Failure> {
-        let mut args = std::env::args().skip(1);
+        let mut args = env_args().skip(1);
         let model = args
             .next()
-            .ok_or_else(|| std::io::Error::other("model path required"))?;
+            .ok_or_else(|| IoError::other("model path required"))?;
         let utilization: f64 = args
             .next()
-            .ok_or_else(|| std::io::Error::other("frozen utilization fraction required"))?
+            .ok_or_else(|| IoError::other("frozen utilization fraction required"))?
             .parse()?;
         if utilization.to_bits() != 0.88_f64.to_bits() {
-            return Err(std::io::Error::other("diagnostic requires frozen0.88utilization").into());
+            return Err(IoError::other("diagnostic requires frozen0.88utilization").into());
         }
         if args.next().is_some() {
-            return Err(std::io::Error::other("unexpected extra argument").into());
+            return Err(IoError::other("unexpected extra argument").into());
         }
         Ok((model, utilization))
     }
@@ -228,14 +233,12 @@ mod profile {
         let execution = loaded.execution_profile();
         let mut graph = loaded.graph().clone();
         graph.plan_lifetimes()?;
-        serde_json::to_writer(std::fs::File::create_new("target-dataflow.json")?, &graph)?;
+        serde_json::to_writer(File::create_new("target-dataflow.json")?, &graph)?;
         if execution.prefill_width != 256
             || execution.batch_width != 3
             || execution.draft_depth != 2
         {
-            return Err(
-                std::io::Error::other("load geometry differs from fixed serving profile").into(),
-            );
+            return Err(IoError::other("load geometry differs from fixed serving profile").into());
         }
         let quote = loaded.sequence_budget(CAPACITY, OutputReadout::Logits, true)?;
         println!(
@@ -286,7 +289,7 @@ mod profile {
 }
 
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn StdError>> {
     profile::run()
 }
 

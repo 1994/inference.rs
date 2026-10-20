@@ -1,8 +1,10 @@
+use crate::vision::validate;
 use infer_core::{Error, ModelId, ProviderId, Result};
 use infer_ir::{
     BackboneKind, DType, FeedForward, Head, Mixer, Modality, ModelIr, PositionSpec, PrecisionPlan,
     StateKind, StateRequirement,
 };
+use infer_model_recipes::decoder::lower;
 use infer_spi::{
     FusionPlan, HiddenActivation, ImportedModel, ModalityEncoder, ModalityPlan, ModelProvider,
     PrecisionPolicy, ProviderMetadata, SPI_VERSION, SpeculationPlan,
@@ -217,7 +219,7 @@ impl QwenProvider {
         validate_vision(vision.as_ref(), text.hidden_size)?;
         let encoder = vision_encoder(vision.as_ref())?;
         if let Some(encoder) = &encoder {
-            crate::vision::validate(encoder)?;
+            validate(encoder)?;
         }
         let model = ModelIr {
             id,
@@ -301,7 +303,7 @@ fn modality_placeholders(map: &serde_json::Map<String, serde_json::Value>) -> Ve
 
 impl ModelProvider for QwenProvider {
     fn graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
-        infer_model_recipes::decoder::lower(model)
+        lower(model)
     }
     fn draft_graph(&self, model: &ModelIr) -> Result<(ModelIr, infer_ir::DataflowGraph)> {
         let mut block = model.clone();

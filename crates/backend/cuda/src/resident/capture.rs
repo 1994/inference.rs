@@ -1,9 +1,23 @@
 use super::{ActivationArena, ProgramWeights, attention::attention, kernels::aux};
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::DEFAULT_TILE_COLUMNS;
+use crate::constants::DEFAULT_TILE_ROWS;
+#[cfg(test)]
+use crate::constants::GEMV_WIDE_OUTPUT_RATIO;
+#[cfg(test)]
+use crate::constants::SMALL_GEMM_TILE;
+#[cfg(test)]
+use crate::mlp::ProjectionWeight;
 use crate::strategy::LinearTiling;
+use crate::tuning::gated_norm::options as gated_norm_options;
+#[cfg(test)]
+use cutile::half::bf16;
 use cutile::prelude::*;
+use cutile::tile_kernel::CompileOptions;
 use infer_core::TensorId;
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::sync::Arc;
 
 /// How activation slots are bound for one captured node.
@@ -42,7 +56,7 @@ pub(super) struct Capture<'a> {
     pub mode: CaptureMode,
 }
 
-pub(super) fn error(message: impl std::fmt::Display) -> DeviceError {
+pub(super) fn error(message: impl Display) -> DeviceError {
     DeviceError::Launch(message.to_string())
 }
 
@@ -177,7 +191,7 @@ impl Capture<'_> {
             }
             TensorOp::Scale => {
                 self.scope.record(super::moe::kernels::scale(
-                    (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
+                    (&mut output).partition([AUX_KERNEL_TILE]),
                     &self.input(node.inputs[0])?,
                     &self.input(node.inputs[1])?,
                 ))?;
@@ -191,7 +205,7 @@ impl Capture<'_> {
             TensorOp::Silu | TensorOp::Sigmoid => {
                 self.scope.record(
                     aux::unary(
-                        (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
+                        (&mut output).partition([AUX_KERNEL_TILE]),
                         &self.input(node.inputs[0])?,
                     )
                     .generics(vec![i32::from(node.op == TensorOp::Sigmoid).to_string()]),
@@ -200,7 +214,7 @@ impl Capture<'_> {
             TensorOp::Add | TensorOp::Multiply => {
                 self.scope.record(
                     aux::binary(
-                        (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
+                        (&mut output).partition([AUX_KERNEL_TILE]),
                         &self.input(node.inputs[0])?,
                         &self.input(node.inputs[1])?,
                     )
@@ -283,25 +297,19 @@ impl Capture<'_> {
         #[cfg(test)]
         if self.mode == CaptureMode::Flat
             && super::small_gemm::precise_dense_enabled()
-            && output.size()
-                <= input
-                    .size()
-                    .saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
-            && let crate::mlp::ProjectionWeight::Dense(weight) = weights
+            && output.size() <= input.size().saturating_mul(GEMV_WIDE_OUTPUT_RATIO)
+            && let ProjectionWeight::Dense(weight) = weights
         {
             let size = output.size();
             let columns = input.size();
             let mut matrix = output.reshape(&[1, size])?;
             self.scope.record(
                 super::small_gemm::precise_kernels::dense(
-                    (&mut matrix).partition(crate::constants::SMALL_GEMM_TILE),
+                    (&mut matrix).partition(SMALL_GEMM_TILE),
                     &input.view(&[1, columns]).map_err(error)?,
                     weight,
                 )
-                .generics(vec![
-                    cutile::half::bf16::DTYPE.as_str().into(),
-                    columns.to_string(),
-                ]),
+                .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
             )?;
             return Ok(matrix.reshape(&[size])?);
         }
@@ -311,11 +319,7 @@ impl Capture<'_> {
             input,
             input.size(),
             self.weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
-                LinearTiling::new(
-                    crate::constants::DEFAULT_TILE_ROWS,
-                    crate::constants::DEFAULT_TILE_COLUMNS,
-                )
-                .map_err(error)?,
+                LinearTiling::new(DEFAULT_TILE_ROWS, DEFAULT_TILE_COLUMNS).map_err(error)?,
             ),
         )?;
         Ok(output)
@@ -353,7 +357,7 @@ impl Capture<'_> {
                 .ok_or_else(|| error("missing device embedding"))?;
             self.scope.record(
                 attention::embedding(
-                    output.partition([crate::constants::AUX_KERNEL_TILE]),
+                    output.partition([AUX_KERNEL_TILE]),
                     weight,
                     self.external,
                     self.metadata,
@@ -386,7 +390,7 @@ impl Capture<'_> {
             .ok_or_else(|| error("missing fusion workspace"))?;
         self.scope.record(
             attention::embedding(
-                (&mut work.embedding).partition([crate::constants::AUX_KERNEL_TILE]),
+                (&mut work.embedding).partition([AUX_KERNEL_TILE]),
                 weight,
                 self.external,
                 self.metadata,
@@ -473,9 +477,9 @@ impl Capture<'_> {
         let gate = g.view(&[heads, dimension])?;
         let weight = self.input(node.inputs[if gated { 2 } else { 1 }])?;
         let options = if gated {
-            crate::tuning::gated_norm::options(output.device_id(), dimension, heads, epsilon)
+            gated_norm_options(output.device_id(), dimension, heads, epsilon)
         } else {
-            cutile::tile_kernel::CompileOptions::default()
+            CompileOptions::default()
         };
         #[cfg(test)]
         let options = super::gated_norm_discovery::model_options(dimension, gated, heads, options);

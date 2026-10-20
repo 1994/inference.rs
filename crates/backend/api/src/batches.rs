@@ -1,4 +1,5 @@
 //! Generation-checked sealed batches. Rings carry handles; work storage stays in its slot.
+use crate::constants::HANDLE_GENERATION_SHIFT;
 use crate::{MAX_SUBMISSION_BATCH, SubmissionDescriptor};
 use infer_core::{BatchHandle, Error, ErrorCode, OwnerId, Result, new_owner_id};
 use infer_ir::{ExecutionTask, StepPlan};
@@ -94,7 +95,7 @@ impl<C> BatchArena<C> {
             .get(index as usize)
             .ok_or_else(|| Error::invalid("batch handle out of bounds"))?;
         if u64::from(slot.generation.load(Ordering::Acquire))
-            != handle.get() >> crate::constants::HANDLE_GENERATION_SHIFT
+            != handle.get() >> HANDLE_GENERATION_SHIFT
             || matches!(slot.state.load(Ordering::Acquire), FREE | RETIRED)
         {
             return Err(Error::invariant("stale batch generation"));
@@ -149,8 +150,7 @@ impl<C> BatchArena<C> {
             slot.abandoned.store(false, Ordering::Relaxed);
             let generation = slot.generation.load(Ordering::Relaxed);
             let handle = BatchHandle::new(
-                (u64::from(generation) << crate::constants::HANDLE_GENERATION_SHIFT)
-                    | (index as u64 + 1),
+                (u64::from(generation) << HANDLE_GENERATION_SHIFT) | (index as u64 + 1),
             )?;
             slot.state.store(PUBLISHED, Ordering::Release);
             return Ok(BatchLease {

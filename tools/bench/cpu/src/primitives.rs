@@ -3,13 +3,17 @@ use infer_core::{
     Error, RequestHandle, Result, arena::Arena, credits::CreditPool, map::BoundedMap,
 };
 use infer_spi::{ResourcePool, ResourceReply};
+use infer_state::blocks::BlockLease;
+use infer_state::kv::KvCacheConfig;
+use infer_state::kv::KvCacheManager;
+use infer_state::kv::KvPrefix;
 #[derive(Clone)]
 struct NoPrefix;
-impl infer_state::kv::KvPrefix for NoPrefix {
+impl KvPrefix for NoPrefix {
     fn tokens(&self) -> &[u32] {
         &[]
     }
-    fn blocks(&self) -> &[infer_state::blocks::BlockLease] {
+    fn blocks(&self) -> &[BlockLease] {
         &[]
     }
     fn bytes(&self) -> u64 {
@@ -34,15 +38,14 @@ pub fn run() -> Result<Measurement> {
         1024,
     )?;
 
-    let mut physical =
-        infer_state::kv::KvCacheManager::<NoPrefix>::new(infer_state::kv::KvCacheConfig {
-            namespace: vec![1],
-            block_size: 16,
-            blocks: 256,
-            bytes_per_block: 64,
-            prefix_bytes: 0,
-            max_prefixes: 16,
-        })?;
+    let mut physical = KvCacheManager::<NoPrefix>::new(KvCacheConfig {
+        namespace: vec![1],
+        block_size: 16,
+        blocks: 256,
+        bytes_per_block: 64,
+        prefix_bytes: 0,
+        max_prefixes: 16,
+    })?;
     let mut table = Vec::with_capacity(64);
     let mut fork = Vec::with_capacity(64);
     measure(10_000, || {

@@ -1,4 +1,6 @@
 //! Pre-capture upper bound for shared recurrent scratch, shared by admission and capture.
+use crate::constants::F32_BYTES;
+use crate::constants::GDN_PROJECTED_INPUTS;
 use crate::resident::ProgramWeights;
 use infer_core::{Error, Result};
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
@@ -35,7 +37,7 @@ pub(super) fn ordered(node: &TensorNode, weights: &ProgramWeights, lanes: usize)
         && value_heads.is_multiple_of(key_heads)
         && node
             .inputs
-            .get(..crate::constants::GDN_PROJECTED_INPUTS)
+            .get(..GDN_PROJECTED_INPUTS)
             .is_some_and(|inputs| inputs.iter().all(|id| !weights.constants.contains_key(id)))
 }
 
@@ -71,7 +73,7 @@ pub fn required_bytes(
             let storage = value_heads
                 .checked_mul(value_dim)
                 .and_then(|n| n.checked_mul(lanes))
-                .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+                .and_then(|n| n.checked_mul(F32_BYTES))
                 .and_then(|n| u64::try_from(n).ok())
                 .ok_or_else(|| Error::invalid("CUDA recurrent scratch size overflow"))?;
             bytes = bytes

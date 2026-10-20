@@ -6,6 +6,7 @@ use infer_ir::CanonicalRequest;
 use infer_runtime::ReplayAction;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,8 +155,7 @@ fn retry_pending<B: AgentBackend>(
     now_us: u64,
 ) -> Result<Vec<RequestId>> {
     let mut expired = Vec::new();
-    let mut kept: std::collections::VecDeque<(CanonicalRequest, Option<u64>)> =
-        std::collections::VecDeque::new();
+    let mut kept: VecDeque<(CanonicalRequest, Option<u64>)> = VecDeque::new();
     while let Some((request, queued_at)) = context.pending.pop_front() {
         let deadline = queued_at.unwrap_or(now_us);
         if now_us.saturating_sub(deadline) > QUEUE_WAIT_US {

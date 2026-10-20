@@ -1,4 +1,7 @@
 //! Validated native storage bindings for mixed FP8/NVFP4 packages.
+use crate::constants::CONFIG_MAX_BYTES;
+use crate::storage::package::load_shards;
+use crate::storage::package::read_bounded;
 use crate::{
     ImportedModel, ModelRegistry, SafetensorsFile, TensorDtype, default_registry, package_path,
 };
@@ -93,10 +96,7 @@ impl QuantizedPackage {
         id: ModelId,
     ) -> Result<Self> {
         let root = root.as_ref();
-        let config = crate::storage::package::read_bounded(
-            &package_path(root, "config.json")?,
-            crate::constants::CONFIG_MAX_BYTES,
-        )?;
+        let config = read_bounded(&package_path(root, "config.json")?, CONFIG_MAX_BYTES)?;
         let mut value: serde_json::Value =
             serde_json::from_slice(&config).map_err(|e| Error::invalid(e.to_string()))?;
         if let Some(quant) = value.get("quantization_config") {
@@ -115,7 +115,7 @@ impl QuantizedPackage {
         let provider = registry.resolve(&config)?;
         let imported = provider.import(id, &config)?;
         let graph = provider.graph(&imported.model)?;
-        let (shards, tensor_map) = crate::storage::package::load_shards(root)?;
+        let (shards, tensor_map) = load_shards(root)?;
         let mut package = Self {
             provider,
             imported,

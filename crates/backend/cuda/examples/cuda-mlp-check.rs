@@ -1,5 +1,7 @@
 //! Small numerical test only: no model load and no throughput measurement.
 #[cfg(target_os = "linux")]
+use std::env::args;
+#[cfg(target_os = "linux")]
 fn main() -> infer_core::Result<()> {
     use cuda_core::{f4e2m1fnx2, f8e4m3fn};
     use cutile::half::bf16;
@@ -47,7 +49,7 @@ fn main() -> infer_core::Result<()> {
             epsilon: 1e-6,
             norm_offset: 1.0,
             tiling: LinearTiling::new(16, 256)?,
-            pdl: std::env::args().any(|arg| arg == "--pdl"),
+            pdl: args().any(|arg| arg == "--pdl"),
         };
         let mut graph = MlpGraph::new(&device, &config, &weights)?;
         // Drop caller weight handles to check graph-owned storage lifetimes.

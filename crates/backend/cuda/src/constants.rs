@@ -10,6 +10,7 @@ pub const DEFAULT_TILE_COLUMNS: usize = 256;
 /// Device-only geometry and budget constants; empty without the `cuda` feature.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 mod device {
+
     /// Middle prompt capture bucket, including quantized recurrent models.
     pub const MID_PREFILL_LANES: usize = 64;
     /// Head-major KV cache axes: heads, capacity, head dimension.

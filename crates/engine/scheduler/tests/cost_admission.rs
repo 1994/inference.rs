@@ -2,6 +2,7 @@ use infer_core::*;
 use infer_ir::*;
 use infer_scheduler::*;
 use infer_spi::{AdmissionPolicy, CostModelProvider};
+use std::collections::BTreeMap;
 
 #[expect(
     clippy::unwrap_used,
@@ -247,7 +248,7 @@ fn long_context_admission_uses_resources_and_explicit_tenant_quotas() {
         ),
     ] {
         let policy = ResourceAdmission::new(AdmissionConfig {
-            tenants: std::collections::BTreeMap::from([("a".into(), quota)]),
+            tenants: BTreeMap::from([("a".into(), quota)]),
             ..Default::default()
         })
         .unwrap();

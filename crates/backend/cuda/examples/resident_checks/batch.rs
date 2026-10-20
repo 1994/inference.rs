@@ -1,4 +1,7 @@
+use cutile::half::bf16;
+use infer_backend_cuda::device::CudaDevice;
 use infer_backend_cuda::resident::DeviceProgram;
+use infer_backend_cuda::resident::ProgramWeights;
 use infer_core::{Error, Result};
 use infer_ir::TensorOp;
 use infer_state::physical::PhysicalTensor;
@@ -93,7 +96,7 @@ fn reference(
 ) -> Result<Vec<f32>> {
     let external: Vec<_> = super::values(inputs[0].len(), f32::from(token))
         .into_iter()
-        .map(|v| cutile::half::bf16::from_f32(v).to_f32())
+        .map(|v| bf16::from_f32(v).to_f32())
         .collect();
     let mut refs: Vec<_> = inputs.iter().map(Vec::as_slice).collect();
     refs[0] = &external;
@@ -132,9 +135,9 @@ fn compare(actual: &[f32], expected: &[f32]) -> Result<()> {
 }
 
 pub fn prompt32(
-    device: &infer_backend_cuda::device::CudaDevice,
+    device: &CudaDevice,
     graph: &infer_ir::DataflowGraph,
-    weights: &mut infer_backend_cuda::resident::ProgramWeights,
+    weights: &mut ProgramWeights,
     op: &TensorOp,
     inputs: &[Vec<f32>],
     initial: Option<&PhysicalTensor>,

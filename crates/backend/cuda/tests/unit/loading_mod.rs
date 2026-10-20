@@ -1,4 +1,5 @@
 use super::*;
+use crate::constants::MAX_MTP_DEPTH;
 #[test]
 fn attention_profile_defaults_to_canonical() {
     let options = LoadOptions::default();
@@ -41,7 +42,7 @@ fn mtp_depth_bounds_are_validated() {
     );
     assert!(
         LoadOptions {
-            mtp_depth: crate::constants::MAX_MTP_DEPTH,
+            mtp_depth: MAX_MTP_DEPTH,
             ..LoadOptions::default()
         }
         .validate()
@@ -49,7 +50,7 @@ fn mtp_depth_bounds_are_validated() {
     );
     assert!(
         LoadOptions {
-            mtp_depth: crate::constants::MAX_MTP_DEPTH + 1,
+            mtp_depth: MAX_MTP_DEPTH + 1,
             ..LoadOptions::default()
         }
         .validate()

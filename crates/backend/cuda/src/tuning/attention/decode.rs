@@ -1,5 +1,7 @@
 //! Decode launch geometry derived from hardware occupancy and the attention window.
 
+use crate::constants::ATTENTION_SPLIT_MAX_PARTS;
+use crate::constants::ATTENTION_SPLIT_THRESHOLD;
 /// Padded query rows required by the grouped MMA kernel.
 pub const GROUPED_ROWS: usize = 16;
 /// Compiler occupancy hint of the grouped decode kernels. Without it the compiler spends the whole
@@ -12,12 +14,12 @@ const WAVE_DENOMINATOR: usize = 2;
 
 /// Match the existing F32 reduction tree using hardware/window facts, never KV storage capacity.
 pub fn partitions(heads: usize, window: Option<usize>, multiprocessors: usize) -> usize {
-    if window.is_some_and(|tokens| tokens < crate::constants::ATTENTION_SPLIT_THRESHOLD) {
+    if window.is_some_and(|tokens| tokens < ATTENTION_SPLIT_THRESHOLD) {
         return 1;
     }
     let limit = multiprocessors
         .div_ceil(heads)
-        .clamp(1, crate::constants::ATTENTION_SPLIT_MAX_PARTS);
+        .clamp(1, ATTENTION_SPLIT_MAX_PARTS);
     1 << limit.ilog2()
 }
 

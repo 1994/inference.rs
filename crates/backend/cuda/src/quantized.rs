@@ -1,4 +1,7 @@
 //! Quantized storage launch adapters; precision policy stays explicit.
+use crate::constants::NVFP4_GROUP_SIZE;
+use crate::kernels::linear::fp8;
+use crate::kernels::linear::nvfp4;
 use crate::{
     device::{CudaDevice, device_error},
     strategy::LinearTiling,
@@ -24,7 +27,7 @@ impl CudaDevice {
             return Err(Error::invalid("FP8 channel scales shape"));
         }
         let out = api::zeros::<f32>(&[rows]).partition([tile.rows()]);
-        crate::kernels::linear::fp8(out, x, w, scales)
+        fp8(out, x, w, scales)
             .generics(vec![
                 tile.rows().to_string(),
                 tile.columns().to_string(),
@@ -53,24 +56,21 @@ impl CudaDevice {
     ) -> Result<Arc<Tensor<f32>>> {
         self.target().require_native_nvfp4()?;
         let (rows, columns) = shape(&x, &w, 2)?;
-        if columns % crate::constants::NVFP4_GROUP_SIZE != 0
-            || !matches_shape(
-                scales.shape(),
-                &[rows, columns / crate::constants::NVFP4_GROUP_SIZE],
-            )
+        if columns % NVFP4_GROUP_SIZE != 0
+            || !matches_shape(scales.shape(), &[rows, columns / NVFP4_GROUP_SIZE])
             || !global_scale.is_finite()
             || global_scale <= 0.0
         {
             return Err(Error::invalid("invalid NVFP4 scales or alignment"));
         }
         let out = api::zeros::<f32>(&[rows]).partition([tile.rows()]);
-        crate::kernels::linear::nvfp4(out, x, w, scales, global_scale.recip())
+        nvfp4(out, x, w, scales, global_scale.recip())
             .generics(vec![
                 tile.rows().to_string(),
                 tile.columns().to_string(),
                 columns.to_string(),
                 (tile.columns() / 2).to_string(),
-                (tile.columns() / crate::constants::NVFP4_GROUP_SIZE).to_string(),
+                (tile.columns() / NVFP4_GROUP_SIZE).to_string(),
             ])
             .first()
             .unpartition()

@@ -1,11 +1,15 @@
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::error::Error;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn Error>> {
     use infer_backend_cuda::{
         benchmark::dense_baseline,
         device::CudaDevice,
         strategy::{DecodeSearch, LinearStrategy, LinearTiling},
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = env_args().skip(1).collect();
     if args.len() == 2 && args[0] == "--catalog" {
         use infer_models::ProjectionCatalog;
         let model = infer_models::QuantizedPackage::open(&args[1], infer_core::ModelId::ONE)?;

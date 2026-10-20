@@ -1,7 +1,10 @@
 //! Checkpoints contain ownership and timing, never collection implementation details.
 use super::{Entry, QueueState, ReadyKey, RequestQueue, Tenant};
 use infer_core::{Error, RequestId, Result, map::BoundedMap};
+use serde::de::Error as DeError;
+use serde::ser::Error as SerError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -25,10 +28,10 @@ struct CheckpointRef<'a> {
     scan_after: Option<RequestId>,
 }
 impl Serialize for RequestQueue {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
         self.scratch
             .validate(self.capacity)
-            .map_err(serde::ser::Error::custom)?;
+            .map_err(SerError::custom)?;
         CheckpointRef {
             capacity: self.capacity,
             entries: &self.entries,
@@ -42,8 +45,8 @@ impl Serialize for RequestQueue {
     }
 }
 impl<'de> Deserialize<'de> for RequestQueue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        Self::restore(Checkpoint::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> StdResult<Self, D::Error> {
+        Self::restore(Checkpoint::deserialize(deserializer)?).map_err(DeError::custom)
     }
 }
 impl RequestQueue {

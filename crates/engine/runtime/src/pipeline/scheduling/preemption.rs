@@ -1,6 +1,7 @@
 use crate::Engine;
 use infer_core::{Error, Result, event::EventKind, event::ObjectKind};
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub(crate) fn preempt_for_progress(
@@ -42,7 +43,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         else {
             return Ok(());
         };
-        let victims = std::mem::take(&mut self.host.preemption.victims);
+        let victims = take(&mut self.host.preemption.victims);
         let result = self.preempt_victims(focus, &victims, ready);
         self.host.preemption.victims = victims;
         result

@@ -1,16 +1,24 @@
 use super::*;
 use crate::default_registry;
+use crate::image::ImageProcessor;
+use crate::image::RgbImage;
+use crate::input::text::TextAssets;
 use infer_core::ModelId;
+use std::env::var;
+use std::fs::read;
+use std::iter::once;
+use std::path::Path;
+use std::slice::from_ref;
 
 const IMAGE: u32 = 248_056;
 const VISION_START: u32 = 248_053;
 const VISION_END: u32 = 248_054;
 
 fn shipped() -> Result<ImportedModel> {
-    let root = std::env::var("INFER_VISION_PACKAGE").unwrap_or_else(|_| {
+    let root = var("INFER_VISION_PACKAGE").unwrap_or_else(|_| {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../../examples/qwen3.8-27b").into()
     });
-    let config = std::fs::read(std::path::Path::new(&root).join("config.json"))
+    let config = read(Path::new(&root).join("config.json"))
         .map_err(|error| Error::invalid(error.to_string()))?;
     let provider = default_registry().resolve(&config)?;
     provider.import(ModelId::ONE, &config)
@@ -62,13 +70,13 @@ fn placeholder_runs_cover_every_merged_patch() -> Result<()> {
 /// Skipped unless the real package (with its tokenizer) is configured.
 #[test]
 fn prepared_prompt_lines_up_tokens_and_media() -> Result<()> {
-    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(package) = var("INFER_VISION_PACKAGE") else {
         return Ok(());
     };
     let imported = shipped()?;
-    let assets = crate::input::text::TextAssets::open(&package, 4096)?;
-    let processor = crate::image::ImageProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&package).join("preprocessor_config.json"))
+    let assets = TextAssets::open(&package, 4096)?;
+    let processor = ImageProcessor::from_json(
+        &read(Path::new(&package).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let text = "<|vision_start|><|image_pad|><|vision_end|>describe";
@@ -82,7 +90,7 @@ fn prepared_prompt_lines_up_tokens_and_media() -> Result<()> {
         &processor,
         &imported,
         text,
-        std::slice::from_ref(&image),
+        from_ref(&image),
         &Modality::Image,
     )?;
     assert_eq!(prepared.images.len(), 1);
@@ -277,20 +285,20 @@ fn media_layout_exposes_every_span_and_the_next_rotary_coordinate() -> Result<()
 /// Skipped unless the real package (with its tokenizer and video processor) is configured.
 #[test]
 fn prepared_video_prompt_expands_temporal_patches() -> Result<()> {
-    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(package) = var("INFER_VISION_PACKAGE") else {
         return Ok(());
     };
     let imported = shipped()?;
-    let assets = crate::input::text::TextAssets::open(&package, 4096)?;
+    let assets = TextAssets::open(&package, 4096)?;
     let processor = VideoProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
+        &read(Path::new(&package).join("video_preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     // Four 32x32 frames fill two temporal groups and a 2x2 spatial patch grid.
     let video = RawVideo {
         fps: 30.0,
         frames: (0..4)
-            .map(|index| crate::RgbImage {
+            .map(|index| RgbImage {
                 height: 32,
                 width: 32,
                 pixels: vec![u8::try_from(index * 60).unwrap_or(0); 32 * 32 * 3],
@@ -303,7 +311,7 @@ fn prepared_video_prompt_expands_temporal_patches() -> Result<()> {
         &processor,
         &imported,
         text,
-        std::slice::from_ref(&video),
+        from_ref(&video),
         &Modality::Video,
     )?;
     let placeholder = placeholders(&imported, &Modality::Video)?[0];
@@ -339,7 +347,7 @@ fn prepared_video_prompt_expands_temporal_patches() -> Result<()> {
             &processor,
             &imported,
             "describe",
-            std::slice::from_ref(&video),
+            from_ref(&video),
             &Modality::Video
         )
         .is_err()
@@ -408,7 +416,7 @@ fn media_layout_rejects_uncovered_or_misaligned_spans() -> Result<()> {
             pixels: Vec::new(),
             grid: (1, 4, 6),
         }],
-        spans: std::iter::once(0..4).collect(),
+        spans: once(0..4).collect(),
     };
     assert!(media_layout(&short, &imported, &Modality::Image).is_err());
     Ok(())
@@ -419,19 +427,19 @@ fn media_layout_rejects_uncovered_or_misaligned_spans() -> Result<()> {
 /// Skipped unless the real package (with its tokenizer and video processor) is configured.
 #[test]
 fn prepared_video_prompt_orders_multiple_clips() -> Result<()> {
-    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(package) = var("INFER_VISION_PACKAGE") else {
         return Ok(());
     };
     let imported = shipped()?;
-    let assets = crate::input::text::TextAssets::open(&package, 4096)?;
+    let assets = TextAssets::open(&package, 4096)?;
     let processor = VideoProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
+        &read(Path::new(&package).join("video_preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let clip = |level: u8| RawVideo {
         fps: 30.0,
         frames: (0..4)
-            .map(|_| crate::RgbImage {
+            .map(|_| RgbImage {
                 height: 32,
                 width: 32,
                 pixels: vec![level; 32 * 32 * 3],

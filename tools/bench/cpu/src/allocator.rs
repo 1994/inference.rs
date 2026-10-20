@@ -1,5 +1,11 @@
 //! Measurement-only allocator boundary. Production crates retain their unsafe-code prohibition.
 use serde::Serialize;
+use std::backtrace::Backtrace;
+use std::env::var_os;
+use std::panic::catch_unwind;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::{
     alloc::{GlobalAlloc, Layout},
     cell::Cell,
@@ -29,16 +35,16 @@ pub fn stop() -> Counts {
     COUNTS.with(|counts| counts.replace(None).unwrap_or_default())
 }
 /// Diagnostic trap: capture the stack of the first allocation seen after [`arm_trap`].
-static TRAP_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static TRAP_STACK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static TRAP_ARMED: AtomicBool = AtomicBool::new(false);
+static TRAP_STACK: OnceLock<String> = OnceLock::new();
 
 /// Arms the one-shot allocation trap when `INFER_CPU_BENCH_ALLOC_TRAP` is set.
 ///
 /// The trap's own stack capture allocates, so it is off by default and must never run while
 /// the gate counts are being interpreted.
 pub fn arm_trap() {
-    if std::env::var_os("INFER_CPU_BENCH_ALLOC_TRAP").is_some() {
-        TRAP_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+    if var_os("INFER_CPU_BENCH_ALLOC_TRAP").is_some() {
+        TRAP_ARMED.store(true, Ordering::SeqCst);
     }
 }
 
@@ -49,13 +55,11 @@ pub fn trapped_stack() -> Option<&'static str> {
 }
 
 fn trap() {
-    if !TRAP_ARMED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+    if !TRAP_ARMED.swap(false, Ordering::SeqCst) {
         return;
     }
     // The flag is already cleared, so the allocations this capture performs cannot re-enter it.
-    if let Ok(text) =
-        std::panic::catch_unwind(|| std::backtrace::Backtrace::force_capture().to_string())
-    {
+    if let Ok(text) = catch_unwind(|| Backtrace::force_capture().to_string()) {
         let _ = TRAP_STACK.set(text);
     }
 }

@@ -1,13 +1,15 @@
 use super::{MetalBackend, Sequence, u32_size};
+use crate::constants::INPUT_BINDING_COUNT;
 use crate::{device::Bindings, device::MetalDevice, device::Params, registry::shader};
 use infer_core::{Error, Result};
 use infer_ir::{ExecutionProgram, ExecutionTask, OpTrace, StepPlan, TensorNode, TensorOp};
 use infer_models::TensorDtype;
 use metal::Buffer;
+use std::array::from_fn;
 use std::{ops::Range, time::Instant};
 
 pub(super) struct ForwardNode {
-    inputs: [Buffer; crate::constants::INPUT_BINDING_COUNT],
+    inputs: [Buffer; INPUT_BINDING_COUNT],
     outputs: Vec<OutputDispatch>,
     state: Option<infer_core::TensorId>,
     params: Params,
@@ -99,16 +101,14 @@ impl MetalBackend {
             .nodes
             .iter()
             .map(|node| {
-                if node.inputs.len() > crate::constants::INPUT_BINDING_COUNT
-                    || node.states.len() > 1
-                {
+                if node.inputs.len() > INPUT_BINDING_COUNT || node.states.len() > 1 {
                     return Err(Error::unsupported("Metal forward binding capacity"));
                 }
                 let head = self
                     .graph
                     .logits
                     .is_some_and(|id| node.outputs.contains(&id));
-                let inputs = std::array::from_fn(|i| {
+                let inputs = from_fn(|i| {
                     node.inputs.get(i).map_or_else(
                         || self.dummy.clone(),
                         |id| {

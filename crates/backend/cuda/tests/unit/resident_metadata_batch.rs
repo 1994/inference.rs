@@ -1,4 +1,5 @@
 use super::{PromptOverrides, stage_metadata_batch};
+use crate::resident::arena::batch_rows;
 use crate::{
     constants::{METADATA_FIELDS, PREFILL_LANES},
     device::{CudaDevice, device_error},
@@ -143,7 +144,7 @@ fn batch_rows_outlive_the_owner_handle() -> Result<()> {
     let owner = api::zeros::<i32>(&[8])
         .sync_on(&device.stream)
         .map_err(device_error)?;
-    let mut rows = crate::resident::arena::batch_rows(&owner, 2)?;
+    let mut rows = batch_rows(&owner, 2)?;
     drop(owner);
 
     device.copy_host_slice(&mut rows[1], &[7, 8, 9, 10])?;
@@ -158,7 +159,7 @@ fn batch_rows_outlive_the_owner_handle() -> Result<()> {
 fn batch_rows_rejects_zero_lanes() -> Result<()> {
     let device = CudaDevice::new(0)?;
     let owner = allocate_owner(&device)?;
-    let rows = crate::resident::arena::batch_rows(&owner, 0);
+    let rows = batch_rows(&owner, 0);
     assert!(rows.is_err(), "zero-lane batch must be rejected");
     Ok(())
 }

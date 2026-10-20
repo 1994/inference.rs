@@ -2,6 +2,7 @@
 //! Original GEMV is a diagnostic control; the experimental private lowering must match pool.
 use super::support::{agreement, differences, seed_prefix, state_census_slot};
 use super::{LoadOptions, LoadedModel};
+use crate::tuning::table_path;
 use crate::{
     device::CudaDevice,
     resident::{
@@ -11,6 +12,9 @@ use crate::{
 };
 use infer_core::{Error, ModelId, Result};
 use serde_json::{Value, json};
+use std::env::var;
+use std::fs::read;
+use std::path::PathBuf;
 
 fn state_census(
     loaded: &LoadedModel,
@@ -61,17 +65,14 @@ fn greedy(logits: &[f32]) -> Result<u32> {
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL, frozen INFER_TEST_TOKENS/table; full private/pool arithmetic diagnostic, safe-run"]
 fn checkpoint_private_pool_first_step_arithmetic_census() -> Result<()> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     assert_eq!(tokens.len(), 511);
-    let cache_path =
-        crate::tuning::table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
-    let cache = std::fs::read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let cache_path = table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
+    let cache = read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -147,7 +148,7 @@ fn checkpoint_private_pool_first_step_arithmetic_census() -> Result<()> {
     );
     assert_eq!(
         cache,
-        std::fs::read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     assert_eq!(
         aligned_differences, 0,
@@ -162,21 +163,18 @@ struct PoolCheckpoint {
     loaded: LoadedModel,
     next: Vec<u32>,
     vocabulary: u32,
-    cache_path: std::path::PathBuf,
+    cache_path: PathBuf,
     cache: Vec<u8>,
 }
 fn pool_checkpoint() -> Result<PoolCheckpoint> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     assert_eq!(tokens.len(), 511);
-    let cache_path =
-        crate::tuning::table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
-    let cache = std::fs::read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let cache_path = table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
+    let cache = read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -332,7 +330,7 @@ fn checkpoint_pool_four_slots_private_f32_census() -> Result<()> {
     );
     assert_eq!(
         cache,
-        std::fs::read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     assert_eq!(
         changed, 0,

@@ -9,7 +9,7 @@
 | 范围 | 要求 |
 |---|---|
 | 目录与依赖 | crate 分组、路径注册、小型 facade、禁止实现层反向依赖服务或具体 backend、本地文档链接有效 |
-| Rust lint | `cargo fmt --check`；Clippy all / pedantic / nursery 全部 `-D warnings` |
+| Rust lint | `cargo fmt --check`；Clippy all / pedantic / nursery 全部 `-D warnings`；`clippy::absolute_paths` 要求三段及以上的项路径先用 `use` 引入（阈值 2，见 `clippy.toml`） |
 | 长度与复杂度 | `too_many_lines` ≤ 100、`cognitive_complexity` ≤ 25，不允许调高阈值 |
 | 数值常量 | `crates/*/*/src` 生产代码里的数字字面量必须写成带 `///` 说明的具名常量；白名单 `0`/`1`/`2`、数组下标、`const`/`static` 定义、字符串与字符字面量、注释、`#[cfg(test)]`/`#[cutile::module]` 段以及测试文件除外 |
 | 错误路径 | 生产代码禁止 `unwrap` / `expect` / `panic` / `todo` / `unimplemented` / `dbg` 与忽略 `Result` |

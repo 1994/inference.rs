@@ -1,11 +1,18 @@
 //! Paired graph replay measurements against the pre-optimization W4A4 main loop.
 use super::kernels;
+use crate::constants::QUANT_GEMM_TILE;
 use crate::device::CudaDevice;
+use crate::tuning::resident_gemm::native_tile;
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
+use cutile::bench::BenchOptions;
+use cutile::bench::do_bench_paired;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error;
 use std::time::Duration;
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 struct Inputs {
     shape: [usize; 3],
@@ -61,10 +68,7 @@ impl Inputs {
             tile[0].to_string(),
             tile[1].to_string(),
         ];
-        if optimized
-            && rows > crate::constants::QUANT_GEMM_TILE[0]
-            && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
-        {
+        if optimized && rows > QUANT_GEMM_TILE[0] && tile[1] > QUANT_GEMM_TILE[1] {
             scope.record(
                 kernels::packed_prefill(
                     output.partition(tile),
@@ -99,7 +103,7 @@ fn nvfp4_prefill_performance_comparison() -> TestResult {
     if cfg!(debug_assertions) {
         return Err("performance measurements require cargo test --release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
         return Err("performance measurements require CUDA JIT O3 without device debug".into());
     }
@@ -114,7 +118,7 @@ fn nvfp4_prefill_performance_comparison() -> TestResult {
     );
     for round in 0..3 {
         for clear_l2 in [true, false] {
-            let options = cutile::bench::BenchOptions {
+            let options = BenchOptions {
                 warmup: Duration::from_millis(50),
                 rep: Duration::from_millis(100),
                 min_reps: 30,
@@ -133,7 +137,7 @@ fn nvfp4_prefill_performance_comparison() -> TestResult {
 
 fn compare_case(
     device: &CudaDevice,
-    options: &cutile::bench::BenchOptions,
+    options: &BenchOptions,
     shape: [usize; 3],
     round: usize,
 ) -> TestResult {
@@ -141,7 +145,7 @@ fn compare_case(
     let mut inputs = Inputs::new(device, shape)?;
     let mut original_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
     let mut optimized_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
-    let original_tile = crate::tuning::resident_gemm::native_tile(rows);
+    let original_tile = native_tile(rows);
     // Sweep the supported wider-column candidate; production choice requires measured proof.
     let optimized_tile = [original_tile[0], original_tile[1] * 2];
     let original = CudaGraph::scope(&device.stream, |scope| {
@@ -173,20 +177,20 @@ fn compare_case(
         .iter()
         .zip(&expected)
         .all(|(value, reference)| value.to_bits() == reference.to_bits());
-    let (base, candidate) = cutile::bench::do_bench_paired(
+    let (base, candidate) = do_bench_paired(
         &device.stream,
         options,
         |_| {
             original
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
         |_| {
             optimized
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
     )?;
     println!(

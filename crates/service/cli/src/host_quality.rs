@@ -1,4 +1,8 @@
 //! Independent golden validation of loaded weights and their executable program.
+use crate::backend::Selection;
+use crate::constants::DEVICE_POLL_INTERVAL;
+use crate::constants::MAX_IDLE_TICKS;
+use crate::constants::MAX_JSON_FILE_BYTES;
 use crate::{backend::SelectedBackend, support::selected_engine};
 use infer_core::{DecisionId, Error, ErrorCode, RequestId, Result, StateId, StepId};
 use infer_ir::{
@@ -8,12 +12,18 @@ use infer_ir::{
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::iter::once;
 use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
+use std::time::Instant;
 
 /// Bytes per F32 hidden-state element in sampled layer-probe payloads.
 const F32_BYTES_U64: u64 = size_of::<f32>() as u64;
 /// Wall-clock budget for one golden prefill step on a device backend.
-const GOLDEN_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const GOLDEN_STEP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Leading token budgets exercised for golden trajectory invariance.
 const TRAJECTORY_CHUNK_TOKENS: [usize; 2] = [1, 3];
 
@@ -37,14 +47,14 @@ pub fn verify_package(
     memory_mib: u64,
     atol: f64,
     rtol: f64,
-    choice: &crate::backend::Selection,
+    choice: &Selection,
 ) -> Result<serde_json::Value> {
-    let file = std::fs::File::open(golden_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let file = File::open(golden_path).map_err(|e| Error::invalid(e.to_string()))?;
     if file
         .metadata()
         .map_err(|e| Error::invalid(e.to_string()))?
         .len()
-        > crate::constants::MAX_JSON_FILE_BYTES
+        > MAX_JSON_FILE_BYTES
     {
         return Err(Error::new(
             ErrorCode::Capacity,
@@ -162,18 +172,18 @@ fn verify_prefixes(
                 sampling: None,
             }],
         )?;
-        let deadline = std::time::Instant::now() + GOLDEN_STEP_TIMEOUT;
+        let deadline = Instant::now() + GOLDEN_STEP_TIMEOUT;
         let result = loop {
             if let Some(mut output) = backend.poll(&mut ticket)? {
                 break output.remove(0).output;
             }
-            if std::time::Instant::now() > deadline {
+            if Instant::now() > deadline {
                 return Err(Error::new(
                     ErrorCode::Backend,
                     "golden GPU completion timeout",
                 ));
             }
-            std::thread::sleep(crate::constants::DEVICE_POLL_INTERVAL);
+            sleep(DEVICE_POLL_INTERVAL);
         };
         let logits = infer_quality::compare(&prefix.logits, &result.logits, atol, rtol)?;
         let expected: Vec<_> = prefix.hidden.iter().flatten().copied().collect();
@@ -211,7 +221,7 @@ fn verify_prefixes(
 fn verify_trajectories(
     package: &Path,
     memory_mib: u64,
-    choice: &crate::backend::Selection,
+    choice: &Selection,
     model: &infer_ir::ModelIr,
     executed: &[u32],
     expected_tokens: &[u32],
@@ -220,7 +230,7 @@ fn verify_trajectories(
     let mut trajectories = Vec::new();
     for chunk in TRAJECTORY_CHUNK_TOKENS
         .into_iter()
-        .chain(std::iter::once(model.max_sequence))
+        .chain(once(model.max_sequence))
     {
         let config = RuntimeConfig {
             max_num_batched_tokens: chunk,
@@ -243,10 +253,10 @@ fn verify_trajectories(
                 },
                 qos: Qos::default(),
                 sampling: Sampling::default(),
-                extensions: std::collections::BTreeMap::new(),
+                extensions: BTreeMap::new(),
             })?;
         }
-        for now in 0..crate::constants::MAX_IDLE_TICKS {
+        for now in 0..MAX_IDLE_TICKS {
             if candidate.is_idle() {
                 break;
             }
@@ -255,7 +265,7 @@ fn verify_trajectories(
             if candidate.inspect().inflight_step.is_some()
                 && candidate.program().backend.is_device()
             {
-                std::thread::sleep(crate::constants::DEVICE_POLL_INTERVAL);
+                sleep(DEVICE_POLL_INTERVAL);
             }
         }
         if !candidate.is_idle() {

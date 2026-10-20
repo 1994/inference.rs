@@ -1,7 +1,11 @@
 use super::kernels;
 use crate::device::CudaDevice;
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
+use cutile::bench::BenchOptions as CutileBenchOptions;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error as StdError;
 
 /// Tile these tests construct their output partition with; the GEMM's `M` and `N` generics and
 /// the partition shape must agree. They stay on the narrow tile the correctness cases were
@@ -31,7 +35,7 @@ fn nearest(value: f32, table: &[f32]) -> usize {
 
 #[test]
 #[ignore = "requires a CUDA device; run inside safe-run"]
-fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn std::error::Error>> {
+fn nvfp4_mma_matches_independent_block_quantization() -> Result<(), Box<dyn StdError>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let f4 = [0.0_f32, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
@@ -158,13 +162,13 @@ fn check_product(
 
 #[test]
 #[ignore = "requires a CUDA device; run inside safe-run"]
-fn nvfp4_quantization_split_performance() -> Result<(), Box<dyn std::error::Error>> {
+fn nvfp4_quantization_split_performance() -> Result<(), Box<dyn StdError>> {
     use cutile::bench::{BenchOptions, do_bench_paired};
     use std::time::Duration;
     if cfg!(debug_assertions) {
         return Err("performance measurements require cargo test --release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
         return Err("performance measurements require CUDA JIT O3 without device debug".into());
     }
@@ -234,13 +238,13 @@ fn nvfp4_quantization_split_performance() -> Result<(), Box<dyn std::error::Erro
                     fused
                         .launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
                 |_| {
                     separated
                         .launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 },
             )?;
             println!(
@@ -278,7 +282,7 @@ const SWEEP_TILES: [(usize, usize); 4] = [(16, 64), (16, 128), (64, 128), (64, 6
 /// throttled host cannot flip the ranking. Informational: it prints, it does not assert.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn nvfp4_packed_tile_sweep() -> Result<(), Box<dyn std::error::Error>> {
+fn nvfp4_packed_tile_sweep() -> Result<(), Box<dyn StdError>> {
     use cutile::bench::BenchOptions;
     use std::time::Duration;
     if cfg!(debug_assertions) {
@@ -302,9 +306,9 @@ fn nvfp4_packed_tile_sweep() -> Result<(), Box<dyn std::error::Error>> {
 /// One shape's tile comparison, alternating baseline and candidate under `do_bench_paired`.
 fn sweep_shape(
     device: &CudaDevice,
-    options: &cutile::bench::BenchOptions,
+    options: &CutileBenchOptions,
     (m, n, k): (usize, usize, usize),
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn StdError>> {
     use cutile::bench::do_bench_paired;
     assert!(m <= SWEEP_PAD_ROWS);
     let input = device.upload(
@@ -348,13 +352,13 @@ fn sweep_shape(
                 baseline
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
             |_| {
                 candidate
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
         )?;
         println!(

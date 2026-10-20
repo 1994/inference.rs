@@ -1,3 +1,4 @@
+use crate::constants::F32_BYTES_U64;
 use infer_core::{Error, ProgramId, Result};
 use infer_ir::{
     CanonicalRequest, DecisionQuestion, ModelIr, ModelOutput, Workload, WorkloadOutput,
@@ -41,7 +42,7 @@ impl ProjectionWorkloads {
             }
             let tensor = file.read_f32(&name, READOUT_MAX_BYTES)?;
             let tensor_bytes = (tensor.data.len() as u64)
-                .checked_mul(crate::constants::F32_BYTES_U64)
+                .checked_mul(F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("readout size overflow"))?;
             bytes = bytes
                 .checked_add(tensor_bytes)

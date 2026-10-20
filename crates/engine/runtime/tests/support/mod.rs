@@ -21,6 +21,7 @@ use infer_ir::{
     ExecutionTask, FeedForward, Head, Mixer, Modality, ModelIr, ModelOutput, Operation,
     OutputReadout, PositionSpec, PrecisionPlan, StateKind, StateRequirement, StepPlan, TaskOutput,
 };
+use infer_model_recipes::decoder::lower;
 use infer_spi::{BackendProvider, KernelProvider, KernelRegistration, SourceLocation};
 use std::num::NonZeroU64;
 
@@ -283,7 +284,7 @@ impl BackendProvider for ProtocolBackend {
         true
     }
     fn execution_graph(&self, ir: &ModelIr) -> Result<infer_ir::DataflowGraph> {
-        infer_model_recipes::decoder::lower(ir)
+        lower(ir)
     }
     fn validate_program(&self, _: &ModelIr, _: &ExecutionProgram) -> Result<()> {
         Ok(())

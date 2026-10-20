@@ -1,4 +1,5 @@
 //! Error HTTP adapter.
+use axum::extract::rejection::JsonRejection;
 use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
 use infer_core::{Error, ErrorCode};
 
@@ -23,8 +24,8 @@ impl IntoResponse for HttpError {
         (self.1.unwrap_or(status), Json(self.0)).into_response()
     }
 }
-impl From<axum::extract::rejection::JsonRejection> for HttpError {
-    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
+impl From<JsonRejection> for HttpError {
+    fn from(rejection: JsonRejection) -> Self {
         Self(
             Error::invalid(rejection.body_text()),
             Some(rejection.status()),

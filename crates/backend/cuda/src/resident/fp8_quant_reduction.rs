@@ -38,19 +38,25 @@ pub(crate) mod kernels {
     }
 }
 
+use cutile::prelude::DeviceError;
+use cutile::prelude::Scope;
+use cutile::prelude::Tensor as PreludeTensor;
+use cutile::prelude::TensorView;
 use cutile::prelude::{PartitionMut, TileKernel};
+#[cfg(test)]
+use std::cell::Cell;
 const SERIAL_COLUMNS: usize = 4096;
 const CONVERSION_COLUMNS: usize = 512;
 
 /// Large-row conversion is partitioned independently from the original row maximum.
 /// Both stages reuse the existing quantized activation and scale buffers.
 pub(super) fn record(
-    scope: &cutile::prelude::Scope,
-    codes: &mut cutile::prelude::Tensor<cuda_core::f8e4m3fn>,
-    scale: &mut cutile::prelude::Tensor<f32>,
-    input: &cutile::prelude::TensorView<'_, f32>,
+    scope: &Scope,
+    codes: &mut PreludeTensor<cuda_core::f8e4m3fn>,
+    scale: &mut PreludeTensor<f32>,
+    input: &TensorView<'_, f32>,
     columns: usize,
-) -> Result<(), cutile::prelude::DeviceError> {
+) -> Result<(), DeviceError> {
     if columns <= SERIAL_COLUMNS || !columns.is_multiple_of(CONVERSION_COLUMNS) || !enabled() {
         scope.record(
             super::fp8_gemm::kernels::quantize(
@@ -89,16 +95,16 @@ const fn enabled() -> bool {
 }
 #[cfg(test)]
 std::thread_local! {
-    static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-    static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ENABLED: Cell<bool> = const { Cell::new(true) };
+    static CAPTURES: Cell<usize> = const { Cell::new(0) };
 }
 #[cfg(test)]
 fn enabled() -> bool {
-    ENABLED.with(std::cell::Cell::get)
+    ENABLED.with(Cell::get)
 }
 #[cfg(test)]
 pub fn captures() -> usize {
-    CAPTURES.with(std::cell::Cell::get)
+    CAPTURES.with(Cell::get)
 }
 #[cfg(test)]
 pub fn with_parallel_conversion<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

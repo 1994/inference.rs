@@ -1,6 +1,7 @@
 use infer_core::{Error, Result};
 use infer_ir::{AdmissionConfig, AdmissionDecision, AdmissionInput, AdmissionReason};
 use infer_spi::AdmissionPolicy;
+use std::iter::once;
 
 pub struct ResourceAdmission {
     pub config: AdmissionConfig,
@@ -9,7 +10,7 @@ impl ResourceAdmission {
     /// # Errors
     /// Returns an invalid-input error for invalid configuration, or a capacity error if the requested resources cannot be reserved.
     pub fn new(config: AdmissionConfig) -> Result<Self> {
-        for quota in std::iter::once(&config.default_tenant).chain(config.tenants.values()) {
+        for quota in once(&config.default_tenant).chain(config.tenants.values()) {
             if quota.max_active_requests == 0
                 || quota.max_reserved_tokens == 0
                 || quota.max_state_pages == 0

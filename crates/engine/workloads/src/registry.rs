@@ -1,6 +1,7 @@
 use infer_core::{Error, ErrorCode, ProgramId, Result};
 use infer_ir::{CanonicalRequest, ModelIr, ModelOutput, Workload, WorkloadOutput, WorkloadPlan};
 use infer_spi::{ProviderMetadata, WorkloadProvider};
+use std::cmp::Reverse;
 
 /// Maximum number of providers one registry accepts.
 const MAX_REGISTRY_PROVIDERS: usize = 64;
@@ -63,7 +64,7 @@ impl WorkloadRegistry {
             provider: Box::new(provider),
         });
         self.entries
-            .sort_by_key(|e| (std::cmp::Reverse(e.priority), e.metadata.id));
+            .sort_by_key(|e| (Reverse(e.priority), e.metadata.id));
         self.identity = format!(
             "workload-registry-v1{:?}",
             self.entries

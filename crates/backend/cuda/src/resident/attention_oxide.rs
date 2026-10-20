@@ -1,5 +1,6 @@
 //! Exact F32 prefill attention compiled from the pinned Rust SIMT source.
 //! The generated PTX is embedded so host builds keep their stable toolchain.
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::{CudaDevice, device_error};
 use cuda_core::{Function, LaunchConfig};
 use cutile::{
@@ -11,6 +12,10 @@ use cutile::{
 };
 use infer_core::Result;
 use infer_ir::{DataflowGraph, TensorOp};
+#[cfg(test)]
+use std::cell::Cell;
+use std::result::Result as StdResult;
+use std::sync::OnceLock;
 mod shared;
 mod vector;
 
@@ -116,14 +121,14 @@ impl Support {
         (heads, kv_heads, dim, lanes, capacity): (usize, usize, usize, usize, usize),
         window: i32,
         scales: [f32; 2],
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         if (heads, kv_heads, dim) != (HEADS, KV_HEADS, DIM)
             || !SUPPORTED_LANES.contains(&lanes)
             || (self.rows_per_cta != 1 && lanes != shared::LANES)
             || E::DTYPE != cuda_core::f8e4m3fn::DTYPE
             || size_of::<E>() != 1
             || capacity == 0
-            || !capacity.is_multiple_of(crate::constants::KV_BLOCK_TOKENS)
+            || !capacity.is_multiple_of(KV_BLOCK_TOKENS)
             || !scales.iter().all(|x| x.is_finite() && *x > 0.0)
             || bindings.query.size() != lanes * HEADS * DIM
             || !bindings.query.is_contiguous()
@@ -197,7 +202,7 @@ impl<E: DType> GraphNode for Recorded<'_, E> {}
 )]
 impl<E: DType> DeviceOp for Recorded<'_, E> {
     type Output = ();
-    unsafe fn execute(self, ctx: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    unsafe fn execute(self, ctx: &ExecutionContext) -> StdResult<(), DeviceError> {
         if ctx.get_cuda_stream().cu_stream() as usize != self.stream {
             return Err(DeviceError::Internal(
                 "Rust attention stream mismatch".into(),
@@ -215,7 +220,7 @@ impl<E: DType> DeviceOp for Recorded<'_, E> {
     }
 }
 impl<E: DType> IntoFuture for Recorded<'_, E> {
-    type Output = std::result::Result<(), DeviceError>;
+    type Output = StdResult<(), DeviceError>;
     type IntoFuture = DeviceFuture<(), Self>;
     fn into_future(self) -> Self::IntoFuture {
         match with_default_device_policy(|policy| {
@@ -230,8 +235,8 @@ impl<E: DType> IntoFuture for Recorded<'_, E> {
 
 #[cfg(test)]
 thread_local! {
-    static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DISABLED: Cell<bool> = const { Cell::new(false) };
+    static CAPTURES: Cell<usize> = const { Cell::new(0) };
 }
 #[cfg(test)]
 pub fn disabled() -> bool {
@@ -257,7 +262,7 @@ pub fn with_cutile<T>(f: impl FnOnce() -> T) -> T {
 
 pub fn artifact_identity() -> &'static str {
     use sha2::{Digest, Sha256};
-    static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static IDENTITY: OnceLock<String> = OnceLock::new();
     IDENTITY.get_or_init(|| {
         let source = include_str!("../../kernels/oxide-attention/src/main.rs");
         let provenance = include_str!("../../kernels/oxide-attention/provenance.json");

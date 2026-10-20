@@ -4,6 +4,7 @@ use infer_runtime::Engine;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SemanticNode {
@@ -31,7 +32,7 @@ pub struct SemanticGraph {
 #[derive(Default)]
 struct Builder {
     nodes: BTreeMap<String, SemanticNode>,
-    edges: std::collections::BTreeSet<SemanticEdge>,
+    edges: BTreeSet<SemanticEdge>,
 }
 
 impl Builder {

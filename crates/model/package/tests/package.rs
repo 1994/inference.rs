@@ -1,6 +1,14 @@
 use infer_core::*;
 use infer_ir::*;
+use infer_model_recipes::decoder::lower;
 use infer_models::*;
+use std::env::temp_dir;
+use std::env::var;
+use std::fs::create_dir_all;
+use std::fs::read;
+use std::fs::remove_dir_all;
+use std::fs::write;
+use std::process::id;
 use std::{collections::BTreeMap, path::PathBuf, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -9,12 +17,12 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
     reason = "Integration fixture helpers intentionally fail the test immediately on invalid setup or unexpected runtime output"
 )]
 fn temp() -> PathBuf {
-    let p = std::env::temp_dir().join(format!(
+    let p = temp_dir().join(format!(
         "infer-tensor-{}-{}",
-        std::process::id(),
+        id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&p).unwrap();
+    create_dir_all(&p).unwrap();
     p
 }
 #[expect(
@@ -27,7 +35,7 @@ fn raw(header: &str, data: &[u8]) -> PathBuf {
     let mut b = (header.len() as u64).to_le_bytes().to_vec();
     b.extend(header.as_bytes());
     b.extend(data);
-    std::fs::write(&p, b).unwrap();
+    write(&p, b).unwrap();
     p
 }
 #[test]
@@ -52,8 +60,8 @@ fn safetensors_float_conversion_and_row_read_are_exact() {
         .read_f32("w", 1024)
         .unwrap();
     assert_eq!(out.data, [1.0, -2.0, 2.0f32.powi(-24), -0.0]);
-    std::fs::remove_dir_all(bf16.parent().unwrap()).unwrap();
-    std::fs::remove_dir_all(f16.parent().unwrap()).unwrap();
+    remove_dir_all(bf16.parent().unwrap()).unwrap();
+    remove_dir_all(f16.parent().unwrap()).unwrap();
 }
 #[test]
 fn malformed_header_bounds_duplicates_and_nonfinite_payload_are_rejected() {
@@ -65,7 +73,7 @@ fn malformed_header_bounds_duplicates_and_nonfinite_payload_are_rejected() {
     ] {
         let p = raw(header, &[0; 8]);
         assert!(SafetensorsFile::open(&p).is_err());
-        std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
+        remove_dir_all(p.parent().unwrap()).unwrap();
     }
     let p = raw(
         r#"{"w":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#,
@@ -77,7 +85,7 @@ fn malformed_header_bounds_duplicates_and_nonfinite_payload_are_rejected() {
             .read_f32("w", 1024)
             .is_err()
     );
-    std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
+    remove_dir_all(p.parent().unwrap()).unwrap();
 }
 #[test]
 fn host_package_binds_payload_and_respects_budget() {
@@ -116,7 +124,7 @@ fn qwen38_required_bindings_exist_in_pinned_official_index() {
         "../../../../examples/qwen3.8-27b/model.safetensors.index.json"
     ))
     .unwrap();
-    let graph = infer_model_recipes::decoder::lower(&model).unwrap();
+    let graph = lower(&model).unwrap();
     let expected: BTreeMap<_, _> = graph
         .tensors
         .iter()
@@ -151,7 +159,7 @@ fn qwen38_required_bindings_exist_in_pinned_official_index() {
 }
 #[test]
 fn official_qwen_text_parity_when_assets_are_supplied() {
-    let Ok(root) = std::env::var("INFER_QWEN_TEXT_PACKAGE") else {
+    let Ok(root) = var("INFER_QWEN_TEXT_PACKAGE") else {
         return;
     };
     let assets = TextAssets::open(root, 262_144).unwrap();
@@ -189,14 +197,14 @@ fn the_fixture_tokenizer_refuses_streaming_decode() {
 fn byte_level_fixture() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
     let mut tokenizer: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.join("tokenizer.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read(root.join("tokenizer.json")).unwrap()).unwrap();
     let byte_level = serde_json::json!({
         "type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": true
     });
     tokenizer["decoder"] = byte_level.clone();
     tokenizer["pre_tokenizer"] = byte_level;
     let package = temp();
-    std::fs::write(
+    write(
         package.join("tokenizer.json"),
         serde_json::to_vec(&tokenizer).unwrap(),
     )
@@ -250,7 +258,7 @@ fn an_incremental_decode_never_publishes_a_partial_character() {
 
 #[test]
 fn streaming_decode_matches_on_the_served_package() {
-    let Ok(root) = std::env::var("INFER_QWEN_TEXT_PACKAGE") else {
+    let Ok(root) = var("INFER_QWEN_TEXT_PACKAGE") else {
         return;
     };
     let assets = TextAssets::open(&root, 262_144).unwrap();

@@ -1,3 +1,8 @@
+use crate::constants::JSONRPC_INVALID_PARAMS;
+use crate::constants::JSONRPC_INVALID_REQUEST;
+use crate::constants::JSONRPC_METHOD_NOT_FOUND;
+use crate::constants::MAX_BATCH_REQUESTS;
+use crate::constants::MAX_RECORDED_METHOD_CHARS;
 use crate::{
     AgentBackend, AgentContext, CallRecord, commands, protocol::RpcError, protocol::RpcRequest,
     protocol::error_response, protocol::response, registry::CommandDescriptor,
@@ -46,13 +51,10 @@ impl<B: AgentBackend> AgentService<B> {
     #[must_use]
     pub fn handle(&mut self, value: Value) -> Option<Value> {
         if let Value::Array(batch) = value {
-            if batch.is_empty() || batch.len() > crate::constants::MAX_BATCH_REQUESTS {
+            if batch.is_empty() || batch.len() > MAX_BATCH_REQUESTS {
                 return Some(error_response(
                     Value::Null,
-                    &RpcError::new(
-                        crate::constants::JSONRPC_INVALID_REQUEST,
-                        "batch requires 1 to 64 requests",
-                    ),
+                    &RpcError::new(JSONRPC_INVALID_REQUEST, "batch requires 1 to 64 requests"),
                 ));
             }
             let responses: Vec<_> = batch
@@ -72,19 +74,14 @@ impl<B: AgentBackend> AgentService<B> {
         let start = Instant::now();
         let outcome = if !request.params.is_object() && !request.params.is_array() {
             Err(RpcError::new(
-                crate::constants::JSONRPC_INVALID_PARAMS,
+                JSONRPC_INVALID_PARAMS,
                 "params must be an object or array",
             ))
         } else {
             self.registry
                 .dispatch(&mut self.context, &request.method, request.params)
                 .map_or_else(
-                    || {
-                        Err(RpcError::new(
-                            crate::constants::JSONRPC_METHOD_NOT_FOUND,
-                            "method not found",
-                        ))
-                    },
+                    || Err(RpcError::new(JSONRPC_METHOD_NOT_FOUND, "method not found")),
                     |r| r.map_err(RpcError::from),
                 )
         };
@@ -102,7 +99,7 @@ impl<B: AgentBackend> AgentService<B> {
             method: request
                 .method
                 .chars()
-                .take(crate::constants::MAX_RECORDED_METHOD_CHARS)
+                .take(MAX_RECORDED_METHOD_CHARS)
                 .collect(),
             error,
             rpc_error: outcome.as_ref().err().map(|error| error.code),

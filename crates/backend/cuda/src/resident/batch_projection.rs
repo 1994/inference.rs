@@ -1,4 +1,16 @@
 use super::{ProgramWeights, batch::Lane, capture::error, linear_batch::batched};
+use crate::constants::AUX_KERNEL_TILE;
+#[cfg(test)]
+use crate::constants::CB_DECODE_SLOTS;
+use crate::constants::DEFAULT_TILE_COLUMNS;
+use crate::constants::DEFAULT_TILE_ROWS;
+use crate::constants::F32_BYTES;
+use crate::constants::FUSED_VERIFY_LANES;
+use crate::constants::GEMV_WIDE_OUTPUT_RATIO;
+use crate::constants::NVFP4_GROUP_SIZE;
+use crate::constants::SMALL_GEMM_TILE;
+use crate::constants::SMALL_GEMV_MAX_ROWS;
+use crate::strategy::LinearTiling;
 use crate::{
     device::{CudaDevice, device_error},
     mlp::ProjectionWeight,
@@ -7,10 +19,11 @@ use cutile::{half::bf16, prelude::*};
 use infer_core::{Error, OpId, Result};
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
 use std::collections::BTreeMap;
+use std::result::Result as StdResult;
 
 /// Rows of one verify tile: one row group of the fused GEMV. The kernel walks row groups
 /// on grid dim 0, so any row count works; a partial group is predicated out.
-const VERIFY_TILE_ROWS: usize = crate::constants::FUSED_VERIFY_LANES + 1;
+const VERIFY_TILE_ROWS: usize = FUSED_VERIFY_LANES + 1;
 /// Output columns per block. Measured on the slot decode hot path (3 lanes, n3 sweep):
 /// 8 → 39.3 ms/step of linear, 16 → 28.6 ms; 32 crosses the register spill cliff of the
 /// `[rows, BN, depth]` accumulator (16k f32 entries) and collapses to 88.9 ms.
@@ -20,7 +33,7 @@ const VERIFY_TILE_DEPTH: usize = 256;
 /// Packed FP4 bytes per inner step: two nibble values share one byte.
 const VERIFY_PACKED_DEPTH: usize = VERIFY_TILE_DEPTH / 2;
 /// Scale groups per inner step: one E4M3 scale per NVFP4 group of 16 values.
-const VERIFY_SCALE_DEPTH: usize = VERIFY_TILE_DEPTH / crate::constants::NVFP4_GROUP_SIZE;
+const VERIFY_SCALE_DEPTH: usize = VERIFY_TILE_DEPTH / NVFP4_GROUP_SIZE;
 /// Output tile of the batched verification GEMV.
 const VERIFY_OUTPUT_TILE: [usize; 2] = [VERIFY_TILE_ROWS, VERIFY_TILE_COLUMNS];
 
@@ -60,7 +73,7 @@ pub(super) fn allocate(
         }
         bytes = rows
             .checked_add(columns)
-            .and_then(|n| n.checked_mul(width * crate::constants::F32_BYTES))
+            .and_then(|n| n.checked_mul(width * F32_BYTES))
             .and_then(|n| bytes.checked_add(n))
             .ok_or_else(|| Error::invalid("batched projection workspace overflow"))?;
         if u64::try_from(bytes).map_err(device_error)? > device.profile()?.arena_budget_bytes() {
@@ -88,7 +101,7 @@ pub(super) fn record(
     weights: &ProgramWeights,
     buffers: &mut Workspace,
     nvfp4: &mut super::nvfp4_gemm::Workspace,
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     let key = buffers
         .nodes
         .get(&node.id)
@@ -99,9 +112,9 @@ pub(super) fn record(
         .ok_or_else(|| error("batch projection workspace"))?;
     let width = lanes.len();
     let columns = input.size() / width;
-    if width == crate::constants::FUSED_VERIFY_LANES {
+    if width == FUSED_VERIFY_LANES {
         scope.record(batched::pack_inputs(
-            (&mut *input).partition([1, crate::constants::AUX_KERNEL_TILE]),
+            (&mut *input).partition([1, AUX_KERNEL_TILE]),
             weights.constants.get(&node.inputs[0]).map_or_else(
                 || lanes[0].arena.get(node.inputs[0]).map_err(error),
                 |value| Ok(value.as_ref()),
@@ -122,7 +135,7 @@ pub(super) fn record(
                 |value| Ok(value.as_ref()),
             )?;
             scope.record(batched::pack_row(
-                (&mut *input).partition([1, crate::constants::AUX_KERNEL_TILE]),
+                (&mut *input).partition([1, AUX_KERNEL_TILE]),
                 source,
                 i32::try_from(row).map_err(error)?,
             ))?;
@@ -155,15 +168,15 @@ pub(super) fn record(
     }
     if let [first, second, third] = outputs.as_mut_slice() {
         scope.record(batched::unpack_outputs(
-            first.partition([crate::constants::AUX_KERNEL_TILE]),
-            second.partition([crate::constants::AUX_KERNEL_TILE]),
-            third.partition([crate::constants::AUX_KERNEL_TILE]),
+            first.partition([AUX_KERNEL_TILE]),
+            second.partition([AUX_KERNEL_TILE]),
+            third.partition([AUX_KERNEL_TILE]),
             &*output,
         ))?;
     } else {
         for (row, target) in outputs.iter_mut().enumerate() {
             scope.record(batched::unpack_row(
-                target.partition([crate::constants::AUX_KERNEL_TILE]),
+                target.partition([AUX_KERNEL_TILE]),
                 &*output,
                 i32::try_from(row).map_err(error)?,
             ))?;
@@ -184,7 +197,7 @@ pub(super) fn record_slots(
     arena: &mut super::ActivationArena,
     weights: &ProgramWeights,
     nvfp4: &mut super::nvfp4_gemm::Workspace,
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     if weights.constants.contains_key(&node.inputs[0]) {
         return Err(error("slot decode constant linear input"));
     }
@@ -209,13 +222,10 @@ pub(super) fn record_slots(
         return Ok(());
     }
     if weights.activation_quantization(node.inputs[1]).is_none() {
-        let tile = weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
-            crate::strategy::LinearTiling::new(
-                crate::constants::DEFAULT_TILE_ROWS,
-                crate::constants::DEFAULT_TILE_COLUMNS,
-            )
-            .map_err(error)?,
-        );
+        let tile =
+            weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
+                LinearTiling::new(DEFAULT_TILE_ROWS, DEFAULT_TILE_COLUMNS).map_err(error)?,
+            );
         if super::pool_gemv::record(scope, weight, &input, &mut output, columns, tile)? {
             nvfp4.clear_quant_reuse();
             arena.buffers[slot] = Some(output.reshape(&[flat]).map_err(error)?);
@@ -254,7 +264,7 @@ fn record_projection(
     x: &TensorView<'_, f32>,
     output: &mut Tensor<f32>,
     columns: usize,
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     if super::nvfp4_gemm::record(scope, nvfp4, weight, input_scale, x, output, columns)? {
         return Ok(());
     }
@@ -262,18 +272,16 @@ fn record_projection(
     // GEMV path for narrow batches with a very wide output (e.g. a vocabulary head).
     let rows = usize::try_from(x.shape()[0]).map_err(error)?;
     let outputs = output.size() / rows;
-    if rows > crate::constants::SMALL_GEMV_MAX_ROWS
-        || outputs <= columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
-    {
+    if rows > SMALL_GEMV_MAX_ROWS || outputs <= columns.saturating_mul(GEMV_WIDE_OUTPUT_RATIO) {
         match weight {
             ProjectionWeight::Dense(w) => {
                 #[cfg(test)]
                 if super::small_gemm::precise_dense_enabled()
-                    && outputs <= columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+                    && outputs <= columns.saturating_mul(GEMV_WIDE_OUTPUT_RATIO)
                 {
                     scope.record(
                         super::small_gemm::precise_kernels::dense(
-                            output.partition(crate::constants::SMALL_GEMM_TILE),
+                            output.partition(SMALL_GEMM_TILE),
                             x,
                             w,
                         )
@@ -282,19 +290,15 @@ fn record_projection(
                     return Ok(());
                 }
                 scope.record(
-                    super::small_gemm::kernels::dense(
-                        output.partition(crate::constants::SMALL_GEMM_TILE),
-                        x,
-                        w,
-                    )
-                    .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
+                    super::small_gemm::kernels::dense(output.partition(SMALL_GEMM_TILE), x, w)
+                        .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
                 )?;
                 return Ok(());
             }
             ProjectionWeight::Fp8(w, scale) => {
                 scope.record(
                     super::small_gemm::kernels::scaled(
-                        output.partition(crate::constants::SMALL_GEMM_TILE),
+                        output.partition(SMALL_GEMM_TILE),
                         x,
                         w,
                         scale,
@@ -354,29 +358,27 @@ fn record_pool_small_f32(
     input: &TensorView<'_, f32>,
     output: &mut Tensor<f32>,
     columns: usize,
-) -> std::result::Result<bool, DeviceError> {
+) -> StdResult<bool, DeviceError> {
     let rows = usize::try_from(input.shape()[0]).map_err(error)?;
-    if rows != crate::constants::CB_DECODE_SLOTS
+    if rows != CB_DECODE_SLOTS
         || !super::small_gemm::pool_f32_enabled()
         || weights.activation_quantization(node.inputs[1]).is_some()
         || columns == 0
-        || output.size() / rows > columns.saturating_mul(crate::constants::GEMV_WIDE_OUTPUT_RATIO)
+        || output.size() / rows > columns.saturating_mul(GEMV_WIDE_OUTPUT_RATIO)
     {
         return Ok(false);
     }
     let ProjectionWeight::Dense(weight) = weight else {
         return Ok(false);
     };
-    let tile = weights.tiling.get(&node.inputs[1]).copied().unwrap_or(
-        crate::strategy::LinearTiling::new(
-            crate::constants::DEFAULT_TILE_ROWS,
-            crate::constants::DEFAULT_TILE_COLUMNS,
-        )
-        .map_err(error)?,
-    );
+    let tile = weights
+        .tiling
+        .get(&node.inputs[1])
+        .copied()
+        .unwrap_or(LinearTiling::new(DEFAULT_TILE_ROWS, DEFAULT_TILE_COLUMNS).map_err(error)?);
     scope.record(
         batched::dense(
-            output.partition([crate::constants::CB_DECODE_SLOTS, tile.rows()]),
+            output.partition([CB_DECODE_SLOTS, tile.rows()]),
             input,
             weight,
         )

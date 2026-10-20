@@ -1,11 +1,16 @@
 //! Preparation waiters retain state ownership until the actual resource acknowledgement.
 mod waiters;
+use crate::stages::prefill::retained_readout;
 use crate::{Engine, EngineOutput};
+use infer_core::event::EventKind;
+use infer_core::event::ObjectKind;
+use infer_core::event::SemanticEvent;
 use infer_core::{Error, ErrorCode, FinishReason, RequestId, RequestStatus, Result};
 use infer_scheduler::BlockedOn;
 use infer_spi::{
     BackendProvider, ResourceCommand, ResourceReply, ResourceTicket, SchedulingPolicy,
 };
+use std::mem::take;
 pub use waiters::ResourceWaiters;
 
 #[derive(Clone, Copy)]
@@ -90,10 +95,10 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .ok_or_else(|| Error::invariant("resource request disappeared"))?
             .status
             .transition(RequestStatus::Waiting(infer_core::WaitReason::BackendBusy))?;
-        self.emit_semantic(infer_core::event::SemanticEvent {
+        self.emit_semantic(SemanticEvent {
             timestamp_us: self.now_us,
-            kind: infer_core::event::EventKind::Deferred,
-            object_kind: infer_core::event::ObjectKind::Request,
+            kind: EventKind::Deferred,
+            object_kind: ObjectKind::Request,
             reserved: infer_ir::DeferReason::Preparation.code(),
             object_id: id.get(),
             correlation_id: 0,
@@ -169,7 +174,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 ResourcePhase::Reserve => ResourceCommand::Reserve {
                     state,
                     capacity: record.plan.reserved_tokens,
-                    readout: crate::stages::prefill::retained_readout(&record.request.workload),
+                    readout: retained_readout(&record.request.workload),
                 },
                 ResourcePhase::Reset => ResourceCommand::Reset { state },
                 ResourcePhase::Prefix => {
@@ -210,7 +215,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .poll()
     }
     pub(crate) fn poll_resources(&mut self, emitted: &mut Vec<EngineOutput>) -> Result<()> {
-        let mut ids = std::mem::take(&mut self.host.resource_poll_buffer);
+        let mut ids = take(&mut self.host.resource_poll_buffer);
         self.resources_pending
             .poll_window(self.config.cpu.maintenance_items, &mut ids)?;
         let result = ids
@@ -273,8 +278,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .remove(id)
             .ok_or_else(|| Error::invariant("resource acknowledgement lost owner"))?;
         self.event(
-            infer_core::event::EventKind::ResourceAcknowledged,
-            infer_core::event::ObjectKind::Request,
+            EventKind::ResourceAcknowledged,
+            ObjectKind::Request,
             id.get(),
             0,
             pending.phase as u64,
@@ -349,8 +354,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                     record.prefill_done = tokens;
                     record.cached_tokens += tokens;
                     self.event(
-                        infer_core::event::EventKind::PrefixHit,
-                        infer_core::event::ObjectKind::Request,
+                        EventKind::PrefixHit,
+                        ObjectKind::Request,
                         id.get(),
                         state.get(),
                         tokens as u64,

@@ -6,6 +6,7 @@ use crate::{
 };
 use infer_core::{Error, ModelId, Result};
 use serde_json::json;
+use std::env::var;
 
 fn greedy(logits: &[f32]) -> Result<u32> {
     assert_ne!(logits.len(), 0);
@@ -137,7 +138,7 @@ fn replay(loaded: &LoadedModel, case: &mut Case, slots: usize) -> Result<()> {
 #[ignore = "requires CUDA/checkpoint/frozen511tokens/safe-run; original private versus default pool full-model bits"]
 fn checkpoint_pool_gemv_private_model_bits() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = super::quant_reuse_model_tests::prompt()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,

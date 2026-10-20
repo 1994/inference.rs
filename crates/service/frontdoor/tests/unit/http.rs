@@ -1,11 +1,20 @@
+use axum::body::Body;
+use axum::body::to_bytes;
+use axum::http::Request;
 use axum::http::StatusCode;
 use infer_core::{Error, ErrorCode, ModelId, RequestId, Result};
 use infer_kernel_api::KernelRegistry;
 use infer_observe::ObservationQuery;
 use infer_runtime::{CompletedRequest, Engine, EngineOutput, RuntimeConfig};
 use infer_spi::BackendProvider;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::{collections::BTreeMap, time::Duration};
 use tokio::sync::mpsc as async_mpsc;
+use tokio::time::sleep;
+use tokio::time::timeout;
 use tower::ServiceExt;
 
 use super::*;
@@ -55,7 +64,7 @@ fn request(id: u64, max_new_tokens: usize) -> CanonicalRequest {
 }
 async fn receive(receiver: &mut async_mpsc::Receiver<Result<EngineOutput>>) -> CompletedRequest {
     loop {
-        let event = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        let event = timeout(Duration::from_secs(2), receiver.recv())
             .await
             .unwrap()
             .unwrap()
@@ -84,14 +93,14 @@ async fn disconnected_client_is_cancelled_and_freed() {
     let handle = handle();
     let receiver = handle.submit(request(1, 100)).await.unwrap();
     drop(receiver);
-    tokio::time::timeout(Duration::from_secs(2), async {
+    timeout(Duration::from_secs(2), async {
         loop {
             let inspection = handle.inspect().await.unwrap();
             if inspection.active_requests == 0 {
                 assert_eq!(inspection.state.allocated_pages, 0);
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(2)).await;
+            sleep(Duration::from_millis(2)).await;
         }
     })
     .await
@@ -102,12 +111,12 @@ async fn disconnected_client_is_cancelled_and_freed() {
 async fn slow_consumer_gets_terminal_cancellation_instead_of_leaking() {
     let handle = handle();
     let mut receiver = handle.submit(request(1, 100)).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(2), async {
+    timeout(Duration::from_secs(2), async {
         loop {
             if handle.inspect().await.unwrap().active_requests == 0 {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(2)).await;
+            sleep(Duration::from_millis(2)).await;
         }
     })
     .await
@@ -124,21 +133,17 @@ async fn schema_rejection_has_structured_error_and_does_not_enter_runtime() {
     payload["unknown_feature"] = serde_json::json!(true);
     let response = router(handle.clone())
         .oneshot(
-            axum::http::Request::builder()
+            Request::builder()
                 .method("POST")
                 .uri("/native/v1/requests")
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(
-                    serde_json::to_vec(&payload).unwrap(),
-                ))
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     let error: Error = serde_json::from_slice(&body).unwrap();
     assert_eq!(error.code, ErrorCode::InvalidInput);
     assert_eq!(handle.inspect().await.unwrap().active_requests, 0);
@@ -150,11 +155,9 @@ async fn schema_rejection_has_structured_error_and_does_not_enter_runtime() {
 /// checks that the served text path uses the package's assets and reports its own work.
 #[tokio::test]
 async fn native_text_uses_package_assets_and_reports_its_work() {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
     let model = support::model(ModelId::ONE);
-    let assets =
-        std::sync::Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());
+    let assets = Arc::new(infer_models::TextAssets::open(root, model.max_sequence).unwrap());
     let mut kernels = KernelRegistry::default();
     kernels.register(&support::DeclaredKernels).unwrap();
     let handle = RuntimeHandle::start(
@@ -173,18 +176,16 @@ async fn native_text_uses_package_assets_and_reports_its_work() {
         "prompt":"hello world system assistant token8 token13",
         "workload":{"Generate":{"max_new_tokens":5}}});
     let post = |body: &serde_json::Value| {
-        axum::http::Request::builder()
+        Request::builder()
             .method("POST")
             .uri("/native/v1/text")
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(body).unwrap()))
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
             .unwrap()
     };
     let response = app.clone().oneshot(post(&payload)).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
     // The declared peak is token 3 and the budget is five tokens, so the sequence continues with
     // the fixture's own decoding of that token.
@@ -223,7 +224,7 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
     let response = app
         .clone()
         .oneshot(
-            axum::http::Request::builder()
+            Request::builder()
                 .method("POST")
                 .uri("/native/v1/requests")
                 .header("content-type", "application/json")
@@ -231,9 +232,7 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
                     "traceparent",
                     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 )
-                .body(axum::body::Body::from(
-                    serde_json::to_vec(&request(1, 3)).unwrap(),
-                ))
+                .body(Body::from(serde_json::to_vec(&request(1, 3)).unwrap()))
                 .unwrap(),
         )
         .await
@@ -247,18 +246,11 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
     ] {
         let response = app
             .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(path)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-            .await
-            .unwrap();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
         observations.insert(
             path,
             serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
@@ -285,9 +277,9 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
     assert_eq!(span["parentSpanId"], "00f067aa0ba902b7");
     let metrics = app
         .oneshot(
-            axum::http::Request::builder()
+            Request::builder()
                 .uri("/metrics")
-                .body(axum::body::Body::empty())
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -299,7 +291,7 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
             .starts_with("text/plain; version=0.0.4")
     );
     let metrics = String::from_utf8(
-        axum::body::to_bytes(metrics.into_body(), 1 << 20)
+        to_bytes(metrics.into_body(), 1 << 20)
             .await
             .unwrap()
             .to_vec(),
@@ -311,7 +303,7 @@ async fn metrics_history_and_trace_parent_are_available_after_result_consumption
 
 struct HeldBackend {
     inner: ProtocolBackend,
-    complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    complete: Arc<AtomicBool>,
 }
 impl BackendProvider for HeldBackend {
     type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
@@ -346,7 +338,7 @@ impl BackendProvider for HeldBackend {
         self.inner.submit(program, step, tasks)
     }
     fn poll(&mut self, ticket: &mut Self::Ticket) -> Result<Option<Vec<TaskOutput>>> {
-        if self.complete.load(std::sync::atomic::Ordering::Acquire) {
+        if self.complete.load(Ordering::Acquire) {
             self.inner.poll(ticket)
         } else {
             Ok(None)
@@ -356,7 +348,7 @@ impl BackendProvider for HeldBackend {
 #[tokio::test]
 async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_completion() {
     let ir = support::model(ModelId::ONE);
-    let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let complete = Arc::new(AtomicBool::new(false));
     let backend = HeldBackend {
         inner: ProtocolBackend::new(16, 8, &ir).unwrap(),
         complete: complete.clone(),
@@ -378,7 +370,7 @@ async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_c
     )
     .unwrap();
     let mut output = handle.submit(request(1, 3)).await.unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(2), output.recv())
+    let error = timeout(Duration::from_secs(2), output.recv())
         .await
         .unwrap()
         .unwrap()
@@ -401,17 +393,17 @@ async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_c
     );
     let health = router(handle.clone())
         .oneshot(
-            axum::http::Request::builder()
+            Request::builder()
                 .uri("/health")
-                .body(axum::body::Body::empty())
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::SERVICE_UNAVAILABLE);
     drop(output);
-    complete.store(true, std::sync::atomic::Ordering::Release);
-    tokio::time::timeout(Duration::from_secs(2), async {
+    complete.store(true, Ordering::Release);
+    timeout(Duration::from_secs(2), async {
         loop {
             let inspection = handle.inspect().await.unwrap();
             if !inspection.resource_release_pending {
@@ -420,7 +412,7 @@ async fn timed_out_actor_retains_device_ownership_and_serves_diagnostics_until_c
                 assert!(!inspection.ready);
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(2)).await;
+            sleep(Duration::from_millis(2)).await;
         }
     })
     .await
@@ -435,17 +427,15 @@ async fn invalid_observation_query_has_a_structured_error() {
     let handle = handle();
     let invalid = router(handle.clone())
         .oneshot(
-            axum::http::Request::builder()
+            Request::builder()
                 .uri("/native/v1/events?limit=invalid")
-                .body(axum::body::Body::empty())
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
-    let bytes = axum::body::to_bytes(invalid.into_body(), 1 << 20)
-        .await
-        .unwrap();
+    let bytes = to_bytes(invalid.into_body(), 1 << 20).await.unwrap();
     assert_eq!(
         serde_json::from_slice::<Error>(&bytes).unwrap().code,
         ErrorCode::InvalidInput

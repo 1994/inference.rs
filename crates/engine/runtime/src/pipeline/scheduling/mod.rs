@@ -1,5 +1,6 @@
 //! Schedule one batch: resource preparation → queue candidates → pure policy → validated commit.
 use crate::{Engine, EngineOutput};
+use infer_core::event::CpuStage;
 use infer_core::{
     Error, FinishReason, RequestStatus, Result, event::EventKind, event::ObjectKind,
     event::SemanticEvent,
@@ -7,6 +8,8 @@ use infer_core::{
 use infer_ir::{DeferReason, ReadyWork, ResourceSnapshot, SchedulingDecision};
 use infer_observe::DiagnosticCode;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
+use std::time::Instant;
 
 mod admission;
 mod evidence;
@@ -59,7 +62,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     ) -> Result<SchedulingDecision> {
         let decision_id = self.ids.allocate()?;
         let step_id = self.ids.allocate()?;
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let decision = self.policy.plan_into(
             infer_spi::PlanningContext {
                 ready,
@@ -72,12 +75,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             &mut self.planning_workspace,
             &mut self.host.decisions,
         )?;
-        self.cpu_stage(
-            infer_core::event::CpuStage::Planning,
-            decision_id.get(),
-            start,
-            ready.len(),
-        );
+        self.cpu_stage(CpuStage::Planning, decision_id.get(), start, ready.len());
         if decision.id != decision_id
             || decision
                 .step
@@ -227,7 +225,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         self.wake_memory_waiters()
     }
     pub(crate) fn wake_memory_waiters(&mut self) -> Result<()> {
-        let mut ids = std::mem::take(&mut self.host.wake_buffer);
+        let mut ids = take(&mut self.host.wake_buffer);
         let result = self
             .host
             .queues

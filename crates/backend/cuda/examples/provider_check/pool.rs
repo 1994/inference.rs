@@ -1,8 +1,10 @@
 use super::lifecycle;
 use infer_backend_cuda::executor::CudaBackend;
+use infer_backend_cuda::loading::LoadedModel;
 use infer_core::{Error, RequestId, Result, StateId};
 use infer_ir::{ExecutionInput, ExecutionProgram, ExecutionTask, OutputReadout, TokenBuffer};
 use infer_spi::BackendProvider;
+use std::env::args;
 use std::time::Instant;
 
 pub fn check(
@@ -120,8 +122,8 @@ fn verify(
     Ok(())
 }
 
-pub fn backend(loaded: infer_backend_cuda::loading::LoadedModel) -> Result<CudaBackend> {
-    let pressure = std::env::args().any(|arg| arg == "--pool-budget-pressure");
+pub fn backend(loaded: LoadedModel) -> Result<CudaBackend> {
+    let pressure = args().any(|arg| arg == "--pool-budget-pressure");
     CudaBackend::new(
         loaded,
         if pressure { 6 } else { 8 } * 1024 * 1024 * 1024,
@@ -135,7 +137,7 @@ fn long_capacity(
     prompt: &[u32],
     logits: &[f32],
 ) -> Result<serde_json::Value> {
-    if !std::env::args().any(|arg| arg == "--large-capacity") {
+    if !args().any(|arg| arg == "--large-capacity") {
         return Ok(serde_json::Value::Null);
     }
     backend.trim_state_pool()?;

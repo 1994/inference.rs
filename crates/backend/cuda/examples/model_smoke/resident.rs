@@ -4,11 +4,18 @@ use cutile::{
     half::bf16,
     prelude::{Arc, Tensor},
 };
-use infer_backend_cuda::resident::{DeviceProgram, FusionWeights, ProgramWeights};
+use infer_backend_cuda::loading::load_kv_scales;
+use infer_backend_cuda::resident::{
+    DeviceProgram, FusionWeights, ProgramWeights, PromptScratchRegistry,
+};
+use infer_backend_cuda::strategy::default_tiling;
+use infer_backend_cuda::tuning::projection_key;
+use infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession;
 use infer_core::{Error, Result};
 use infer_ir::TensorOp;
 use infer_models::TensorDtype;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 pub type Embeddings = BTreeMap<infer_core::TensorId, Arc<Tensor<bf16>>>;
 
@@ -24,11 +31,9 @@ pub fn prepare(
 ) -> Result<()> {
     let mut weights = ProgramWeights {
         mrope: false,
-        prompt_scratch: infer_backend_cuda::resident::PromptScratchRegistry::default(),
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
-        resident_tuning: Arc::new(
-            infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
-        ),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: model.verify_width,
         prefill_width: model.prefill_width,
@@ -37,7 +42,7 @@ pub fn prepare(
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion,
-        fp8_inputs: std::collections::BTreeSet::new(),
+        fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: model
             .projections
@@ -54,12 +59,8 @@ pub fn prepare(
         weights.kv_scales = kv_scales(model)?;
     }
     for (id, projection) in &weights.projections {
-        let (key, _, _) = infer_backend_cuda::tuning::projection_key(projection)?;
-        let tiling = model
-            .tuning
-            .get(&key)
-            .copied()
-            .unwrap_or(infer_backend_cuda::strategy::default_tiling()?);
+        let (key, _, _) = projection_key(projection)?;
+        let tiling = model.tuning.get(&key).copied().unwrap_or(default_tiling()?);
         weights.tiling.insert(*id, tiling);
     }
     for (id, data) in &model.constants {
@@ -125,5 +126,5 @@ pub fn prepare(
 }
 
 fn kv_scales(model: &mut Model) -> Result<BTreeMap<infer_core::TensorId, [f32; 2]>> {
-    infer_backend_cuda::loading::load_kv_scales(&mut model.package)
+    load_kv_scales(&mut model.package)
 }

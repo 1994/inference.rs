@@ -1,4 +1,6 @@
 use super::*;
+use std::fs::read;
+use std::path::Path;
 
 fn geometry(taps: Vec<usize>) -> DraftGeometry {
     DraftGeometry {
@@ -178,9 +180,9 @@ fn another_architecture_does_not_answer_an_explicit_dflash2_request() {
 }
 
 fn fixture() -> DFlash2Config {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples/qwen3.8-27b-dflash2/config.json");
-    DFlash2Config::parse(&std::fs::read(path).unwrap()).unwrap()
+    DFlash2Config::parse(&read(path).unwrap()).unwrap()
 }
 
 #[test]
@@ -257,18 +259,17 @@ fn a_causal_or_tied_draft_configuration_is_rejected() {
 
 #[test]
 fn a_configuration_for_another_architecture_does_not_parse() {
-    let bytes = std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../examples/qwen3.8-27b/config.json"),
+    let bytes = read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen3.8-27b/config.json"),
     )
     .unwrap();
     assert!(DFlash2Config::parse(&bytes).is_err());
 }
 
 fn golden() -> serde_json::Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples/qwen3.8-27b-dflash2/fusion-golden.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    serde_json::from_slice(&read(path).unwrap()).unwrap()
 }
 
 #[test]
@@ -280,8 +281,8 @@ fn the_fusion_golden_matches_the_registered_contract() {
     // The golden is only usable if it came from the same configuration the fixture registers.
     let digest = {
         use sha2::{Digest, Sha256};
-        let bytes = std::fs::read(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let bytes = read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../examples/qwen3.8-27b-dflash2/config.json"),
         )
         .unwrap();
@@ -328,9 +329,9 @@ fn the_fusion_projection_is_recorded_in_float32() {
 }
 
 fn selector_golden() -> serde_json::Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples/qwen3.8-27b-dflash2/selector-golden.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    serde_json::from_slice(&read(path).unwrap()).unwrap()
 }
 
 #[test]
@@ -385,9 +386,9 @@ fn the_conv_golden_matches_the_registered_contract() {
     let config = fixture();
     let geometry = config.geometry();
     let draft = &config.dflash_config;
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples/qwen3.8-27b-dflash2/conv-golden.json");
-    let golden: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let golden: serde_json::Value = serde_json::from_slice(&read(path).unwrap()).unwrap();
 
     // The convolution's own parameters come from the configuration, not from the exporter.
     assert_eq!(
@@ -495,9 +496,9 @@ fn a_draft_block_never_exceeds_its_window() {
 }
 
 fn target_config() -> serde_json::Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../examples/qwen3.8-27b/config.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen3.8-27b/config.json");
+    serde_json::from_slice(&read(path).unwrap()).unwrap()
 }
 
 #[test]

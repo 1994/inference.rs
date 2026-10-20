@@ -3,6 +3,7 @@ use super::{MetalBackend, RestoredBlock, SavedSequence};
 use infer_core::{Error, ErrorCode, Result, StateId, TensorId};
 use infer_ir::{StateKind, TensorSpec, TensorStorage};
 use infer_state::blocks::BlockLease;
+use std::iter::once;
 use std::{collections::BTreeMap, collections::BTreeSet};
 
 impl MetalBackend {
@@ -133,7 +134,7 @@ impl MetalBackend {
             self.sequences
                 .values()
                 .map(|s| s.blocks.as_slice())
-                .chain(std::iter::once(self.inflight_pins.as_slice())),
+                .chain(once(self.inflight_pins.as_slice())),
         )?;
         if states.len() != self.sequences.len()
             || states.iter().any(|(id, cap, pos)| {

@@ -153,6 +153,10 @@ mem_forget = "deny"
 multiple_unsafe_ops_per_block = "deny"
 unused_result_ok = "deny"
 get_unwrap = "deny"
+# Fully-qualified item paths are imports: keep one style across every crate. The threshold
+# (clippy.toml `absolute-paths-max-segments`) leaves `crate::Error`-style two-segment paths alone;
+# anything deeper must be brought into scope with `use`.
+absolute_paths = "deny"
 rc_mutex = "deny"
 too_many_lines = "deny"
 cognitive_complexity = "deny"

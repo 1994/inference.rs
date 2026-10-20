@@ -1,11 +1,13 @@
 use super::kernels;
 use crate::device::CudaDevice;
+use cutile::half::bf16;
 use cutile::prelude::*;
 use infer_ir::TensorOp;
+use std::error::Error;
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn routing_matches_independent_reference() -> Result<(), Box<dyn std::error::Error>> {
+fn routing_matches_independent_reference() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let mut cases = vec![
@@ -67,7 +69,7 @@ fn routing_matches_independent_reference() -> Result<(), Box<dyn std::error::Err
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn selected_dense_experts_match_reference() -> Result<(), Box<dyn std::error::Error>> {
+fn selected_dense_experts_match_reference() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let experts = 4;
@@ -78,11 +80,7 @@ fn selected_dense_experts_match_reference() -> Result<(), Box<dyn std::error::Er
         .map(|i| f32::from(u16::try_from(i % 17).unwrap()) / 16.0 - 0.5)
         .collect();
     let w = device.upload(
-        values
-            .iter()
-            .copied()
-            .map(cutile::half::bf16::from_f32)
-            .collect(),
+        values.iter().copied().map(bf16::from_f32).collect(),
         &[experts, rows, columns],
     )?;
     let routes = vec![3.0, 1.0, 0.7, 0.3];
@@ -151,7 +149,7 @@ struct Fp8Case {
 }
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn selected_fp8_experts_match_pytorch() -> Result<(), Box<dyn std::error::Error>> {
+fn selected_fp8_experts_match_pytorch() -> Result<(), Box<dyn Error>> {
     let golden: Fp8Golden = serde_json::from_str(include_str!(
         "../../../../../examples/moe-operators/golden.json"
     ))?;

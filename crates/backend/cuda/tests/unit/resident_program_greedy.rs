@@ -1,5 +1,10 @@
 use super::*;
+use crate::resident::BatchOutput;
+use crate::resident::PromptScratchRegistry;
+use crate::resident::batch::BatchReadout;
+use crate::strategy::default_tiling;
 use crate::test_support::fixture_graph;
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{mlp::ProjectionWeight, resident::FusionWeights};
 use cutile::half::bf16;
 use infer_core::TensorId;
@@ -16,9 +21,9 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .collect();
     Ok(ProgramWeights {
         mrope: false,
-        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
-        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
@@ -28,7 +33,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         tiling: BTreeMap::new(),
         fusion: Some(FusionWeights {
             projection: ProjectionWeight::Dense(device.upload(fusion_values, &[width, 2 * width])?),
-            tiling: crate::strategy::default_tiling()?,
+            tiling: default_tiling()?,
             norms: device.upload(vec![0.0; 2 * width], &[2, width])?,
             epsilon: 1e-6,
             offset: 1.0,
@@ -103,10 +108,7 @@ fn draft_device_hidden_reuse_matches_host_roundtrips_bitwise() -> Result<()> {
     Ok(())
 }
 
-fn assert_selected_rows(
-    expected: &[(Vec<f32>, Vec<f32>)],
-    actual: &crate::resident::batch::BatchReadout,
-) -> Result<()> {
+fn assert_selected_rows(expected: &[(Vec<f32>, Vec<f32>)], actual: &BatchReadout) -> Result<()> {
     assert_eq!(expected.len(), actual.rows.len());
     let tokens = actual
         .tokens
@@ -272,7 +274,7 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
     let expected = retained.prefill_batch(&prompt, 0, true)?;
     let mut actual = pooled.prefill_batch(&prompt[..32], 0, false)?;
     actual.extend(pooled.prefill_batch(&prompt[32..], 32, true)?);
-    let bits = |rows: &crate::resident::BatchOutput| {
+    let bits = |rows: &BatchOutput| {
         rows.iter()
             .map(|(h, l)| {
                 (

@@ -4,10 +4,13 @@
 //! through a single graph replay per step.
 use super::{
     batch::{BatchOutput, SlotDecodeGraph, SlotLane, States},
-    fp8_cache::Fp8Caches,
+    fp8_cache::{Fp8Caches, allocate},
     program::ProgramWeights,
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
+use crate::constants::F32_BYTES;
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::MAX_VERIFICATION_WIDTH;
 use crate::device::{CudaDevice, device_error};
 use cuda_core::{CudaContext, PinnedHostBuffer, f8e4m3fn};
 use cutile::prelude::*;
@@ -16,10 +19,13 @@ use infer_ir::{DataflowGraph, StateKind, TensorStorage};
 
 /// Pinned ring depth per external-hidden lane: one upload per draft or catch-up step,
 /// and a lane's chain between stream barriers never exceeds the maximum verify width.
-const EXTERNAL_UPLOAD_RING: usize = crate::constants::MAX_VERIFICATION_WIDTH + 1;
+const EXTERNAL_UPLOAD_RING: usize = MAX_VERIFICATION_WIDTH + 1;
 
 /// Per-lane external hidden rows and their pinned upload rings.
 type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
+
+/// One pool's per-slot recurrent states, KV caches and KV position tables.
+type SlotStorage = (Vec<States>, Vec<Fp8Caches>, Vec<Tensor<i32>>);
 
 /// How one state family moves into a slot at bind time: a token-row prefix of a
 /// capacity-sized KV cache (f32 or fp8), or the whole tensor (conv/delta state).
@@ -107,7 +113,7 @@ fn state_bytes(states: &States, fp8: &Fp8Caches) -> u64 {
         .values()
         .map(|(keys, values)| (keys.size() + values.size()) as u64)
         .sum();
-    float_elements.saturating_mul(crate::constants::F32_BYTES as u64) + packed_elements
+    float_elements.saturating_mul(F32_BYTES as u64) + packed_elements
 }
 
 /// Free-slot stack and the pool's lifetime lease counters.
@@ -207,7 +213,6 @@ impl SlotPool {
     /// or CUDA capture failures; the caller disables batching on any error.
     #[expect(
         clippy::too_many_arguments,
-        clippy::too_many_lines,
         reason = "Pool construction binds model, geometry, readout and KV paging explicitly"
     )]
     pub fn new(
@@ -222,7 +227,7 @@ impl SlotPool {
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
         let capacity = super::capacity::padded(capacity)?;
-        if !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&width)
+        if !(2..=MAX_VERIFICATION_WIDTH).contains(&width)
             || capacity == 0
             || hidden == 0
             || vocabulary == 0
@@ -237,40 +242,15 @@ impl SlotPool {
         let plan = copy_plan(graph, weights)?;
         let headroom = device.profile()?.device_headroom_bytes();
         let budget = device.memory_info()?.0.saturating_sub(headroom);
-        let mut states = Vec::with_capacity(width);
-        let mut fp8 = Vec::with_capacity(width);
-        let mut tables = Vec::with_capacity(width);
-        let mut bytes = 0_u64;
         let paging = Self::paging(device, graph, weights, (width, capacity), kv_tokens)?;
-        if let Some(paging) = &paging {
-            bytes = state_bytes(&States::new(), &paging.shared);
-        }
-        for _ in 0..width {
-            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
-            let slot_fp8 = match paging.as_ref() {
-                Some(paging) => paging.slot_caches()?,
-                None => super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?,
-            };
-            let slot_bytes = if paging.is_some() {
-                state_bytes(&slot_states, &Fp8Caches::new())
-            } else {
-                state_bytes(&slot_states, &slot_fp8)
-            };
-            bytes = bytes
-                .checked_add(slot_bytes)
-                .ok_or_else(|| Error::invalid("slot pool budget overflow"))?;
-            if bytes > budget {
-                return Err(Error::new(
-                    infer_core::ErrorCode::Capacity,
-                    "slot decode pool exceeds available device memory minus headroom",
-                ));
-            }
-            states.push(slot_states);
-            fp8.push(slot_fp8);
-            // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
-            // A paged pool fills the table from its shared blocks when the slot is assigned.
-            tables.push(super::metadata::identity_table(device, capacity)?);
-        }
+        let (mut states, mut fp8, tables) = Self::allocate_slots(
+            device,
+            graph,
+            weights,
+            (width, capacity),
+            paging.as_ref(),
+            budget,
+        )?;
         let external = api::zeros::<f32>(&[hidden])
             .sync_on(&device.stream)
             .map_err(device_error)?;
@@ -334,6 +314,48 @@ impl SlotPool {
             pinned_cursor: vec![0; lanes],
             _lane_fusion: lane_fusion,
         })
+    }
+
+    /// Allocate each slot's recurrent states and KV cache, checking the running total against
+    /// the device budget before the pool captures any graph.
+    fn allocate_slots(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        (width, capacity): (usize, usize),
+        paging: Option<&Paging>,
+        budget: u64,
+    ) -> Result<SlotStorage> {
+        let mut states = Vec::with_capacity(width);
+        let mut fp8 = Vec::with_capacity(width);
+        let mut tables = Vec::with_capacity(width);
+        let mut bytes = paging.map_or(0, |paging| state_bytes(&States::new(), &paging.shared));
+        for _ in 0..width {
+            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
+            let slot_fp8 = match paging {
+                Some(paging) => paging.slot_caches()?,
+                None => allocate(device, graph, capacity, &weights.kv_scales)?,
+            };
+            let slot_bytes = paging.map_or_else(
+                || state_bytes(&slot_states, &slot_fp8),
+                |_| state_bytes(&slot_states, &Fp8Caches::new()),
+            );
+            bytes = bytes
+                .checked_add(slot_bytes)
+                .ok_or_else(|| Error::invalid("slot pool budget overflow"))?;
+            if bytes > budget {
+                return Err(Error::new(
+                    infer_core::ErrorCode::Capacity,
+                    "slot decode pool exceeds available device memory minus headroom",
+                ));
+            }
+            states.push(slot_states);
+            fp8.push(slot_fp8);
+            // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
+            // A paged pool fills the table from its shared blocks when the slot is assigned.
+            tables.push(super::metadata::identity_table(device, capacity)?);
+        }
+        Ok((states, fp8, tables))
     }
 
     /// Per-lane external hidden rows plus, for an external-hidden pool, their pinned
@@ -537,7 +559,7 @@ impl SlotPool {
         let Some(paging) = self.paging.as_mut() else {
             return Ok(true);
         };
-        let blocks = tokens.div_ceil(crate::constants::KV_BLOCK_TOKENS).max(1);
+        let blocks = tokens.div_ceil(KV_BLOCK_TOKENS).max(1);
         let owned = paging
             .owned
             .get_mut(slot)
@@ -588,9 +610,9 @@ impl SlotPool {
         let Some(tokens) = kv_tokens.filter(|_| !weights.kv_scales.is_empty()) else {
             return Ok(None);
         };
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         let blocks = tokens.div_ceil(block).max(capacity.div_ceil(block));
-        let shared = super::fp8_cache::allocate(device, graph, blocks * block, &weights.kv_scales)?;
+        let shared = allocate(device, graph, blocks * block, &weights.kv_scales)?;
         let free = (0..i32::try_from(blocks).map_err(device_error)?)
             .rev()
             .collect();
@@ -630,7 +652,7 @@ impl SlotPool {
         // Step 1 of the KV refactor: the kernels resolve KV positions through this table, so it
         // must cover the slot's whole capacity. Step 2 replaces the identity contents with the
         // allocator's blocks and rewrites them here on every bind.
-        let blocks = i32::try_from(self.capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS))
+        let blocks = i32::try_from(self.capacity.div_ceil(KV_BLOCK_TOKENS))
             .map_err(|_| Error::invalid("slot block count"))?;
         if self
             .tables
@@ -803,7 +825,7 @@ impl SlotPool {
         let (dst_keys, dst_values) = dst
             .get_mut(&id)
             .ok_or_else(|| Error::invariant("slot bind target fp8 cache"))?;
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         if rows.div_ceil(block) > blocks.len() {
             return Err(Error::invariant("slot bind beyond assigned blocks"));
         }

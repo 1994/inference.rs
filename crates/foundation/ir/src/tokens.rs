@@ -1,14 +1,16 @@
 //! Shared CPU token ownership and incremental phase inputs. Cloning never copies token payload.
+use infer_core::credits::CreditLease;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::slice::from_ref;
 use std::{borrow::Cow, ops::Deref, ops::Range, sync::Arc};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TokenBuffer(
     Arc<Vec<u32>>,
-    #[serde(skip)] Option<infer_core::credits::CreditLease>,
-    #[serde(skip)] Option<infer_core::credits::CreditLease>,
+    #[serde(skip)] Option<CreditLease>,
+    #[serde(skip)] Option<CreditLease>,
 );
 impl From<Vec<u32>> for TokenBuffer {
     fn from(tokens: Vec<u32>) -> Self {
@@ -27,10 +29,10 @@ impl Deref for TokenBuffer {
     }
 }
 impl TokenBuffer {
-    pub fn attach_byte_credit(&mut self, credit: infer_core::credits::CreditLease) {
+    pub fn attach_byte_credit(&mut self, credit: CreditLease) {
         self.2 = Some(credit);
     }
-    pub fn attach_credit(&mut self, credit: infer_core::credits::CreditLease) {
+    pub fn attach_credit(&mut self, credit: CreditLease) {
         self.1 = Some(credit);
     }
     /// Allocate bounded mutable generation storage on a preparation worker.
@@ -172,9 +174,7 @@ impl ExecutionInput {
                 .get(committed..)
                 .ok_or_else(|| Error::invalid("token cursor exceeds input")),
             Self::Prefill { span, .. } if span.range.start == committed => Ok(span),
-            Self::Decode { position, token } if *position == committed => {
-                Ok(std::slice::from_ref(token))
-            }
+            Self::Decode { position, token } if *position == committed => Ok(from_ref(token)),
             _ => Err(Error::invalid("incremental token cursor mismatch")),
         }
     }

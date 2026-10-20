@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::mpsc::channel;
 #[test]
 fn cpulists_are_bounded_sorted_and_reject_malformed_ranges() -> Result<()> {
     assert_eq!(parse_cpu_list("3,0-2,2,7")?, [0, 1, 2, 3, 7]);
@@ -12,7 +13,7 @@ fn unconfigured_scope_and_owner_complete_without_changing_affinity() -> Result<(
     let policy = ThreadPlacement::default();
     let before = policy.report()?;
     assert_eq!(policy.scope(|| policy.report())?, before);
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = channel();
     let thread = policy.spawn("infer-placement-test".into(), move |report| {
         let _ = tx.send(report);
     })?;
@@ -33,7 +34,7 @@ fn macos_owner_applies_qos_and_rejects_hard_binding_before_startup() -> Result<(
         qos: ThreadQos::UserInitiated,
         ..ThreadPlacement::default()
     };
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = channel();
     let thread = policy.spawn("infer-qos-test".into(), move |report| {
         let _ = tx.send(report);
     })?;

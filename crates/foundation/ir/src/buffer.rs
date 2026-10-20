@@ -1,6 +1,7 @@
 //! Shared result payloads keep host credits until the last consumer releases the storage.
 use infer_core::{Error, ErrorCode, Result, credits::CreditLease};
 use serde::{Deserialize, Serialize};
+use std::slice::Iter;
 use std::{ops::Deref, sync::Arc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +60,7 @@ impl<T> SharedOutput<T> {
 
 impl<'a, T> IntoIterator for &'a SharedOutput<T> {
     type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+    type IntoIter = Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }

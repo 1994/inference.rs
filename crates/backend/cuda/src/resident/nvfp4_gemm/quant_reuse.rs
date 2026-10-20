@@ -3,6 +3,8 @@ use super::super::{ProgramWeights, program::ActivationQuantization};
 use crate::mlp::ProjectionWeight;
 use infer_core::TensorId;
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,11 +331,11 @@ const fn enabled() -> bool {
 }
 #[cfg(test)]
 thread_local! {
-    static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static ENABLED: Cell<bool> = const { Cell::new(true) };
 }
 #[cfg(test)]
 fn enabled() -> bool {
-    ENABLED.with(std::cell::Cell::get)
+    ENABLED.with(Cell::get)
 }
 /// Applies only to workspaces constructed on this thread; unwinding restores the preference.
 #[cfg(test)]

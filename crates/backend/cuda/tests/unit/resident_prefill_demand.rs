@@ -1,6 +1,7 @@
 use super::*;
 use infer_core::{OpId, Result, TensorId};
 use infer_ir::{TensorNode, TensorOp};
+use std::panic::catch_unwind;
 
 fn node(id: u64, inputs: &[u64], outputs: &[u64], state: bool) -> Result<TensorNode> {
     Ok(TensorNode {
@@ -82,7 +83,7 @@ fn internal_control_is_scoped_and_restored_after_unwinding() {
         assert!(enabled());
         with_state_prefill(false, || assert!(!enabled()));
         assert!(enabled());
-        let result = std::panic::catch_unwind(|| with_state_prefill(false, || panic!("restore")));
+        let result = catch_unwind(|| with_state_prefill(false, || panic!("restore")));
         assert!(result.is_err());
         assert!(enabled());
     });

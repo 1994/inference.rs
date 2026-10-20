@@ -3,6 +3,12 @@ use super::{
     Choice, Shape,
     reference::{Fixture, KEY_SCALE, VALUE_SCALE},
 };
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::METADATA_FIELDS;
+use crate::resident::attention_mma::Arithmetic;
+use crate::resident::attention_mma::Support;
+use crate::resident::attention_oxide::Support as AttentionOxideSupport;
+use crate::resident::attention_oxide::artifact_identity;
 use crate::{
     device::{CudaDevice, device_error},
     resident::attention_prefill::kernels,
@@ -10,6 +16,8 @@ use crate::{
 use cuda_core::f8e4m3fn;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use std::env::var_os;
+use std::result::Result as StdResult;
 struct Operands {
     query: Arc<Tensor<f32>>,
     append_keys: Arc<Tensor<f32>>,
@@ -34,7 +42,7 @@ impl Operands {
             query: device.upload(f.query.clone(), &[s.lanes, s.heads * s.dim])?,
             append_keys: device.upload(f.append_keys.clone(), &[s.lanes, s.kv_heads, s.dim])?,
             append_values: device.upload(f.append_values.clone(), &[s.lanes, s.kv_heads, s.dim])?,
-            metadata: device.upload(f.metadata.clone(), &[crate::constants::METADATA_FIELDS])?,
+            metadata: device.upload(f.metadata.clone(), &[METADATA_FIELDS])?,
             table: device.upload(f.table.clone(), &[f.table.len()])?,
             keys: api::copy_host_vec_to_device(&Arc::new(f.keys.clone()))
                 .sync_on(&device.stream)
@@ -53,7 +61,7 @@ impl Operands {
     }
     fn meta(device: &CudaDevice, s: Shape, choice: Choice) -> Result<Self> {
         let capacity = s.lanes * 2;
-        let blocks = capacity / crate::constants::KV_BLOCK_TOKENS;
+        let blocks = capacity / KV_BLOCK_TOKENS;
         Ok(Self {
             query: Arc::new(
                 api::meta::<f32>(&[s.lanes, s.heads * s.dim])
@@ -71,7 +79,7 @@ impl Operands {
                     .map_err(device_error)?,
             ),
             metadata: Arc::new(
-                api::meta::<i32>(&[crate::constants::METADATA_FIELDS])
+                api::meta::<i32>(&[METADATA_FIELDS])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
@@ -97,7 +105,7 @@ impl Operands {
             s.dim.to_string(),
             capacity.to_string(),
             "1".into(),
-            crate::constants::KV_BLOCK_TOKENS.to_string(),
+            KV_BLOCK_TOKENS.to_string(),
         ]
     }
     fn compute_generics(s: Shape, choice: Choice) -> Vec<String> {
@@ -109,15 +117,12 @@ impl Operands {
         if let Some(q) = choice.query_tile() {
             g.extend([
                 q.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
                 "1".into(),
             ]);
         } else {
-            g.extend([
-                s.heads.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
-            ]);
+            g.extend([s.heads.to_string(), KV_BLOCK_TOKENS.to_string()]);
         }
         g
     }
@@ -126,9 +131,9 @@ impl Operands {
         scope: &Scope,
         f: &Fixture,
         choice: Choice,
-        oxide: Option<&crate::resident::attention_oxide::Support>,
-        mma: Option<&mut crate::resident::attention_mma::Support>,
-    ) -> std::result::Result<(), DeviceError> {
+        oxide: Option<&AttentionOxideSupport>,
+        mma: Option<&mut Support>,
+    ) -> StdResult<(), DeviceError> {
         let s = f.shape;
         scope.record(
             kernels::append(
@@ -286,19 +291,19 @@ impl Operands {
 pub(super) struct Captured {
     pub graph: CudaGraph<()>,
     operands: Operands,
-    _oxide: Option<crate::resident::attention_oxide::Support>,
-    _mma: Option<crate::resident::attention_mma::Support>,
+    _oxide: Option<AttentionOxideSupport>,
+    _mma: Option<Support>,
 }
 impl Captured {
     pub fn new(device: &CudaDevice, fixture: &Fixture, choice: Choice) -> Result<Self> {
         let oxide = if choice == Choice::SharedKv {
-            crate::resident::attention_oxide::Support::load_shared(device)?
+            AttentionOxideSupport::load_shared(device)?
         } else if choice == Choice::VectorSharedKv {
-            crate::resident::attention_oxide::Support::load_vector(device)?
+            AttentionOxideSupport::load_vector(device)?
         } else if choice == Choice::VectorSharedKvCombined {
-            crate::resident::attention_oxide::Support::load_combined(device)?
+            AttentionOxideSupport::load_combined(device)?
         } else if choice == Choice::RustSimt {
-            crate::resident::attention_oxide::Support::load(device)?
+            AttentionOxideSupport::load(device)?
         } else {
             None
         };
@@ -308,14 +313,14 @@ impl Captured {
         device: &CudaDevice,
         fixture: &Fixture,
         choice: Choice,
-        oxide: Option<crate::resident::attention_oxide::Support>,
+        oxide: Option<AttentionOxideSupport>,
     ) -> Result<Self> {
         let mut mma = if let Choice::Mma { variant } = choice {
-            let mut support = crate::resident::attention_mma::Support::load(
+            let mut support = Support::load(
                 device,
                 fixture.capacity,
                 fixture.shape.lanes,
-                crate::resident::attention_mma::Arithmetic::Bf16,
+                Arithmetic::Bf16,
             )?;
             support.prepare_variant(device, variant)?;
             Some(support)
@@ -338,7 +343,7 @@ impl Captured {
     pub fn candidate(
         device: &CudaDevice,
         fixture: &Fixture,
-        support: crate::resident::attention_oxide::Support,
+        support: AttentionOxideSupport,
     ) -> Result<Self> {
         Self::new_with_support(device, fixture, Choice::RustSimt, Some(support))
     }
@@ -347,7 +352,7 @@ impl Captured {
         &mut self,
         device: &CudaDevice,
         f: &Fixture,
-        support: &crate::resident::attention_oxide::Support,
+        support: &AttentionOxideSupport,
     ) -> Result<CudaGraph<()>> {
         CudaGraph::scope(&device.stream, |scope| {
             self.operands
@@ -479,8 +484,8 @@ pub(super) fn fingerprint(device: &CudaDevice, shape: Shape) -> Result<String> {
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         CompileOptions::default(),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS")
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS")
     );
     let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     let key = (shape, context.clone());
@@ -530,9 +535,9 @@ pub(super) fn native_fingerprint(device: &CudaDevice, shape: Shape) -> Result<St
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         format!("{:?}", CompileOptions::default()),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
-        crate::resident::attention_oxide::artifact_identity(),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        artifact_identity(),
     ))
     .map_err(device_error)?;
     let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
@@ -555,9 +560,9 @@ pub(super) fn native_fingerprint(device: &CudaDevice, shape: Shape) -> Result<St
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         format!("{:?}", CompileOptions::default()),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
-        crate::resident::attention_oxide::artifact_identity(),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        artifact_identity(),
     ))
     .map_err(device_error)?;
     let identity = format!("{:x}", Sha256::digest(payload));

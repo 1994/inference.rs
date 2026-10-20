@@ -8,6 +8,7 @@ mod stream;
 mod tests;
 
 use super::text::TextState;
+use axum::extract::rejection::JsonRejection;
 use axum::{
     Json, Router,
     extract::State,
@@ -21,7 +22,7 @@ use request::{GenerationRequest, ToolPolicy};
 use serde_json::{Value, json};
 
 type ApiResult<T> = Result<T, ApiError>;
-type Payload = Result<Json<GenerationRequest>, axum::extract::rejection::JsonRejection>;
+type Payload = Result<Json<GenerationRequest>, JsonRejection>;
 
 pub(super) fn routes() -> Router<TextState> {
     Router::new()

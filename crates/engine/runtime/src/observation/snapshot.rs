@@ -1,6 +1,10 @@
 //! Immutable observation ownership handed to exporters outside the engine owner.
 use crate::EngineFault;
 use infer_core::Result;
+use infer_observe::export::prometheus_retention;
+use infer_observe::trace::coverage;
+use infer_observe::trace::otlp;
+use infer_observe::trace::timeline;
 use infer_observe::{
     ObservationQuery, ObservationWindow, RuntimeMetrics, export::ResourceGauges,
     trace::TraceContext,
@@ -52,10 +56,10 @@ impl ObservationSnapshot {
                 "session":format!("{:016x}",self.namespace),
                 "retained_events":window.retained(),"history_evicted":window.history_evicted,
                 "diagnostics_evicted":window.diagnostics_evicted,"clock":"runtime_logical",
-                "trace_coverage":infer_observe::trace::coverage(&window.timeline()),
+                "trace_coverage":coverage(&window.timeline()),
                 "unix_origin_us":self.unix_origin_us, "collector_metadata_dropped": collected.dropped_metadata,
             }),
-            ObservationQuery::Metrics => json!(infer_observe::export::prometheus_retention(
+            ObservationQuery::Metrics => json!(prometheus_retention(
                 &self.metrics,
                 &self.resources,
                 window.history_evicted,
@@ -72,12 +76,12 @@ impl ObservationSnapshot {
                 json!(events)
             }
             ObservationQuery::Diagnostics => json!(window.diagnostics()),
-            ObservationQuery::Timeline => infer_observe::trace::timeline(
+            ObservationQuery::Timeline => timeline(
                 &window.timeline(),
                 self.resources.event_ring_dropped,
                 window.history_evicted,
             ),
-            ObservationQuery::Otlp => infer_observe::trace::otlp(
+            ObservationQuery::Otlp => otlp(
                 &window.timeline(),
                 &parents,
                 self.namespace,

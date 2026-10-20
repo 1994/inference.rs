@@ -1,4 +1,12 @@
 use infer_core::{Error, ErrorCode, ModelId, Result};
+use std::env::temp_dir;
+use std::error::Error as StdError;
+use std::fs::copy;
+use std::fs::create_dir_all;
+use std::fs::remove_dir_all;
+use std::fs::write;
+use std::process::id;
+use std::result::Result as StdResult;
 use std::{cell::Cell, path::Path, rc::Rc};
 
 use infer_models::*;
@@ -145,12 +153,12 @@ fn changed_binding_metadata_is_rejected_before_target_allocation() -> Result<()>
     Ok(())
 }
 
-fn mixed_package() -> std::result::Result<ModelPackage, Box<dyn std::error::Error>> {
+fn mixed_package() -> StdResult<ModelPackage, Box<dyn StdError>> {
     use std::collections::BTreeMap;
-    let root = std::env::temp_dir().join(format!("infer-mixed-loader-{}", std::process::id()));
-    std::fs::create_dir_all(&root)?;
+    let root = temp_dir().join(format!("infer-mixed-loader-{}", id()));
+    create_dir_all(&root)?;
     let original = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
-    std::fs::copy(original.join("config.json"), root.join("config.json"))?;
+    copy(original.join("config.json"), root.join("config.json"))?;
     let mut file = SafetensorsFile::open(original.join("model.safetensors"))?;
     let mut headers = BTreeMap::new();
     let mut payload = Vec::new();
@@ -177,12 +185,11 @@ fn mixed_package() -> std::result::Result<ModelPackage, Box<dyn std::error::Erro
     let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
     bytes.extend(header);
     bytes.extend(payload);
-    std::fs::write(root.join("model.safetensors"), bytes)?;
+    write(root.join("model.safetensors"), bytes)?;
     Ok(ModelPackage::open(root, ModelId::ONE)?)
 }
 #[test]
-fn f32_upload_conversion_accounts_for_both_live_chunks()
--> std::result::Result<(), Box<dyn std::error::Error>> {
+fn f32_upload_conversion_accounts_for_both_live_chunks() -> StdResult<(), Box<dyn StdError>> {
     let mut p = mixed_package()?;
     let expected = p.load_host_weights(1 << 20)?;
     let options = LoadOptions {
@@ -216,7 +223,7 @@ fn f32_upload_conversion_accounts_for_both_live_chunks()
             .collect();
         assert_eq!(tensor.data, expected);
     }
-    std::fs::remove_dir_all(p.root)?;
+    remove_dir_all(p.root)?;
     Ok(())
 }
 

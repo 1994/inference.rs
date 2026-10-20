@@ -11,6 +11,9 @@ mod tests;
 mod topology;
 use crate::{Error, ErrorCode, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::mpsc::sync_channel;
+use std::thread::Builder;
+use std::thread::JoinHandle;
 pub use topology::{CpuTopology, PlacementPair, parse_cpu_list};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,10 +71,10 @@ impl ThreadPlacement {
         &self,
         name: String,
         run: impl FnOnce(PlacementReport) + Send + 'static,
-    ) -> Result<std::thread::JoinHandle<()>> {
+    ) -> Result<JoinHandle<()>> {
         let placement = self.clone();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let handle = std::thread::Builder::new()
+        let (sender, receiver) = sync_channel(1);
+        let handle = Builder::new()
             .name(name)
             .spawn(move || {
                 let result = placement.enter_owner();

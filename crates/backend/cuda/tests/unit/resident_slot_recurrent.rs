@@ -1,9 +1,10 @@
 use super::fused;
+use crate::constants::CONV_KERNEL_TILE;
+use std::error::Error;
 
 // Tile IR is only specialized at launch; compile the snapshot-free kernels on header-only CI.
 #[test]
-fn snapshot_free_recurrent_kernels_compile_without_a_device()
--> Result<(), Box<dyn std::error::Error>> {
+fn snapshot_free_recurrent_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
     use cutile::cutile_compiler::compile_api::KernelCompiler;
     let lanes = |names: &[&'static str]| -> Vec<(&'static str, &'static [i32])> {
         names.iter().map(|&name| (name, &[1][..])).collect()
@@ -33,13 +34,17 @@ fn snapshot_free_recurrent_kernels_compile_without_a_device()
     ]);
     let mut commit = lanes(&rows);
     commit.push(("state", &[16384, 128, 1][..]));
-    let generics = || vec!["16".into(), "48".into(), "128".into(), "32".into()];
-    for (entry, strides) in [("delta_verify3", &verify), ("delta_commit3", &commit)] {
-        KernelCompiler::new(fused::__module_ast_self, "fused", entry)
-            .target("sm_120")
-            .generics(generics())
-            .strides(strides)
-            .compile()?;
+    for generics in [
+        vec!["16".into(), "48".into(), "128".into(), "32".into()],
+        vec!["2".into(), "4".into(), "32".into(), "32".into()],
+    ] {
+        for (entry, strides) in [("delta_verify3", &verify), ("delta_commit3", &commit)] {
+            KernelCompiler::new(fused::__module_ast_self, "fused", entry)
+                .target("sm_120")
+                .generics(generics.clone())
+                .strides(strides)
+                .compile()?;
+        }
     }
     let mut conv_verify = lanes(&[
         "out0",
@@ -82,7 +87,7 @@ fn snapshot_free_recurrent_kernels_compile_without_a_device()
 use crate::{device::CudaDevice, resident::recurrent::recurrent};
 use cutile::prelude::*;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult = Result<(), Box<dyn Error>>;
 
 fn upload(
     device: &CudaDevice,
@@ -111,17 +116,102 @@ fn assert_close(label: &str, actual: &[f32], expected: &[f32]) {
 
 const PATTERNS: [[i32; 3]; 3] = [[4, 5, 6], [9, 10, -1], [-1, -1, -1]];
 
+type Reference<S> = (Vec<Vec<f32>>, S);
+
+fn conv_reference(
+    device: &CudaDevice,
+    inputs: &[Tensor<f32>],
+    w: &Tensor<f32>,
+    metadata: &[Arc<Tensor<i32>>],
+    count: usize,
+    channels: usize,
+) -> Result<Reference<Vec<Vec<f32>>>, Box<dyn Error>> {
+    let tile = CONV_KERNEL_TILE;
+    // Reference: conv4 lane after lane, keeping the state after `count` active lanes.
+    let mut state = (0..3)
+        .map(|h| upload(device, values(channels, h + 3), &[channels]))
+        .collect::<infer_core::Result<Vec<_>>>()?;
+    let mut expected_out = Vec::new();
+    let mut expected_state = None;
+    for lane in 0..3 {
+        let mut out = upload(device, vec![0.0; channels], &[channels])?;
+        let [h0, h1, h2] = state.as_mut_slice() else {
+            unreachable!()
+        };
+        recurrent::conv4(
+            (&mut out).partition([tile]),
+            h0.partition([tile]),
+            h1.partition([tile]),
+            h2.partition([tile]),
+            &inputs[lane],
+            w,
+            &metadata[lane],
+        )
+        .sync_on(&device.stream)?;
+        expected_out.push(device.read_borrowed(&out)?);
+        if lane + 1 == count {
+            expected_state = Some(
+                state
+                    .iter()
+                    .map(|h| device.read_borrowed(h))
+                    .collect::<infer_core::Result<Vec<_>>>()?,
+            );
+        }
+    }
+    Ok((expected_out, expected_state.ok_or("conv reference state")?))
+}
+
+type DeltaLane = (Tensor<f32>, Tensor<f32>, Tensor<f32>);
+
+fn delta_reference(
+    device: &CudaDevice,
+    lanes: &[DeltaLane],
+    a_log: &Tensor<f32>,
+    bias: &Tensor<f32>,
+    metadata: &[Arc<Tensor<i32>>],
+    count: usize,
+    shape: [usize; 3],
+) -> Result<Reference<Vec<f32>>, Box<dyn Error>> {
+    let [key_heads, value_heads, dim] = shape;
+    let state_len = value_heads * dim * dim;
+    let generics = vec![
+        key_heads.to_string(),
+        value_heads.to_string(),
+        dim.to_string(),
+        dim.to_string(),
+    ];
+    let mut state = upload(device, values(state_len, 23), &[value_heads, dim, dim])?;
+    let mut expected_out = Vec::new();
+    let mut expected_state = None;
+    for (lane, (qkv, beta, alpha)) in lanes.iter().enumerate() {
+        let mut out = upload(device, vec![0.0; value_heads * dim], &[value_heads, 1, dim])?;
+        recurrent::delta(
+            (&mut out).partition([1, 1, dim]),
+            (&mut state).partition([1, dim, dim]),
+            qkv,
+            beta,
+            alpha,
+            a_log,
+            bias,
+            &metadata[lane],
+        )
+        .generics(generics.clone())
+        .sync_on(&device.stream)?;
+        expected_out.push(device.read_borrowed(&out)?);
+        if lane + 1 == count {
+            expected_state = Some(device.read_borrowed(&state)?);
+        }
+    }
+    Ok((expected_out, expected_state.ok_or("delta reference state")?))
+}
+
 #[test]
 #[ignore = "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Reference and fused launches bind every lane explicitly"
-)]
 fn conv_verify_and_commit_match_sequential_lanes() -> TestResult {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let channels = 256;
-    let tile = crate::constants::CONV_KERNEL_TILE;
+    let tile = CONV_KERNEL_TILE;
     let w = upload(&device, values(channels * 4, 5), &[channels, 4])?;
     let inputs = (0..3)
         .map(|lane| upload(&device, values(channels, lane + 11), &[channels]))
@@ -132,37 +222,8 @@ fn conv_verify_and_commit_match_sequential_lanes() -> TestResult {
             .map(|&p| device.upload(vec![p, 0, p, 0], &[4]))
             .collect::<infer_core::Result<Vec<_>>>()?;
         for count in 1..=3usize {
-            // Reference: conv4 lane after lane, keeping the state after `count` active lanes.
-            let mut state = (0..3)
-                .map(|h| upload(&device, values(channels, h + 3), &[channels]))
-                .collect::<infer_core::Result<Vec<_>>>()?;
-            let mut expected_out = Vec::new();
-            let mut expected_state = None;
-            for lane in 0..3 {
-                let mut out = upload(&device, vec![0.0; channels], &[channels])?;
-                let [h0, h1, h2] = state.as_mut_slice() else {
-                    unreachable!()
-                };
-                recurrent::conv4(
-                    (&mut out).partition([tile]),
-                    h0.partition([tile]),
-                    h1.partition([tile]),
-                    h2.partition([tile]),
-                    &inputs[lane],
-                    &w,
-                    &metadata[lane],
-                )
-                .sync_on(&device.stream)?;
-                expected_out.push(device.read_borrowed(&out)?);
-                if lane + 1 == count {
-                    expected_state = Some(
-                        state
-                            .iter()
-                            .map(|h| device.read_borrowed(h))
-                            .collect::<infer_core::Result<Vec<_>>>()?,
-                    );
-                }
-            }
+            let (expected_out, expected_state) =
+                conv_reference(&device, &inputs, &w, &metadata, count, channels)?;
             let mut fused_state = (0..3)
                 .map(|h| upload(&device, values(channels, h + 3), &[channels]))
                 .collect::<infer_core::Result<Vec<_>>>()?;
@@ -218,7 +279,6 @@ fn conv_verify_and_commit_match_sequential_lanes() -> TestResult {
                 )
                 .sync_on(&device.stream)?;
             }
-            let expected_state = expected_state.ok_or("conv reference state")?;
             for (h, expected) in fused_state.iter().zip(&expected_state) {
                 assert_close(
                     &format!("{positions:?} count {count} conv state"),
@@ -231,12 +291,83 @@ fn conv_verify_and_commit_match_sequential_lanes() -> TestResult {
     Ok(())
 }
 
+struct DeltaFixture {
+    lanes: Vec<DeltaLane>,
+    a_log: Tensor<f32>,
+    bias: Tensor<f32>,
+    dim: usize,
+    generics: Vec<String>,
+}
+
+impl DeltaFixture {
+    fn verify(
+        &self,
+        device: &CudaDevice,
+        state: &Tensor<f32>,
+        outs: &mut [Tensor<f32>],
+        metadata: &[Arc<Tensor<i32>>],
+    ) -> TestResult {
+        let dim = self.dim;
+        let [o0, o1, o2] = outs else { unreachable!() };
+        fused::delta_verify3(
+            o0.partition([1, 1, dim]),
+            o1.partition([1, 1, dim]),
+            o2.partition([1, 1, dim]),
+            state,
+            &self.lanes[0].0,
+            &self.lanes[1].0,
+            &self.lanes[2].0,
+            &self.lanes[0].1,
+            &self.lanes[1].1,
+            &self.lanes[2].1,
+            &self.lanes[0].2,
+            &self.lanes[1].2,
+            &self.lanes[2].2,
+            &self.a_log,
+            &self.bias,
+            &metadata[0],
+            &metadata[1],
+            &metadata[2],
+        )
+        .generics(self.generics.clone())
+        .sync_on(&device.stream)?;
+        Ok(())
+    }
+
+    fn commit(
+        &self,
+        device: &CudaDevice,
+        state: &mut Tensor<f32>,
+        metadata: &[Arc<Tensor<i32>>],
+        count: usize,
+    ) -> TestResult {
+        let dim = self.dim;
+        fused::delta_commit3(
+            state.partition([1, dim, dim]),
+            &self.lanes[0].0,
+            &self.lanes[1].0,
+            &self.lanes[2].0,
+            &self.lanes[0].1,
+            &self.lanes[1].1,
+            &self.lanes[2].1,
+            &self.lanes[0].2,
+            &self.lanes[1].2,
+            &self.lanes[2].2,
+            &self.a_log,
+            &self.bias,
+            &metadata[0],
+            &metadata[1],
+            &metadata[2],
+            i32::try_from(count)?,
+        )
+        .generics(self.generics.clone())
+        .sync_on(&device.stream)?;
+        Ok(())
+    }
+}
+
 #[test]
 #[ignore = "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Reference and fused launches bind every lane explicitly"
-)]
 fn delta_verify_and_commit_match_sequential_lanes() -> TestResult {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
@@ -260,38 +391,28 @@ fn delta_verify_and_commit_match_sequential_lanes() -> TestResult {
         .collect::<infer_core::Result<Vec<_>>>()?;
     let a_log = upload(&device, values(value_heads, 3), &[value_heads])?;
     let bias = upload(&device, values(value_heads, 5), &[value_heads])?;
+    let fixture = DeltaFixture {
+        lanes,
+        a_log,
+        bias,
+        dim,
+        generics,
+    };
     for positions in PATTERNS {
         let metadata = positions
             .iter()
             .map(|&p| device.upload(vec![p, 0, p, 0], &[4]))
             .collect::<infer_core::Result<Vec<_>>>()?;
         for count in 1..=3usize {
-            let mut state = upload(&device, values(state_len, 23), &[value_heads, dim, dim])?;
-            let mut expected_out = Vec::new();
-            let mut expected_state = None;
-            for (lane, (qkv, beta, alpha)) in lanes.iter().enumerate() {
-                let mut out = upload(
-                    &device,
-                    vec![0.0; value_heads * dim],
-                    &[value_heads, 1, dim],
-                )?;
-                recurrent::delta(
-                    (&mut out).partition([1, 1, dim]),
-                    (&mut state).partition([1, dim, dim]),
-                    qkv,
-                    beta,
-                    alpha,
-                    &a_log,
-                    &bias,
-                    &metadata[lane],
-                )
-                .generics(generics.clone())
-                .sync_on(&device.stream)?;
-                expected_out.push(device.read_borrowed(&out)?);
-                if lane + 1 == count {
-                    expected_state = Some(device.read_borrowed(&state)?);
-                }
-            }
+            let (expected_out, expected_state) = delta_reference(
+                &device,
+                &fixture.lanes,
+                &fixture.a_log,
+                &fixture.bias,
+                &metadata,
+                count,
+                [key_heads, value_heads, dim],
+            )?;
             let mut fused_state = upload(&device, values(state_len, 23), &[value_heads, dim, dim])?;
             let mut outs = (0..3)
                 .map(|_| {
@@ -302,33 +423,7 @@ fn delta_verify_and_commit_match_sequential_lanes() -> TestResult {
                     )
                 })
                 .collect::<infer_core::Result<Vec<_>>>()?;
-            {
-                let [o0, o1, o2] = outs.as_mut_slice() else {
-                    unreachable!()
-                };
-                fused::delta_verify3(
-                    o0.partition([1, 1, dim]),
-                    o1.partition([1, 1, dim]),
-                    o2.partition([1, 1, dim]),
-                    &fused_state,
-                    &lanes[0].0,
-                    &lanes[1].0,
-                    &lanes[2].0,
-                    &lanes[0].1,
-                    &lanes[1].1,
-                    &lanes[2].1,
-                    &lanes[0].2,
-                    &lanes[1].2,
-                    &lanes[2].2,
-                    &a_log,
-                    &bias,
-                    &metadata[0],
-                    &metadata[1],
-                    &metadata[2],
-                )
-                .generics(generics.clone())
-                .sync_on(&device.stream)?;
-            }
+            fixture.verify(&device, &fused_state, &mut outs, &metadata)?;
             for (lane, out) in outs.iter().enumerate() {
                 assert_close(
                     &format!("{positions:?} delta out {lane}"),
@@ -336,27 +431,7 @@ fn delta_verify_and_commit_match_sequential_lanes() -> TestResult {
                     &expected_out[lane],
                 );
             }
-            fused::delta_commit3(
-                (&mut fused_state).partition([1, dim, dim]),
-                &lanes[0].0,
-                &lanes[1].0,
-                &lanes[2].0,
-                &lanes[0].1,
-                &lanes[1].1,
-                &lanes[2].1,
-                &lanes[0].2,
-                &lanes[1].2,
-                &lanes[2].2,
-                &a_log,
-                &bias,
-                &metadata[0],
-                &metadata[1],
-                &metadata[2],
-                i32::try_from(count)?,
-            )
-            .generics(generics.clone())
-            .sync_on(&device.stream)?;
-            let expected_state = expected_state.ok_or("delta reference state")?;
+            fixture.commit(&device, &mut fused_state, &metadata, count)?;
             assert_close(
                 &format!("{positions:?} count {count} delta state"),
                 &device.read_borrowed(&fused_state)?,

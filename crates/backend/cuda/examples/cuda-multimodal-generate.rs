@@ -5,7 +5,23 @@
 //! decodes greedily. Two different images are generated from to show the media actually reaches the
 //! language model rather than being silently dropped.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::loading::LoadedModel as LoadingLoadedModel;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::resident::DeviceProgram;
+#[cfg(target_os = "linux")]
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+use std::fs::read;
+#[cfg(target_os = "linux")]
+use std::ops::Range;
+#[cfg(target_os = "linux")]
+use std::path::Path;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{
         device::CudaDevice,
         loading::{LoadOptions, LoadedModel},
@@ -13,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use infer_core::{Error, ModelId};
     use infer_models::{ChatMessage, ChatOptions, ImageProcessor, TextAssets};
 
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let root = args
         .next()
         .ok_or_else(|| Error::invalid("model package path required"))?;
@@ -23,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|error| Error::invalid(format!("generation budget: {error}")))?,
         None => 8,
     };
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let device = CudaDevice::new(0)?;
     let options = LoadOptions {
         // A prompt graph turns the media prefill into fused chunks instead of one decode step
@@ -40,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = TextAssets::open(&root, 4096)?;
     let processor = ImageProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&root).join("preprocessor_config.json"))
+        &read(Path::new(&root).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let message = ChatMessage::new(
@@ -111,15 +127,15 @@ struct Case {
     reason = "The example threads the loaded model, its assets and the generation settings through"
 )]
 fn run_case(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
-    loaded: &infer_backend_cuda::loading::LoadedModel,
+    program: &mut DeviceProgram,
+    loaded: &LoadingLoadedModel,
     assets: &infer_models::TextAssets,
     processor: &infer_models::ImageProcessor,
     text: &str,
     kind: u8,
     budget: usize,
     hidden: usize,
-) -> Result<Case, Box<dyn std::error::Error>> {
+) -> Result<Case, Box<dyn StdError>> {
     use infer_backend_cuda::vision;
     use infer_core::Error;
     use infer_ir::Modality;
@@ -152,11 +168,7 @@ fn run_case(
     )?;
     let logits = prefill.logits.clone();
     let generated = vision::decode(program, prepared.tokens.len(), &prefill, budget, &[])?;
-    let media_tokens = prepared
-        .spans
-        .iter()
-        .map(std::ops::Range::len)
-        .sum::<usize>();
+    let media_tokens = prepared.spans.iter().map(Range::len).sum::<usize>();
     Ok(Case {
         summary: serde_json::json!({
             "image": kind,

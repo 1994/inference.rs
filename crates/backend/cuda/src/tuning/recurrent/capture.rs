@@ -3,6 +3,7 @@ use super::{
     SHAPE_RANK,
     reference::{Fixture, maximum_error},
 };
+use std::env::var_os;
 
 const METADATA_LEN: usize = 4;
 const FINGERPRINT_SPLITS: [usize; 3] = [1, 2, 4];
@@ -185,8 +186,8 @@ pub(super) fn fingerprint(device: &CudaDevice, shape: [usize; SHAPE_RANK]) -> Re
         compiler::tileiras_fingerprint(),
         compiler::bytecode_override(),
         CompileOptions::default(),
-        std::env::var_os("CUTILE_DISABLE_CHECK_HOISTING"),
-        std::env::var_os("CUTILE_FORCE_DEVICE_CHECKS"),
+        var_os("CUTILE_DISABLE_CHECK_HOISTING"),
+        var_os("CUTILE_FORCE_DEVICE_CHECKS"),
     );
     let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     let key = (shape, context.clone());

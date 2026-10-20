@@ -1,9 +1,12 @@
 //! Execution responsibilities.
 use super::{MetalBackend, MetalTicket, TicketWork};
+use crate::constants::MAX_TICKET_TASKS;
 use infer_core::{Error, ErrorCode, Result};
 use infer_ir::{ExecutionProgram, ExecutionTask, StepPlan};
 use infer_spi::BackendProvider;
 use metal::MTLCommandBufferStatus;
+use objc::rc::autoreleasepool;
+use std::mem::take;
 use std::{collections::BTreeSet, sync::Arc, time::Instant};
 
 impl MetalBackend {
@@ -78,13 +81,13 @@ impl MetalBackend {
         step: &StepPlan,
         tasks: &[ExecutionTask],
     ) -> Result<MetalTicket> {
-        if tasks.len() > crate::constants::MAX_TICKET_TASKS {
+        if tasks.len() > MAX_TICKET_TASKS {
             return Err(Error::invalid(
                 "Metal batch exceeds ticket metadata capacity",
             ));
         }
         self.prepare_submission(program, step, tasks)?;
-        objc::rc::autoreleasepool(|| {
+        autoreleasepool(|| {
             let command = self.gpu.queue.new_command_buffer().to_owned();
             command.set_label(&format!("infer-step-{}", step.id));
             let undo = self.begin_encoding(tasks)?;
@@ -105,7 +108,7 @@ impl MetalBackend {
                 task.tokens.commit(&mut sequence.tokens)?;
                 sequence.pending_prefix = None;
             }
-            let mut metadata = std::mem::take(&mut self.ticket_work);
+            let mut metadata = take(&mut self.ticket_work);
             metadata.clear();
             metadata.extend(tasks.iter().map(|task| TicketWork {
                 request: task.request,

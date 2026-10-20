@@ -1,6 +1,7 @@
 use infer_core::KernelId;
 use infer_ir::{BackendKind, CapabilityRequirements, DType, Operation, PrecisionPlan};
 use infer_spi::{KernelProvider, KernelRegistration, SourceLocation};
+use std::num::NonZeroU64;
 
 /// First kernel id reserved for the Metal backend's registration table.
 const KERNEL_ID_BASE: u64 = 2000;
@@ -29,7 +30,7 @@ impl KernelProvider for MetalKernels {
         .map(|(i, operation)| KernelRegistration {
             backend: BackendKind::Metal,
             id: KernelId::from_nonzero(
-                std::num::NonZeroU64::MIN.saturating_add((KERNEL_ID_BASE + i as u64) - 1),
+                NonZeroU64::MIN.saturating_add((KERNEL_ID_BASE + i as u64) - 1),
             ),
             operation,
             precision: PrecisionPlan::f32(),

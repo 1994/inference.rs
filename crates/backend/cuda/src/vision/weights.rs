@@ -6,6 +6,10 @@
 use crate::device::{CudaDevice, device_error};
 use cutile::{half::bf16, prelude::*};
 use infer_core::{Error, Result};
+use infer_models::vision::head_dim;
+use infer_models::vision::merged_width;
+use infer_models::vision::row_tile;
+use infer_models::vision::slots as vision_slots;
 use infer_models::{QuantizedPackage, TensorDtype};
 use infer_spi::ModalityEncoder;
 use std::collections::BTreeMap;
@@ -22,7 +26,7 @@ const COLUMN_MULTIPLE: usize = 64;
 
 /// Half-head tile width: the real half head (36) rounded up to a power of two.
 pub fn half_tile(encoder: &ModalityEncoder) -> Result<usize> {
-    let head = infer_models::vision::head_dim(encoder)?;
+    let head = head_dim(encoder)?;
     if head < 2 || !head.is_multiple_of(2) {
         return Err(Error::invalid("encoder head width must be even"));
     }
@@ -79,7 +83,7 @@ impl VisionWeights {
         package: &mut QuantizedPackage,
         encoder: &ModalityEncoder,
     ) -> Result<Self> {
-        let slots = infer_models::vision::slots(encoder)?;
+        let slots = vision_slots(encoder)?;
         let mut tensors = BTreeMap::new();
         let mut positions = Vec::new();
         for slot in slots {
@@ -106,7 +110,7 @@ impl VisionWeights {
             drop(bytes);
             // Row kernels load a norm tensor whole, so it must span a power-of-two tile.
             let shape = if slot.row {
-                let padded = infer_models::vision::row_tile(encoder)?;
+                let padded = row_tile(encoder)?;
                 if padded < values.len() {
                     return Err(Error::invalid(format!(
                         "{}: row tile below row",
@@ -164,7 +168,7 @@ impl VisionWeights {
             let qkv_bias = Self::read_values(package, &format!("{base}qkv.bias"))?;
             let proj_weight = Self::read_values(package, &format!("{base}proj.weight"))?;
             let proj_bias = Self::read_values(package, &format!("{base}proj.bias"))?;
-            let real_head = infer_models::vision::head_dim(encoder)?;
+            let real_head = head_dim(encoder)?;
             if qkv_weight.len() != QKV * heads * real_head * hidden {
                 return Err(Error::invalid(format!("{base}qkv.weight shape")));
             }
@@ -302,7 +306,7 @@ impl VisionWeights {
         encoder: &ModalityEncoder,
     ) -> Result<()> {
         let hidden = encoder.hidden_size;
-        let merged = infer_models::vision::merged_width(encoder)?;
+        let merged = merged_width(encoder)?;
         let out = encoder.out_hidden_size;
         let base = format!("{}merger.", encoder.prefix);
         let fc1_weight = Self::read_values(package, &format!("{base}linear_fc1.weight"))?;

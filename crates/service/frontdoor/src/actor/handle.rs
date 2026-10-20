@@ -1,10 +1,16 @@
 //! Handle responsibilities.
 use super::{Command, RuntimeHandle, async_mpsc, mpsc, oneshot, preparation_bytes};
+use crate::cpu::CpuContext;
+use crate::cpu::CpuInspection;
+use crate::cpu::CpuPool;
+use crate::ingress::Abandon;
 use infer_core::{Error, ErrorCode, RequestId, Result};
 use infer_ir::CanonicalRequest;
 use infer_observe::{ObservationQuery, trace::TraceContext};
 use infer_runtime::{EngineOutput, RuntimeInspection};
+use std::sync::atomic::Ordering as AtomicOrdering;
 use std::{time::Duration, time::Instant};
+use tokio::time::timeout;
 
 /// Capacity of the output channel carrying each accepted request's engine events.
 const OUTPUT_CHANNEL_CAPACITY: usize = 16;
@@ -43,19 +49,19 @@ impl RuntimeHandle {
         }
     }
     #[must_use]
-    pub fn cpu_pool(&self) -> crate::cpu::CpuPool {
+    pub fn cpu_pool(&self) -> CpuPool {
         self.cpu.clone()
     }
     #[must_use]
-    pub fn delivery_pool(&self) -> crate::cpu::CpuPool {
+    pub fn delivery_pool(&self) -> CpuPool {
         self.delivery.clone()
     }
     #[must_use]
-    pub fn cpu_inspection(&self) -> crate::cpu::CpuInspection {
+    pub fn cpu_inspection(&self) -> CpuInspection {
         self.cpu.inspect()
     }
     pub(super) async fn reply<T>(&self, response: oneshot::Receiver<T>) -> Result<T> {
-        tokio::time::timeout(
+        timeout(
             Duration::from_millis(self.config.command_timeout_ms),
             response,
         )
@@ -115,7 +121,7 @@ impl RuntimeHandle {
         id: RequestId,
         bytes: usize,
         trace: Option<TraceContext>,
-        work: impl FnOnce(&crate::cpu::CpuContext) -> Result<CanonicalRequest> + Send + 'static,
+        work: impl FnOnce(&CpuContext) -> Result<CanonicalRequest> + Send + 'static,
     ) -> Result<async_mpsc::Receiver<Result<EngineOutput>>> {
         self.submit_preparing_until(id, bytes, trace, None, work)
             .await
@@ -128,7 +134,7 @@ impl RuntimeHandle {
         bytes: usize,
         trace: Option<TraceContext>,
         deadline_us: Option<u64>,
-        work: impl FnOnce(&crate::cpu::CpuContext) -> Result<CanonicalRequest> + Send + 'static,
+        work: impl FnOnce(&CpuContext) -> Result<CanonicalRequest> + Send + 'static,
     ) -> Result<async_mpsc::Receiver<Result<EngineOutput>>> {
         let now_us = self.clock_origin_us.saturating_add(
             u64::try_from(self.clock_started.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -138,8 +144,8 @@ impl RuntimeHandle {
         });
         let pending = self.ingress.reserve(id, bytes)?;
         self.request_ids
-            .fetch_max(id.get(), std::sync::atomic::Ordering::Relaxed);
-        let _abandon = crate::ingress::Abandon(pending.clone());
+            .fetch_max(id.get(), AtomicOrdering::Relaxed);
+        let _abandon = Abandon(pending.clone());
         let preparing = pending.clone();
         let preparer = self.preparer.clone();
         let request = self
@@ -215,7 +221,7 @@ impl RuntimeHandle {
     pub async fn shutdown(&self) -> Result<()> {
         let (reply, response) = oneshot::channel();
         self.send(Command::Stop { reply })?;
-        tokio::time::timeout(Duration::from_secs(SHUTDOWN_ACK_TIMEOUT_SECS),response)
+        timeout(Duration::from_secs(SHUTDOWN_ACK_TIMEOUT_SECS),response)
             .await.map_err(|_|Error::new(ErrorCode::Backend,"shutdown acknowledgement timed out; in-flight resources remain owned by the actor"))?
             .map_err(|_| Error::new(ErrorCode::Backend, "engine actor stopped"))?
     }

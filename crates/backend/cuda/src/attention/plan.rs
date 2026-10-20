@@ -4,6 +4,7 @@ use cutile::{cuda_async::cuda_graph::Scope, prelude::*};
 use infer_core::{Error, Result};
 use infer_ir::DType as Precision;
 use infer_kernel_api::attention::{AttentionDescriptor, AttentionMask};
+use std::result::Result as StdResult;
 
 /// Default query/key tile, independent of GPU model and model architecture.
 const TILE: usize = 32;
@@ -119,7 +120,7 @@ impl DenseAttentionPlan {
         k: &Tensor<f32>,
         v: &Tensor<f32>,
         out: &mut Tensor<f32>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         for (tensor, shape) in [q, k, v, &*out].into_iter().zip(self.shapes) {
             if tensor.shape().len() != shape.len()
                 || !tensor

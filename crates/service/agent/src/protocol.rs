@@ -1,4 +1,7 @@
 //! JSON-RPC envelopes carry no engine types; command parameters are decoded separately.
+use crate::constants::JSONRPC_INVALID_PARAMS;
+use crate::constants::JSONRPC_INVALID_REQUEST;
+use crate::constants::JSONRPC_SERVER_ERROR;
 use infer_core::{Error, ErrorCode};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -34,9 +37,9 @@ impl From<Error> for RpcError {
     fn from(error: Error) -> Self {
         Self {
             code: if error.code == ErrorCode::InvalidInput {
-                crate::constants::JSONRPC_INVALID_PARAMS
+                JSONRPC_INVALID_PARAMS
             } else {
-                crate::constants::JSONRPC_SERVER_ERROR
+                JSONRPC_SERVER_ERROR
             },
             message: error.message,
             data: Some(json!({"code": error.code})),
@@ -50,7 +53,7 @@ impl RpcRequest {
     pub fn parse(value: Value) -> Result<Self, RpcError> {
         let Value::Object(mut object) = value else {
             return Err(RpcError::new(
-                crate::constants::JSONRPC_INVALID_REQUEST,
+                JSONRPC_INVALID_REQUEST,
                 "invalid JSON-RPC request",
             ));
         };
@@ -64,13 +67,13 @@ impl RpcRequest {
                 .is_some_and(|id| !id.is_null() && !id.is_string() && !id.is_number())
         {
             return Err(RpcError::new(
-                crate::constants::JSONRPC_INVALID_REQUEST,
+                JSONRPC_INVALID_REQUEST,
                 "invalid JSON-RPC request",
             ));
         }
         let Some(Value::String(method)) = method else {
             return Err(RpcError::new(
-                crate::constants::JSONRPC_INVALID_REQUEST,
+                JSONRPC_INVALID_REQUEST,
                 "invalid JSON-RPC method",
             ));
         };

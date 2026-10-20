@@ -1,4 +1,7 @@
 use super::*;
+use std::env::var;
+use std::fs::read;
+use std::path::Path;
 
 fn frame(height: usize, width: usize) -> RgbImage {
     RgbImage {
@@ -116,12 +119,10 @@ fn odd_clips_pad_their_last_frame_into_a_whole_temporal_patch() -> Result<()> {
 
 #[test]
 fn configuration_comes_from_the_package() {
-    let Ok(package) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(package) = var("INFER_VISION_PACKAGE") else {
         return;
     };
-    let Ok(config) =
-        std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
-    else {
+    let Ok(config) = read(Path::new(&package).join("video_preprocessor_config.json")) else {
         return;
     };
     let processor = VideoProcessor::from_json(&config).unwrap();
@@ -143,14 +144,13 @@ fn configuration_comes_from_the_package() {
 fn preprocessing_matches_the_reference_processor() -> Result<()> {
     const TOLERANCE: f32 = 1e-6;
     let (Ok(package), Ok(golden)) = (
-        std::env::var("INFER_VISION_PACKAGE"),
-        std::env::var("INFER_VISION_VIDEO_GOLDEN"),
+        var("INFER_VISION_PACKAGE"),
+        var("INFER_VISION_VIDEO_GOLDEN"),
     ) else {
         return Ok(());
     };
-    let config =
-        std::fs::read(std::path::Path::new(&package).join("video_preprocessor_config.json"))
-            .map_err(|error| Error::invalid(error.to_string()))?;
+    let config = read(Path::new(&package).join("video_preprocessor_config.json"))
+        .map_err(|error| Error::invalid(error.to_string()))?;
     let processor = VideoProcessor::from_json(&config)?;
     let mut file = crate::SafetensorsFile::open(&golden)?;
     let expected = file.read_f32("pixel_values", 1 << 30)?;

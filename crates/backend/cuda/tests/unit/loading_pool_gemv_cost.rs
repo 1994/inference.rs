@@ -1,9 +1,13 @@
 use super::{LoadOptions, LoadedModel};
+use crate::constants::SMALL_GEMM_TILE;
+use crate::kernels::linear::dense;
+use crate::strategy::LinearTiling;
 use crate::{
     device::CudaDevice,
     mlp::ProjectionWeight,
     resident::{pool_gemv, small_gemm_kernels},
 };
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     half::bf16,
@@ -11,13 +15,16 @@ use cutile::{
 };
 use infer_core::{Error, ModelId, Result};
 use infer_ir::TensorStorage;
+use std::env::var;
+use std::error::Error as StdError;
+use std::result::Result as StdResult;
 use std::time::Duration;
-type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = StdResult<T, Box<dyn StdError>>;
 
 struct Case {
     name: String,
     weight: Arc<Tensor<bf16>>,
-    tile: crate::strategy::LinearTiling,
+    tile: LinearTiling,
     joined: Arc<Tensor<f32>>,
     rows: Vec<Arc<Tensor<f32>>>,
     reference: Vec<Tensor<f32>>,
@@ -31,7 +38,7 @@ impl Case {
         device: &CudaDevice,
         name: String,
         weight: Arc<Tensor<bf16>>,
-        tile: crate::strategy::LinearTiling,
+        tile: LinearTiling,
         rows: usize,
     ) -> TestResult<Self> {
         let n = usize::try_from(weight.shape()[0])?;
@@ -48,7 +55,7 @@ impl Case {
                 .collect::<Result<_>>()?,
             reference: (0..rows)
                 .map(|_| api::zeros::<f32>(&[n]).sync_on(&device.stream))
-                .collect::<std::result::Result<_, _>>()?,
+                .collect::<StdResult<_, _>>()?,
             original: api::zeros::<f32>(&[rows, n]).sync_on(&device.stream)?,
             candidate: api::zeros::<f32>(&[rows, n]).sync_on(&device.stream)?,
         })
@@ -93,15 +100,10 @@ impl Case {
         }
         Ok(())
     }
-    fn reference(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+    fn reference(&mut self, scope: &Scope) -> StdResult<(), DeviceError> {
         for (input, output) in self.rows.iter().zip(&mut self.reference) {
             scope.record(
-                crate::kernels::linear::dense(
-                    output.partition([self.tile.rows()]),
-                    input,
-                    &self.weight,
-                )
-                .generics(vec![
+                dense(output.partition([self.tile.rows()]), input, &self.weight).generics(vec![
                     bf16::DTYPE.as_str().into(),
                     self.tile.rows().to_string(),
                     self.tile.columns().to_string(),
@@ -111,10 +113,10 @@ impl Case {
         }
         Ok(())
     }
-    fn original(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+    fn original(&mut self, scope: &Scope) -> StdResult<(), DeviceError> {
         scope.record(
             small_gemm_kernels::dense(
-                (&mut self.original).partition(crate::constants::SMALL_GEMM_TILE),
+                (&mut self.original).partition(SMALL_GEMM_TILE),
                 &self.joined,
                 &self.weight,
             )
@@ -122,7 +124,7 @@ impl Case {
         )?;
         Ok(())
     }
-    fn candidate(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+    fn candidate(&mut self, scope: &Scope) -> StdResult<(), DeviceError> {
         scope.record(
             pool_gemv::kernels::dense(
                 (&mut self.candidate).partition([1, self.tile.rows()]),
@@ -242,7 +244,7 @@ fn run_group(loaded: &LoadedModel, rows: usize) -> TestResult {
             let run = |g: &CudaGraph<()>| {
                 g.launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             };
             let (first, second) = if reverse { (&new, &old) } else { (&old, &new) };
             let (a, b) = do_bench_paired(&device.stream, &opts, |_| run(first), |_| run(second))?;
@@ -261,7 +263,7 @@ fn run_group(loaded: &LoadedModel, rows: usize) -> TestResult {
 #[ignore = "requires CUDA/checkpoint/safe-run; all96 real small weights, original private GEMV bits"]
 fn checkpoint_row_gemv_bits_and_cost() -> TestResult {
     CudaDevice::enable_kernel_cache()?;
-    let model = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let loaded = LoadedModel::open(
         CudaDevice::new(0)?,
         model,

@@ -1,11 +1,11 @@
 use super::*;
+use std::path::Path;
 #[test]
 fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
     if !metal_available() {
         return Ok(());
     }
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/qwen-hybrid-tiny");
     let mut backend = metal::load(
         &root,
         // A zero budget derives the share from the Metal device; the CPU test-backend
@@ -23,6 +23,7 @@ fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
             num_speculative_tokens: 0,
             gpu_memory_utilization: 0.0,
             autotune: false,
+            text_only: false,
             // The exact per-token kernel; this fixture checks the Metal reservation, not prefill.
         },
     )?;

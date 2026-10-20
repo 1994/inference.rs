@@ -12,8 +12,12 @@ use super::{
     MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS, median,
     resident_gemm::ResidentTuningSession,
 };
+use crate::constants::PREFILL_LANES;
 use crate::device::{CudaDevice, device_error};
+use crate::resident::attention_mma::catalog::Variant;
 use capture::Captured;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
@@ -21,6 +25,9 @@ use cutile::{
 use infer_core::{Error, Result};
 use reference::Fixture;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::env::var;
+use std::fs::read_to_string;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -46,7 +53,7 @@ impl Shape {
             && self.kv_heads > 0
             && self.heads.is_multiple_of(self.kv_heads)
             && self.dim == VALIDATED_DIM
-            && self.lanes >= crate::constants::PREFILL_LANES
+            && self.lanes >= PREFILL_LANES
             && self.lanes.is_multiple_of(QUERY_TILES[1])
             && i32::try_from(self.window).is_ok()
     }
@@ -59,7 +66,7 @@ pub enum Choice {
     VectorSharedKv,
     VectorSharedKvCombined,
     Mma {
-        variant: crate::resident::attention_mma::catalog::Variant,
+        variant: Variant,
     },
     /// Validated SM120 plain-FP16 target prefill; never selected by the draft path.
     MmaF16,
@@ -184,7 +191,7 @@ pub(crate) const fn enabled() -> bool {
 }
 #[cfg(test)]
 pub(crate) fn enabled() -> bool {
-    std::env::var("INFER_CUDA_TILED_ATTENTION").is_ok_and(|v| v == "1" || v == "true")
+    var("INFER_CUDA_TILED_ATTENTION").is_ok_and(|v| v == "1" || v == "true")
 }
 pub(crate) fn select(
     device: &CudaDevice,
@@ -204,7 +211,7 @@ pub(crate) fn select(
     }
 }
 fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
-    let driver_build = std::fs::read_to_string("/proc/driver/nvidia/version")
+    let driver_build = read_to_string("/proc/driver/nvidia/version")
         .ok()
         .and_then(|text| {
             text.lines()
@@ -301,7 +308,7 @@ fn measure(
         c.graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (a, b) = do_bench_paired(&device.stream, &options, |_| run(left), |_| run(right))
         .map_err(device_error)?;
@@ -346,7 +353,7 @@ fn trial(
     })
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let options = cutile::cutile_compiler::hints::CompileOptions::default();
+    let options = CompileOptions::default();
     if cfg!(debug_assertions)
         || options.device_debug
         || options.opt_level.is_some_and(|l| l != CUDA_OPT_LEVEL)

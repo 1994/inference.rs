@@ -5,9 +5,16 @@ use super::{
     reference::{self, Fixture},
 };
 use crate::device::{CudaDevice, device_error};
+use crate::tuning::MIN_CONFIRM_SPEEDUP;
 use crate::tuning::resident_gemm::ResidentTuningSession;
+use crate::tuning::resolve_table;
+use crate::tuning::shipped_table;
+use crate::tuning::table_path;
+use crate::tuning::update_table;
+use cutile::cutile_compiler::hints::CompileOptions;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::fs::read_to_string;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -35,8 +42,7 @@ impl Case {
         self.cold.valid() && self.warm.valid()
     }
     fn confirmed(&self) -> bool {
-        self.cold.speedup() >= crate::tuning::MIN_CONFIRM_SPEEDUP
-            && self.warm.speedup() >= crate::tuning::MIN_CONFIRM_SPEEDUP
+        self.cold.speedup() >= MIN_CONFIRM_SPEEDUP && self.warm.speedup() >= MIN_CONFIRM_SPEEDUP
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +93,7 @@ fn memo() -> &'static Memo {
     MEMO.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 pub(super) fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
-    let driver_build = std::fs::read_to_string("/proc/driver/nvidia/version")
+    let driver_build = read_to_string("/proc/driver/nvidia/version")
         .ok()
         .and_then(|text| {
             text.lines()
@@ -137,13 +143,13 @@ fn resolve(
     {
         return Ok(entry.selected);
     }
-    let path = crate::tuning::table_path();
+    let path = table_path();
     let local = if key.driver_build.is_some() {
-        crate::tuning::resolve_table(path.as_deref())?
+        resolve_table(path.as_deref())?
     } else {
         None
     };
-    for table in [local.as_ref(), Some(crate::tuning::shipped_table()?)]
+    for table in [local.as_ref(), Some(shipped_table()?)]
         .into_iter()
         .flatten()
     {
@@ -170,7 +176,7 @@ fn resolve(
         return Ok(Choice::Simt);
     };
     let cached = key.driver_build.is_some()
-        && crate::tuning::update_table(path.as_deref(), |table| {
+        && update_table(path.as_deref(), |table| {
             table
                 .resident_exact_attention
                 .retain(|entry| entry.key != key);
@@ -215,7 +221,7 @@ fn cases(
     Ok(Some(cases))
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let options = cutile::cutile_compiler::hints::CompileOptions::default();
+    let options = CompileOptions::default();
     if cfg!(debug_assertions)
         || options.device_debug
         || options

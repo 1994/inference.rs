@@ -1,17 +1,19 @@
 //! Request-owned state and its immutable scheduling projection.
 use crate::CompletedRequest;
+use infer_core::credits::CreditLease;
 use infer_core::{FinishReason, RequestStatus, StateId};
 use infer_ir::{AdmissionDecision, CanonicalRequest, ModelOutput, WorkloadPlan};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestRecord {
-    pub request: std::sync::Arc<CanonicalRequest>,
-    pub tenant: std::sync::Arc<str>,
+    pub request: Arc<CanonicalRequest>,
+    pub tenant: Arc<str>,
     #[serde(skip)]
-    pub host_lease: Option<infer_core::credits::CreditLease>,
+    pub host_lease: Option<CreditLease>,
     #[serde(skip)]
-    pub byte_lease: Option<infer_core::credits::CreditLease>,
+    pub byte_lease: Option<CreditLease>,
     pub plan: WorkloadPlan,
     pub state: Option<StateId>,
     pub status: RequestStatus,

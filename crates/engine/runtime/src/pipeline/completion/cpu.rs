@@ -1,15 +1,21 @@
 //! GPU completion releases compute ownership; CPU output leases retire independently.
 use super::CompletedBatch;
+use crate::stages::output::ProcessedOutput;
+use crate::stages::prefill::readout as prefill_readout;
 use crate::{
     Engine, EngineOutput, stages::output::OutputJob, stages::output::OutputShape,
     stages::worker::OutputCredit, stages::worker::OutputTicket,
 };
+use infer_core::event::EventKind;
+use infer_core::event::ObjectKind;
 use infer_core::{Error, ErrorCode, FinishReason, RequestStatus, Result};
 use infer_ir::{ExecutionRole, ModelOutput, OutputReadout, PlannedWork, StepPlan, Workload};
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
+use std::sync::Arc;
 
 pub struct PendingOutput {
-    pub step: std::sync::Arc<StepPlan>,
+    pub step: Arc<StepPlan>,
     pub ticket: OutputTicket,
     pub started: u64,
 }
@@ -74,7 +80,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         let readout = if work.role == ExecutionRole::Decode {
             OutputReadout::Logits
         } else {
-            crate::stages::prefill::readout(r, rows)
+            prefill_readout(r, rows)
         };
         let generate = matches!(r.request.workload, Workload::Generate { .. });
         Ok(OutputJob {
@@ -96,17 +102,17 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             },
             sample: (generate && readout == OutputReadout::Logits).then_some(r.generated.len()),
             project: (!generate && rows == r.context.len() && r.unit + 1 == r.plan.units.len())
-                .then(|| std::mem::take(&mut r.outputs)),
+                .then(|| take(&mut r.outputs)),
         })
     }
     pub(super) fn start_output_stage(
         &mut self,
-        step: std::sync::Arc<StepPlan>,
+        step: Arc<StepPlan>,
         mut outputs: CompletedBatch,
         credit: OutputCredit,
         emitted: &mut Vec<EngineOutput>,
     ) -> Result<()> {
-        let mut jobs = std::mem::take(&mut self.host.output_jobs);
+        let mut jobs = take(&mut self.host.output_jobs);
         jobs.clear();
         let result = self
             .prepare_output_jobs(&step, &mut outputs, &mut jobs, emitted)
@@ -201,8 +207,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             }
             if let Some(ack) = pending.ticket.poll(index) {
                 self.event(
-                    infer_core::event::EventKind::CpuOutputCompleted,
-                    infer_core::event::ObjectKind::Request,
+                    EventKind::CpuOutputCompleted,
+                    ObjectKind::Request,
                     work.request.get(),
                     pending.step.id.get(),
                     ack.elapsed_us,
@@ -236,7 +242,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         &mut self,
         step: &StepPlan,
         work: &PlannedWork,
-        output: Result<crate::stages::output::ProcessedOutput>,
+        output: Result<ProcessedOutput>,
         emitted: &mut Vec<EngineOutput>,
     ) -> Result<()> {
         self.output_owners.remove(&work.request);

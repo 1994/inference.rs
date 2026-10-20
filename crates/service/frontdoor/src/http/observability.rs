@@ -1,5 +1,6 @@
 //! Observability HTTP adapter.
 use super::{HttpResult, RuntimeHandle};
+use axum::extract::rejection::QueryRejection;
 use axum::{Json, extract::Query, extract::State, response::IntoResponse, response::Response};
 use infer_core::{Error, RequestId};
 use infer_observe::ObservationQuery;
@@ -53,7 +54,7 @@ pub(super) async fn otlp(
 }
 pub(super) async fn events(
     State(handle): State<RuntimeHandle>,
-    query: Result<Query<EventParams>, axum::extract::rejection::QueryRejection>,
+    query: Result<Query<EventParams>, QueryRejection>,
 ) -> HttpResult<Json<serde_json::Value>> {
     let Query(query) = query.map_err(|error| Error::invalid(error.body_text()))?;
     Ok(Json(

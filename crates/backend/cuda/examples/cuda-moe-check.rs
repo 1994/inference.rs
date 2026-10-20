@@ -1,24 +1,32 @@
 //! Full reduced-model parity against independent Transformers prefix goldens.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use std::env::args;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+use std::fs::read;
+#[cfg(target_os = "linux")]
+use std::path::Path;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{
         device::CudaDevice,
         loading::{LoadOptions, LoadedModel},
     };
     use infer_core::{Error, ModelId};
-    let root = std::env::args()
+    let root = args()
         .nth(1)
         .ok_or_else(|| Error::invalid("model path required"))?;
-    let decode_only = std::env::args().any(|arg| arg == "--decode-only");
-    let verify_only = std::env::args().any(|arg| arg == "--verify-only");
+    let decode_only = args().any(|arg| arg == "--decode-only");
+    let verify_only = args().any(|arg| arg == "--verify-only");
     if decode_only && verify_only {
         return Err(Error::invalid("choose only one check mode").into());
     }
-    let golden: Golden = serde_json::from_slice(&std::fs::read(
-        std::path::Path::new(&root).join("golden.json"),
-    )?)?;
+    let golden: Golden = serde_json::from_slice(&read(Path::new(&root).join("golden.json"))?)?;
     reference_graph(&root, &golden)?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let loaded = LoadedModel::open(
         CudaDevice::new(0)?,
         &root,
