@@ -23,6 +23,7 @@ fn selected_backend_preserves_compact_generation_reservation() -> Result<()> {
             num_speculative_tokens: 0,
             gpu_memory_utilization: 0.0,
             autotune: false,
+            text_only: false,
             // The exact per-token kernel; this fixture checks the Metal reservation, not prefill.
         },
     )?;
