@@ -56,6 +56,7 @@ pub(crate) mod attention {
         k: &Tensor<f32, { [-1, D] }>,
         v: &Tensor<f32, { [-1, D] }>,
         metadata: &Tensor<i32, { [-1] }>,
+        table: &Tensor<i32, { [-1] }>,
         k_scale: f32,
         v_scale: f32,
     ) {
@@ -63,6 +64,14 @@ pub(crate) mod attention {
         let position: i32 =
             tile_to_scalar(metadata.partition(shape![1]).load([2i32]).reshape(shape![]));
         if position >= 0 {
+            // Logical block to physical block; an identity table keeps the same row.
+            let physical: i32 = tile_to_scalar(
+                table
+                    .partition(shape![1])
+                    .load([position / 32i32])
+                    .reshape(shape![]),
+            );
+            let row = physical * 32i32 + position % 32i32;
             let mut k = k
                 .partition(shape![1, D])
                 .load([pid.0, 0i32])
@@ -80,10 +89,10 @@ pub(crate) mod attention {
             let k: Tile<E, { [1, 1, D] }> = convert_tile(k);
             let v: Tile<E, { [1, 1, D] }> = convert_tile(v);
             keys.partition_mut(shape![1, 1, D])
-                .store(k, [0i32, position, 0i32]);
+                .store(k, [0i32, row, 0i32]);
             values
                 .partition_mut(shape![1, 1, D])
-                .store(v, [0i32, position, 0i32]);
+                .store(v, [0i32, row, 0i32]);
         }
     }
 

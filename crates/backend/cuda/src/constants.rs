@@ -136,7 +136,7 @@ mod device {
     /// work. Each slot also keeps a full state set plus its verification checkpoints, so a
     /// wider pool spends device memory for a throughput gain that was not observed. Do not
     /// raise this without an end-to-end measurement at the concurrency being targeted.
-    pub const CB_DECODE_SLOTS: usize = 8;
+    pub const CB_DECODE_SLOTS: usize = 5;
     /// Token rows in each slot's KV cache. Sequences admitted above this stay on the
     /// per-sequence serial path. The pool is captured at load time, so this allocation
     /// (fp8 KV per slot per token) competes with the sequences it must coexist with:

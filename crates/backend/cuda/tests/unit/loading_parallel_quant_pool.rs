@@ -18,9 +18,9 @@ fn pooled(
     slots: usize,
 ) -> Result<()> {
     let before = captures();
-    let mut separate = with_parallel_conversion(false, || loaded.slot_pool(slots, 128))?;
+    let mut separate = with_parallel_conversion(false, || loaded.slot_pool(slots, 128, None))?;
     assert_eq!(captures(), before);
-    let mut shared = with_parallel_conversion(true, || loaded.slot_pool(slots, 128))?;
+    let mut shared = with_parallel_conversion(true, || loaded.slot_pool(slots, 128, None))?;
     assert!(captures() > before);
     for slot in 0..slots {
         assert_eq!(shared.take_free(), Some(slot));

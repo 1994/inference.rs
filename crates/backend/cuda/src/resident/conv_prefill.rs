@@ -64,6 +64,94 @@ pub(crate) mod kernels {
             out.store(0.0f32.broadcast(shape![1, 128]));
         }
     }
+    /// [`forward`] over 16 consecutive rows of one 128-channel tile per block: the four-tap
+    /// window slides in registers, so each input row loads once instead of four times and the
+    /// grid has a sixteenth of the blocks.
+    #[expect(
+        clippy::useless_let_if_seq,
+        reason = "cuTile DSL uses statement control flow"
+    )]
+    #[cutile::entry()]
+    fn forward_rows(
+        out: &mut Tensor<f32, { [16, 128] }>,
+        h0: &Tensor<f32, { [-1] }>,
+        h1: &Tensor<f32, { [-1] }>,
+        h2: &Tensor<f32, { [-1] }>,
+        x: &Tensor<f32, { [-1, -1] }>,
+        w: &Tensor<f32, { [-1, 4] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let meta = metadata.partition(shape![1]);
+        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+        let mut first = 0i32;
+        if base + offset < 0 {
+            first = 0i32 - base - offset;
+        }
+        let start = pid.0 * 16i32;
+        let xp = x.partition(shape![1, 128]);
+        let state0: Tile<f32, { [128] }> = h0.partition(shape![128]).load([pid.1]);
+        let state1: Tile<f32, { [128] }> = h1.partition(shape![128]).load([pid.1]);
+        let state2: Tile<f32, { [128] }> = h2.partition(shape![128]).load([pid.1]);
+        let wp = w.partition(shape![128, 1]);
+        let wa = wp.load([pid.1, 0i32]).reshape(shape![128]);
+        let wb = wp.load([pid.1, 1i32]).reshape(shape![128]);
+        let wc = wp.load([pid.1, 2i32]).reshape(shape![128]);
+        let wd = wp.load([pid.1, 3i32]).reshape(shape![128]);
+        // Rows before `first` come from the carried state: first-1 is the newest.
+        let mut oldest = state0;
+        if start - 3i32 >= first {
+            oldest = xp.load([start - 3i32, pid.1]).reshape(shape![128]);
+        } else if start - 3i32 == first - 1i32 {
+            oldest = state2;
+        } else if start - 3i32 == first - 2i32 {
+            oldest = state1;
+        }
+        let mut middle = state1;
+        if start - 2i32 >= first {
+            middle = xp.load([start - 2i32, pid.1]).reshape(shape![128]);
+        } else if start - 2i32 == first - 1i32 {
+            middle = state2;
+        } else if start - 2i32 == first - 3i32 {
+            middle = state0;
+        }
+        let mut newest = state2;
+        if start - 1i32 >= first {
+            newest = xp.load([start - 1i32, pid.1]).reshape(shape![128]);
+        } else if start - 1i32 == first - 2i32 {
+            newest = state1;
+        } else if start - 1i32 == first - 3i32 {
+            newest = state0;
+        }
+        let mut rows = out.partition_mut(shape![1, 128]);
+        let zero: Tile<f32, { [128] }> = 0.0f32.broadcast(shape![128]);
+        let one: Tile<f32, { [128] }> = 1.0f32.broadcast(shape![128]);
+        for row in 0i32..16i32 {
+            let lane = start + row;
+            let mut current = state2;
+            if lane >= first && lane < count {
+                current = xp.load([lane, pid.1]).reshape(shape![128]);
+            } else if lane == first - 1i32 {
+                current = state2;
+            } else if lane == first - 2i32 {
+                current = state1;
+            } else if lane == first - 3i32 {
+                current = state0;
+            }
+            let value = oldest * wa + middle * wb + newest * wc + current * wd;
+            let mut result = zero;
+            if lane >= first && lane < count {
+                result = value / (one + exp(zero - value));
+            }
+            rows.store(result.reshape(shape![1, 128]), [row, 0i32]);
+            oldest = middle;
+            middle = newest;
+            newest = current;
+        }
+    }
+
     #[expect(
         clippy::useless_let_if_seq,
         reason = "cuTile DSL uses statement control flow"
@@ -109,6 +197,9 @@ use crate::constants::CONV_KERNEL_SIZE;
 use crate::constants::CONV_KERNEL_TILE;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
+
+/// Rows per block of the row-sliding convolution kernel (fixed in the kernel).
+const CONV_ROWS: usize = 16;
 
 pub(super) fn record(
     scope: &Scope,
@@ -160,15 +251,27 @@ pub(super) fn record(
         .ok_or_else(|| error("prefill convolution weight"))?
         .view(&[channels, CONV_KERNEL_SIZE])
         .map_err(error)?;
-    scope.record(kernels::forward(
-        (&mut output).partition([1, CONV_KERNEL_TILE]),
-        &*h0,
-        &*h1,
-        &*h2,
-        &input,
-        &weight,
-        metadata,
-    ))?;
+    if lanes.is_multiple_of(CONV_ROWS) {
+        scope.record(kernels::forward_rows(
+            (&mut output).partition([CONV_ROWS, CONV_KERNEL_TILE]),
+            &*h0,
+            &*h1,
+            &*h2,
+            &input,
+            &weight,
+            metadata,
+        ))?;
+    } else {
+        scope.record(kernels::forward(
+            (&mut output).partition([1, CONV_KERNEL_TILE]),
+            &*h0,
+            &*h1,
+            &*h2,
+            &input,
+            &weight,
+            metadata,
+        ))?;
+    }
     scope.record(kernels::commit(
         h0.partition([CONV_KERNEL_TILE]),
         h1.partition([CONV_KERNEL_TILE]),

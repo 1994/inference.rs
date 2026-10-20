@@ -195,7 +195,7 @@ fn original_private_pool_gpu_greedy_lifecycle() -> Result<()> {
     let mut lanes = make_lanes(&loaded, &inputs)?;
     loaded.weights.prefill_width = 0;
     loaded.weights.narrow_prefill_width = 0;
-    let mut pool = loaded.slot_pool(4, 1024)?;
+    let mut pool = loaded.slot_pool(4, 1024, None)?;
     trajectory(&loaded, &mut lanes, &mut pool, 8)?;
     Ok(())
 }

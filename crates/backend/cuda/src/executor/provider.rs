@@ -160,7 +160,12 @@ impl BackendProvider for CudaBackend {
         };
         // A slot-leased sequence decodes through the shared pool graph; restoring a prefix
         // into its private program state would desync the slot, so decline to reuse.
-        if sequence.readout != OutputReadout::Logits || sequence.slot.is_some() {
+        // A slot-resident sequence's KV lives in shared pool blocks that a contiguous snapshot
+        // cannot describe.
+        if sequence.readout != OutputReadout::Logits
+            || sequence.slot.is_some()
+            || sequence.home.is_some()
+        {
             self.prefix.insert(entry);
             return Ok(0);
         }

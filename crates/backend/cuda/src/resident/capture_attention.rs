@@ -28,24 +28,27 @@ impl Capture<'_> {
             .fp8_states
             .remove(&id)
             .ok_or_else(|| error("missing FP8 attention state"))?;
-        let mut keys = keys.reshape(&[kv_heads, self.capacity, head_dim])?;
-        let mut values = values.reshape(&[kv_heads, self.capacity, head_dim])?;
+        // A paged slot's cache holds the pool's physical rows, not one sequence's capacity.
+        let rows = keys.size() / (kv_heads * head_dim);
+        let mut keys = keys.reshape(&[kv_heads, rows, head_dim])?;
+        let mut values = values.reshape(&[kv_heads, rows, head_dim])?;
         let result = self
             .scope
             .record(
                 attention::append(
-                    (&mut keys).partition([1, self.capacity, head_dim]),
-                    (&mut values).partition([1, self.capacity, head_dim]),
+                    (&mut keys).partition([1, rows, head_dim]),
+                    (&mut values).partition([1, rows, head_dim]),
                     &self.input(node.inputs[1])?.view(&[kv_heads, head_dim])?,
                     &self.input(node.inputs[2])?.view(&[kv_heads, head_dim])?,
                     self.metadata,
+                    self.table,
                     scales[0],
                     scales[1],
                 )
                 .generics(vec![
                     cuda_core::f8e4m3fn::DTYPE.as_str().into(),
                     head_dim.to_string(),
-                    self.capacity.to_string(),
+                    rows.to_string(),
                     "1".into(),
                 ]),
             )
@@ -77,22 +80,25 @@ impl Capture<'_> {
         if self.mode == CaptureMode::Prefill {
             return self.record_prefill_attention(node, output, keys, values, scales);
         }
-        let mut keys = keys.reshape(&[kv_heads, self.capacity, head_dim])?;
-        let mut values = values.reshape(&[kv_heads, self.capacity, head_dim])?;
+        // A paged slot's cache holds the pool's physical rows, not one sequence's capacity.
+        let rows = keys.size() / (kv_heads * head_dim);
+        let mut keys = keys.reshape(&[kv_heads, rows, head_dim])?;
+        let mut values = values.reshape(&[kv_heads, rows, head_dim])?;
         self.scope.record(
             attention::append(
-                (&mut keys).partition([1, self.capacity, head_dim]),
-                (&mut values).partition([1, self.capacity, head_dim]),
+                (&mut keys).partition([1, rows, head_dim]),
+                (&mut values).partition([1, rows, head_dim]),
                 &self.input(node.inputs[1])?.view(&[kv_heads, head_dim])?,
                 &self.input(node.inputs[2])?.view(&[kv_heads, head_dim])?,
                 self.metadata,
+                self.table,
                 scales[0],
                 scales[1],
             )
             .generics(vec![
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
-                self.capacity.to_string(),
+                rows.to_string(),
                 i32::from(E::DTYPE != f32::DTYPE).to_string(),
             ]),
         )?;
@@ -167,12 +173,14 @@ impl Capture<'_> {
             return Err(error("expected attention"));
         };
         let lanes = self.arena.lanes();
-        let mut keys = keys.reshape(&[kv_heads, self.capacity, head_dim])?;
-        let mut values = values.reshape(&[kv_heads, self.capacity, head_dim])?;
+        // A paged slot's cache holds the pool's physical rows, not one sequence's capacity.
+        let rows = keys.size() / (kv_heads * head_dim);
+        let mut keys = keys.reshape(&[kv_heads, rows, head_dim])?;
+        let mut values = values.reshape(&[kv_heads, rows, head_dim])?;
         self.scope.record(
             kernels::append(
-                (&mut keys).partition([1, self.capacity, head_dim]),
-                (&mut values).partition([1, self.capacity, head_dim]),
+                (&mut keys).partition([1, rows, head_dim]),
+                (&mut values).partition([1, rows, head_dim]),
                 &self
                     .input(node.inputs[1])?
                     .view(&[lanes, kv_heads, head_dim])?,
@@ -187,7 +195,7 @@ impl Capture<'_> {
             .generics(vec![
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
-                self.capacity.to_string(),
+                rows.to_string(),
                 i32::from(E::DTYPE != f32::DTYPE).to_string(),
                 KV_BLOCK_TOKENS.to_string(),
             ]),

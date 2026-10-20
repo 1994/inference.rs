@@ -16,8 +16,11 @@ use std::mem::swap;
 use std::mem::take;
 use std::ops::Range;
 use std::sync::Arc;
-/// Token granularity at which a prefill state becomes a reusable prompt prefix.
-const PREFIX_GRANULARITY: usize = 256;
+/// Prompt positions between prefix-cache snapshots, where a prefill state becomes a reusable
+/// prompt prefix. Each snapshot copies the covered KV and
+/// the recurrent state and synchronizes, so snapshotting every 2048-token chunk cost 0.12 s
+/// of a 32K prompt's TTFT; at 4096 a later turn recomputes at most one interval.
+const PREFIX_GRANULARITY: usize = 4096;
 
 /// Snapshot the KV rows a sequence has covered, when they form a reusable prompt prefix.
 ///
@@ -31,6 +34,7 @@ fn cacheable_prefix(
     task: &ExecutionTask,
 ) -> Option<prefix::CachedPrefix> {
     if state.poisoned
+        || state.home.is_some()
         || state.readout != OutputReadout::Logits
         || !matches!(
             task.tokens,
@@ -298,7 +302,9 @@ impl CudaBackend {
         let Some(pool) = self.slots.as_ref() else {
             return;
         };
-        let worker = self.loaded.prompt_worker(pool.capacity());
+        // SAFETY: the worker is cleared before the pool drops (see the expectation above).
+        let kv = unsafe { pool.kv_views() };
+        let worker = kv.and_then(|kv| self.loaded.prompt_worker(pool.capacity(), kv));
         match worker {
             Ok((program, draft)) => self.worker = Some(super::Worker { program, draft }),
             Err(error) => tracing::warn!(
@@ -336,7 +342,10 @@ impl CudaBackend {
     fn create_slot_pool(&mut self, capacity: usize, maximum: usize) -> Option<SlotPool> {
         for width in (2..=maximum).rev() {
             loop {
-                match self.loaded.slot_pool(width, capacity) {
+                match self
+                    .loaded
+                    .slot_pool(width, capacity, Some(paged_tokens(width, capacity)))
+                {
                     Ok(pool) => return Some(pool),
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);
@@ -457,6 +466,18 @@ impl CudaBackend {
             let Some(slot) = pool.take_free() else {
                 break;
             };
+            let tokens = self.states[&tasks[index].state].capacity;
+            match pool.assign(slot, tokens, self.loaded.device()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    pool.release(slot);
+                    break;
+                }
+                Err(error) => {
+                    pool.release(slot);
+                    return Err(error);
+                }
+            }
             newly.push((index, slot));
         }
         let minimum = if pool.verify().is_some() { 1 } else { 2 };
@@ -571,22 +592,28 @@ fn run_on_worker(
     worker: &mut super::Worker,
     task: &ExecutionTask,
 ) -> Result<ModelOutput> {
-    worker
-        .program
-        .copy_state_from(&state.program, state.program.position())?;
-    if let (Some(spec), Some(draft)) = (state.speculation.as_ref(), worker.draft.as_mut()) {
-        draft.copy_state_from(&spec.program, spec.program.position())?;
-    }
+    super::profiling::phase("worker_load", || -> Result<()> {
+        worker
+            .program
+            .copy_state_from(&state.program, state.program.position())?;
+        if let (Some(spec), Some(draft)) = (state.speculation.as_ref(), worker.draft.as_mut()) {
+            draft.copy_state_from(&spec.program, spec.program.position())?;
+        }
+        Ok(())
+    })?;
     swap_worker(state, worker);
     let output = state.run(task);
     swap_worker(state, worker);
     let output = output?;
-    state
-        .program
-        .copy_state_from(&worker.program, worker.program.position())?;
-    if let (Some(spec), Some(draft)) = (state.speculation.as_mut(), worker.draft.as_ref()) {
-        spec.program.copy_state_from(draft, draft.position())?;
-    }
+    super::profiling::phase("worker_store", || -> Result<()> {
+        state
+            .program
+            .copy_state_from(&worker.program, worker.program.position())?;
+        if let (Some(spec), Some(draft)) = (state.speculation.as_mut(), worker.draft.as_ref()) {
+            spec.program.copy_state_from(draft, draft.position())?;
+        }
+        Ok(())
+    })?;
     Ok(output)
 }
 
@@ -595,6 +622,18 @@ const fn swap_worker(state: &mut Sequence, worker: &mut super::Worker) {
     if let (Some(spec), Some(draft)) = (state.speculation.as_mut(), worker.draft.as_mut()) {
         swap(&mut spec.program, draft);
     }
+}
+
+/// Numerator of the physical-KV share a paged pool reserves: three quarters of the unpaged
+/// reservation, since a request holds blocks for what it can reach, not the slot's whole
+/// capacity.
+const PAGED_KV_SHARE_NUMERATOR: usize = 3;
+/// Denominator of [`PAGED_KV_SHARE_NUMERATOR`].
+const PAGED_KV_SHARE_DENOMINATOR: usize = 4;
+
+/// Physical KV positions a pool of `width` slots of `capacity` tokens shares.
+const fn paged_tokens(width: usize, capacity: usize) -> usize {
+    width * capacity * PAGED_KV_SHARE_NUMERATOR / PAGED_KV_SHARE_DENOMINATOR
 }
 
 /// Device memory the load-time slot pool leaves free for the runtime's workspace and transient
