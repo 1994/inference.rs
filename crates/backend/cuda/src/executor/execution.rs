@@ -467,9 +467,16 @@ impl CudaBackend {
                 break;
             };
             let tokens = self.states[&tasks[index].state].capacity;
-            if !pool.assign(slot, tokens, self.loaded.device())? {
-                pool.release(slot);
-                break;
+            match pool.assign(slot, tokens, self.loaded.device()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    pool.release(slot);
+                    break;
+                }
+                Err(error) => {
+                    pool.release(slot);
+                    return Err(error);
+                }
             }
             newly.push((index, slot));
         }
