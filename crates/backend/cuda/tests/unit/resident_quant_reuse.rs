@@ -6,7 +6,7 @@ use crate::{
     device::CudaDevice,
     loading::{Projection, floats},
     mlp::ProjectionWeight,
-    resident::ProgramWeights,
+    resident::{ProgramWeights, PromptScratchRegistry},
 };
 use cutile::bench::BenchOptions;
 use cutile::bench::do_bench_paired;
@@ -137,6 +137,7 @@ impl Pair {
 fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         batch_width: 4,

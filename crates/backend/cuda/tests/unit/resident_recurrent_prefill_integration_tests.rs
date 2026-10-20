@@ -2,7 +2,7 @@ use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{
     device::CudaDevice,
     mlp::ProjectionWeight,
-    resident::{DeviceProgram, ProgramWeights},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry},
 };
 use cutile::half::bf16;
 use infer_core::{OpId, Result, TensorId};
@@ -48,6 +48,7 @@ fn fixture_at(
     )?;
     let weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,

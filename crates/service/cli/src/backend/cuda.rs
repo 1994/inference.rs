@@ -58,12 +58,16 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
                 mtp_depth: selection.num_speculative_tokens,
                 autotune: selection.autotune,
                 attention_profile: selection.attention_profile.into(),
+                vision: !selection.text_only,
                 ..LoadOptions::default()
             },
         )
         .map_err(|error| load_failure(&error, budget, selection))?;
         report_tuning(loaded.tuning());
-        let used = free.saturating_sub(loaded.device().memory_info()?.0);
+        // Prompt scratch is allocated with the first sequence and shared by all of them.
+        let used = free
+            .saturating_sub(loaded.device().memory_info()?.0)
+            .saturating_add(loaded.shared_scratch_bytes()?);
         let Some(state_budget) = limit.checked_sub(used).filter(|bytes| *bytes > 0) else {
             let error = Error::new(
                 infer_core::ErrorCode::Capacity,

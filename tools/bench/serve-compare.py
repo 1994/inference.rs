@@ -344,6 +344,9 @@ def native_command(args, port):
         str(args.max_model_len),
         "--max-num-seqs",
         str(args.max_num_seqs),
+        # Same text-only service as the vLLM command: neither side loads the vision tower.
+        "--limit-mm-per-prompt",
+        '{"image":0,"video":0}',
     ]
     if args.extra:
         command += args.extra

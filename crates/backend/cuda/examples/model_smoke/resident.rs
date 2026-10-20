@@ -5,7 +5,9 @@ use cutile::{
     prelude::{Arc, Tensor},
 };
 use infer_backend_cuda::loading::load_kv_scales;
-use infer_backend_cuda::resident::{DeviceProgram, FusionWeights, ProgramWeights};
+use infer_backend_cuda::resident::{
+    DeviceProgram, FusionWeights, ProgramWeights, PromptScratchRegistry,
+};
 use infer_backend_cuda::strategy::default_tiling;
 use infer_backend_cuda::tuning::projection_key;
 use infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession;
@@ -29,6 +31,7 @@ pub fn prepare(
 ) -> Result<()> {
     let mut weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,

@@ -59,6 +59,9 @@ pub struct LoadOptions {
     /// path; `Bf16` is the experimental FA4 profile for target FP8-KV prefill only. The profile
     /// is resolved once here and never changes the draft, weights, KV storage or quality gate.
     pub attention_profile: crate::AttentionProfile,
+    /// Bind the vision tower; false serves text only, as vLLM does with all-zero multimodal
+    /// limits, and rejects image inputs.
+    pub vision: bool,
 }
 impl Default for LoadOptions {
     fn default() -> Self {
@@ -70,6 +73,7 @@ impl Default for LoadOptions {
             autotune: true,
             chunked_recurrent: false,
             attention_profile: crate::AttentionProfile::Canonical,
+            vision: true,
         }
     }
 }
@@ -325,8 +329,7 @@ impl LoadedModel {
         }
         let requirements = package.imported.requirements.clone();
         let vision_phase = phase::Phase::start("vision", "binding the vision tower");
-        let vision =
-            LoadedVision::bind(&device, &mut package).map_err(|e| vision_phase.fail(&e))?;
+        let vision = bind_vision(&device, &mut package, options.vision, &vision_phase)?;
         vision_phase.finish();
         let imported = package.imported.clone();
         let loaded = Self {
@@ -491,6 +494,71 @@ impl LoadedModel {
     /// graph is the pooled speculation graph of `mtp_depth + 1` candidate lanes per slot.
     /// # Errors
     /// Rejects invalid geometry, exceeded device budgets or CUDA capture failures.
+    /// Wide-prompt target and draft programs at `capacity` that slot-resident sequences prompt
+    /// through.
+    /// # Errors
+    /// Rejects invalid capacity or CUDA graph capture failures.
+    pub(crate) fn prompt_worker(
+        &self,
+        capacity: usize,
+    ) -> Result<(DeviceProgram, Option<DeviceProgram>)> {
+        self.validate_capacity(capacity)?;
+        let geometry = (capacity, self.model.hidden_size, self.model.vocab_size);
+        let program =
+            DeviceProgram::new_worker(&self.device, &self.graph, &self.weights, geometry)?;
+        let draft = self
+            .draft
+            .as_ref()
+            .map(|draft| {
+                DeviceProgram::new_worker(&self.device, &draft.graph, &draft.weights, geometry)
+            })
+            .transpose()?;
+        Ok((program, draft))
+    }
+
+    /// Target and draft programs that prefill straight into `slot` of the target and draft
+    /// pools: their recurrent states and KV caches are the slots' storage.
+    /// # Safety
+    /// Both pools must outlive the programs, and a program may replay only while its sequence
+    /// owns the slot.
+    /// # Errors
+    /// Rejects unknown slots or CUDA graph capture failures.
+    #[expect(
+        unsafe_code,
+        reason = "Audited slot alias: forwarded from SlotPool::slot_views"
+    )]
+    pub(crate) unsafe fn slot_programs(
+        &self,
+        target: &SlotPool,
+        draft: Option<&SlotPool>,
+        slot: usize,
+    ) -> Result<(DeviceProgram, Option<DeviceProgram>)> {
+        let geometry = (
+            target.capacity(),
+            self.model.hidden_size,
+            self.model.vocab_size,
+        );
+        // SAFETY: forwarded from this function's contract.
+        let views = unsafe { target.slot_views(slot)? };
+        let program =
+            DeviceProgram::new_on_slot(&self.device, &self.graph, &self.weights, geometry, views)?;
+        let draft = match (&self.draft, draft) {
+            (Some(model), Some(pool)) => {
+                // SAFETY: forwarded from this function's contract.
+                let views = unsafe { pool.slot_views(slot)? };
+                Some(DeviceProgram::new_on_slot(
+                    &self.device,
+                    &model.graph,
+                    &model.weights,
+                    geometry,
+                    views,
+                )?)
+            }
+            _ => None,
+        };
+        Ok((program, draft))
+    }
+
     pub(crate) fn slot_pool(&self, width: usize, capacity: usize) -> Result<SlotPool> {
         self.validate_capacity(capacity)?;
         SlotPool::new(
@@ -577,6 +645,20 @@ fn select_prompt_width(
         weights.prefill_width = selected;
     }
     Ok(())
+}
+
+/// The vision tower, unless the service is text only.
+fn bind_vision(
+    device: &CudaDevice,
+    package: &mut QuantizedPackage,
+    enabled: bool,
+    phase: &phase::Phase,
+) -> Result<Option<LoadedVision>> {
+    if !enabled {
+        tracing::info!(target: "infer::load", "text-only serving: vision tower not loaded");
+        return Ok(None);
+    }
+    LoadedVision::bind(device, package).map_err(|e| phase.fail(&e))
 }
 
 #[cfg(test)]

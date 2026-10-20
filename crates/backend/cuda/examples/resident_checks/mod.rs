@@ -11,7 +11,7 @@ use infer_backend_cuda::mlp::ProjectionWeight;
 use infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession;
 use infer_backend_cuda::{
     device::CudaDevice,
-    resident::{DeviceProgram, ProgramWeights},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry},
 };
 use infer_core::{Error, OpId, Result, TensorId};
 use infer_ir::{DType, DataflowGraph, StateKind, TensorNode, TensorOp, TensorSpec, TensorStorage};
@@ -65,6 +65,7 @@ fn check_projection(
     let mut graph = DataflowGraph::default();
     let mut weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,

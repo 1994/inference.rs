@@ -2,6 +2,7 @@
 use super::{backend, commands};
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -61,6 +62,11 @@ pub struct Cli {
     /// canonical and the draft proposal path is unchanged.
     #[arg(long, global = true, value_enum, default_value = "canonical")]
     pub(super) cuda_attention_profile: backend::CudaAttentionProfile,
+    /// Per-prompt multimodal item limits as JSON, as in vLLM (for example
+    /// `{"image":0,"video":0}`). All-zero limits serve text only and skip loading the vision
+    /// tower; image inputs are then rejected.
+    #[arg(long, global = true, value_name = "JSON", value_parser = parse_text_only)]
+    pub(super) limit_mm_per_prompt: Option<bool>,
     /// Fraction of device memory the engine may use, as in vLLM (0 disables the cap).
     #[arg(long, global = true, default_value_t = crate::constants::DEFAULT_GPU_MEMORY_UTILIZATION)]
     pub(super) gpu_memory_utilization: f64,
@@ -121,3 +127,26 @@ impl Cli {
 #[cfg(test)]
 #[path = "../tests/unit/arguments.rs"]
 mod tests;
+
+/// Whether `--limit-mm-per-prompt` limits every modality to zero items. This build only
+/// implements the text-only case, so reject a non-zero or unknown limit instead of accepting a
+/// flag whose promise it cannot keep.
+fn parse_text_only(value: &str) -> Result<bool, String> {
+    let limits: BTreeMap<String, u64> =
+        serde_json::from_str(value).map_err(|error| format!("modality limits: {error}"))?;
+    if limits.is_empty() {
+        return Ok(false);
+    }
+    if let Some(modality) = limits
+        .keys()
+        .find(|modality| !matches!(modality.as_str(), "image" | "video"))
+    {
+        return Err(format!("unsupported modality limit `{modality}`"));
+    }
+    if let Some((modality, _)) = limits.iter().find(|(_, limit)| **limit != 0) {
+        return Err(format!(
+            "non-zero limit for `{modality}` is not supported; this build serves text only"
+        ));
+    }
+    Ok(true)
+}

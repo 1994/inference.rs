@@ -2,7 +2,7 @@ use super::*;
 use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{
     mlp::ProjectionWeight,
-    resident::{DeviceProgram, ProgramWeights, slot_batch::SlotPool},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry, slot_batch::SlotPool},
 };
 use cutile::half::bf16;
 use cutile::jit_cache::enable_default;
@@ -91,6 +91,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let embedding = device.upload(dense, &[32, 32])?;
     let weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,

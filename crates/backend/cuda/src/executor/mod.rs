@@ -34,6 +34,12 @@ pub struct CudaBackend {
     kv_block_bytes: u64,
     /// Prompt tokens restored from the prefix cache instead of recomputed, for observability.
     reused_tokens: u64,
+    /// Wide prompt programs slot-resident sequences prompt through; see [`Worker`].
+    worker: Option<Worker>,
+    /// Per slot, the target and draft programs that prefill straight into that slot while no
+    /// sequence holds them. Declared before the pools so they drop first: their states are
+    /// views of the slots' storage.
+    homes: Vec<Option<Home>>,
     /// Continuous-batching decode slots, captured lazily on the first batchable step;
     /// `None` with `slots_disabled` means initialization failed and decode stays serial.
     slots: Option<SlotPool>,
@@ -47,7 +53,23 @@ pub struct CudaBackend {
     busy: bool,
     fatal: Option<Error>,
 }
+/// Wide-prompt target and draft programs shared by every slot-resident sequence. A slot's own
+/// programs capture only the narrow prompt graph (a wide one per slot does not fit), so a long
+/// prompt chunk moves the sequence's state into the worker, replays there, and moves it back:
+/// a few hundred megabytes of copies against a chunk that runs for hundreds of milliseconds.
+struct Worker {
+    program: DeviceProgram,
+    draft: Option<DeviceProgram>,
+}
+/// A pool slot's resident programs: prompts prefill into the slot's own storage, so a sequence
+/// that holds them never owns a private copy of its state.
+struct Home {
+    program: DeviceProgram,
+    draft: Option<DeviceProgram>,
+}
 struct Sequence {
+    /// The slot whose resident programs this sequence holds; it keeps that slot leased.
+    home: Option<usize>,
     program: DeviceProgram,
     speculation: Option<Speculation>,
     capacity: usize,
@@ -175,6 +197,8 @@ impl CudaBackend {
             prefix: prefix::PrefixCache::new(prefix_cache_bytes(state_budget)),
             kv_block_bytes,
             reused_tokens: 0,
+            worker: None,
+            homes: Vec::new(),
             slots: None,
             draft_slots: None,
             reclaimed_slot_capacity: None,

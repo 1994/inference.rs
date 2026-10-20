@@ -1,5 +1,6 @@
 use super::*;
 use crate::resident::BatchOutput;
+use crate::resident::PromptScratchRegistry;
 use crate::resident::batch::BatchReadout;
 use crate::strategy::default_tiling;
 use crate::test_support::fixture_graph;
@@ -20,6 +21,7 @@ fn fixture_weights(device: &CudaDevice, width: usize) -> Result<ProgramWeights> 
         .collect();
     Ok(ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,

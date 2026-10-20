@@ -56,6 +56,30 @@ fn copy_plan(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<Vec<(Ten
     Ok(plan)
 }
 
+/// Whether two tensors start at the same device address: a slot-resident program's view and the
+/// slot it aliases.
+fn same_storage<T: DType>(left: &Tensor<T>, right: &Tensor<T>) -> bool {
+    left.device_pointer().cu_deviceptr() == right.device_pointer().cu_deviceptr()
+}
+
+/// A whole-tensor alias with the source's shape.
+/// # Safety
+/// The source must outlive the alias; see [`SlotPool::slot_views`].
+#[expect(
+    unsafe_code,
+    reason = "Audited slot alias: forwarded from SlotPool::slot_views"
+)]
+unsafe fn alias<T: DType>(tensor: &Tensor<T>) -> Result<Tensor<T>> {
+    let shape = tensor
+        .shape()
+        .iter()
+        .map(|&dim| usize::try_from(dim).map_err(device_error))
+        .collect::<Result<Vec<_>>>()?;
+    // SAFETY: forwarded from this function's contract; one lane spans the whole tensor.
+    let view = unsafe { super::arena::row_view(tensor, 1, 0)? };
+    view.reshape(&shape).map_err(device_error)
+}
+
 /// Device bytes one slot's state tensors occupy: f32 states plus fp8 KV caches.
 fn state_bytes(states: &States, fp8: &Fp8Caches) -> u64 {
     let float_elements: u64 = states
@@ -360,12 +384,70 @@ impl SlotPool {
         self.leases.take()
     }
 
+    /// Lease one specific free slot; false when it is already leased.
+    pub(crate) fn take_slot(&mut self, slot: usize) -> bool {
+        let Some(index) = self.leases.free.iter().position(|&free| free == slot) else {
+            return false;
+        };
+        self.leases.free.remove(index);
+        self.leases.allocations = self.leases.allocations.saturating_add(1);
+        true
+    }
+
+    /// Views of one slot's recurrent states and KV caches, for a program that prefills
+    /// straight into the slot ([`super::program::DeviceProgram::new_on_slot`]).
+    /// # Safety
+    /// The pool must outlive the views and every graph captured through them, and only the
+    /// slot's current owner may replay those graphs, serialized on the device stream.
+    /// # Errors
+    /// Rejects an unknown slot.
+    #[expect(
+        unsafe_code,
+        reason = "Audited slot alias: the views share the slot's storage under the caller's contract"
+    )]
+    pub(crate) unsafe fn slot_views(&self, slot: usize) -> Result<(States, Fp8Caches)> {
+        let states = self
+            .states
+            .get(slot)
+            .ok_or_else(|| Error::invalid("slot view index"))?;
+        let fp8 = self
+            .fp8
+            .get(slot)
+            .ok_or_else(|| Error::invalid("slot view index"))?;
+        let mut state_views = States::new();
+        for (id, tensors) in states {
+            let mut views = Vec::with_capacity(tensors.len());
+            for tensor in tensors {
+                // SAFETY: forwarded from this function's contract.
+                views.push(unsafe { alias(tensor)? });
+            }
+            state_views.insert(*id, views);
+        }
+        let mut fp8_views = Fp8Caches::new();
+        for (id, (keys, values)) in fp8 {
+            // SAFETY: forwarded from this function's contract.
+            let keys = unsafe { alias(keys)? };
+            // SAFETY: forwarded from this function's contract.
+            let values = unsafe { alias(values)? };
+            fp8_views.insert(*id, (keys, values));
+        }
+        Ok((state_views, fp8_views))
+    }
+
     /// Return a slot to the free set; the next bind overwrites its state prefix.
     pub fn release(&mut self, slot: usize) {
         if slot < self.width()
             && self.leases.release(slot)
             && let Some(graph) = self.verify.as_mut()
         {
+            graph.discard(slot);
+        }
+    }
+
+    /// Forget a slot's pending verification without freeing its lease: a slot-resident
+    /// sequence that resets keeps its slot.
+    pub(crate) fn discard(&mut self, slot: usize) {
+        if let Some(graph) = self.verify.as_mut() {
             graph.discard(slot);
         }
     }
@@ -572,6 +654,10 @@ impl SlotPool {
         slot_capacity: usize,
         device: &CudaDevice,
     ) -> Result<()> {
+        // A slot-resident program's views are the slot's own storage: nothing to move.
+        if same_storage(dst, src) {
+            return Ok(());
+        }
         let dims = |tensor: &Tensor<T>| {
             tensor
                 .shape()
@@ -629,7 +715,9 @@ impl SlotPool {
             if src.size() != dst.size() {
                 return Err(Error::invariant("slot bind tensor size"));
             }
-            device.copy_d2d(dst, src, src.size())?;
+            if !same_storage(dst, src) {
+                device.copy_d2d(dst, src, src.size())?;
+            }
         }
         Ok(())
     }

@@ -9,7 +9,7 @@ use crate::tuning::select_tiling;
 use crate::tuning::{TilingSource, TuningReport, resolve_table, shipped_table, table_path};
 use crate::{
     device::CudaDevice,
-    resident::{FusionWeights, ProgramWeights},
+    resident::{FusionWeights, ProgramWeights, PromptScratchRegistry},
 };
 use cutile::half::bf16;
 use infer_core::{Error, Result, TensorId};
@@ -118,6 +118,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
     }
 }
 
@@ -336,6 +337,7 @@ fn draft_weights(
         rope_frequencies: BTreeMap::new(),
         rope_axes: BTreeMap::new(),
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
     };
     for tensor in &graph.tensors {
         let TensorStorage::Weight { slot } = &tensor.storage else {

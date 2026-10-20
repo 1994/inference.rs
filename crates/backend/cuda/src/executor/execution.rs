@@ -12,6 +12,7 @@ use infer_ir::{
     ExecutionInput, ExecutionProgram, ExecutionTask, OutputReadout, StepPlan, TaskOutput,
 };
 use std::collections::BTreeMap;
+use std::mem::swap;
 use std::mem::take;
 use std::ops::Range;
 use std::sync::Arc;
@@ -198,7 +199,10 @@ impl CudaBackend {
             .max()
             .unwrap_or(1)
             .next_power_of_two();
-        let Some(pool) = self.create_slot_pool(capacity) else {
+        // Reserve the configured capture bucket, not the transient number of arrivals seen on
+        // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
+        let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
+        let Some(pool) = self.create_slot_pool(capacity, maximum) else {
             self.slots_disabled = true;
             // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and
             // the fallback is otherwise silent: a caller only sees steps that never batched.
@@ -228,6 +232,7 @@ impl CudaBackend {
         }
         self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
         self.slots = Some(pool);
+        self.build_homes();
         self.reclaimed_slot_capacity = None;
     }
 
@@ -242,18 +247,35 @@ impl CudaBackend {
     }
 
     pub(super) fn warm_slot_pool_at(&mut self, capacity: usize) {
-        let Some(pool) = self.create_slot_pool(capacity) else {
-            tracing::warn!(
-                target: "infer::executor",
-                capacity,
-                last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
-                "CUDA slot pool prewarm failed; will retry on the first batchable step"
-            );
-            return;
+        let mut maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
+        let width = loop {
+            let Some(pool) = self.create_slot_pool(capacity, maximum) else {
+                tracing::warn!(
+                    target: "infer::executor",
+                    capacity,
+                    last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
+                    "CUDA slot pool prewarm failed; will retry on the first batchable step"
+                );
+                return;
+            };
+            let width = pool.width();
+            self.draft_slots = self.prepare_draft_pool(width, capacity);
+            self.slots = Some(pool);
+            self.build_homes();
+            // The pool, its slot programs and the prompt worker must leave room for the
+            // runtime's own workspace and transient allocations; otherwise retry narrower.
+            if width <= 2 || self.physical_available().unwrap_or(0) >= SERVING_RESERVE_BYTES {
+                break width;
+            }
+            self.worker = None;
+            self.homes.clear();
+            drop(self.draft_slots.take());
+            drop(self.slots.take());
+            if self.loaded.device().reclaim_barrier().is_err() {
+                return;
+            }
+            maximum = width - 1;
         };
-        let width = pool.width();
-        self.draft_slots = self.prepare_draft_pool(width, capacity);
-        self.slots = Some(pool);
         self.reclaimed_slot_capacity = None;
         tracing::info!(
             target: "infer::executor",
@@ -263,15 +285,55 @@ impl CudaBackend {
         );
     }
 
+    /// Capture each slot's resident target and draft programs. A slot without them still
+    /// serves sequences that bind a private program's state, so failures only log.
+    #[expect(
+        unsafe_code,
+        reason = "Audited slot alias: homes are declared before the pools and cleared before \
+                  either pool drops, and only the slot's lease holder replays them"
+    )]
+    fn build_homes(&mut self) {
+        self.worker = None;
+        self.homes.clear();
+        let Some(pool) = self.slots.as_ref() else {
+            return;
+        };
+        let worker = self.loaded.prompt_worker(pool.capacity());
+        match worker {
+            Ok((program, draft)) => self.worker = Some(super::Worker { program, draft }),
+            Err(error) => tracing::warn!(
+                target: "infer::executor",
+                %error,
+                "wide prompt worker unavailable; slot-resident prompts use the narrow graph"
+            ),
+        }
+        for slot in 0..pool.width() {
+            // SAFETY: see the expectation above.
+            let built = unsafe {
+                self.loaded
+                    .slot_programs(pool, self.draft_slots.as_ref(), slot)
+            };
+            match built {
+                Ok((program, draft)) => self.homes.push(Some(super::Home { program, draft })),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "infer::executor",
+                        slot,
+                        %error,
+                        "slot-resident programs unavailable; this slot binds private state"
+                    );
+                    self.homes.push(None);
+                }
+            }
+        }
+    }
+
     /// Widest pool the device can fund, trying every width down to two.
     ///
     /// Each attempt that fails is followed by a reclaim so the next one is judged against
     /// memory that is actually free; a width that cannot fit is worth more to the server than
     /// no batching at all.
-    fn create_slot_pool(&mut self, capacity: usize) -> Option<SlotPool> {
-        // Reserve the configured capture bucket, not the transient number of arrivals seen on
-        // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
-        let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
+    fn create_slot_pool(&mut self, capacity: usize, maximum: usize) -> Option<SlotPool> {
         for width in (2..=maximum).rev() {
             loop {
                 match self.loaded.slot_pool(width, capacity) {
@@ -374,19 +436,22 @@ impl CudaBackend {
             .ok_or_else(|| Error::invariant("CUDA slot pool"))?;
         let mut participants: Vec<(usize, usize)> = Vec::new();
         let mut unbound: Vec<usize> = Vec::new();
+        // Slot-resident sequences already hold their slot and wrote its state in place.
+        let mut homed: Vec<(usize, usize)> = Vec::new();
         for index in segment {
             let state = self
                 .states
                 .get(&tasks[index].state)
                 .ok_or_else(|| Error::invariant("validated CUDA state"))?;
-            match &state.slot {
-                Some(lease) => participants.push((index, lease.slot)),
-                None => unbound.push(index),
+            match (&state.slot, state.home) {
+                (Some(lease), _) => participants.push((index, lease.slot)),
+                (None, Some(slot)) => homed.push((index, slot)),
+                (None, None) => unbound.push(index),
             }
         }
         let mut newly: Vec<(usize, usize)> = Vec::new();
         for &index in &unbound {
-            if participants.len() + newly.len() >= pool.width() {
+            if participants.len() + homed.len() + newly.len() >= pool.width() {
                 break;
             }
             let Some(slot) = pool.take_free() else {
@@ -395,12 +460,14 @@ impl CudaBackend {
             newly.push((index, slot));
         }
         let minimum = if pool.verify().is_some() { 1 } else { 2 };
-        if participants.is_empty() && newly.len() < minimum {
+        if participants.is_empty() && homed.is_empty() && newly.len() < minimum {
             for (_, slot) in newly {
                 pool.release(slot);
             }
             return Ok(Vec::new());
         }
+        // Binding a slot-resident sequence copies nothing: its program's views are the slot.
+        newly.extend_from_slice(&homed);
         participants.extend_from_slice(&newly);
         participants.sort_unstable_by_key(|&(index, _)| index);
         let device = self.loaded.device();
@@ -415,10 +482,16 @@ impl CudaBackend {
         ) {
             // A failed replay poisons the participating sequences, never the pool.
             for &(index, slot) in &participants {
-                if let Some(state) = self.states.get_mut(&tasks[index].state) {
-                    state.poisoned = true;
-                    state.slot = None;
+                let Some(state) = self.states.get_mut(&tasks[index].state) else {
+                    continue;
+                };
+                state.poisoned = true;
+                // A home slot stays leased to its sequence until that sequence is released;
+                // returning it here would let another request bind the same storage.
+                if state.home == Some(slot) {
+                    continue;
                 }
+                state.slot = None;
                 pool.release(slot);
             }
             return Err(error);
@@ -445,13 +518,20 @@ impl CudaBackend {
                 "slot-leased CUDA sequence cannot run serially",
             ));
         }
-        if state.speculation.is_some()
+        if state.home.is_none()
+            && state.speculation.is_some()
             && (matches!(task.tokens, ExecutionInput::Decode { .. })
                 || state.program.prefill_width() < PREFILL_LANES)
         {
             self.loaded.ensure_verification(&mut state.program)?;
         }
-        let output = state.run(task)?;
+        // A slot-resident sequence's programs capture no prompt graph: every prompt chunk runs
+        // on the worker.
+        let wide = state.home.is_some() && !matches!(task.tokens, ExecutionInput::Decode { .. });
+        let output = match self.worker.as_mut() {
+            Some(worker) if wide => run_on_worker(state, worker, task)?,
+            _ => state.run(task)?,
+        };
         if let Some(snapshot) = cacheable_prefix(self.loaded.device(), &self.loaded, state, task) {
             snapshots.push(snapshot);
         }
@@ -484,6 +564,43 @@ impl CudaBackend {
 
 /// Bind newly assigned sequences into their slots, replay one decode step for every
 /// participant and commit each lane's token, logits and cursor in task order.
+/// Run a slot-resident sequence's prompt chunk on the wide worker: move its target and draft
+/// state in, replay, and move the advanced state back into the slot.
+fn run_on_worker(
+    state: &mut Sequence,
+    worker: &mut super::Worker,
+    task: &ExecutionTask,
+) -> Result<ModelOutput> {
+    worker
+        .program
+        .copy_state_from(&state.program, state.program.position())?;
+    if let (Some(spec), Some(draft)) = (state.speculation.as_ref(), worker.draft.as_mut()) {
+        draft.copy_state_from(&spec.program, spec.program.position())?;
+    }
+    swap_worker(state, worker);
+    let output = state.run(task);
+    swap_worker(state, worker);
+    let output = output?;
+    state
+        .program
+        .copy_state_from(&worker.program, worker.program.position())?;
+    if let (Some(spec), Some(draft)) = (state.speculation.as_mut(), worker.draft.as_ref()) {
+        spec.program.copy_state_from(draft, draft.position())?;
+    }
+    Ok(output)
+}
+
+const fn swap_worker(state: &mut Sequence, worker: &mut super::Worker) {
+    swap(&mut state.program, &mut worker.program);
+    if let (Some(spec), Some(draft)) = (state.speculation.as_mut(), worker.draft.as_mut()) {
+        swap(&mut spec.program, draft);
+    }
+}
+
+/// Device memory the load-time slot pool leaves free for the runtime's workspace and transient
+/// allocations; a wider pool that would leave less is rebuilt narrower.
+const SERVING_RESERVE_BYTES: u64 = 1 << 31;
+
 fn slot_replay(
     pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,

@@ -140,6 +140,32 @@ impl LoadedModel {
         Ok(price)
     }
 
+    /// Device bytes of the prompt scratch the target and draft programs share across all of
+    /// their sequences. Charged once against the state budget, never per sequence.
+    /// # Errors
+    /// Rejects arithmetic overflow.
+    pub fn shared_scratch_bytes(&self) -> Result<u64> {
+        let profile = self.device().profile()?;
+        let mut bytes = prompt_scratch_bytes(
+            &self.graph,
+            &self.weights,
+            ProgramGeometry::new(&self.weights, true),
+            profile,
+        )?;
+        if let Some(draft) = &self.draft {
+            bytes = add(
+                bytes,
+                prompt_scratch_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    ProgramGeometry::new(&draft.weights, true),
+                    profile,
+                )?,
+            )?;
+        }
+        Ok(bytes)
+    }
+
     /// KV bytes one block of `KV_BLOCK_TOKENS` positions occupies across every attention
     /// state of the target graph, fp8-packed where the checkpoint carries scales. This is
     /// the physical page price the slot pool's block accounting reports to the engine; the
@@ -211,37 +237,13 @@ fn program_price(
         )?;
     }
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
-    // tensor in the graph; charge what the arena will actually allocate.
-    // Prompt arenas keep one logits row (prompt_logits); decode and verification arenas keep one
-    // per lane.
-    let prompt_arenas = geometry
-        .prompts
-        .into_iter()
-        .filter(|width| *width > 0)
-        .try_fold(0usize, |sum, width| {
-            prompt_logits::required_bytes(graph, weights, width).and_then(|bytes| {
-                sum.checked_add(bytes)
-                    .ok_or_else(|| Error::invalid("activation budget"))
-            })
-        })?;
+    // tensor in the graph; charge what the arena will actually allocate. Prompt arenas and the
+    // rest of the prompt scratch are shared by every sequence ([`prompt_scratch_bytes`]).
     let other_arenas = ActivationArena::required_bytes(graph, lanes - geometry.prompt_lanes())?;
     bytes = add(
         bytes,
-        u64::try_from(
-            prompt_arenas
-                .checked_add(other_arenas)
-                .ok_or_else(|| Error::invalid("activation budget"))?,
-        )
-        .map_err(|_| Error::invalid("activation budget"))?,
+        u64::try_from(other_arenas).map_err(|_| Error::invalid("activation budget"))?,
     )?;
-    for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
-        bytes = add(
-            bytes,
-            recurrent_prefill_required_bytes(graph, weights, width)?,
-        )?;
-        // One owner per retained prompt graph, shared by hidden and final-logits replays.
-        bytes = add(bytes, required_bytes(weights, width, profile))?;
-    }
     for spec in &graph.tensors {
         let elements = spec.elements()? as u64;
         let amount = match spec.storage {
@@ -289,6 +291,66 @@ fn program_price(
 /// External hidden rows for every lane; fused draft programs also retain embedding and two
 /// normalized rows per lane, except where batched prompt fusion covers the prompt graph and only
 /// decode and verification lanes keep their own.
+/// Prompt-graph scratch one program allocates once and shares across its sequences
+/// (`resident::prompt_scratch`): per prompt width, the arena with its one logits row
+/// (`prompt_logits`), the chunked recurrent workspace and the fusion workspace.
+fn prompt_scratch_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    geometry: ProgramGeometry,
+    profile: &DeviceProfile,
+) -> Result<u64> {
+    let mut bytes = 0;
+    for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
+        let arena = prompt_logits::required_bytes(graph, weights, width)?;
+        bytes = add(
+            bytes,
+            u64::try_from(arena).map_err(|_| Error::invalid("activation budget"))?,
+        )?;
+        bytes = add(
+            bytes,
+            recurrent_prefill_required_bytes(graph, weights, width)?,
+        )?;
+        bytes = add(bytes, required_bytes(weights, width, profile))?;
+        bytes = add(bytes, prompt_partials_bytes(graph, weights, width)?)?;
+    }
+    Ok(bytes)
+}
+
+/// Split-K partial rows for every FP4 prompt projection at `width`, allocated once by the
+/// shared prompt scratch and reused by every sequence.
+fn prompt_partials_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    width: usize,
+) -> Result<u64> {
+    let sizes = graph
+        .tensors
+        .iter()
+        .map(|tensor| Ok((tensor.id, tensor.elements()? as u64)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut partials = BTreeSet::new();
+    let mut bytes = 0;
+    for node in &graph.nodes {
+        if node.op != TensorOp::Linear
+            || weights.input_scales.contains_key(&node.inputs[1])
+            || !matches!(
+                weights.projections.get(&node.inputs[1]),
+                Some(ProjectionWeight::Fp4(..))
+            )
+        {
+            continue;
+        }
+        let rows = *sizes
+            .get(&node.outputs[0])
+            .ok_or_else(|| Error::invalid("prefill linear output"))?;
+        if partials.insert(rows) {
+            bytes = add(bytes, mul(rows, (PREFILL_SPLIT_K * width) as u64 * F32)?)?;
+        }
+    }
+    Ok(bytes)
+}
+
 fn external_bytes(weights: &ProgramWeights, hidden: usize, profile: &DeviceProfile) -> Result<u64> {
     let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
     let external_lanes = 1 + width;

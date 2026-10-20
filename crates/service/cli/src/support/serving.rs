@@ -8,6 +8,12 @@ use infer_spi::BackendProvider;
 /// Fallback logical CUDA prefill chunk when the backend does not report graph geometry.
 const CUDA_PREFILL_CHUNK_TOKENS: usize = 64;
 
+/// Step GPU-time budget for CUDA serving: wide enough that the scheduler packs every ready
+/// decode and a prompt chunk, and leaves `max_num_batched_tokens` to bound a step. The
+/// calibrated per-token cost mixes decode and prompt steps, so it prices a 2048-token chunk
+/// at tens of seconds; any tighter budget trims or defers prompt work.
+const CUDA_STEP_BUDGET_US: u64 = 60_000_000;
+
 pub fn derive_config(
     config: &mut RuntimeConfig,
     backend: &impl BackendProvider,
@@ -39,6 +45,11 @@ pub fn derive_config(
         config.max_num_batched_tokens = config
             .max_num_batched_tokens
             .max(config.scheduler.prefill_chunk_tokens);
+        // One decode step of a large model already exceeds the generic 10 ms step budget, and
+        // the cost model prices an unseen batch shape linearly, so a second decode was always
+        // deferred and batched shapes were never observed: concurrent requests ran one at a
+        // time. Batched decode is bandwidth-bound, so the token budget is the real limit.
+        config.gpu_budget_us = config.gpu_budget_us.max(CUDA_STEP_BUDGET_US);
     }
     // Cold graph capture can take as long as a device submission. The generic resource
     // default is intended for already-warm pools and is too short for JIT-backed loading.

@@ -28,16 +28,19 @@ mod prefill_projection;
 mod profile;
 mod program;
 pub(crate) mod prompt_logits;
+pub(crate) mod prompt_scratch;
 mod recurrent;
 mod recurrent_checkpoint;
 pub(crate) mod recurrent_prefill;
 pub(crate) mod slot_batch;
+mod slot_recurrent;
 mod slot_verify;
 mod small_gemm;
 mod validation;
 pub use arena::ActivationArena;
 pub(crate) use program::ProgramGeometry;
 pub use program::{DeviceProgram, FusionWeights, ProgramWeights};
+pub use prompt_scratch::Registry as PromptScratchRegistry;
 
 mod conv_prefill;
 

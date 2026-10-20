@@ -1,6 +1,6 @@
 use super::*;
 use crate::mlp::ProjectionWeight;
-use crate::resident::{DeviceProgram, FusionWeights};
+use crate::resident::{DeviceProgram, FusionWeights, PromptScratchRegistry};
 use crate::strategy::default_tiling;
 use crate::tuning::resident_gemm::ResidentTuningSession;
 use cutile::half::bf16;
@@ -77,6 +77,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     };
     let weights = ProgramWeights {
         mrope: false,
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
         resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
