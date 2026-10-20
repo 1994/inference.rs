@@ -142,12 +142,12 @@ impl Support {
             && b.query.size() == lanes * HEADS * DIM
             && b.keys.is_contiguous()
             && b.values.is_contiguous()
-            && b.keys.shape()
-                == [
-                    i32::try_from(KV_HEADS).map_err(super::capture::error)?,
-                    i32::try_from(capacity).map_err(super::capture::error)?,
-                    i32::try_from(DIM).map_err(super::capture::error)?,
-                ]
+            // A paged pool's cache holds more physical rows than one sequence's capacity; the
+            // table maps the sequence's positions into them.
+            && b.keys.shape().len() == 3
+            && b.keys.shape()[0] == i32::try_from(KV_HEADS).map_err(super::capture::error)?
+            && b.keys.shape()[1] >= i32::try_from(capacity).map_err(super::capture::error)?
+            && b.keys.shape()[2] == i32::try_from(DIM).map_err(super::capture::error)?
             && b.values.shape() == b.keys.shape()
             && b.output.is_contiguous()
             && b.output.size() == lanes * HEADS * DIM
@@ -238,7 +238,8 @@ impl Support {
                 prepare.push_device_ptr(pointer);
             }
         }
-        prepare.push_arg(u32::try_from(capacity).map_err(super::capture::error)?);
+        // Physical rows, not logical capacity: the bridge's head stride; lengths bound it.
+        prepare.push_arg(u32::try_from(b.keys.shape()[1]).map_err(super::capture::error)?);
         prepare.push_arg(u32::try_from(lanes).map_err(super::capture::error)?);
         prepare.push_arg(scales[0]);
         prepare.push_arg(scales[1]);

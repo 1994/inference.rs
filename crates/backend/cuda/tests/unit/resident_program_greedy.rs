@@ -174,16 +174,16 @@ fn pooled_device_readout_matches_host_for_inactive_slots_and_partial_commits() -
     let graph = fixture_graph(width)?;
     let mut weights = fixture_weights(&device, width)?;
     weights.fusion = None;
-    let mut host = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 1))?;
-    let mut selected = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 1))?;
+    let mut host = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 1), None)?;
+    let mut selected = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 1), None)?;
     for position in 0..8 {
         let lanes = [(3, 31, position, position), (1, 13, position, position)];
         let expected = host.run_lanes(&device, &lanes)?;
         let actual = selected.run_lanes_readout(&device, &lanes, true)?;
         assert_selected_rows(&expected, &actual)?;
     }
-    let mut host = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 3))?;
-    let mut selected = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 3))?;
+    let mut host = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 3), None)?;
+    let mut selected = SlotPool::new(&device, &graph, &weights, 4, 64, width, (width, 3), None)?;
     let mut positions = [0; 4];
     for round in 0..8 {
         let lanes: Vec<_> = [3, 1]

@@ -245,6 +245,10 @@ fn assert_checkpoint_hidden_bits(actual: &[f32], expected: &[f32], label: &str) 
 /// candidate suffixes that were inactive in the preceding replay.
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One scenario drives pooled and serial programs side by side"
+)]
 fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
     use crate::resident::slot_batch::SlotPool;
 
@@ -255,7 +259,16 @@ fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
             let (graph, mut weights) = fixture_at(&device, geometry)?;
             weights.batch_width = verify;
             let hidden = geometry.1 * geometry.2;
-            let mut pool = SlotPool::new(&device, &graph, &weights, 4, 128, hidden, (16, verify))?;
+            let mut pool = SlotPool::new(
+                &device,
+                &graph,
+                &weights,
+                4,
+                128,
+                hidden,
+                (16, verify),
+                None,
+            )?;
             let mut references = (0..4)
                 .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, hidden, 16))
                 .collect::<Result<Vec<_>>>()?;

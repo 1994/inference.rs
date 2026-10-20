@@ -88,7 +88,7 @@ fn checkpoint_private_pool_first_step_arithmetic_census() -> Result<()> {
     loaded.weights.narrow_prefill_width = 0;
     let mut original = with_precise_dense(false, || loaded.sequence(1024))?;
     let mut aligned = with_precise_dense(true, || loaded.sequence(1024))?;
-    let mut pool = with_precise_dense(true, || loaded.slot_pool(4, 1024))?;
+    let mut pool = with_precise_dense(true, || loaded.slot_pool(4, 1024, None))?;
     let logits = common_prefix(&loaded, &mut original, &mut aligned, &tokens)?;
     let mut token = greedy(&logits)?;
     assert_eq!(pool.take_free(), Some(0));
@@ -208,7 +208,7 @@ fn pool_checkpoint() -> Result<PoolCheckpoint> {
         controls.push(program);
     }
     let before = pool_f32_capture_records();
-    let mut pool = with_pool_f32(true, || loaded.slot_pool(4, 1024))?;
+    let mut pool = with_pool_f32(true, || loaded.slot_pool(4, 1024, None))?;
     let records = pool_f32_capture_records().saturating_sub(before);
     assert!(
         records >= 96,

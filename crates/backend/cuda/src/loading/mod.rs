@@ -468,6 +468,7 @@ impl LoadedModel {
             capacity,
             self.model.hidden_size,
             (self.model.vocab_size, 0),
+            None,
         )
         .map(Some)
     }
@@ -484,16 +485,23 @@ impl LoadedModel {
     pub(crate) fn prompt_worker(
         &self,
         capacity: usize,
+        kv: Option<crate::resident::fp8_cache::Fp8Caches>,
     ) -> Result<(DeviceProgram, Option<DeviceProgram>)> {
         self.validate_capacity(capacity)?;
         let geometry = (capacity, self.model.hidden_size, self.model.vocab_size);
         let program =
-            DeviceProgram::new_worker(&self.device, &self.graph, &self.weights, geometry)?;
+            DeviceProgram::new_worker(&self.device, &self.graph, &self.weights, geometry, kv)?;
         let draft = self
             .draft
             .as_ref()
             .map(|draft| {
-                DeviceProgram::new_worker(&self.device, &draft.graph, &draft.weights, geometry)
+                DeviceProgram::new_worker(
+                    &self.device,
+                    &draft.graph,
+                    &draft.weights,
+                    geometry,
+                    None,
+                )
             })
             .transpose()?;
         Ok((program, draft))
@@ -546,6 +554,7 @@ impl LoadedModel {
         &self,
         width: usize,
         capacity: usize,
+        kv_tokens: Option<usize>,
     ) -> Result<crate::resident::slot_batch::SlotPool> {
         self.validate_capacity(capacity)?;
         crate::resident::slot_batch::SlotPool::new(
@@ -563,6 +572,7 @@ impl LoadedModel {
                     self.mtp_depth + 1
                 },
             ),
+            kv_tokens,
         )
     }
 }

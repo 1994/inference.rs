@@ -455,9 +455,7 @@ pub(crate) mod fused {
     }
 }
 
-use super::{
-    ActivationArena, ProgramWeights, batch::States, capture::error, capture_state::value_block,
-};
+use super::{ActivationArena, ProgramWeights, batch::States, capture::error};
 use cutile::prelude::*;
 use infer_core::TensorId;
 use infer_ir::{TensorNode, TensorOp};
@@ -510,6 +508,20 @@ pub(super) fn allocate_staging(
     }
     Ok(staging)
 }
+
+/// Value-dimension block of the fused kernels: a quarter of the dimension, so a layer launches
+/// four CTAs per value head (192 on the 27B rather than 48 for 170 SMs). Every reduction is
+/// over the key dimension, so the split changes no summation order.
+const fn fused_block(value_dim: usize) -> usize {
+    if value_dim.is_multiple_of(FUSED_VALUE_SPLIT) {
+        value_dim / FUSED_VALUE_SPLIT
+    } else {
+        value_dim
+    }
+}
+
+/// Value-dimension split of the fused verify and commit kernels.
+const FUSED_VALUE_SPLIT: usize = 4;
 
 /// Whether `node` is a recurrent state writer the fused verify/commit pair covers.
 pub(super) const fn covers(node: &TensorNode) -> bool {
@@ -628,7 +640,7 @@ pub(super) fn record_verify(
                 let [state] = state.as_slice() else {
                     return Err(error("delta state layout"));
                 };
-                let block = value_block(value_dim)?;
+                let block = fused_block(value_dim);
                 let shape = [value_heads, 1, value_dim];
                 let (mut o0, mut o1, mut o2) = (
                     o0.reshape(&shape)?,
@@ -750,7 +762,7 @@ pub(super) fn record_commit(
             let [state] = state.as_mut_slice() else {
                 return Err(error("delta state layout"));
             };
-            let block = value_block(value_dim)?;
+            let block = fused_block(value_dim);
             let [qkv, beta, alpha] = staged else {
                 return Err(error("delta staging layout"));
             };

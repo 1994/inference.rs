@@ -401,6 +401,10 @@ impl CudaBackend {
         if !pool.take_slot(slot) {
             return busy;
         }
+        if !pool.assign(slot, capacity, self.loaded.device())? {
+            pool.release(slot);
+            return busy;
+        }
         let Some(mut home) = self.homes[slot].take() else {
             return Ok(false);
         };

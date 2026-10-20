@@ -522,7 +522,21 @@ impl DeviceProgram {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         geometry: (usize, usize, usize),
+        kv: Option<super::fp8_cache::Fp8Caches>,
     ) -> Result<Self> {
+        // A paged pool's worker reads and writes the shared KV blocks of whichever sequence it
+        // runs, through a table it copies from that sequence; its recurrent state is its own.
+        let slot = match kv {
+            Some(kv) => {
+                let capacity = super::capacity::padded(geometry.0)?;
+                Some((
+                    allocate_states(device, graph, capacity, weights)?,
+                    kv,
+                    super::metadata::identity_table(device, capacity)?,
+                ))
+            }
+            None => None,
+        };
         let wide = ProgramGeometry::from_flags(
             weights.batch_width,
             weights.prefill_width,
@@ -530,7 +544,7 @@ impl DeviceProgram {
             false,
             true,
         );
-        Self::new_impl(device, graph, weights, geometry, wide, None)
+        Self::new_impl(device, graph, weights, geometry, wide, slot)
     }
 
     /// Copy `source`'s recurrent states and its first `rows` KV positions into this program,
@@ -563,6 +577,8 @@ impl DeviceProgram {
             copy_prefix(device, keys, from_keys, Some((rows, self.capacity)))?;
             copy_prefix(device, values, from_values, Some((rows, self.capacity)))?;
         }
+        // Paged sequences share KV storage and differ in their block tables.
+        copy_prefix(device, &mut self.table, &source.table, None)?;
         self.next_position = rows;
         self.last_batch = None;
         Ok(())
@@ -578,7 +594,11 @@ impl DeviceProgram {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         (capacity, hidden, vocabulary): (usize, usize, usize),
-        slot: (super::batch::States, super::fp8_cache::Fp8Caches),
+        slot: (
+            super::batch::States,
+            super::fp8_cache::Fp8Caches,
+            Tensor<i32>,
+        ),
     ) -> Result<Self> {
         // Every prompt chunk runs on the prompt worker, so a slot's programs capture no prompt
         // graph: the draft's wide one alone retained 160 MB of projection scratch per slot.
@@ -657,7 +677,11 @@ impl DeviceProgram {
         weights: &ProgramWeights,
         (capacity, hidden, vocabulary): (usize, usize, usize),
         geometry: ProgramGeometry,
-        slot: Option<(super::batch::States, super::fp8_cache::Fp8Caches)>,
+        slot: Option<(
+            super::batch::States,
+            super::fp8_cache::Fp8Caches,
+            Tensor<i32>,
+        )>,
     ) -> Result<Self> {
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
@@ -673,14 +697,17 @@ impl DeviceProgram {
         )?;
         let (mut nvfp4, mut delegated) =
             Self::projection_workspaces(device, graph, weights, geometry)?;
-        let (mut states, mut fp8_states) = match slot {
-            Some(slot) => slot,
+        let (mut states, mut fp8_states, slot_table) = match slot {
+            Some((states, fp8, table)) => (states, fp8, Some(table)),
             None => (
                 allocate_states(device, graph, capacity, weights)?,
                 super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?,
+                None,
             ),
         };
-        let (metadata, external, table) = Self::constant_inputs(device, hidden, capacity)?;
+        let (metadata, external, identity) = Self::constant_inputs(device, hidden, capacity)?;
+        // A slot program addresses its slot's KV blocks through the slot's own table.
+        let table = slot_table.unwrap_or(identity);
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (lane_external_owner, mut lane_external, mut lane_fusion) =
             allocate_lane_fusion(device, hidden, weights)?;

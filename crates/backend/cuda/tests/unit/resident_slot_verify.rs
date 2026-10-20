@@ -128,7 +128,16 @@ fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> 
     let (graph, mut weights) = fixture(&device)?;
     weights.batch_width = verify;
     weights.prefill_width = 1;
-    let mut pool = SlotPool::new(&device, &graph, &weights, width, capacity, 32, (32, verify))?;
+    let mut pool = SlotPool::new(
+        &device,
+        &graph,
+        &weights,
+        width,
+        capacity,
+        32,
+        (32, verify),
+        None,
+    )?;
     let mut serial = (0..width)
         .map(|_| DeviceProgram::new(&device, &graph, &weights, 32, 32, 32))
         .collect::<Result<Vec<_>>>()?;

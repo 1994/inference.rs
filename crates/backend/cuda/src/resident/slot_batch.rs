@@ -9,7 +9,7 @@ use super::{
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
 use crate::device::{CudaDevice, device_error};
-use cuda_core::{CudaContext, PinnedHostBuffer};
+use cuda_core::{CudaContext, PinnedHostBuffer, f8e4m3fn};
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorStorage};
@@ -51,6 +51,25 @@ fn copy_plan(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<Vec<(Ten
         plan.push((spec.id, copy));
     }
     Ok(plan)
+}
+
+/// Whole-tensor aliases of every cache in `caches`.
+/// # Safety
+/// The caches must outlive the aliases; see [`SlotPool::slot_views`].
+#[expect(
+    unsafe_code,
+    reason = "Audited cache alias: forwarded from the pool's view contracts"
+)]
+unsafe fn alias_caches(caches: &Fp8Caches) -> Result<Fp8Caches> {
+    let mut views = Fp8Caches::new();
+    for (id, (keys, values)) in caches {
+        // SAFETY: forwarded from this function's contract.
+        let keys = unsafe { alias(keys)? };
+        // SAFETY: forwarded from this function's contract.
+        let values = unsafe { alias(values)? };
+        views.insert(*id, (keys, values));
+    }
+    Ok(views)
 }
 
 /// Whether two tensors start at the same device address: a slot-resident program's view and the
@@ -123,6 +142,29 @@ impl SlotLedger {
     }
 }
 
+/// One FP8 KV cache per attention layer shared by every slot, addressed through each slot's
+/// block table: a slot holds blocks for the tokens its sequence can reach, not the pool's
+/// whole per-slot capacity.
+struct Paging {
+    /// Owner of the shared caches; each slot's entry in `SlotPool::fp8` aliases it.
+    shared: Fp8Caches,
+    free: Vec<i32>,
+    owned: Vec<Vec<i32>>,
+}
+
+impl Paging {
+    /// A slot's view of the shared caches; the slot's table selects its blocks.
+    #[expect(
+        unsafe_code,
+        reason = "Audited pool alias: the pool owns the shared caches and drops its graphs and \
+                  slot views first"
+    )]
+    fn slot_caches(&self) -> Result<Fp8Caches> {
+        // SAFETY: see the expectation above.
+        unsafe { alias_caches(&self.shared) }
+    }
+}
+
 pub struct SlotPool {
     // Exactly one of the two graphs exists: plain decode without a draft, pooled
     // speculation with one. Declared first so the graphs drop before the state sets and
@@ -134,6 +176,8 @@ pub struct SlotPool {
     /// Per-slot identity block tables; declared with the states so they outlive the captures.
     tables: Vec<Tensor<i32>>,
     plan: Vec<(TensorId, SlotCopy)>,
+    /// Shared physical KV blocks behind every slot's table, when the pool pages its KV.
+    paging: Option<Paging>,
     leases: SlotLedger,
     slots: usize,
     capacity: usize,
@@ -161,6 +205,11 @@ impl SlotPool {
     /// # Errors
     /// Rejects invalid geometry, fused verification graphs, an exceeded device budget
     /// or CUDA capture failures; the caller disables batching on any error.
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "Pool construction binds model, geometry, readout and KV paging explicitly"
+    )]
     pub fn new(
         device: &CudaDevice,
         graph: &DataflowGraph,
@@ -169,6 +218,7 @@ impl SlotPool {
         capacity: usize,
         hidden: usize,
         output: (usize, usize),
+        kv_tokens: Option<usize>,
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
         let capacity = super::capacity::padded(capacity)?;
@@ -191,11 +241,23 @@ impl SlotPool {
         let mut fp8 = Vec::with_capacity(width);
         let mut tables = Vec::with_capacity(width);
         let mut bytes = 0_u64;
+        let paging = Self::paging(device, graph, weights, (width, capacity), kv_tokens)?;
+        if let Some(paging) = &paging {
+            bytes = state_bytes(&States::new(), &paging.shared);
+        }
         for _ in 0..width {
             let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
-            let slot_fp8 = super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?;
+            let slot_fp8 = match paging.as_ref() {
+                Some(paging) => paging.slot_caches()?,
+                None => super::fp8_cache::allocate(device, graph, capacity, &weights.kv_scales)?,
+            };
+            let slot_bytes = if paging.is_some() {
+                state_bytes(&slot_states, &Fp8Caches::new())
+            } else {
+                state_bytes(&slot_states, &slot_fp8)
+            };
             bytes = bytes
-                .checked_add(state_bytes(&slot_states, &slot_fp8))
+                .checked_add(slot_bytes)
                 .ok_or_else(|| Error::invalid("slot pool budget overflow"))?;
             if bytes > budget {
                 return Err(Error::new(
@@ -206,6 +268,7 @@ impl SlotPool {
             states.push(slot_states);
             fp8.push(slot_fp8);
             // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
+            // A paged pool fills the table from its shared blocks when the slot is assigned.
             tables.push(super::metadata::identity_table(device, capacity)?);
         }
         let external = api::zeros::<f32>(&[hidden])
@@ -257,6 +320,7 @@ impl SlotPool {
             fp8,
             tables,
             plan,
+            paging,
             leases: SlotLedger::new(width),
             slots: width,
             capacity,
@@ -402,7 +466,10 @@ impl SlotPool {
         unsafe_code,
         reason = "Audited slot alias: the views share the slot's storage under the caller's contract"
     )]
-    pub(crate) unsafe fn slot_views(&self, slot: usize) -> Result<(States, Fp8Caches)> {
+    pub(crate) unsafe fn slot_views(
+        &self,
+        slot: usize,
+    ) -> Result<(States, Fp8Caches, Tensor<i32>)> {
         let states = self
             .states
             .get(slot)
@@ -420,6 +487,14 @@ impl SlotPool {
             }
             state_views.insert(*id, views);
         }
+        // SAFETY: forwarded from this function's contract.
+        let table = unsafe {
+            alias(
+                self.tables
+                    .get(slot)
+                    .ok_or_else(|| Error::invalid("slot view index"))?,
+            )?
+        };
         let mut fp8_views = Fp8Caches::new();
         for (id, (keys, values)) in fp8 {
             // SAFETY: forwarded from this function's contract.
@@ -428,17 +503,102 @@ impl SlotPool {
             let values = unsafe { alias(values)? };
             fp8_views.insert(*id, (keys, values));
         }
-        Ok((state_views, fp8_views))
+        Ok((state_views, fp8_views, table))
     }
 
     /// Return a slot to the free set; the next bind overwrites its state prefix.
     pub fn release(&mut self, slot: usize) {
-        if slot < self.width()
-            && self.leases.release(slot)
-            && let Some(graph) = self.verify.as_mut()
-        {
-            graph.discard(slot);
+        if slot < self.width() && self.leases.release(slot) {
+            if let Some(graph) = self.verify.as_mut() {
+                graph.discard(slot);
+            }
+            if let Some(paging) = self.paging.as_mut()
+                && let Some(owned) = paging.owned.get_mut(slot)
+            {
+                paging.free.append(owned);
+            }
         }
+    }
+
+    /// Give a leased slot the KV blocks for `tokens` positions and point its table at them.
+    /// Unpaged pools pre-own their whole capacity. False when the shared pool lacks blocks; the
+    /// caller releases the slot and the request waits.
+    /// # Errors
+    /// Rejects a request beyond the slot capacity and table upload failures.
+    pub(crate) fn assign(
+        &mut self,
+        slot: usize,
+        tokens: usize,
+        device: &CudaDevice,
+    ) -> Result<bool> {
+        if tokens > self.capacity {
+            return Err(Error::invalid("slot assignment beyond capacity"));
+        }
+        let Some(paging) = self.paging.as_mut() else {
+            return Ok(true);
+        };
+        let blocks = tokens.div_ceil(crate::constants::KV_BLOCK_TOKENS).max(1);
+        let owned = paging
+            .owned
+            .get_mut(slot)
+            .ok_or_else(|| Error::invalid("slot assignment index"))?;
+        paging.free.append(owned);
+        if paging.free.len() < blocks {
+            return Ok(false);
+        }
+        let start = paging.free.len() - blocks;
+        *owned = paging.free.split_off(start);
+        let table = self
+            .tables
+            .get_mut(slot)
+            .ok_or_else(|| Error::invariant("slot block table"))?;
+        // Positions past the request's reach never resolve; point them at its first block.
+        let mut entries = owned.clone();
+        entries.resize(table.size(), owned[0]);
+        device.copy_host_slice(table, &entries)?;
+        Ok(true)
+    }
+
+    /// Views of the shared paged KV caches, for the prompt worker; `None` when unpaged.
+    /// # Safety
+    /// The pool must outlive the views and every graph captured through them.
+    /// # Errors
+    /// Propagates view failures.
+    #[expect(
+        unsafe_code,
+        reason = "Audited pool alias: the views share the paged caches under the caller's contract"
+    )]
+    pub(crate) unsafe fn kv_views(&self) -> Result<Option<Fp8Caches>> {
+        self.paging
+            .as_ref()
+            // SAFETY: forwarded from this function's contract.
+            .map(|paging| unsafe { alias_caches(&paging.shared) })
+            .transpose()
+    }
+
+    /// The physical KV pool for a pool of `width` slots of `capacity` tokens: `kv_tokens`
+    /// shared positions, or `None` to give each slot its own whole-capacity cache.
+    fn paging(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        (width, capacity): (usize, usize),
+        kv_tokens: Option<usize>,
+    ) -> Result<Option<Paging>> {
+        let Some(tokens) = kv_tokens.filter(|_| !weights.kv_scales.is_empty()) else {
+            return Ok(None);
+        };
+        let block = crate::constants::KV_BLOCK_TOKENS;
+        let blocks = tokens.div_ceil(block).max(capacity.div_ceil(block));
+        let shared = super::fp8_cache::allocate(device, graph, blocks * block, &weights.kv_scales)?;
+        let free = (0..i32::try_from(blocks).map_err(device_error)?)
+            .rev()
+            .collect();
+        Ok(Some(Paging {
+            shared,
+            free,
+            owned: vec![Vec::new(); width],
+        }))
     }
 
     /// Forget a slot's pending verification without freeing its lease: a slot-resident
@@ -491,16 +651,24 @@ impl SlotPool {
                     self.capacity,
                     device,
                 )?,
-                SlotCopy::KvFp8 => Self::copy_kv_fp8(
-                    self.fp8
+                SlotCopy::KvFp8 => {
+                    let dst = self
+                        .fp8
                         .get_mut(slot)
-                        .ok_or_else(|| Error::invariant("slot fp8 caches"))?,
-                    source_fp8,
-                    *id,
-                    rows,
-                    self.capacity,
-                    device,
-                )?,
+                        .ok_or_else(|| Error::invariant("slot fp8 caches"))?;
+                    match self.paging.as_ref() {
+                        Some(paging) => Self::scatter_kv_fp8(
+                            dst,
+                            source_fp8,
+                            *id,
+                            (rows, &paging.owned[slot]),
+                            device,
+                        )?,
+                        None => {
+                            Self::copy_kv_fp8(dst, source_fp8, *id, rows, self.capacity, device)?;
+                        }
+                    }
+                }
                 SlotCopy::Whole => Self::copy_whole(
                     self.states
                         .get_mut(slot)
@@ -615,6 +783,64 @@ impl SlotPool {
         }
         for (dst, src) in dst_tensors.iter_mut().zip(src_tensors) {
             Self::copy_kv_tensor(dst, src, rows, slot_capacity, device)?;
+        }
+        Ok(())
+    }
+
+    /// Copy a contiguous `[kv_heads, capacity, head_dim]` FP8 cache's first `rows` positions
+    /// into a paged slot's blocks, block by block. A slot-resident program's views are the
+    /// slot's own blocks and move nothing.
+    fn scatter_kv_fp8(
+        dst: &mut Fp8Caches,
+        src: &Fp8Caches,
+        id: TensorId,
+        (rows, blocks): (usize, &[i32]),
+        device: &CudaDevice,
+    ) -> Result<()> {
+        let (src_keys, src_values) = src
+            .get(&id)
+            .ok_or_else(|| Error::invariant("slot bind source fp8 cache"))?;
+        let (dst_keys, dst_values) = dst
+            .get_mut(&id)
+            .ok_or_else(|| Error::invariant("slot bind target fp8 cache"))?;
+        let block = crate::constants::KV_BLOCK_TOKENS;
+        if rows.div_ceil(block) > blocks.len() {
+            return Err(Error::invariant("slot bind beyond assigned blocks"));
+        }
+        for (dst, src) in [(dst_keys, src_keys), (dst_values, src_values)] {
+            if same_storage(dst, src) {
+                continue;
+            }
+            let dims = |tensor: &Tensor<f8e4m3fn>| -> Result<Vec<usize>> {
+                tensor
+                    .shape()
+                    .iter()
+                    .map(|&dim| usize::try_from(dim).map_err(device_error))
+                    .collect()
+            };
+            let (dst_dims, src_dims) = (dims(dst)?, dims(src)?);
+            if dst_dims.len() != KV_STATE_DIMS
+                || src_dims.len() != KV_STATE_DIMS
+                || dst_dims[0] != src_dims[0]
+                || dst_dims[2] != src_dims[2]
+                || src_dims[1] < rows
+            {
+                return Err(Error::invariant("slot bind paged KV layout"));
+            }
+            let dim = dst_dims[2];
+            for head in 0..dst_dims[0] {
+                for (index, &physical) in blocks.iter().enumerate().take(rows.div_ceil(block)) {
+                    let count = block.min(rows - index * block);
+                    let physical = usize::try_from(physical).map_err(device_error)?;
+                    device.copy_d2d_at(
+                        dst,
+                        src,
+                        (head * dst_dims[1] + physical * block) * dim,
+                        (head * src_dims[1] + index * block) * dim,
+                        count * dim,
+                    )?;
+                }
+            }
         }
         Ok(())
     }

@@ -122,7 +122,7 @@ fn external_hidden_batch_preserves_private_kv_and_rollback() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (graph, weights) = fixture(&device)?;
-    let mut pool = SlotPool::new(&device, &graph, &weights, 4, 64, 32, (32, 0))?;
+    let mut pool = SlotPool::new(&device, &graph, &weights, 4, 64, 32, (32, 0), None)?;
     let mut references = (0..4)
         .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, 32, 32))
         .collect::<Result<Vec<_>>>()?;
@@ -218,7 +218,7 @@ fn accepted_draft_tokens_refresh_kv_with_target_hidden_rows() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (graph, weights) = fixture(&device)?;
-    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, 32, (32, 0))?;
+    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, 32, (32, 0), None)?;
     let mut reference = DeviceProgram::new(&device, &graph, &weights, 128, 32, 32)?;
     for position in 0..3 {
         reference.step(

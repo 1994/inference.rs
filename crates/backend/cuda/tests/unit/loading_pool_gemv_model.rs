@@ -25,7 +25,7 @@ struct Case {
 }
 fn make_case(loaded: &LoadedModel, prefix: &DeviceProgram, slots: usize) -> Result<Case> {
     let before = pool_gemv::captures();
-    let mut pool = loaded.slot_pool(slots, 128)?;
+    let mut pool = loaded.slot_pool(slots, 128, None)?;
     assert!(pool_gemv::captures() - before >= 96, "actual GEMV captures");
     let mut controls = Vec::new();
     for slot in 0..slots {

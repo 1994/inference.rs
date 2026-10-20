@@ -71,8 +71,8 @@ fn pooled(
     expected: &DeviceProgram,
     tokens: &[u32],
 ) -> Result<()> {
-    let mut shared = loaded.slot_pool(4, 128)?;
-    let mut separate = with_quant_reuse_disabled(|| loaded.slot_pool(4, 128))?;
+    let mut shared = loaded.slot_pool(4, 128, None)?;
+    let mut separate = with_quant_reuse_disabled(|| loaded.slot_pool(4, 128, None))?;
     assert!(
         shared.quant_reuse_stats().1 > 0,
         "pooled capture must reuse input"
