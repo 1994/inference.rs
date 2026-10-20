@@ -1,5 +1,6 @@
 //! Opt-in host-side execution evidence; no token contents are recorded.
 use super::CudaBackend;
+use crate::device::CudaDevice;
 use infer_ir::{ExecutionInput, ExecutionTask};
 use std::collections::BTreeMap;
 use std::env::var_os;
@@ -72,13 +73,7 @@ pub(super) struct StepProfile {
 
 impl StepProfile {
     pub(super) fn start(backend: &CudaBackend, tasks: &[ExecutionTask]) -> Option<Self> {
-        let path = OUTPUT
-            .get_or_init(|| {
-                var_os(PROFILE_ENV)
-                    .filter(|v| !v.is_empty())
-                    .map(PathBuf::from)
-            })
-            .as_ref()?;
+        let path = output_path()?;
         let inputs = tasks
             .iter()
             .map(|task| {
@@ -152,7 +147,7 @@ impl StepProfile {
 
 /// Keep fallback causes alongside grouping evidence instead of silently losing batching.
 pub(super) fn pool_failure(kind: &str, width: usize, capacity: usize, error: &infer_core::Error) {
-    let Some(path) = OUTPUT.get().and_then(Option::as_ref) else {
+    let Some(path) = output_path() else {
         return;
     };
     let line = serde_json::json!({"pool_kind": kind, "pool_creation_failed": error.to_string(), "width": width, "capacity": capacity});
@@ -163,5 +158,41 @@ pub(super) fn pool_failure(kind: &str, width: usize, capacity: usize, error: &in
         .and_then(|mut file| writeln!(file, "{line}"))
     {
         eprintln!("CUDA execution profile write failed: {error}");
+    }
+}
+
+fn output_path() -> Option<&'static PathBuf> {
+    OUTPUT
+        .get_or_init(|| {
+            var_os(PROFILE_ENV)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
+        .as_ref()
+}
+
+/// Startup allocation evidence shares the opt-in host profile and never synchronizes the GPU.
+pub(super) fn memory(stage: &str, width: usize, device: &CudaDevice) {
+    let Some(path) = output_path() else {
+        return;
+    };
+    let (Ok((free, total)), Ok(reusable)) = (device.memory_info(), device.pool_reclaimable_bytes())
+    else {
+        return;
+    };
+    let line = serde_json::json!({
+        "memory_stage": stage,
+        "width": width,
+        "driver_free_bytes": free,
+        "pool_unused_bytes": reusable,
+        "allocatable_bytes": free.saturating_add(reusable).min(total),
+    });
+    if let Err(error) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{line}"))
+    {
+        eprintln!("CUDA memory profile write failed: {error}");
     }
 }

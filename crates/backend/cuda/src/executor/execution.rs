@@ -254,6 +254,7 @@ impl CudaBackend {
     pub(super) fn warm_slot_pool_at(&mut self, capacity: usize) {
         let mut maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
         let width = loop {
+            super::profiling::memory("before_pool", maximum, self.loaded.device());
             let Some(pool) = self.create_slot_pool(capacity, maximum) else {
                 tracing::warn!(
                     target: "infer::executor",
@@ -264,9 +265,12 @@ impl CudaBackend {
                 return;
             };
             let width = pool.width();
+            super::profiling::memory("target_pool", width, self.loaded.device());
             self.draft_slots = self.prepare_draft_pool(width, capacity);
+            super::profiling::memory("draft_pool", width, self.loaded.device());
             self.slots = Some(pool);
             self.build_homes();
+            super::profiling::memory("homes", width, self.loaded.device());
             // The pool, its slot programs and the prompt worker must leave room for the
             // runtime's own workspace and transient allocations; otherwise retry narrower.
             let reserve = self
@@ -284,6 +288,7 @@ impl CudaBackend {
             if self.loaded.device().reclaim_barrier().is_err() {
                 return;
             }
+            super::profiling::memory("released", width, self.loaded.device());
             maximum = width - 1;
         };
         self.reclaimed_slot_capacity = None;
@@ -319,6 +324,7 @@ impl CudaBackend {
                 "wide prompt worker unavailable; slot-resident prompts use the narrow graph"
             ),
         }
+        super::profiling::memory("worker", pool.width(), self.loaded.device());
         for slot in 0..pool.width() {
             // SAFETY: see the expectation above.
             let built = unsafe {
