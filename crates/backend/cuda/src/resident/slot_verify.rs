@@ -56,6 +56,7 @@ pub(super) struct SlotVerifyGraph {
     profile: Option<profile::SlotProfile>,
     /// Commit inputs the verify graph copies out and the commit graphs read.
     _staging: super::slot_recurrent::Staging,
+    _parameters: super::slot_recurrent::RecurrentParameters,
     // The shared batched arena anchors the graph's activations; declared last so the graph
     // and the restore graphs drop before it.
     _arena: ActivationArena,
@@ -249,9 +250,17 @@ impl BatchBuilder<'_> {
         node: &TensorNode,
         arena: &mut ActivationArena,
         (states, metadata): (&[States], &[Tensor<i32>]),
-        (staging, index, value_split): (&mut super::slot_recurrent::Staging, usize, usize),
+        (staging, index, value_split, batch): (
+            &mut super::slot_recurrent::Staging,
+            usize,
+            usize,
+            &super::slot_recurrent::VerifyBatch<'_>,
+        ),
     ) -> StdResult<(), DeviceError> {
         staging.record_node(scope, node, arena, index)?;
+        if super::slot_recurrent::record_batch(scope, node, arena, batch, value_split)? {
+            return Ok(());
+        }
         for (slot, states) in states.iter().enumerate() {
             let lanes = slot_lanes(slot, metadata)?;
             super::slot_recurrent::record_verify(
@@ -271,12 +280,16 @@ impl BatchBuilder<'_> {
         &mut self,
         lane_states: &mut [States],
         lane_fp8: &mut [Fp8Caches],
-        geometry: (usize, &[Tensor<i32>]),
+        geometry: (
+            usize,
+            &[Tensor<i32>],
+            &super::slot_recurrent::VerifyBatch<'_>,
+        ),
         arena: &mut ActivationArena,
         (checkpoints, staging): (&mut [Vec<States>], &mut super::slot_recurrent::Staging),
         profile: &mut Option<profile::SlotProfile>,
     ) -> Result<CudaGraph<()>> {
-        let (verify, metadata) = geometry;
+        let (verify, metadata, batch) = geometry;
         let fused = fused_recurrent(self.graph, verify);
         let value_split =
             super::slot_recurrent::value_split(self.device.profile()?.multiprocessors);
@@ -329,7 +342,7 @@ impl BatchBuilder<'_> {
                             node,
                             arena,
                             (lane_states, metadata),
-                            (staging, index, value_split),
+                            (staging, index, value_split, batch),
                         )?;
                     }
                     Dispatch32::Row => {
@@ -388,7 +401,7 @@ impl BatchBuilder<'_> {
     /// capture failures.
     pub fn build_slot_verify(
         &mut self,
-        lane_states: &mut [States],
+        lane_states: &mut super::slot_states::SlotStates,
         lane_fp8: &mut [Fp8Caches],
         verify: usize,
     ) -> Result<SlotVerifyGraph> {
@@ -404,6 +417,7 @@ impl BatchBuilder<'_> {
         {
             return Err(Error::invalid("slot verify lanes"));
         }
+        let (lane_states, roots) = lane_states.parts();
         let fused = fused_recurrent(self.graph, verify);
         let mut checkpoints = if fused {
             (0..slots).map(|_| Vec::new()).collect()
@@ -423,10 +437,20 @@ impl BatchBuilder<'_> {
         } else {
             super::slot_recurrent::Staging::new()
         };
+        let parameters = if fused {
+            super::slot_recurrent::prepare_parameters(self.device, &self.graph.nodes, self.weights)?
+        } else {
+            super::slot_recurrent::RecurrentParameters::new()
+        };
+        let batch = super::slot_recurrent::VerifyBatch {
+            roots,
+            parameters: &parameters,
+            metadata: &metadata_owner,
+        };
         let graph = self.capture_slot_verify(
             lane_states,
             lane_fp8,
-            (verify, &metadata),
+            (verify, &metadata, &batch),
             &mut arena,
             (&mut checkpoints, &mut staging),
             &mut profile,
@@ -446,6 +470,7 @@ impl BatchBuilder<'_> {
             self.weights,
         )?;
         Ok(SlotVerifyGraph {
+            _parameters: parameters,
             token_readout,
             graph,
             restore,

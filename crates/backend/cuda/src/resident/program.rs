@@ -1527,17 +1527,13 @@ fn capture_reset(
     .map_err(device_error)
 }
 
-pub fn allocate_states(
-    device: &CudaDevice,
+/// Allocation shapes shared by private and pooled state storage.
+pub(super) fn state_shapes(
     graph: &DataflowGraph,
     capacity: usize,
     weights: &ProgramWeights,
-) -> Result<BTreeMap<TensorId, Vec<Tensor<f32>>>> {
+) -> Result<Vec<(TensorId, Vec<Vec<usize>>)>> {
     let mut plan = Vec::new();
-    let mut total = 0usize;
-    let budget = device
-        .allocatable_memory_bytes()?
-        .saturating_sub(device.profile()?.device_headroom_bytes());
     for spec in &graph.tensors {
         let TensorStorage::State { kind, .. } = &spec.storage else {
             continue;
@@ -1562,7 +1558,24 @@ pub fn allocate_states(
             }
             _ => return Err(Error::unsupported("resident state recipe")),
         };
-        for shape in &shapes {
+        plan.push((spec.id, shapes));
+    }
+    Ok(plan)
+}
+
+pub fn allocate_states(
+    device: &CudaDevice,
+    graph: &DataflowGraph,
+    capacity: usize,
+    weights: &ProgramWeights,
+) -> Result<BTreeMap<TensorId, Vec<Tensor<f32>>>> {
+    let plan = state_shapes(graph, capacity, weights)?;
+    let mut total = 0usize;
+    let budget = device
+        .allocatable_memory_bytes()?
+        .saturating_sub(device.profile()?.device_headroom_bytes());
+    for (_, shapes) in &plan {
+        for shape in shapes {
             let elements = shape.iter().try_fold(1usize, |a, b| {
                 a.checked_mul(*b)
                     .ok_or_else(|| Error::invalid("state overflow"))
@@ -1582,7 +1595,6 @@ pub fn allocate_states(
                 ));
             }
         }
-        plan.push((spec.id, shapes));
     }
     let mut states = BTreeMap::new();
     for (id, shapes) in plan {

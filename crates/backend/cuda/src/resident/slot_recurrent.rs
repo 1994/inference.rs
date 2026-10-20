@@ -19,6 +19,14 @@ pub(crate) mod fused {
         ge_tile(position, 0i32.broadcast(shape![1]))
     }
 
+    fn batch_active<const MF: i32>(
+        metadata: &Tensor<i32, { [-1] }>,
+        row: i32,
+    ) -> Tile<bool, { [1] }> {
+        let position = metadata.partition(shape![1]).load([row * MF + 2i32]);
+        ge_tile(position, 0i32.broadcast(shape![1]))
+    }
+
     /// Short-convolution outputs of one slot's three verification lanes, each over the window
     /// its predecessors would leave, without shifting the state: [`conv_commit3`] shifts it by
     /// the accepted prefix. Matches `conv4`'s arithmetic; a padding lane outputs zero.
@@ -282,6 +290,103 @@ pub(crate) mod fused {
         out2.store(delta_output(after2, q2, active2));
     }
 
+    /// Keep the immutable rate and bias in one launch operand.
+    #[cutile::entry()]
+    fn pack_parameters<const VH: i32>(
+        out: &mut Tensor<f32, { [2, 1] }>,
+        rate: &Tensor<f32, { [-1] }>,
+        bias: &Tensor<f32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let rate = rate.partition(shape![1]).load([pid.1]);
+        let bias = bias.partition(shape![1]).load([pid.1]);
+        out.partition_mut(shape![1, 1])
+            .store(rate.reshape(shape![1, 1]), [0i32, 0i32]);
+        out.partition_mut(shape![1, 1])
+            .store(bias.reshape(shape![1, 1]), [1i32, 0i32]);
+    }
+
+    /// The slot axis shares one launch; each CTA retains the original per-head reduction order.
+    #[cutile::entry()]
+    fn delta_verify_batch<
+        const KH: i32,
+        const VH: i32,
+        const D: i32,
+        const SW: i32,
+        const MF: i32,
+    >(
+        out: &mut Tensor<f32, { [1, 3, SW] }>,
+        state: &Tensor<f32, { [-1, D, D] }>,
+        qkv: &Tensor<f32, { [-1] }>,
+        beta: &Tensor<f32, { [-1] }>,
+        alpha: &Tensor<f32, { [-1] }>,
+        parameters: &Tensor<f32, { [-1] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let slot = pid.0;
+        let head = pid.2 / (D / SW);
+        let split = pid.2 % (D / SW);
+        let row0 = slot * 3i32;
+        let row1 = row0 + 1i32;
+        let row2 = row0 + 2i32;
+        let base0 = row0 * (2i32 * KH + VH);
+        let base1 = row1 * (2i32 * KH + VH);
+        let base2 = row2 * (2i32 * KH + VH);
+        let key = head / (VH / KH);
+        let head_bias = parameters.partition(shape![1]).load([VH + head]);
+        let rate = exp(parameters.partition(shape![1]).load([head]));
+        let initial: Tile<f32, { [D, SW] }> = state
+            .partition(shape![1, D, SW])
+            .load([slot * VH + head, 0i32, split])
+            .reshape(shape![D, SW]);
+        let active0 = batch_active::<MF>(metadata, row0);
+        let qp0 = qkv.partition(shape![D]);
+        let k0: Tile<f32, { [D] }> = qp0.load([base0 + KH + key]);
+        let v0: Tile<f32, { [SW] }> = qkv
+            .partition(shape![SW])
+            .load([(base0 + 2i32 * KH + head) * (D / SW) + split]);
+        let bt0 = sigmoid(beta.partition(shape![1]).load([row0 * VH + head]));
+        let decay0 = delta_decay(
+            alpha.partition(shape![1]).load([row0 * VH + head]) + head_bias,
+            rate,
+        );
+        let after0 = delta_update(initial, k0, v0, bt0, decay0, active0);
+        let q0: Tile<f32, { [D] }> = qp0.load([base0 + key]);
+        out.partition_mut(shape![1, 1, SW])
+            .store(delta_output(after0, q0, active0), [0i32, 0i32, 0i32]);
+        let active1 = batch_active::<MF>(metadata, row1);
+        let qp1 = qkv.partition(shape![D]);
+        let k1: Tile<f32, { [D] }> = qp1.load([base1 + KH + key]);
+        let v1: Tile<f32, { [SW] }> = qkv
+            .partition(shape![SW])
+            .load([(base1 + 2i32 * KH + head) * (D / SW) + split]);
+        let bt1 = sigmoid(beta.partition(shape![1]).load([row1 * VH + head]));
+        let decay1 = delta_decay(
+            alpha.partition(shape![1]).load([row1 * VH + head]) + head_bias,
+            rate,
+        );
+        let after1 = delta_update(after0, k1, v1, bt1, decay1, active1);
+        let q1: Tile<f32, { [D] }> = qp1.load([base1 + key]);
+        out.partition_mut(shape![1, 1, SW])
+            .store(delta_output(after1, q1, active1), [0i32, 1i32, 0i32]);
+        let active2 = batch_active::<MF>(metadata, row2);
+        let qp2 = qkv.partition(shape![D]);
+        let k2: Tile<f32, { [D] }> = qp2.load([base2 + KH + key]);
+        let v2: Tile<f32, { [SW] }> = qkv
+            .partition(shape![SW])
+            .load([(base2 + 2i32 * KH + head) * (D / SW) + split]);
+        let bt2 = sigmoid(beta.partition(shape![1]).load([row2 * VH + head]));
+        let decay2 = delta_decay(
+            alpha.partition(shape![1]).load([row2 * VH + head]) + head_bias,
+            rate,
+        );
+        let after2 = delta_update(after1, k2, v2, bt2, decay2, active2);
+        let q2: Tile<f32, { [D] }> = qp2.load([base2 + key]);
+        out.partition_mut(shape![1, 1, SW])
+            .store(delta_output(after2, q2, active2), [0i32, 2i32, 0i32]);
+    }
+
     /// Apply the accepted prefix, ignoring padding and every lane after the first padding.
     #[expect(
         clippy::too_many_arguments,
@@ -348,13 +453,142 @@ pub(crate) mod fused {
 }
 
 use super::{ActivationArena, ProgramWeights, batch::States, capture::error};
-use crate::constants::{CONV_KERNEL_SIZE, CONV_KERNEL_TILE, GDN_PROJECTED_INPUTS};
+use crate::constants::{
+    CONV_KERNEL_SIZE, CONV_KERNEL_TILE, F32_BYTES, GDN_PROJECTED_INPUTS, METADATA_FIELDS,
+};
 use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
-use infer_core::{Error, TensorId};
+use infer_core::{Error, OpId, TensorId};
 use infer_ir::{TensorNode, TensorOp};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+pub(super) type RecurrentParameters = BTreeMap<OpId, Tensor<f32>>;
+
+/// Full owners used only while constructing the shared verification launch.
+pub(super) struct VerifyBatch<'a> {
+    pub roots: &'a States,
+    pub parameters: &'a RecurrentParameters,
+    pub metadata: &'a Tensor<i32>,
+}
+
+const DELTA_PARAMETER_VECTORS: u64 = 2;
+const PARAMETER_ALIGNMENT_BYTES: u64 = 256;
+
+/// Conservative shared-parameter quote, including allocator alignment for every delta node.
+pub(super) fn parameter_bytes(nodes: &[TensorNode]) -> infer_core::Result<u64> {
+    nodes
+        .iter()
+        .filter(|node| covers(node))
+        .try_fold(0_u64, |sum, node| {
+            let TensorOp::Delta { value_heads, .. } = node.op else {
+                return Ok(sum);
+            };
+            let bytes = (value_heads as u64)
+                .checked_mul(DELTA_PARAMETER_VECTORS * F32_BYTES as u64)
+                .and_then(|n| n.checked_add(PARAMETER_ALIGNMENT_BYTES - 1))
+                .map(|n| n / PARAMETER_ALIGNMENT_BYTES * PARAMETER_ALIGNMENT_BYTES)
+                .ok_or_else(|| Error::invalid("pooled parameter byte overflow"))?;
+            sum.checked_add(bytes)
+                .ok_or_else(|| Error::invalid("pooled parameter budget overflow"))
+        })
+}
+
+/// Prepack immutable constants without changing their bits or allocating per replay.
+pub(super) fn prepare_parameters(
+    device: &CudaDevice,
+    nodes: &[TensorNode],
+    weights: &ProgramWeights,
+) -> infer_core::Result<RecurrentParameters> {
+    let mut result = RecurrentParameters::new();
+    for node in nodes.iter().filter(|node| covers(node)) {
+        let TensorOp::Delta { value_heads, .. } = node.op else {
+            continue;
+        };
+        let (Some(rate), Some(bias)) = (
+            weights.constants.get(&node.inputs[3]),
+            weights.constants.get(&node.inputs[4]),
+        ) else {
+            continue;
+        };
+        if rate.size() != value_heads || bias.size() != value_heads {
+            return Err(Error::invalid("pooled delta parameter geometry"));
+        }
+        let mut parameters = api::zeros::<f32>(&[2, value_heads])
+            .sync_on(&device.stream)
+            .map_err(device_error)?;
+        fused::pack_parameters(
+            (&mut parameters).partition([2, 1]),
+            &rate.view(&[value_heads]).map_err(device_error)?,
+            &bias.view(&[value_heads]).map_err(device_error)?,
+        )
+        .generics(vec![value_heads.to_string()])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+        result.insert(node.id, parameters);
+    }
+    Ok(result)
+}
+
+/// Use the slot axis when its immutable constants and contiguous state family are available.
+pub(super) fn record_batch(
+    scope: &Scope,
+    node: &TensorNode,
+    arena: &mut ActivationArena,
+    batch: &VerifyBatch<'_>,
+    value_split: usize,
+) -> Result<bool, DeviceError> {
+    let TensorOp::Delta {
+        key_heads,
+        value_heads,
+        key_dim,
+        value_dim,
+    } = node.op
+    else {
+        return Ok(false);
+    };
+    let Some(parameters) = batch.parameters.get(&node.id) else {
+        return Ok(false);
+    };
+    let roots = batch
+        .roots
+        .get(&node.states[0])
+        .ok_or_else(|| error("pooled delta owner"))?;
+    let [state] = roots.as_slice() else {
+        return Err(error("pooled delta state layout"));
+    };
+    let slots = arena.lanes() / LANES;
+    let block = fused_block(value_dim, value_split);
+    let index = arena.slot(node.outputs[0]).map_err(error)?;
+    let output = arena.buffers[index]
+        .take()
+        .ok_or_else(|| error("pooled delta output"))?;
+    let output_size = output.size();
+    let mut output = output.reshape(&[slots, LANES, value_heads * value_dim])?;
+    let recorded = (|| {
+        scope.record(
+            fused::delta_verify_batch(
+                (&mut output).partition([1, LANES, block]),
+                &state.view(&[slots * value_heads, key_dim, value_dim])?,
+                arena.get(node.inputs[0]).map_err(error)?,
+                arena.get(node.inputs[1]).map_err(error)?,
+                arena.get(node.inputs[2]).map_err(error)?,
+                &parameters.view(&[parameters.size()])?,
+                batch.metadata,
+            )
+            .generics(vec![
+                key_heads.to_string(),
+                value_heads.to_string(),
+                key_dim.to_string(),
+                block.to_string(),
+                METADATA_FIELDS.to_string(),
+            ]),
+        )?;
+        Ok(true)
+    })();
+    arena.buffers[index] = Some(output.reshape(&[output_size])?);
+    recorded
+}
 
 /// Candidate lanes of one slot that the fused kernels cover.
 pub(super) const LANES: usize = 3;

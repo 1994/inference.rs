@@ -6,6 +6,7 @@ use super::{
     batch::{BatchOutput, SlotDecodeGraph, SlotLane, States},
     fp8_cache::{Fp8Caches, allocate},
     program::ProgramWeights,
+    slot_states::SlotStates,
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
 use crate::constants::CB_DECODE_SLOTS;
@@ -26,7 +27,7 @@ const EXTERNAL_UPLOAD_RING: usize = MAX_VERIFICATION_WIDTH + 1;
 type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
 
 /// One pool's per-slot recurrent states, KV caches and KV position tables.
-type SlotStorage = (Vec<States>, Vec<Fp8Caches>, Vec<Tensor<i32>>);
+type SlotStorage = (SlotStates, Vec<Fp8Caches>, Vec<Tensor<i32>>);
 
 /// How one state family moves into a slot at bind time: a token-row prefix of a
 /// capacity-sized KV cache (f32 or fp8), or the whole tensor (conv/delta state).
@@ -178,7 +179,7 @@ pub struct SlotPool {
     // arena buffers their kernels reference.
     decode: Option<SlotDecodeGraph>,
     verify: Option<SlotVerifyGraph>,
-    states: Vec<States>,
+    states: SlotStates,
     fp8: Vec<Fp8Caches>,
     /// Per-slot identity block tables; declared with the states so they outlive the captures.
     tables: Vec<Tensor<i32>>,
@@ -206,6 +207,14 @@ pub struct SlotPool {
 }
 
 impl SlotPool {
+    pub(crate) fn parameter_bytes(graph: &DataflowGraph, verify: usize) -> Result<u64> {
+        if super::slot_verify::fused_recurrent(graph, verify) {
+            super::slot_recurrent::parameter_bytes(&graph.nodes)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Device staging or rollback storage used by the same recurrent policy as capture.
     pub(crate) fn rollback_bytes(
         graph: &DataflowGraph,
@@ -377,19 +386,25 @@ impl SlotPool {
         paging: Option<&Paging>,
         budget: u64,
     ) -> Result<SlotStorage> {
-        let mut states = Vec::with_capacity(width);
+        let paging_bytes = paging.map_or(0, |paging| state_bytes(&States::new(), &paging.shared));
+        let states = SlotStates::allocate(
+            device,
+            graph,
+            weights,
+            (width, capacity),
+            budget.saturating_sub(paging_bytes),
+        )?;
         let mut fp8 = Vec::with_capacity(width);
         let mut tables = Vec::with_capacity(width);
         let mut bytes = paging.map_or(0, |paging| state_bytes(&States::new(), &paging.shared));
-        for _ in 0..width {
-            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
+        for slot_states in states.iter() {
             let slot_fp8 = match paging {
                 Some(paging) => paging.slot_caches()?,
                 None => allocate(device, graph, capacity, &weights.kv_scales)?,
             };
             let slot_bytes = paging.map_or_else(
-                || state_bytes(&slot_states, &slot_fp8),
-                |_| state_bytes(&slot_states, &Fp8Caches::new()),
+                || state_bytes(slot_states, &slot_fp8),
+                |_| state_bytes(slot_states, &Fp8Caches::new()),
             );
             bytes = bytes
                 .checked_add(slot_bytes)
@@ -400,7 +415,6 @@ impl SlotPool {
                     "slot decode pool exceeds available device memory minus headroom",
                 ));
             }
-            states.push(slot_states);
             fp8.push(slot_fp8);
             // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
             // A paged pool fills the table from its shared blocks when the slot is assigned.

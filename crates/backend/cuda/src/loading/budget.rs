@@ -449,6 +449,7 @@ fn pool_storage_bytes(
     }
     bytes = add(bytes, ActivationArena::required_bytes(graph, lanes)? as u64)?;
     bytes = add(bytes, SlotPool::rollback_bytes(graph, width, verify)?)?;
+    bytes = add(bytes, SlotPool::parameter_bytes(graph, verify)?)?;
     // These widths prepare packed projection inputs; pooled verification writes directly
     // into arena rows and needs none of the private graph's pack/unpack buffers.
     bytes = add(

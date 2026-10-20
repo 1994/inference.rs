@@ -34,6 +34,7 @@ mod recurrent_checkpoint;
 pub(crate) mod recurrent_prefill;
 pub(crate) mod slot_batch;
 mod slot_recurrent;
+mod slot_states;
 mod slot_verify;
 mod slot_verify_attention;
 mod small_gemm;
