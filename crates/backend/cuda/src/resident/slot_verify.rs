@@ -112,6 +112,8 @@ impl BatchBuilder<'_> {
         (verify, staging): (usize, &super::slot_recurrent::Staging),
     ) -> Result<Vec<Vec<CudaGraph<()>>>> {
         let mut commits = Vec::with_capacity(lane_states.len());
+        let value_split =
+            super::slot_recurrent::value_split(self.device.profile()?.multiprocessors);
         for (slot, states) in lane_states.iter_mut().enumerate() {
             let lanes = slot_lanes(slot, metadata).map_err(device_error)?;
             let mut graphs = Vec::with_capacity(verify);
@@ -130,6 +132,7 @@ impl BatchBuilder<'_> {
                                     states,
                                     &lanes,
                                     self.weights,
+                                    value_split,
                                     (staged, count),
                                 )?;
                             }
@@ -249,6 +252,8 @@ impl BatchBuilder<'_> {
     ) -> Result<CudaGraph<()>> {
         let (verify, metadata) = geometry;
         let fused = self.fused_recurrent(verify);
+        let value_split =
+            super::slot_recurrent::value_split(self.device.profile()?.multiprocessors);
         CudaGraph::scope(&self.device.stream, |scope| {
             let mut no_fusion = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
@@ -296,6 +301,7 @@ impl BatchBuilder<'_> {
                                 states,
                                 &lanes,
                                 self.weights,
+                                value_split,
                                 staged,
                             )?;
                         }

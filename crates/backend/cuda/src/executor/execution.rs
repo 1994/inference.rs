@@ -5,6 +5,7 @@ use crate::constants::MIB;
 use crate::constants::MTP_KV_OFFSET;
 use crate::constants::PREFILL_LANES;
 use crate::device::CudaDevice;
+use crate::device::DeviceProfile;
 use crate::loading::LoadedModel;
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, Result, StateId};
@@ -268,7 +269,12 @@ impl CudaBackend {
             self.build_homes();
             // The pool, its slot programs and the prompt worker must leave room for the
             // runtime's own workspace and transient allocations; otherwise retry narrower.
-            if width <= 2 || self.physical_available().unwrap_or(0) >= SERVING_RESERVE_BYTES {
+            let reserve = self
+                .loaded
+                .device()
+                .profile()
+                .map_or(SERVING_RESERVE_FALLBACK_BYTES, serving_reserve_bytes);
+            if width <= 2 || self.physical_available().unwrap_or(0) >= reserve {
                 break width;
             }
             self.worker = None;
@@ -637,8 +643,19 @@ const fn paged_tokens(width: usize, capacity: usize) -> usize {
 }
 
 /// Device memory the load-time slot pool leaves free for the runtime's workspace and transient
-/// allocations; a wider pool that would leave less is rebuilt narrower.
-const SERVING_RESERVE_BYTES: u64 = 1 << 31;
+/// allocations, as a fraction of total memory. A wider pool that would leave less is rebuilt
+/// narrower. The fraction is clamped so a 16 GiB card keeps a 1 GiB floor and a large card does
+/// not over-reserve what the runtime never uses.
+const SERVING_RESERVE_DIVISOR: u64 = 16;
+const MIN_SERVING_RESERVE_BYTES: u64 = 1 << 30;
+const MAX_SERVING_RESERVE_BYTES: u64 = 3 << 30;
+/// Reserve used when the driver profile is unavailable.
+const SERVING_RESERVE_FALLBACK_BYTES: u64 = 1 << 31;
+
+fn serving_reserve_bytes(profile: &DeviceProfile) -> u64 {
+    (profile.total_memory_bytes / SERVING_RESERVE_DIVISOR)
+        .clamp(MIN_SERVING_RESERVE_BYTES, MAX_SERVING_RESERVE_BYTES)
+}
 
 fn slot_replay(
     pools: (&mut SlotPool, Option<&mut SlotPool>),

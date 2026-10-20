@@ -404,19 +404,37 @@ pub(super) fn allocate_staging(
     Ok(staging)
 }
 
-/// Value-dimension block of the fused kernels: a quarter of the dimension, so a layer launches
-/// four CTAs per value head (192 on the 27B rather than 48 for 170 SMs). Every reduction is
-/// over the key dimension, so the split changes no summation order.
-const fn fused_block(value_dim: usize) -> usize {
-    if value_dim.is_multiple_of(FUSED_VALUE_SPLIT) {
-        value_dim / FUSED_VALUE_SPLIT
+/// Value-dimension block of the fused kernels: one CTA per value head per split. Every
+/// reduction is over the key dimension, so the split changes no summation order.
+const fn fused_block(value_dim: usize, split: usize) -> usize {
+    if split > 1 && value_dim.is_multiple_of(split) {
+        value_dim / split
     } else {
         value_dim
     }
 }
 
-/// Value-dimension split of the fused verify and commit kernels.
-const FUSED_VALUE_SPLIT: usize = 4;
+/// Value-dimension split of the fused verify and commit kernels for a device's SM count.
+///
+/// Four splits are the measured optimum on the 170-SM RTX 5090 (192 CTAs per layer rather than
+/// 48). Smaller devices keep fewer splits: the goal is roughly one wave of CTAs, and many tiny
+/// blocks lose more to launch and reduction overhead than they gain in occupancy.
+pub(super) const fn value_split(multiprocessors: u32) -> usize {
+    match multiprocessors {
+        0..=VALUE_SPLIT_ONE_MAX_SM => VALUE_SPLIT_ONE,
+        VALUE_SPLIT_TWO_MIN_SM..=VALUE_SPLIT_TWO_MAX_SM => VALUE_SPLIT_TWO,
+        _ => VALUE_SPLIT_FOUR,
+    }
+}
+
+/// SM counts at which the fused split grows. The 170-SM class takes four; smaller devices
+/// take one or two so each layer still has enough CTAs to fill them.
+const VALUE_SPLIT_ONE_MAX_SM: u32 = 63;
+const VALUE_SPLIT_TWO_MIN_SM: u32 = 64;
+const VALUE_SPLIT_TWO_MAX_SM: u32 = 127;
+const VALUE_SPLIT_ONE: usize = 1;
+const VALUE_SPLIT_TWO: usize = 2;
+const VALUE_SPLIT_FOUR: usize = 4;
 
 /// Whether `node` is a recurrent state writer the fused verify/commit pair covers.
 pub(super) const fn covers(node: &TensorNode) -> bool {
@@ -473,6 +491,10 @@ fn rows<'a>(
     reason = "Audited row alias: the three output rows are disjoint lanes of one arena slot, \
               which outlives the captured graph"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The captured verify node binds scope, geometry, state, lanes and staging explicitly"
+)]
 pub(super) fn record_verify(
     scope: &Scope,
     node: &TensorNode,
@@ -480,6 +502,7 @@ pub(super) fn record_verify(
     states: &States,
     slot: &SlotLanes<'_>,
     weights: &ProgramWeights,
+    value_split: usize,
     staged: &mut [[Tensor<f32>; LANES]],
 ) -> Result<(), DeviceError> {
     stage_inputs(scope, node, arena, slot, staged)?;
@@ -535,7 +558,7 @@ pub(super) fn record_verify(
                 let [state] = state.as_slice() else {
                     return Err(error("delta state layout"));
                 };
-                let block = fused_block(value_dim);
+                let block = fused_block(value_dim, value_split);
                 let shape = [value_heads, 1, value_dim];
                 let (mut o0, mut o1, mut o2) = (
                     o0.reshape(&shape)?,
@@ -612,6 +635,10 @@ fn stage_inputs(
 }
 
 /// Record the commit of one slot's first `count` verification lanes for a covered node.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The captured commit node binds scope, geometry, state, lanes and staging explicitly"
+)]
 pub(super) fn record_commit(
     scope: &Scope,
     node: &TensorNode,
@@ -619,6 +646,7 @@ pub(super) fn record_commit(
     states: &mut States,
     slot: &SlotLanes<'_>,
     weights: &ProgramWeights,
+    value_split: usize,
     (staged, count): (&[[Tensor<f32>; LANES]], usize),
 ) -> Result<(), DeviceError> {
     let count = i32::try_from(count).map_err(error)?;
@@ -657,7 +685,7 @@ pub(super) fn record_commit(
             let [state] = state.as_mut_slice() else {
                 return Err(error("delta state layout"));
             };
-            let block = fused_block(value_dim);
+            let block = fused_block(value_dim, value_split);
             let [qkv, beta, alpha] = staged else {
                 return Err(error("delta staging layout"));
             };
