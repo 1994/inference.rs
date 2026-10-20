@@ -67,6 +67,40 @@ pub(crate) mod aux {
         out.store(result);
     }
 
+    /// [`norm`] over 16 rows per block for a row that fills one power-of-two tile: one row per
+    /// block left the per-head gated norm (48 heads × 2048 prompt rows) bound by block overhead.
+    #[cutile::entry()]
+    fn norm_rows<const D: i32, const GATED: i32>(
+        out: &mut Tensor<f32, { [16, D] }>,
+        x: &Tensor<f32, { [-1, D] }>,
+        weight: &Tensor<f32, { [-1] }>,
+        gate: &Tensor<f32, { [-1, D] }>,
+        epsilon: f32,
+        offset: f32,
+    ) {
+        let x = x.load_like(out);
+        let square: Tile<f32, { [16] }> = reduce_sum(x * x, 1i32);
+        let d: f32 = convert_scalar(D);
+        let variance: Tile<f32, { [16] }> =
+            square / d.broadcast(shape![16]) + epsilon.broadcast(shape![16]);
+        let inverse = rsqrt(variance, ftz::Disabled)
+            .reshape(shape![16, 1])
+            .broadcast(shape![16, D]);
+        let weights = weight
+            .partition(shape![D])
+            .load([0i32])
+            .reshape(shape![1, D])
+            .broadcast(shape![16, D]);
+        let mut result = x * inverse * (weights + offset.broadcast(shape![16, D]));
+        if GATED == 1 {
+            let z = gate.load_like(out);
+            let negative: Tile<f32, { [16, D] }> = 0.0f32.broadcast(shape![16, D]) - z;
+            let denominator = 1.0f32.broadcast(shape![16, D]) + exp(negative);
+            result = result * z / denominator;
+        }
+        out.store(result);
+    }
+
     #[cutile::entry()]
     fn split<const D: i32, const B: i32>(
         out: &mut Tensor<f32, { [1, B] }>,

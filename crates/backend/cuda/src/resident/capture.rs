@@ -479,6 +479,24 @@ impl Capture<'_> {
         };
         #[cfg(test)]
         let options = super::gated_norm_discovery::model_options(dimension, gated, heads, options);
+        if dimension.is_power_of_two()
+            && dimension <= NORM_ROWS_MAX_DIMENSION
+            && heads >= NORM_ROWS * NORM_ROWS
+            && heads.is_multiple_of(NORM_ROWS)
+        {
+            self.scope.record(
+                aux::norm_rows(
+                    (&mut output).partition([NORM_ROWS, dimension]),
+                    &input,
+                    &weight,
+                    &gate,
+                    epsilon,
+                    offset,
+                )
+                .generics(vec![dimension.to_string(), i32::from(gated).to_string()]),
+            )?;
+            return Ok(output);
+        }
         let kernel = aux::norm(
             (&mut output).partition([1, dimension.next_power_of_two()]),
             &input,
@@ -497,3 +515,7 @@ impl Capture<'_> {
         Ok(output)
     }
 }
+
+/// Rows per block of the batched norm (fixed in its kernel), and the widest row it takes.
+const NORM_ROWS: usize = 16;
+const NORM_ROWS_MAX_DIMENSION: usize = 256;
