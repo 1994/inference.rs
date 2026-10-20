@@ -114,6 +114,42 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     Ok((graph, weights))
 }
 
+fn add_rotary(
+    device: &CudaDevice,
+    graph: &mut DataflowGraph,
+    weights: &mut ProgramWeights,
+) -> Result<()> {
+    let output = TensorId::new(8)?;
+    let id = OpId::new(8)?;
+    graph.tensors.push(TensorSpec {
+        id: output,
+        shape: vec![32],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    });
+    graph.nodes[1].inputs[0] = output;
+    graph.nodes.insert(
+        1,
+        TensorNode {
+            id,
+            layer: None,
+            op: TensorOp::Rope {
+                heads: 4,
+                head_dim: 8,
+                rotary_dim: 4,
+                theta: 10000.0,
+            },
+            inputs: vec![TensorId::new(2)?],
+            outputs: vec![output],
+            states: vec![],
+        },
+    );
+    weights
+        .rope_frequencies
+        .insert(id, device.upload(vec![1.0, 0.01], &[2])?);
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh"]
 fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
@@ -126,9 +162,30 @@ fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
 }
 
 fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> {
+    check_pool_width_rotary(width, verify, capacity, false)
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn pooled_rotary_preserves_row_consumers_prefixes_and_reuse() -> Result<()> {
+    for width in [2, 5, 16] {
+        check_pool_width_rotary(width, 3, 32, true)?;
+    }
+    Ok(())
+}
+
+fn check_pool_width_rotary(
+    width: usize,
+    verify: usize,
+    capacity: usize,
+    rotary: bool,
+) -> Result<()> {
     enable_default().map_err(device_error)?;
     let device = CudaDevice::new(0)?;
-    let (graph, mut weights) = fixture(&device)?;
+    let (mut graph, mut weights) = fixture(&device)?;
+    if rotary {
+        add_rotary(&device, &mut graph, &mut weights)?;
+    }
     weights.batch_width = verify;
     weights.prefill_width = 1;
     let mut pool = SlotPool::new(

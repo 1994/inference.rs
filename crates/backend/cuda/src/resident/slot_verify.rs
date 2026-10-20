@@ -321,6 +321,9 @@ impl BatchBuilder<'_> {
                     )?;
                     continue;
                 }
+                if super::slot_rope::record(scope, node, arena, self.weights, batch.metadata)? {
+                    continue;
+                }
                 if self.record_slot_verify_attention(
                     scope,
                     node,
