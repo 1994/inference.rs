@@ -128,9 +128,25 @@ impl Cli {
 #[path = "../tests/unit/arguments.rs"]
 mod tests;
 
-/// Whether `--limit-mm-per-prompt` limits every modality to zero items.
+/// Whether `--limit-mm-per-prompt` limits every modality to zero items. This build only
+/// implements the text-only case, so reject a non-zero or unknown limit instead of accepting a
+/// flag whose promise it cannot keep.
 fn parse_text_only(value: &str) -> Result<bool, String> {
     let limits: BTreeMap<String, u64> =
         serde_json::from_str(value).map_err(|error| format!("modality limits: {error}"))?;
-    Ok(!limits.is_empty() && limits.values().all(|&limit| limit == 0))
+    if limits.is_empty() {
+        return Ok(false);
+    }
+    if let Some(modality) = limits
+        .keys()
+        .find(|modality| !matches!(modality.as_str(), "image" | "video"))
+    {
+        return Err(format!("unsupported modality limit `{modality}`"));
+    }
+    if let Some((modality, _)) = limits.iter().find(|(_, limit)| **limit != 0) {
+        return Err(format!(
+            "non-zero limit for `{modality}` is not supported; this build serves text only"
+        ));
+    }
+    Ok(true)
 }
