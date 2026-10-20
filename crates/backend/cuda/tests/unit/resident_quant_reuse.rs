@@ -1,23 +1,32 @@
 //! Exact activation-quantization CSE on real checkpoint gate/up pairs.
 //! No observer kernels enter either arm; snapshots and input updates stay outside replay.
 use super::{QuantPairPlan, Workspace, record_with_input_pointer};
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{
     device::CudaDevice,
     loading::{Projection, floats},
     mlp::ProjectionWeight,
     resident::ProgramWeights,
 };
+use cutile::bench::BenchOptions;
+use cutile::bench::do_bench_paired;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
 use infer_core::{ModelId, OpId, TensorId};
 use infer_ir::{DType as IrDType, DataflowGraph, TensorNode, TensorOp, TensorSpec, TensorStorage};
 use infer_models::{DeviceWeight, QuantizedPackage, WeightEncoding};
+use std::env::var;
+use std::error::Error;
+use std::process::Command;
+use std::thread::sleep;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const ROWS: [usize; 4] = [1, 4, 64, 256];
 const FIXTURES: [&str; 8] = [
     "ordinary",
@@ -129,7 +138,7 @@ fn fixture_weights() -> ProgramWeights {
     ProgramWeights {
         mrope: false,
         autotune: false,
-        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         batch_width: 4,
         prefill_width: 256,
         narrow_prefill_width: 64,
@@ -630,7 +639,7 @@ fn await_cost_idle() -> TestResult {
     let started = Instant::now();
     let mut consecutive = 0;
     while started.elapsed() < Duration::from_secs(30) {
-        let query = std::process::Command::new("nvidia-smi")
+        let query = Command::new("nvidia-smi")
             .args([
                 "--id=0",
                 "--query-gpu=utilization.gpu",
@@ -654,7 +663,7 @@ fn await_cost_idle() -> TestResult {
         if consecutive == 3 {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_secs(1));
+        sleep(Duration::from_secs(1));
     }
     Err("cost not started: three consecutive <=2% samples absent within 30s; numerical evidence retained".into())
 }
@@ -666,7 +675,7 @@ fn measure_case(
     clear_l2: bool,
     reverse: bool,
 ) -> TestResult {
-    let options = cutile::bench::BenchOptions {
+    let options = BenchOptions {
         warmup: Duration::from_millis(5),
         rep: Duration::from_millis(10),
         min_reps: 16,
@@ -678,20 +687,20 @@ fn measure_case(
     } else {
         (&case.separate, &case.shared)
     };
-    let (a, b) = cutile::bench::do_bench_paired(
+    let (a, b) = do_bench_paired(
         &device.stream,
         &options,
         |_| {
             first
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
         |_| {
             second
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
     )?;
     let (separate, shared) = if reverse { (b, a) } else { (a, b) };
@@ -715,7 +724,7 @@ fn measure_case(
 
 fn run(performance: bool) -> TestResult {
     if performance {
-        let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+        let compile = CompileOptions::default();
         if cfg!(debug_assertions)
             || compile.device_debug
             || compile.opt_level.is_some_and(|x| x != 3)
@@ -733,7 +742,7 @@ fn run(performance: bool) -> TestResult {
             "cost_after_all_numeric_cases":true,
         })
     );
-    let mut package = QuantizedPackage::open(std::env::var("INFER_TEST_MODEL")?, ModelId::ONE)?;
+    let mut package = QuantizedPackage::open(var("INFER_TEST_MODEL")?, ModelId::ONE)?;
     let selected = checkpoint_pairs(&package)?;
     let mut cases = Vec::new();
     for (name, weight) in selected {

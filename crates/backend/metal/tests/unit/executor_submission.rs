@@ -5,6 +5,7 @@ use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
 use infer_models::ModelPackage;
 use infer_spi::BackendProvider;
+use std::thread::sleep;
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -81,7 +82,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     while backend.poll(&mut ticket)?.is_none() {
         assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
     let second = StateId::new(2)?;
     backend.fork_sequence(StateId::ONE, second, 8)?;
@@ -146,7 +147,7 @@ fn encoding_failure_rolls_back_a_batch_and_shared_cow_tails() -> Result<()> {
     backend.validate_state_ownership(&[(StateId::ONE, 8, 3), (second, 8, 4)])?;
     while backend.poll(&mut ticket)?.is_none() {
         assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
     assert_eq!(backend.inflight_pins, []);
     backend.validate_state_ownership(&[(StateId::ONE, 8, 3), (second, 8, 4)])?;

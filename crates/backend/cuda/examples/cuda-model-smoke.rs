@@ -1,14 +1,18 @@
 #[cfg(target_os = "linux")]
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use std::error::Error;
+#[cfg(target_os = "linux")]
 mod model_smoke;
 
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     use clap::Parser;
     use infer_models::{ChatMessage, ChatOptions, TextAssets};
     use model_smoke::{mtp::Mtp, options::Options};
     use std::time::Instant;
     let options = Options::parse();
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     if options.dataset.is_some() {
         return model_smoke::suite::run(&options);
     }

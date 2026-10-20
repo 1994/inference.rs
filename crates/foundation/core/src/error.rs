@@ -1,5 +1,6 @@
 //! Typed error codes and results shared by engine layers.
 use serde::{Deserialize, Serialize};
+use std::result::Result as StdResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCode {
@@ -36,4 +37,4 @@ impl Error {
         Self::new(ErrorCode::Unsupported, message)
     }
 }
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = StdResult<T, Error>;

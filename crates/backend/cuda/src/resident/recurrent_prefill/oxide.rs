@@ -1,6 +1,8 @@
 //! Exact F32 recurrence from pinned Rust SIMT source, with graph operand leases.
 use crate::device::CudaDevice;
 use crate::device::device_error;
+use crate::tuning::recurrent::exact::select as exact_select;
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use cuda_core::{Function, LaunchConfig};
 use cutile::{
     cuda_async::{
@@ -10,6 +12,9 @@ use cutile::{
     prelude::*,
 };
 use infer_core::Result;
+#[cfg(test)]
+use std::cell::Cell;
+use std::result::Result as StdResult;
 const KH: usize = 16;
 const VH: usize = 48;
 const DIM: usize = 128;
@@ -42,7 +47,7 @@ impl Support {
         device: &CudaDevice,
         shape: [usize; SHAPE_RANK],
         autotune: bool,
-        session: &crate::tuning::resident_gemm::ResidentTuningSession,
+        session: &ResidentTuningSession,
     ) -> Result<Option<Self>> {
         if shape[..GEOMETRY_RANK] != [KH, VH, DIM]
             || !SUPPORTED_LANES.contains(&shape[3])
@@ -54,7 +59,7 @@ impl Support {
         if DISABLED.get() {
             return Ok(None);
         }
-        if crate::tuning::recurrent::exact::select(device, shape, autotune, session) {
+        if exact_select(device, shape, autotune, session) {
             Self::load(device).map(Some)
         } else {
             Ok(None)
@@ -65,14 +70,14 @@ impl Support {
         scope: &Scope,
         bindings: Bindings<'_>,
         lanes: usize,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         record(scope, &self.function, bindings, self.stream, lanes)
     }
 }
 #[cfg(test)]
 thread_local! {
-    static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DISABLED: Cell<bool> = const { Cell::new(false) };
+    static CAPTURES: Cell<usize> = const { Cell::new(0) };
 }
 #[cfg(test)]
 pub fn captures() -> usize {
@@ -99,7 +104,7 @@ impl GraphNode for Recorded<'_> {}
 )]
 impl DeviceOp for Recorded<'_> {
     type Output = ();
-    unsafe fn execute(self, ctx: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    unsafe fn execute(self, ctx: &ExecutionContext) -> StdResult<(), DeviceError> {
         if ctx.get_cuda_stream().cu_stream() as usize != self.stream {
             return Err(DeviceError::Internal("GDN stream mismatch".into()));
         }
@@ -120,7 +125,7 @@ impl DeviceOp for Recorded<'_> {
     }
 }
 impl IntoFuture for Recorded<'_> {
-    type Output = std::result::Result<(), DeviceError>;
+    type Output = StdResult<(), DeviceError>;
     type IntoFuture = DeviceFuture<(), Self>;
     fn into_future(self) -> Self::IntoFuture {
         match with_default_device_policy(|policy| {
@@ -142,7 +147,7 @@ pub(super) fn record(
     bindings: Bindings<'_>,
     stream: usize,
     lanes: usize,
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     if !SUPPORTED_LANES.contains(&lanes)
         || bindings.state.shape() != STATE_SHAPE
         || bindings.output.size() != VH * lanes * DIM

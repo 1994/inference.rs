@@ -3,3 +3,7 @@ msrv = "1.90"
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+# `clippy::absolute_paths` counts the path needed to import the item: a two-segment
+# `crate::Error` is already short, while `std::sync::Arc` or `crate::constants::X` is not.
+absolute-paths-max-segments = 2

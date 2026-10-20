@@ -1,5 +1,13 @@
 use super::*;
+use crate::cpu::CpuConfig;
+use crate::cpu::CpuPool;
 use infer_models::{ParsedToolCall, TextAssets};
+use std::collections::BTreeSet;
+use std::env::temp_dir;
+use std::fs::create_dir_all;
+use std::fs::write;
+use std::process::id as process_id;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 
 /// The GPT-2 byte alphabet: printable bytes keep their character, the rest are shifted past
@@ -23,7 +31,7 @@ fn byte_alphabet() -> Vec<char> {
 /// byte. The served packages use `ByteLevel` too; this one is small enough to build in a
 /// test.
 fn byte_assets() -> Arc<TextAssets> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let alphabet = byte_alphabet();
     let vocab: serde_json::Map<String, Value> = (0u16..=255)
         .map(|byte| (alphabet[byte as usize].to_string(), json!(u64::from(byte))))
@@ -39,13 +47,13 @@ fn byte_assets() -> Arc<TextAssets> {
             "continuing_subword_prefix":null,"end_of_word_suffix":null,"fuse_unk":false,
             "vocab":vocab,"merges":[]}
     });
-    let root = std::env::temp_dir().join(format!(
+    let root = temp_dir().join(format!(
         "infer-byte-tokenizer-{}-{}",
-        std::process::id(),
+        process_id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&root).expect("temporary package");
-    std::fs::write(
+    create_dir_all(&root).expect("temporary package");
+    write(
         root.join("tokenizer.json"),
         serde_json::to_vec(&tokenizer).expect("tokenizer serializes"),
     )
@@ -64,7 +72,7 @@ fn parsing_stream(assets: &TextAssets, declared: &[&str]) -> Stream {
                 declared
                     .iter()
                     .map(|name| (*name).to_string())
-                    .collect::<std::collections::BTreeSet<_>>(),
+                    .collect::<BTreeSet<_>>(),
             ),
         )
         .with_argument_deltas(),
@@ -79,7 +87,7 @@ fn stream() -> Stream {
     Stream {
         request: RequestId::new(7).unwrap(),
         receiver,
-        delivery: crate::cpu::CpuPool::new(crate::cpu::CpuConfig::default()).unwrap(),
+        delivery: CpuPool::new(CpuConfig::default()).unwrap(),
         decoder: None,
         parser: None,
         prompt_reasoning: None,

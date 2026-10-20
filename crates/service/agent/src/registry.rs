@@ -1,6 +1,7 @@
 use infer_core::{Error, ErrorCode, Result};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::iter::once;
 use std::{collections::BTreeMap, collections::BTreeSet};
 
 /// Commands declare whether they inspect, mutate live state, or run isolated engines.
@@ -83,7 +84,7 @@ impl<C: 'static> CommandRegistry<C> {
         execute: fn(&mut C, P) -> R,
     ) -> Result<()> {
         let mut unique = BTreeSet::new();
-        for name in std::iter::once(descriptor.method).chain(descriptor.aliases.iter().copied()) {
+        for name in once(descriptor.method).chain(descriptor.aliases.iter().copied()) {
             if name.is_empty()
                 || name.starts_with("rpc.")
                 || descriptor.description.is_empty()

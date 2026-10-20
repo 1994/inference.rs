@@ -2,12 +2,13 @@
 use super::{LoadOptions, LoadedModel, quant_reuse_model_tests as reference};
 use crate::{device::CudaDevice, resident::gated_norm_discovery as candidate};
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
 
 #[test]
 #[ignore = "requires CUDA/checkpoint/safe-run; full states/logits/hidden before service timing"]
 fn gated_norm_occupancy_preserves_full_model_bits() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = reference::prompt()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,

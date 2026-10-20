@@ -4,6 +4,9 @@ use infer_core::{Error, ErrorCode, RequestId, Result};
 use infer_ir::{ExecutionProgram, ModelIr, SchedulingDecision};
 use infer_spi::{BackendProvider, SchedulingPolicy, WorkloadProvider};
 use std::collections::VecDeque;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::thread::available_parallelism;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     /// Largest accepted or retired identity, including restored request history.
@@ -21,7 +24,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub const fn model(&self) -> &ModelIr {
         &self.model
     }
-    pub fn set_waker(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+    pub fn set_waker(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
         self.backend.set_waker(wake.clone());
         self.host.credits.set_waker(wake.clone());
         self.host.bytes.set_waker(wake.clone());
@@ -127,8 +130,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 retained_host_tokens: self.host.credits.used(),
                 retained_host_bytes: self.host.bytes.used(),
                 candidate_capacity: self.config.candidate_limit.min(self.config.max_requests),
-                logical_cpus: std::thread::available_parallelism()
-                    .map_or(1, std::num::NonZeroUsize::get),
+                logical_cpus: available_parallelism().map_or(1, NonZeroUsize::get),
                 placement: self.host.placement.clone(),
                 prepared_next: self.host.prepared_next.is_some(),
             },

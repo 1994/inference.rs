@@ -1,5 +1,11 @@
 use super::{Draft, LoadOptions, Projection, floats, phase};
+use crate::constants::FUSED_VERIFY_LANES;
+use crate::constants::GIB;
+use crate::constants::MAX_PREFILL_LANES;
+use crate::device::DeviceProfile;
 use crate::mlp::ProjectionWeight;
+use crate::tuning::resident_gemm::ResidentTuningSession;
+use crate::tuning::select_tiling;
 use crate::tuning::{TilingSource, TuningReport, resolve_table, shipped_table, table_path};
 use crate::{
     device::CudaDevice,
@@ -8,16 +14,17 @@ use crate::{
 use cutile::half::bf16;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp, TensorStorage};
+use infer_models::mrope::axes as mrope_axes;
 use infer_models::{QuantizedPackage, TensorDtype};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// Read budget for one BF16 embedding tensor.
-const MAX_EMBEDDING_READ_BYTES: u64 = 4 * crate::constants::GIB as u64;
+const MAX_EMBEDDING_READ_BYTES: u64 = 4 * GIB as u64;
 
 pub(super) fn load(
     device: &CudaDevice,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     package: &mut QuantizedPackage,
     options: &LoadOptions,
 ) -> Result<(ProgramWeights, Option<Draft>, TuningReport)> {
@@ -87,10 +94,10 @@ pub(super) fn load(
 fn empty_weights(options: &LoadOptions) -> ProgramWeights {
     ProgramWeights {
         autotune: options.autotune,
-        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         batch_width: options.verification_width.max(
-            if options.prefill_width == crate::constants::FUSED_VERIFY_LANES {
-                crate::constants::FUSED_VERIFY_LANES
+            if options.prefill_width == FUSED_VERIFY_LANES {
+                FUSED_VERIFY_LANES
             } else {
                 0
             },
@@ -117,7 +124,7 @@ fn empty_weights(options: &LoadOptions) -> ProgramWeights {
 /// Bind every graph weight: projections choose a tile, embeddings and constants get uploaded.
 fn bind_tensors(
     device: &CudaDevice,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     package: &mut QuantizedPackage,
     tuning_source: &TilingSource<'_>,
     tuning: &mut TuningReport,
@@ -161,8 +168,7 @@ fn bind_tensors(
         if projections.contains(&tensor.id) {
             let projection = Projection::load(device, package, &source)?.resident();
             bind_activation(package, &source, weights, tensor.id)?;
-            let tiling =
-                crate::tuning::select_tiling(device, &projection, profile, tuning_source, tuning)?;
+            let tiling = select_tiling(device, &projection, profile, tuning_source, tuning)?;
             weights.tiling.insert(tensor.id, tiling);
             // A tied output projection shares its storage with the input embedding, so the very
             // same weight must also be reachable by the embedding lookup.
@@ -213,7 +219,7 @@ fn bind_tensors(
 /// Lower the single attention block of the MTP head into a standalone draft graph.
 fn draft(
     device: &CudaDevice,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     package: &mut QuantizedPackage,
     target: &ProgramWeights,
     source: &TilingSource<'_>,
@@ -278,7 +284,7 @@ fn draft_kv_scales(graph: &DataflowGraph) -> BTreeMap<TensorId, [f32; 2]> {
 /// Bind draft weights, sharing the target embedding and vocabulary projection by slot.
 fn draft_weights(
     device: &CudaDevice,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     package: &mut QuantizedPackage,
     target: &ProgramWeights,
     graph: &DataflowGraph,
@@ -304,7 +310,7 @@ fn draft_weights(
         // into sixteen replays. It has no verify batch: the target verifies, the draft only
         // proposes.
         batch_width: 0,
-        prefill_width: crate::constants::MAX_PREFILL_LANES,
+        prefill_width: MAX_PREFILL_LANES,
         narrow_prefill_width: 0,
         kv_scales: draft_kv_scales(graph),
         tiling: BTreeMap::new(),
@@ -379,7 +385,7 @@ fn draft_weights(
             let projection = draft_projection(device, package, &source, &mut weights, tensor.id)?;
             weights.tiling.insert(
                 tensor.id,
-                crate::tuning::select_tiling(device, &projection, profile, tiling_source, report)?,
+                select_tiling(device, &projection, profile, tiling_source, report)?,
             );
             weights.projections.insert(tensor.id, projection);
         } else {
@@ -396,7 +402,7 @@ fn draft_weights(
 /// Load the MTP fusion projection and its two input normalization vectors.
 fn draft_fusion(
     device: &CudaDevice,
-    profile: &crate::device::DeviceProfile,
+    profile: &DeviceProfile,
     package: &mut QuantizedPackage,
     tiling_source: &TilingSource<'_>,
     plan: &infer_spi::SpeculationPlan,
@@ -430,7 +436,7 @@ fn draft_fusion(
     }
     let fc = Projection::load(device, package, &fc)?.resident();
     // The fusion projection is tuned exactly like the target's own projections.
-    let tiling = crate::tuning::select_tiling(device, &fc, profile, tiling_source, report)?;
+    let tiling = select_tiling(device, &fc, profile, tiling_source, report)?;
     let mut norms = floats(package, &embedding_norm.data)?;
     norms.extend_from_slice(&floats(package, &hidden_norm.data)?);
     Ok(FusionWeights {
@@ -474,7 +480,7 @@ fn add_rope(
             let frequencies = (0..half)
                 .map(|i| theta.powf(-((2 * i) as f64) / rotary_dim as f64) as f32)
                 .collect();
-            let axes = infer_models::mrope::axes(position, half)?;
+            let axes = mrope_axes(position, half)?;
             weights
                 .rope_axes
                 .insert(node.id, device.upload(axes, &[half])?);

@@ -1,6 +1,12 @@
 use super::kernels;
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::METADATA_FIELDS;
 use crate::device::CudaDevice;
+use crate::resident::kernels::aux::prefill_rope;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error;
 
 const HEADS: usize = 4;
 const KV_HEADS: usize = 2;
@@ -60,7 +66,7 @@ fn reference(
 #[test]
 #[ignore = "requires CUDA; run inside safe-run with --test-threads 1"]
 fn chunk_attention_matches_reference_with_tails_windows_and_draft_offset()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (start, count, offset, window) in [
@@ -77,10 +83,7 @@ fn chunk_attention_matches_reference_with_tails_windows_and_draft_offset()
     Ok(())
 }
 
-fn check_case(
-    device: &CudaDevice,
-    case: (i32, i32, i32, i32),
-) -> Result<(), Box<dyn std::error::Error>> {
+fn check_case(device: &CudaDevice, case: (i32, i32, i32, i32)) -> Result<(), Box<dyn Error>> {
     let (start, count, offset, window) = case;
     let lanes = if count > 32 { 128 } else { LANES };
     let query = data(lanes * HEADS * DIM, 1);
@@ -98,7 +101,7 @@ fn check_case(
     let key_device = device.upload(key.clone(), &[lanes, KV_HEADS, DIM])?;
     let value_device = device.upload(value.clone(), &[lanes, KV_HEADS, DIM])?;
     let metadata = device.upload(vec![start, count, offset, 0], &[4])?;
-    let blocks = CAPACITY / crate::constants::KV_BLOCK_TOKENS;
+    let blocks = CAPACITY / KV_BLOCK_TOKENS;
     let identity: Vec<i32> = (0..blocks)
         .map(|b| i32::try_from(b).expect("blocks fit"))
         .collect();
@@ -118,7 +121,7 @@ fn check_case(
         DIM.to_string(),
         CAPACITY.to_string(),
         "0".into(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     // A permuted table must move the appended rows with it, which is what proves the kernel
@@ -152,7 +155,7 @@ fn check_case(
         DIM.to_string(),
         (HEADS / KV_HEADS).to_string(),
         HEADS.to_string(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     for lane in 0..usize::try_from(count)? {
@@ -191,8 +194,8 @@ fn check_case(
 
 #[test]
 #[ignore = "requires CUDA; run inside safe-run with --test-threads 1"]
-fn chunk_rotary_uses_each_token_position_and_preserves_unrotated_tail()
--> Result<(), Box<dyn std::error::Error>> {
+fn chunk_rotary_uses_each_token_position_and_preserves_unrotated_tail() -> Result<(), Box<dyn Error>>
+{
     const WIDTH: usize = 128;
     const HALF: usize = 32;
     CudaDevice::enable_kernel_cache()?;
@@ -205,7 +208,7 @@ fn chunk_rotary_uses_each_token_position_and_preserves_unrotated_tail()
     let frequency_device = device.upload(frequencies.clone(), &[HALF])?;
     let metadata = device.upload(vec![37_i32, 17, 0, 0], &[4])?;
     let mut output = api::zeros::<f32>(&[LANES * HEADS, WIDTH]).sync_on(&device.stream)?;
-    crate::resident::kernels::aux::prefill_rope(
+    prefill_rope(
         (&mut output).partition([1, HALF]),
         &input_device,
         &frequency_device,
@@ -246,7 +249,7 @@ fn check_permuted_append(
     key: &[f32],
     swapped: &[i32],
     (start, count, offset, _): (i32, i32, i32, i32),
-) -> Result<Arc<Tensor<i32>>, Box<dyn std::error::Error>> {
+) -> Result<Arc<Tensor<i32>>, Box<dyn Error>> {
     let blocks = swapped.len();
     let swapped_table = device.upload(swapped.to_vec(), &[blocks])?;
     let mut moved_keys =
@@ -272,7 +275,7 @@ fn check_permuted_append(
         DIM.to_string(),
         CAPACITY.to_string(),
         "0".into(),
-        crate::constants::KV_BLOCK_TOKENS.to_string(),
+        KV_BLOCK_TOKENS.to_string(),
     ])
     .sync_on(&device.stream)?;
     let mut expected_moved = data(KV_HEADS * CAPACITY * DIM, 13);
@@ -282,10 +285,9 @@ fn check_permuted_append(
             continue;
         }
         let position = usize::try_from(position)?;
-        let logical = position / crate::constants::KV_BLOCK_TOKENS;
-        let row = usize::try_from(swapped[logical]).expect("blocks fit")
-            * crate::constants::KV_BLOCK_TOKENS
-            + position % crate::constants::KV_BLOCK_TOKENS;
+        let logical = position / KV_BLOCK_TOKENS;
+        let row = usize::try_from(swapped[logical]).expect("blocks fit") * KV_BLOCK_TOKENS
+            + position % KV_BLOCK_TOKENS;
         for head in 0..KV_HEADS {
             let src = (lane * KV_HEADS + head) * DIM;
             let dst = (head * CAPACITY + row) * DIM;
@@ -317,13 +319,13 @@ fn check_tiled_decode(
     reference_data: HostCache<'_>,
     swapped: &[i32],
     geometry: (usize, (i32, i32, i32, i32)),
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let (keys, values, table, swapped_table) = cache;
     let (query, expected_keys, expected_values) = reference_data;
     let (lanes, (start, count, offset, window)) = geometry;
     let mut permuted_keys = vec![0.0_f32; expected_keys.len()];
     let mut permuted_values = vec![0.0_f32; expected_values.len()];
-    let block_elements = crate::constants::KV_BLOCK_TOKENS * DIM;
+    let block_elements = KV_BLOCK_TOKENS * DIM;
     for head in 0..KV_HEADS {
         for (logical, &physical) in swapped.iter().enumerate() {
             let source = head * CAPACITY * DIM + logical * block_elements;
@@ -362,7 +364,7 @@ fn check_tiled_decode(
                 (HEADS / KV_HEADS).to_string(),
                 qt.to_string(),
                 LANES.to_string(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
                 super::CausalBlockBound::FullChunk.generic(),
             ])
             .sync_on(&device.stream)?;
@@ -402,7 +404,7 @@ use cuda_core::f8e4m3fn;
 use cutile::bench::{BenchOptions, do_bench_paired};
 use std::time::Duration;
 
-type NumericResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type NumericResult<T = ()> = Result<T, Box<dyn Error>>;
 const MODEL_HEADS: usize = 24;
 const MODEL_KV_HEADS: usize = 4;
 const MODEL_DIM: usize = 256;
@@ -489,8 +491,8 @@ fn model_codes(phase: usize) -> Vec<f8e4m3fn> {
 
 fn physical_row(position: i32, table: &[i32]) -> Option<usize> {
     let logical = usize::try_from(position).ok()?;
-    let block = usize::try_from(*table.get(logical / crate::constants::KV_BLOCK_TOKENS)?).ok()?;
-    Some(block * crate::constants::KV_BLOCK_TOKENS + logical % crate::constants::KV_BLOCK_TOKENS)
+    let block = usize::try_from(*table.get(logical / KV_BLOCK_TOKENS)?).ok()?;
+    Some(block * KV_BLOCK_TOKENS + logical % KV_BLOCK_TOKENS)
 }
 
 fn relocate(codes: &[f8e4m3fn], table: &[i32]) -> Vec<f8e4m3fn> {
@@ -550,7 +552,7 @@ struct ChunkFixture {
 impl ChunkFixture {
     fn new(device: &CudaDevice, case: ChunkCase) -> NumericResult<Arc<Self>> {
         assert!(case.count <= case.lanes);
-        let blocks = MODEL_CAPACITY / crate::constants::KV_BLOCK_TOKENS;
+        let blocks = MODEL_CAPACITY / KV_BLOCK_TOKENS;
         let table: Vec<i32> = (0..blocks)
             .map(|b| i32::try_from(if case.permuted { b ^ 1 } else { b }).unwrap())
             .collect();
@@ -572,7 +574,7 @@ impl ChunkFixture {
         let values = device.upload(values, &[case.lanes, MODEL_KV_HEADS, MODEL_DIM])?;
         let metadata = device.upload(
             vec![case.base, i32::try_from(case.count)?, case.offset, 0],
-            &[crate::constants::METADATA_FIELDS],
+            &[METADATA_FIELDS],
         )?;
         let expected_keys = relocate(&logical_keys, &table);
         let expected_values = relocate(&logical_values, &table);
@@ -616,7 +618,7 @@ impl ChunkFixture {
                 MODEL_DIM.to_string(),
                 MODEL_CAPACITY.to_string(),
                 "1".into(),
-                crate::constants::KV_BLOCK_TOKENS.to_string(),
+                KV_BLOCK_TOKENS.to_string(),
             ]),
         )?;
         Ok(())
@@ -630,9 +632,8 @@ impl ChunkFixture {
         variant: AttentionVariant,
     ) -> Result<(), DeviceError> {
         let group = MODEL_HEADS / MODEL_KV_HEADS;
-        let block = crate::constants::KV_BLOCK_TOKENS;
-        let window = i32::try_from(self.case.window)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))?;
+        let block = KV_BLOCK_TOKENS;
+        let window = i32::try_from(self.case.window).map_err(|e| tensor_error(&e.to_string()))?;
         match variant {
             AttentionVariant::Simt => {
                 let query = self
@@ -976,7 +977,7 @@ fn visible_blocks(case: ChunkCase, qt: usize, tile: usize) -> usize {
         .filter_map(|lane| {
             usize::try_from(case.base + i32::try_from(lane).unwrap() + case.offset).ok()
         })
-        .map(|position| (position + 1).div_ceil(crate::constants::KV_BLOCK_TOKENS))
+        .map(|position| (position + 1).div_ceil(KV_BLOCK_TOKENS))
         .max()
         .unwrap_or(0)
 }
@@ -1239,7 +1240,7 @@ fn measure_attention_pair(
         capture
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (first, second) = if reverse {
         (&candidate.1, &baseline.1)
@@ -1300,7 +1301,7 @@ fn fp8_model_geometry_append_and_compute_paired_cold_warm_ab_ba() -> NumericResu
     if cfg!(debug_assertions) {
         return Err("attention costs require release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
         return Err("attention costs require CUDA O3 without debug".into());
     }

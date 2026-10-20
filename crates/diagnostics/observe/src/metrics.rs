@@ -1,3 +1,4 @@
+use infer_core::event::CpuStage;
 use infer_core::{event::EventKind, event::SemanticEvent};
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +11,7 @@ pub const LATENCY_BUCKET_COUNT: usize = 17;
 /// Event-kind slots of [`EventKind::ALL`].
 pub const EVENT_KIND_COUNT: usize = EventKind::ALL.len();
 /// CPU pipeline stages of [`infer_core::event::CpuStage::LABELS`].
-pub const CPU_STAGE_COUNT: usize = infer_core::event::CpuStage::LABELS.len();
+pub const CPU_STAGE_COUNT: usize = CpuStage::LABELS.len();
 /// Whole-percent scale of the requested percentile argument.
 const PERCENT_SCALE: u8 = 100;
 

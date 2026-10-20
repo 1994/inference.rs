@@ -1,6 +1,7 @@
 //! Batched external-hidden execution and attention state transfer.
 use super::{BatchOutput, SlotCopy, SlotLane, SlotPool};
 use crate::device::CudaDevice;
+use crate::resident::batch::BatchReadout;
 use infer_core::{Error, Result};
 
 impl SlotPool {
@@ -108,11 +109,11 @@ impl SlotPool {
         lanes: &[SlotLane],
         hidden: &[&[f32]],
         plain_greedy: bool,
-    ) -> Result<crate::resident::batch::BatchReadout> {
+    ) -> Result<BatchReadout> {
         if !plain_greedy {
             return self
                 .run_external(device, lanes, hidden)
-                .map(crate::resident::batch::BatchReadout::host);
+                .map(BatchReadout::host);
         }
         self.upload_lanes(device, lanes, hidden)?;
         self.decode

@@ -1,12 +1,14 @@
 //! Read-only numerical probe inputs shared during one workspace preparation.
 //! Every weight/configuration still executes all original full-output comparisons.
+use crate::constants::F32_BYTES;
+use crate::constants::MIB;
 use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
 use infer_core::{Error, Result};
 use std::{cell::RefCell, collections::BTreeMap, marker::PhantomData, rc::Rc, sync::Arc};
 
 /// Bound temporary sharing independently of the number of model weights.
-const MAX_BYTES: usize = 128 * crate::constants::MIB;
+const MAX_BYTES: usize = 128 * MIB;
 type Key = (usize, usize, usize);
 struct Cache {
     stream: Arc<cuda_core::Stream>,
@@ -66,7 +68,7 @@ pub(super) fn upload(
     }
     let bytes = rows
         .checked_mul(columns)
-        .and_then(|elements| elements.checked_mul(crate::constants::F32_BYTES))
+        .and_then(|elements| elements.checked_mul(F32_BYTES))
         .ok_or_else(|| Error::invalid("FP8 probe input byte overflow"))?;
     let input = device.upload(values()?, &shape)?;
     INPUTS.with(|inputs| {

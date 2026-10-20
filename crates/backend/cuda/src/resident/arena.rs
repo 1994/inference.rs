@@ -1,9 +1,11 @@
+use crate::constants::F32_BYTES;
 use crate::device::{CudaDevice, device_error};
 use cuda_core::sys::CUdeviceptr;
 use cutile::{cuda_async::device_buffer::DeviceAllocation, prelude::*};
 use infer_core::{Error, Result, TensorId};
 use infer_ir::DataflowGraph;
 use std::collections::BTreeMap;
+use std::slice::from_ref;
 use std::sync::Arc;
 
 /// Slot layout of one graph: `last_node` and element count per reused slot.
@@ -111,7 +113,7 @@ impl ActivationArena {
             .0
             .iter()
             .try_fold(0usize, |sum, size| sum.checked_add(*size))
-            .and_then(|elements| elements.checked_mul(crate::constants::F32_BYTES))
+            .and_then(|elements| elements.checked_mul(F32_BYTES))
             .ok_or_else(|| Error::invalid("activation size overflow"))
     }
 
@@ -186,7 +188,7 @@ impl ActivationArena {
             .try_fold(0usize, |sum, size| sum.checked_add(*size))
             .ok_or_else(|| Error::invalid("activation size overflow"))?;
         if elements
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(F32_BYTES)
             .is_none_or(|bytes| bytes > byte_budget)
         {
             return Err(Error::invalid("device activation budget exceeded"));
@@ -209,7 +211,7 @@ impl ActivationArena {
 
     #[must_use]
     pub const fn bytes(&self) -> usize {
-        self.elements * crate::constants::F32_BYTES
+        self.elements * F32_BYTES
     }
 
     #[must_use]
@@ -246,9 +248,7 @@ impl ActivationArena {
             return Err(Error::invalid("activation lane out of bounds"));
         }
         let range = lane * size..(lane + 1) * size;
-        tensor
-            .slice(std::slice::from_ref(&range))
-            .map_err(device_error)
+        tensor.slice(from_ref(&range)).map_err(device_error)
     }
 }
 
@@ -439,7 +439,7 @@ pub fn row_tensor(
     }
     let offset = lane
         .checked_mul(size)
-        .and_then(|row| row.checked_mul(crate::constants::F32_BYTES))
+        .and_then(|row| row.checked_mul(F32_BYTES))
         .ok_or_else(|| Error::invalid("activation row offset overflow"))?;
     let shared = Arc::new(slot);
     let allocation = RowAllocation {

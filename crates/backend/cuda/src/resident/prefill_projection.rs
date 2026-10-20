@@ -1,11 +1,21 @@
 use super::{ProgramWeights, capture::error, prefill_gemm::gemm};
+use crate::constants::PREFILL_GEMM_TILE_K;
+use crate::constants::PREFILL_GEMM_TILE_N;
+use crate::constants::PREFILL_LANES;
+use crate::constants::PREFILL_NVFP4_TILE_N;
+use crate::constants::PREFILL_SPLIT_K;
+use crate::constants::SMALL_GEMM_TILE;
+use crate::device::cublaslt::Support;
 use crate::{device::DeviceProfile, mlp::ProjectionWeight};
+use cutile::half::bf16;
 use cutile::prelude::*;
 use infer_ir::TensorNode;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use crate::tuning::prefill::narrow_dense_layout;
-const NARROW_DENSE_TILE: [usize; 2] = [crate::constants::PREFILL_LANES, 16];
+const NARROW_DENSE_TILE: [usize; 2] = [PREFILL_LANES, 16];
 /// Output columns and reduction width of the GDN `in_proj_b`/`in_proj_a` pair.
 pub(super) const GDN_BA_SHAPE: [i32; 2] = [48, 5120];
 
@@ -123,7 +133,7 @@ pub(super) fn record(
     (weights, profile): (&ProgramWeights, &DeviceProfile),
     partials: &mut BTreeMap<usize, Tensor<f32>>,
     nvfp4: &mut super::nvfp4_gemm::Workspace,
-    delegated: Option<&mut crate::device::cublaslt::Support>,
+    delegated: Option<&mut Support>,
 ) -> Result<(), DeviceError> {
     if weights.constants.contains_key(&node.inputs[0]) {
         return Err(error("prefill32 constant linear input"));
@@ -180,10 +190,7 @@ pub(super) fn record(
             }
             scope.record(
                 gemm::dense(
-                    (&mut output).partition([
-                        crate::constants::PREFILL_LANES,
-                        crate::constants::PREFILL_GEMM_TILE_N,
-                    ]),
+                    (&mut output).partition([PREFILL_LANES, PREFILL_GEMM_TILE_N]),
                     &input,
                     w,
                 )
@@ -193,10 +200,7 @@ pub(super) fn record(
         ProjectionWeight::Fp8(w, scales) => {
             scope.record(
                 gemm::fp8(
-                    (&mut output).partition([
-                        crate::constants::PREFILL_LANES,
-                        crate::constants::PREFILL_GEMM_TILE_N,
-                    ]),
+                    (&mut output).partition([PREFILL_LANES, PREFILL_GEMM_TILE_N]),
                     &input,
                     w,
                     scales,
@@ -295,14 +299,8 @@ pub(super) fn record_pair(
     let input = flat_input.view(&[width, columns]).map_err(error)?;
     scope.record(
         gemm::dense_pair(
-            (&mut output_b).partition([
-                crate::constants::PREFILL_LANES,
-                crate::constants::PREFILL_GEMM_TILE_N,
-            ]),
-            (&mut output_a).partition([
-                crate::constants::PREFILL_LANES,
-                crate::constants::PREFILL_GEMM_TILE_N,
-            ]),
+            (&mut output_b).partition([PREFILL_LANES, PREFILL_GEMM_TILE_N]),
+            (&mut output_a).partition([PREFILL_LANES, PREFILL_GEMM_TILE_N]),
             &input,
             weight_b,
             weight_a,
@@ -327,19 +325,19 @@ fn record_legacy_fp4(
     let ProjectionWeight::Fp4(w, scales, global) = weight else {
         return Err(error("legacy FP4 prompt weight"));
     };
-    if width != crate::constants::PREFILL_LANES {
+    if width != PREFILL_LANES {
         return Err(error("legacy FP4 split prefill requires width 32"));
     }
     let rows = output.size() / width;
     let partial = partials
         .get_mut(&rows)
         .ok_or_else(|| error("prefill split partials"))?;
-    let windows = columns.div_ceil(crate::constants::PREFILL_GEMM_TILE_K);
-    let k_tiles = i32::try_from(windows.div_ceil(crate::constants::PREFILL_SPLIT_K))
+    let windows = columns.div_ceil(PREFILL_GEMM_TILE_K);
+    let k_tiles = i32::try_from(windows.div_ceil(PREFILL_SPLIT_K))
         .map_err(|_| error("prefill split window"))?;
     scope.record(
         gemm::nvfp4_split(
-            partial.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
+            partial.partition([width, PREFILL_NVFP4_TILE_N]),
             input,
             w,
             scales,
@@ -348,11 +346,10 @@ fn record_legacy_fp4(
         .generics(generics),
     )?;
     scope.record(gemm::reduce_split(
-        output.partition([width, crate::constants::PREFILL_NVFP4_TILE_N]),
+        output.partition([width, PREFILL_NVFP4_TILE_N]),
         &*partial,
         global.recip(),
-        i32::try_from(crate::constants::PREFILL_SPLIT_K)
-            .map_err(|_| error("prefill split count"))?,
+        i32::try_from(PREFILL_SPLIT_K).map_err(|_| error("prefill split count"))?,
     ))?;
     Ok(())
 }
@@ -360,9 +357,9 @@ fn record_legacy_fp4(
 /// Whether the vendor GEMM recorded this projection instead of the tile kernel.
 fn records_vendor_gemm(
     scope: &Scope,
-    delegated: Option<&mut crate::device::cublaslt::Support>,
+    delegated: Option<&mut Support>,
     input: &Tensor<f32>,
-    weight: &Tensor<cutile::half::bf16>,
+    weight: &Tensor<bf16>,
     output: &Tensor<f32>,
     (width, rows, columns): (usize, usize, usize),
 ) -> Result<bool, DeviceError> {
@@ -377,7 +374,7 @@ fn records_precise_sparse(
     scope: &Scope,
     weights: &ProgramWeights,
     input: &TensorView<'_, f32>,
-    weight: &Tensor<cutile::half::bf16>,
+    weight: &Tensor<bf16>,
     output: &mut Tensor<f32>,
     columns: usize,
 ) -> Result<bool, DeviceError> {
@@ -385,15 +382,8 @@ fn records_precise_sparse(
         return Ok(false);
     }
     scope.record(
-        super::small_gemm::kernels::dense(
-            output.partition(crate::constants::SMALL_GEMM_TILE),
-            input,
-            weight,
-        )
-        .generics(vec![
-            cutile::half::bf16::DTYPE.as_str().into(),
-            columns.to_string(),
-        ]),
+        super::small_gemm::kernels::dense(output.partition(SMALL_GEMM_TILE), input, weight)
+            .generics(vec![bf16::DTYPE.as_str().into(), columns.to_string()]),
     )?;
     Ok(true)
 }
@@ -402,7 +392,7 @@ fn records_narrow_dense(
     scope: &Scope,
     profile: &DeviceProfile,
     input: &TensorView<'_, f32>,
-    weight: &Tensor<cutile::half::bf16>,
+    weight: &Tensor<bf16>,
     output: &mut Tensor<f32>,
     shape: (usize, usize, usize),
 ) -> Result<bool, DeviceError> {
@@ -424,8 +414,8 @@ fn records_narrow_dense(
 
 #[cfg(test)]
 thread_local! {
-    static DENSE_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static NARROW_DENSE_CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DENSE_REFERENCE: Cell<bool> = const { Cell::new(false) };
+    static NARROW_DENSE_CAPTURES: Cell<usize> = const { Cell::new(0) };
 }
 
 #[cfg(test)]

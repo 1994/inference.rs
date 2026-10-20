@@ -1,16 +1,24 @@
 //! Native library loader and independent request state, using an actual model package.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::resident::DeviceProgram;
+#[cfg(target_os = "linux")]
+use std::env::args;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{
         device::CudaDevice,
         loading::{LoadOptions, LoadedModel},
     };
     use infer_core::{Error, ModelId};
     use infer_models::{ChatMessage, ChatOptions, TextAssets};
-    let root = std::env::args()
+    let root = args()
         .nth(1)
         .ok_or_else(|| Error::invalid("model path is required"))?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let assets = TextAssets::open(&root, 4096)?;
     let input = assets.encode_chat(
         &[ChatMessage::new("user", "只输出17乘23的结果。")],
@@ -72,10 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
-fn prefill(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
-    tokens: &[u32],
-) -> infer_core::Result<Vec<f32>> {
+fn prefill(program: &mut DeviceProgram, tokens: &[u32]) -> infer_core::Result<Vec<f32>> {
     let mut logits = Vec::new();
     for (index, chunk) in tokens.chunks(32).enumerate() {
         let outputs = program.prefill_batch(chunk, index * 32, (index + 1) * 32 >= tokens.len())?;
@@ -90,7 +95,7 @@ fn prefill(
 
 #[cfg(target_os = "linux")]
 fn generate(
-    program: &mut infer_backend_cuda::resident::DeviceProgram,
+    program: &mut DeviceProgram,
     prompt: &[u32],
     mut logits: Vec<f32>,
     sampling: &infer_ir::Sampling,

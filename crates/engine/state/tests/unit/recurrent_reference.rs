@@ -7,11 +7,13 @@
 //! recorded replay actually reproduces the last state.
 
 use serde_json::Value;
+use std::fs::read;
+use std::path::Path;
 
 fn golden() -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../examples/recurrent-delta/golden.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/recurrent-delta/golden.json");
+    serde_json::from_slice(&read(path).unwrap()).unwrap()
 }
 
 fn count(value: &Value) -> usize {
@@ -70,9 +72,9 @@ fn replaying_the_recorded_inputs_reproduces_the_last_state() {
 }
 
 fn conv_golden() -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../examples/recurrent-conv/golden.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/recurrent-conv/golden.json");
+    serde_json::from_slice(&read(path).unwrap()).unwrap()
 }
 
 #[test]

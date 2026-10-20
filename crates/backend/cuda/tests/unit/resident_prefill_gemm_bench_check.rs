@@ -9,7 +9,9 @@ use crate::device::{CudaDevice, device_error};
 use crate::kernels::linear::cast_bf16;
 use cutile::half::bf16;
 use cutile::prelude::*;
+use std::error::Error;
 use std::sync::Arc;
+use std::time::Instant;
 
 const CAST_TILE: i32 = 1024;
 
@@ -34,7 +36,7 @@ fn sample(seed: u64, index: usize) -> f32 {
     clippy::cast_possible_wrap,
     reason = "benchmark extents are small literals, so the narrowing to the kernel's i32 is exact"
 )]
-fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::error::Error>> {
+fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     if !available() {
@@ -110,8 +112,8 @@ fn cublas_versus_the_prompt_gemm_on_model_shapes() -> Result<(), Box<dyn std::er
             .map_err(device_error)?;
         device.reclaim_barrier()?;
         let repeats = 30;
-        let time = |graph: &CudaGraph<()>| -> Result<f64, Box<dyn std::error::Error>> {
-            let started = std::time::Instant::now();
+        let time = |graph: &CudaGraph<()>| -> Result<f64, Box<dyn Error>> {
+            let started = Instant::now();
             for _ in 0..repeats {
                 graph
                     .launch()

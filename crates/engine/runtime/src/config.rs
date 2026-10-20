@@ -1,4 +1,5 @@
 //! Validated runtime capacity and planning limits.
+use crate::constants::MAX_BOUNDED_CAPACITY;
 use infer_core::{Error, Result};
 use infer_ir::{AdmissionConfig, CostModelConfig, SchedulerConfig};
 use infer_scheduler::{CalibratedCosts, ResourceAdmission};
@@ -131,8 +132,8 @@ impl RuntimeConfig {
     /// # Errors
     /// Returns an invalid-input or invariant error if dimensions, identities, ranges, or ownership are inconsistent.
     pub fn validate(&self) -> Result<()> {
-        if self.event_capacity > crate::constants::MAX_BOUNDED_CAPACITY
-            || self.history_capacity > crate::constants::MAX_BOUNDED_CAPACITY
+        if self.event_capacity > MAX_BOUNDED_CAPACITY
+            || self.history_capacity > MAX_BOUNDED_CAPACITY
         {
             return Err(Error::invalid(
                 "event/history capacities must not exceed 1048576 records",

@@ -1,5 +1,9 @@
 //! Library B-trees backed by reusable slab nodes; no local balancing algorithm.
 use btree_slab::generic::map::BTreeExt;
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::fmt::Result;
+use std::iter::from_fn;
 use std::ops::{Bound, RangeBounds};
 
 pub(super) struct OrderedSet<K> {
@@ -58,7 +62,7 @@ impl<K: Copy + Ord> OrderedSet<K> {
             },
         };
         let end = range.end_bound().cloned();
-        std::iter::from_fn(move || {
+        from_fn(move || {
             let address = next?;
             let key = self.tree.item(address)?.key();
             let within = match end {
@@ -91,8 +95,8 @@ impl<K: Copy + Ord> PartialEq for OrderedSet<K> {
 }
 impl<K: Copy + Ord> Eq for OrderedSet<K> {}
 
-impl<K: Copy + Ord + std::fmt::Debug> std::fmt::Debug for OrderedSet<K> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<K: Copy + Ord + Debug> Debug for OrderedSet<K> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result {
         formatter.debug_set().entries(self.tree.keys()).finish()
     }
 }

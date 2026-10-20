@@ -1,8 +1,11 @@
 //! Exact plain-greedy output for contiguous or separately allocated resident logits.
 use super::{ProgramWeights, greedy::Greedy};
 use crate::device::{CudaDevice, ReadbackSource, Readbacks, device_error};
+use crate::tuning::greedy::select;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use std::env::var;
+use std::slice::from_ref;
 
 pub(super) struct TokenReadout {
     // The graph is destroyed before every buffer it references.
@@ -24,7 +27,7 @@ impl TokenReadout {
         }
         Self::new(
             device,
-            std::slice::from_ref(logits),
+            from_ref(logits),
             rows,
             logits.size() / rows,
             weights,
@@ -38,7 +41,7 @@ impl TokenReadout {
         vocabulary: usize,
         weights: &ProgramWeights,
     ) -> Result<Option<Self>> {
-        if std::env::var("INFER_CUDA_DEVICE_GREEDY").is_ok_and(|value| value == "0") {
+        if var("INFER_CUDA_DEVICE_GREEDY").is_ok_and(|value| value == "0") {
             return Ok(None);
         }
         if rows == 0 || vocabulary == 0 || logits.is_empty() {
@@ -52,7 +55,7 @@ impl TokenReadout {
         {
             return Err(Error::invalid("token readout logits layout"));
         }
-        let tile = crate::tuning::greedy::select(
+        let tile = select(
             device,
             per_input,
             vocabulary,

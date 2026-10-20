@@ -1,6 +1,9 @@
 //! Retention, parent lifetimes and export barriers belong to one bounded collector owner.
 use infer_core::{Error, ErrorCode, Result, event::EventReader};
 use infer_observe::{Diagnostic, ObservationStore, ObservationWindow, trace::TraceContext};
+use std::thread::Builder;
+use std::thread::Thread;
+use std::thread::park;
 use std::{
     collections::BTreeMap, sync::Arc, sync::atomic::AtomicBool, sync::atomic::AtomicU64,
     sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc,
@@ -78,7 +81,7 @@ pub struct Collector {
     metadata: mpsc::SyncSender<Metadata>,
     issued: u64,
     shared: Arc<Shared>,
-    thread: std::thread::Thread,
+    thread: Thread,
 }
 impl Collector {
     pub fn new(
@@ -97,7 +100,7 @@ impl Collector {
         let (commands, receiver) = mpsc::sync_channel(COMMAND_CHANNEL_CAPACITY);
         let (metadata, metadata_receiver) = mpsc::sync_channel(parent_capacity * 2);
         let worker = shared.clone();
-        let thread = std::thread::Builder::new()
+        let thread = Builder::new()
             .name("infer-event-collector".into())
             .spawn(move || {
                 CollectionState {
@@ -359,7 +362,7 @@ impl CollectionState {
                 break;
             }
             if self.reader.is_empty() && commands == 0 && !metadata_progress {
-                std::thread::park();
+                park();
             }
         }
     }

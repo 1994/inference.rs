@@ -3,12 +3,13 @@ use super::{
     APPEND_KEY_PHASE, APPEND_VALUE_PHASE, DIVISOR, Fixture, HISTORY_KEY_PHASE, HISTORY_VALUE_PHASE,
     KEY_SCALE, PERIOD, QUERY_CENTER, QUERY_STRIDE, Shape, VALUE_SCALE, code, decode,
 };
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::device_error;
 use infer_core::{Error, Result};
 const PHYSICAL_SHIFT: usize = 3;
 impl Fixture {
     pub fn history(shape: Shape, history: usize, capacity: usize) -> Result<Self> {
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         if !capacity.is_multiple_of(block)
             || history
                 .checked_add(shape.lanes)

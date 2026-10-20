@@ -1,6 +1,7 @@
 pub mod collector;
 mod snapshot;
 use crate::{Engine, EngineFault};
+use infer_core::event::SemanticEvent;
 use infer_core::{Error, RequestId, Result, StepId, event::EventKind, event::ObjectKind};
 use infer_observe::{
     Diagnostic, DiagnosticCode, EventQuery, ObservationStore, RuntimeMetrics, Severity,
@@ -8,6 +9,9 @@ use infer_observe::{
 };
 use infer_spi::{BackendProvider, SchedulingPolicy};
 use serde_json::{Value, json};
+use std::process::id as process_id;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use std::{collections::BTreeMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 pub use snapshot::ObservationSnapshot;
@@ -30,7 +34,7 @@ fn next_namespace(clock: u64) -> Result<u64> {
             Ordering::Relaxed,
         ) {
             Ok(_) => {
-                return Ok(next ^ (u64::from(std::process::id()) << NAMESPACE_PROCESS_ID_SHIFT));
+                return Ok(next ^ (u64::from(process_id()) << NAMESPACE_PROCESS_ID_SHIFT));
             }
             Err(observed) => previous = observed,
         }
@@ -49,8 +53,8 @@ pub struct Observations {
 }
 impl Observations {
     pub fn new(capacity: usize) -> Result<Self> {
-        let unix_origin_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let unix_origin_us = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| {
                 u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
             });
@@ -220,7 +224,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     /// # Errors
     /// Returns a collector failure while preserving the legacy cursor for retry.
-    pub fn drain_legacy_events(&mut self) -> Result<Vec<infer_core::event::SemanticEvent>> {
+    pub fn drain_legacy_events(&mut self) -> Result<Vec<SemanticEvent>> {
         let snapshot = self.retained_snapshot(true, false)?;
         let events = snapshot
             .window

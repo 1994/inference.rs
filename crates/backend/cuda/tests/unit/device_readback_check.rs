@@ -1,4 +1,5 @@
 use super::*;
+use std::hint::black_box;
 use std::time::Instant;
 
 type Tensors = Vec<Tensor<f32>>;
@@ -156,7 +157,7 @@ fn measure(
                 } else {
                     readbacks.run(device, graph, sources)?
                 };
-                std::hint::black_box(rows);
+                black_box(rows);
             }
             let us = start.elapsed().as_secs_f64() * 1e6 / 100.0;
             if old {

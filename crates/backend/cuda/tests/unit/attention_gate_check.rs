@@ -6,6 +6,9 @@ use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_kernel_api::attention::{AttentionDescriptor, AttentionMask};
 use serde::Deserialize;
+use std::env::var;
+use std::fs::read as fs_read;
+use std::path::Path;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -35,10 +38,10 @@ fn attention_native_gate() -> Result<()> {
     if cfg!(debug_assertions) {
         return Err(Error::invalid("attention gate requires release"));
     }
-    let path = std::env::var("INFER_ATTENTION_GATE")
+    let path = var("INFER_ATTENTION_GATE")
         .map_err(|_| Error::invalid("INFER_ATTENTION_GATE safetensors path required"))?;
-    let manifest_path = std::path::Path::new(&path).with_extension("json");
-    let bytes = std::fs::read(manifest_path).map_err(device_error)?;
+    let manifest_path = Path::new(&path).with_extension("json");
+    let bytes = fs_read(manifest_path).map_err(device_error)?;
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(device_error)?;
     let mut file = infer_models::SafetensorsFile::open(path)?;
     let device = CudaDevice::new(0)?;

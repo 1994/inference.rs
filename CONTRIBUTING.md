@@ -31,6 +31,7 @@ make check-rust
 
 - 遵循现有 crate 分组与依赖方向（见[代码布局](docs/architecture/layout.md)）：实现层不依赖服务入口，引擎只依赖 backend 合约而非具体执行器。
 - 不通过放宽 lint、`allow`/`expect` 或提高阈值绕过问题；确需局部例外时写明原因。
+- 项路径统一用 `use` 引入，不在代码中直接书写三段及以上的全限定路径；`check-rust` 通过 `clippy::absolute_paths` 强制这一约定。
 - 一个 PR 说明修改前后的行为、验证命令及其结果；未运行的硬件或工具检查要注明原因。
 - 不把“编译通过”描述为生产支持。CPU 测试不能替代 Metal / CUDA 实机验收。
 - 保留 `Cargo.lock` 与仓库内微型测试资产；不提交完整模型、凭证、`target/` 或 `artifacts/`。

@@ -1,4 +1,5 @@
 use crate::Head;
+use infer_core::credits::CreditLease;
 use infer_core::{Error, ModelId, ProgramId, RequestId, Result};
 use serde::{Deserialize, Serialize};
 
@@ -195,7 +196,7 @@ pub enum WorkloadOutput {
 }
 
 impl WorkloadOutput {
-    pub fn attach_credit(&mut self, credit: infer_core::credits::CreditLease) {
+    pub fn attach_credit(&mut self, credit: CreditLease) {
         match self {
             Self::Tokens(tokens) => tokens.attach_byte_credit(credit),
             Self::Embedding(values) => values.attach_credit(credit),

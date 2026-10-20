@@ -16,6 +16,8 @@ use infer_ir::{
 };
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig, runner::ThreadedBackend};
+use std::collections::BTreeSet;
+use std::thread::sleep;
 
 use infer_spi::{BackendProvider, ResourceCommand, ResourceReply, ResourceTicket};
 use std::{
@@ -256,7 +258,7 @@ fn deadline(limit: Instant) -> Result<()> {
     if Instant::now() >= limit {
         return Err(Error::invariant("resource owner did not drain"));
     }
-    std::thread::sleep(Duration::from_micros(100));
+    sleep(Duration::from_micros(100));
     Ok(())
 }
 fn request(id: u64) -> Result<CanonicalRequest> {
@@ -775,7 +777,7 @@ fn inline_busy_reservation_defers_instead_of_failing_admission() -> Result<()> {
 struct DelayedBusyReservation {
     inner: ProtocolBackend,
     attempts: Arc<AtomicUsize>,
-    states: std::collections::BTreeSet<StateId>,
+    states: BTreeSet<StateId>,
     owned: usize,
     poll_gate: bool,
     held: Option<infer_spi::ResourceResponder>,
@@ -785,7 +787,7 @@ impl DelayedBusyReservation {
         Ok(Self {
             inner: ProtocolBackend::new(16, 8, ir)?,
             attempts: Arc::new(AtomicUsize::new(0)),
-            states: std::collections::BTreeSet::new(),
+            states: BTreeSet::new(),
             owned: 0,
             poll_gate: true,
             held: None,

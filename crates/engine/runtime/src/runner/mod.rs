@@ -1,12 +1,21 @@
 //! Bounded CPU submission owner. Backend encoding/readback cannot block the scheduler owner.
 mod control;
 mod worker;
+use crate::constants::MAX_BOUNDED_CAPACITY;
+use crate::constants::MAX_POLL_INTERVAL_US;
+use infer_core::map::BoundedMap;
+use infer_core::placement::ThreadPlacement;
+use infer_core::set::BoundedSet;
 use infer_core::{Error, ErrorCode, Result, StateId, StepId};
 use infer_ir::{
     DeviceCapabilities, ExecutionProgram, ExecutionTiming, KvCacheInspection, ModelIr, PageGrowth,
     TaskOutput,
 };
 use infer_spi::BackendProvider;
+use std::collections::VecDeque;
+use std::marker::PhantomData;
+use std::sync::OnceLock;
+use std::thread::Thread;
 use std::{
     sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::AtomicU64,
     sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc,
@@ -40,14 +49,14 @@ impl RunnerConfig {
     pub fn validate(self) -> Result<()> {
         if self.control_capacity == 0
             || self.max_states == 0
-            || self.max_states > crate::constants::MAX_BOUNDED_CAPACITY
+            || self.max_states > MAX_BOUNDED_CAPACITY
             || self.max_num_seqs == 0
             || self.max_num_seqs > infer_gpu_api::MAX_SUBMISSION_BATCH
             || self.batch_slots < 2
             || self.batch_slots > infer_gpu_api::MAX_SUBMISSION_BATCH
             || self.poll_min_us == 0
             || self.poll_max_us < self.poll_min_us
-            || self.poll_max_us > crate::constants::MAX_POLL_INTERVAL_US
+            || self.poll_max_us > MAX_POLL_INTERVAL_US
         {
             return Err(Error::invalid("invalid CPU device owner limits"));
         }
@@ -60,7 +69,7 @@ struct Snapshot {
     free_bytes: Option<u64>,
     state_capacity_bytes: Option<u64>,
     kv: Option<KvCacheInspection>,
-    growth: infer_core::map::BoundedMap<StateId, PageGrowth>,
+    growth: BoundedMap<StateId, PageGrowth>,
     error: Option<Error>,
 }
 impl Snapshot {
@@ -69,7 +78,7 @@ impl Snapshot {
             free_bytes: None,
             state_capacity_bytes: None,
             kv: None,
-            growth: infer_core::map::BoundedMap::new(states)?,
+            growth: BoundedMap::new(states)?,
             error: None,
         })
     }
@@ -79,12 +88,12 @@ struct Shared {
     encoding: AtomicBool,
     flight_abandoned: AtomicBool,
     batches: Arc<infer_gpu_api::BatchArena<Result<Completion>>>,
-    device_thread: std::sync::OnceLock<std::thread::Thread>,
+    device_thread: OnceLock<Thread>,
     snapshot: Mutex<Arc<Snapshot>>,
     wake: Mutex<Option<Wake>>,
     releases: AtomicUsize,
     controls: AtomicUsize,
-    abandoned: Mutex<infer_core::set::BoundedSet<StateId>>,
+    abandoned: Mutex<BoundedSet<StateId>>,
     epoch: AtomicU64,
 }
 struct ControlCredit(Arc<Shared>);
@@ -162,7 +171,7 @@ pub struct ThreadedBackend<B: BackendProvider> {
     completions: infer_gpu_api::Consumer<infer_gpu_api::BatchLease>,
     shared: Arc<Shared>,
     resources: infer_spi::ResourcePool,
-    marker: std::marker::PhantomData<B>,
+    marker: PhantomData<B>,
     identity: String,
     capabilities: DeviceCapabilities,
     speculation: infer_ir::SpeculationCapability,
@@ -172,8 +181,8 @@ pub struct ThreadedBackend<B: BackendProvider> {
     recompute: bool,
     checkpoint: bool,
     active: Option<StepId>,
-    state_ids: infer_core::set::BoundedSet<StateId>,
-    pending_releases: std::collections::VecDeque<StateId>,
+    state_ids: BoundedSet<StateId>,
+    pending_releases: VecDeque<StateId>,
 }
 impl<B: BackendProvider + Send + 'static> ThreadedBackend<B>
 where
@@ -228,7 +237,7 @@ where
             program,
             config,
             states,
-            &infer_core::placement::ThreadPlacement::default(),
+            &ThreadPlacement::default(),
         )
     }
     /// Initialize owner storage under its policy before first-touch and apply it to the worker.
@@ -240,7 +249,7 @@ where
         program: ExecutionProgram,
         config: RunnerConfig,
         states: &[StateId],
-        placement: &infer_core::placement::ThreadPlacement,
+        placement: &ThreadPlacement,
     ) -> Result<Self> {
         placement.scope(|| Self::initialize(backend, model, program, config, states, placement))
     }
@@ -250,10 +259,10 @@ where
         program: ExecutionProgram,
         config: RunnerConfig,
         states: &[StateId],
-        placement: &infer_core::placement::ThreadPlacement,
+        placement: &ThreadPlacement,
     ) -> Result<Self> {
         config.validate()?;
-        let mut state_ids = infer_core::set::BoundedSet::new(config.max_states)?;
+        let mut state_ids = BoundedSet::new(config.max_states)?;
         for state in states {
             if !state_ids.insert(*state)? {
                 return Err(Error::invalid("duplicate restored device states"));
@@ -277,12 +286,12 @@ where
                 config.batch_slots,
                 config.max_num_seqs,
             )?),
-            device_thread: std::sync::OnceLock::new(),
+            device_thread: OnceLock::new(),
             snapshot: Mutex::new(snapshot),
             wake: Mutex::new(None),
             releases: AtomicUsize::new(0),
             controls: AtomicUsize::new(0),
-            abandoned: Mutex::new(infer_core::set::BoundedSet::new(config.max_states)?),
+            abandoned: Mutex::new(BoundedSet::new(config.max_states)?),
             epoch: AtomicU64::new(0),
         });
         let (jobs, receiver) = mpsc::sync_channel(config.control_capacity);
@@ -303,7 +312,7 @@ where
                     .and_then(|n| n.checked_add(RESOURCE_POOL_SLACK))
                     .ok_or_else(|| Error::invalid("resource pool dimensions overflow"))?,
             )?,
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
             identity: backend.identity().into(),
             capabilities: backend.capabilities(),
             speculation: backend.speculation_capability(),
@@ -318,7 +327,7 @@ where
             program: program.clone(),
             active: None,
             state_ids: state_ids.clone(),
-            pending_releases: std::collections::VecDeque::with_capacity(config.max_states),
+            pending_releases: VecDeque::with_capacity(config.max_states),
         };
         let worker_shared = shared.clone();
         let thread = placement.spawn("infer-device-submit".into(), move |_| {

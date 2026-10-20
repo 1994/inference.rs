@@ -1,6 +1,7 @@
 //! Real MTP2 gate: independent default FC/GDN target and draft versus original captures.
 //! Both target timelines compare complete hidden, vocabulary and actual F32/FP8 state bits.
 use super::prefix_state::{DraftSnapshot, ProgramSnapshot};
+use crate::tuning::table_path as tuning_table_path;
 use crate::{
     device::{CudaDevice, device_error},
     loading::{LoadOptions, LoadedModel},
@@ -10,6 +11,9 @@ use cutile::prelude::{DType, Tensor};
 use infer_core::{Error, ModelId, Result, TensorId};
 use infer_ir::{DataflowGraph, OutputReadout, StateKind, TensorStorage};
 use sha2::{Digest, Sha256};
+use std::env::var;
+use std::fs::read;
+use std::iter::once;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Range,
@@ -533,7 +537,7 @@ fn live_ranges<T: DType>(
             ..
         }
     ) {
-        return Ok(std::iter::once(0..tensor.size()).collect());
+        return Ok(once(0..tensor.size()).collect());
     }
     let shape = tensor.shape();
     assert_eq!(shape.len(), 3, "head-major KV shape");
@@ -753,13 +757,11 @@ fn prefix_resume(
 }
 
 fn fixture() -> Result<(String, Vec<u32>)> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let token_file =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(token_file).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let token_file = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(token_file).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     if tokens.len() != 511 {
         return Err(Error::invalid("frozen 511-token MTP2 prompt required"));
     }
@@ -770,9 +772,9 @@ fn fixture() -> Result<(String, Vec<u32>)> {
 #[ignore = "real MTP2 checkpoint, CUDA, frozen table/tokens and protected serial runner required"]
 fn default_fc128_preserves_real_mtp2_model_bits() -> Result<()> {
     let (path, tokens) = fixture()?;
-    let table_path = crate::tuning::table_path()
-        .ok_or_else(|| Error::invalid("frozen tuning table required"))?;
-    let table = std::fs::read(&table_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let table_path =
+        tuning_table_path().ok_or_else(|| Error::invalid("frozen tuning table required"))?;
+    let table = read(&table_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -823,7 +825,7 @@ fn default_fc128_preserves_real_mtp2_model_bits() -> Result<()> {
     )?;
     assert_eq!(
         table,
-        std::fs::read(table_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(table_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     let checked = &timelines.coverage;
     assert!(checked.hidden > 0 && checked.logits > 0);

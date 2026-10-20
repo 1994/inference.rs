@@ -1,5 +1,7 @@
 use super::*;
 use crate::device::{CudaDevice, device_error};
+use std::error::Error;
+use std::time::Instant;
 
 #[expect(
     clippy::cast_precision_loss,
@@ -19,7 +21,7 @@ fn sample(seed: u64, index: usize) -> f32 {
 /// use, before anything is allowed to delegate to it.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn gemm_bf16_matches_reference() -> Result<(), Box<dyn std::error::Error>> {
+fn gemm_bf16_matches_reference() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     if !available() {
@@ -43,7 +45,7 @@ fn gemm_bf16_matches_reference() -> Result<(), Box<dyn std::error::Error>> {
         gemm_bf16(&device, &a, &b, &out)?;
         device.reclaim_barrier()?;
         let repeats = 50;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         for _ in 0..repeats {
             gemm_bf16(&device, &a, &b, &out)?;
         }
@@ -76,7 +78,7 @@ fn gemm_bf16_matches_reference() -> Result<(), Box<dyn std::error::Error>> {
     clippy::cast_possible_wrap,
     reason = "test extents are small literals, so the narrowing to the kernel's i32 is exact"
 )]
-fn gemm_bf16_replays_inside_a_captured_graph() -> Result<(), Box<dyn std::error::Error>> {
+fn gemm_bf16_replays_inside_a_captured_graph() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     if !available() {
@@ -140,7 +142,7 @@ fn reference_error(
     host_weights: &[f32],
     (rows, columns, contraction): (usize, usize, usize),
     device: &CudaDevice,
-) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+) -> Result<(f64, f64), Box<dyn Error>> {
     let actual = device
         .read_borrowed(out)
         .map_err(|error| error.to_string())?;

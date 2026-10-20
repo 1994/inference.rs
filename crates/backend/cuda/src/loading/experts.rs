@@ -1,5 +1,6 @@
 //! Bind expert banks once; kernels read only the selected matrices.
 use super::floats;
+use crate::constants::GIB;
 use crate::{
     constants::{F32_BYTES, FP8_BLOCK_COLUMNS},
     device::CudaDevice,
@@ -143,7 +144,7 @@ fn fp8(
     for part in parts {
         data.extend(
             package
-                .read_view(&part.data, 2 * crate::constants::GIB as u64)?
+                .read_view(&part.data, 2 * GIB as u64)?
                 .iter()
                 .copied()
                 .map(f8e4m3fn),

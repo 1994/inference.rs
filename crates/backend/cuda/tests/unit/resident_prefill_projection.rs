@@ -1,4 +1,5 @@
 use super::{DENSE_REFERENCE, narrow_dense_layout, with_dense_reference};
+use std::panic::catch_unwind;
 
 #[test]
 fn narrow_dense_scope_matches_only_measured_profile() {
@@ -30,7 +31,7 @@ fn dense_reference_restores_after_nested_scope_and_unwind() {
         assert!(DENSE_REFERENCE.get());
     });
     assert!(!DENSE_REFERENCE.get());
-    let failure = std::panic::catch_unwind(|| with_dense_reference(|| panic!("reference unwind")));
+    let failure = catch_unwind(|| with_dense_reference(|| panic!("reference unwind")));
     assert!(failure.is_err());
     assert!(!DENSE_REFERENCE.get());
 }

@@ -1,4 +1,5 @@
 use crate::Engine;
+use crate::stages::prefill::retained_readout;
 use infer_core::{Error, ErrorCode, Result};
 use infer_ir::{
     AdmissionDecision, AdmissionInput, AdmissionReason, CanonicalRequest, ExecutionRole,
@@ -33,7 +34,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     ) -> Result<AdmissionDecision> {
         let bytes = self.backend.state_reservation_bytes_for(
             plan.reserved_tokens,
-            crate::stages::prefill::retained_readout(&request.workload),
+            retained_readout(&request.workload),
         )?;
         self.check_admission_with_bytes(request, plan, bytes)
     }

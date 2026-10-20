@@ -1,5 +1,6 @@
 //! Independent F64 attention on BF16-rounded genuine F32 cache values.
 use super::super::Shape;
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::device_error;
 use cutile::half::bf16;
 use infer_core::{Error, Result};
@@ -59,7 +60,7 @@ fn rounded(value: f32) -> f64 {
 }
 impl Fixture {
     pub fn short(shape: Shape, index: usize) -> Result<Self> {
-        let capacity = (shape.lanes * 2).next_multiple_of(crate::constants::KV_BLOCK_TOKENS);
+        let capacity = (shape.lanes * 2).next_multiple_of(KV_BLOCK_TOKENS);
         let (history, count, offset) = match index {
             0 => (0, shape.lanes, 0),
             1 => (shape.lanes, shape.lanes - 1, -1),
@@ -83,7 +84,7 @@ impl Fixture {
         offset: i32,
         capacity: usize,
     ) -> Result<Self> {
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         if !capacity.is_multiple_of(block)
             || history.checked_add(count).is_none_or(|end| end > capacity)
             || count > shape.lanes
@@ -149,7 +150,7 @@ impl Fixture {
         Ok(f)
     }
     fn physical(&self, position: usize) -> Result<usize> {
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         Ok(
             usize::try_from(self.table[position / block]).map_err(device_error)? * block
                 + position % block,

@@ -2,13 +2,15 @@
 
 use super::*;
 use serde_json::Value;
+use std::fs::read;
+use std::path::Path;
 
 fn golden(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples")
         .join(name)
         .join("golden.json");
-    serde_json::from_slice(&std::fs::read(path).expect("the reference golden is registered"))
+    serde_json::from_slice(&read(path).expect("the reference golden is registered"))
         .expect("the reference golden parses")
 }
 

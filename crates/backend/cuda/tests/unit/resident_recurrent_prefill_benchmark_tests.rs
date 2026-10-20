@@ -1,18 +1,22 @@
 use super::kernels;
 use crate::device::CudaDevice;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
+use std::error::Error;
+use std::slice::from_ref;
 use std::time::Duration;
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn recurrent_chunk_performance_gate() -> Result<(), Box<dyn std::error::Error>> {
+fn recurrent_chunk_performance_gate() -> Result<(), Box<dyn Error>> {
     if cfg!(debug_assertions) {
         return Err("benchmark requires release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|x| x != 3) {
         return Err("benchmark requires CUDA O3".into());
     }
@@ -36,7 +40,7 @@ fn production_block(dim: usize, lanes: usize) -> usize {
 fn bench_case(
     device: &CudaDevice,
     geometry: (usize, usize, usize, usize),
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let (kh, vh, dim, lanes) = geometry;
     let cols = (2 * kh + vh) * dim;
     let qkv = device.upload(
@@ -64,13 +68,13 @@ fn bench_case(
                 super::super::recurrent::recurrent::delta(
                     output.partition([1, 1, dim]),
                     (&mut state).partition([1, dim, dim]),
-                    &qkv.slice(std::slice::from_ref(&(lane * cols..(lane + 1) * cols)))?,
+                    &qkv.slice(from_ref(&(lane * cols..(lane + 1) * cols)))?,
                     &beta
                         .view(&[lanes * vh])?
-                        .slice(std::slice::from_ref(&(lane * vh..(lane + 1) * vh)))?,
+                        .slice(from_ref(&(lane * vh..(lane + 1) * vh)))?,
                     &alpha
                         .view(&[lanes * vh])?
-                        .slice(std::slice::from_ref(&(lane * vh..(lane + 1) * vh)))?,
+                        .slice(from_ref(&(lane * vh..(lane + 1) * vh)))?,
                     &a_log,
                     &bias,
                     &metadata[lane],
@@ -137,7 +141,7 @@ fn compare_graphs(
     baseline: &CudaGraph<()>,
     candidate: &CudaGraph<()>,
     geometry: (usize, usize, usize, usize),
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let options = BenchOptions {
         warmup: Duration::from_millis(50),
         rep: Duration::from_millis(100),
@@ -152,13 +156,13 @@ fn compare_graphs(
             baseline
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
         |_| {
             candidate
                 .launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         },
     )?;
     println!(

@@ -4,6 +4,8 @@ mod cuda;
 mod metal;
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod selected;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::device::CudaDevice;
 #[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::{Error, Result};
 
@@ -60,7 +62,7 @@ pub const fn metal_available() -> bool {
 }
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 pub fn cuda_available() -> bool {
-    infer_backend_cuda::device::CudaDevice::new(0).is_ok()
+    CudaDevice::new(0).is_ok()
 }
 #[cfg(not(all(target_os = "linux", feature = "cuda")))]
 pub const fn cuda_available() -> bool {

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -16,7 +17,7 @@ fn cuda_remains_primary_and_explicit_unavailable_backend_does_not_fallback() {
         serde_json::json!(["cuda", "metal"])
     );
     assert!(report["backends"].get("host").is_none());
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
     let output = Command::new(binary)
         // Make the unavailable-device case deterministic even on GPU hosts.
         .env("CUDA_VISIBLE_DEVICES", "-1")
@@ -51,7 +52,7 @@ fn cuda_remains_primary_and_explicit_unavailable_backend_does_not_fallback() {
 #[test]
 fn production_binary_rejects_cpu_choices_and_implicit_fixture_execution() {
     let binary = env!("CARGO_BIN_EXE_infer");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples");
     for backend in ["host", "cpu", "test-cpu"] {
         let output = Command::new(binary)
             .args(["--backend", backend, "run", "--package"])

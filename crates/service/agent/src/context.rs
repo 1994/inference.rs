@@ -1,3 +1,4 @@
+use crate::constants::MAX_CALL_HISTORY;
 use crate::{experiment::ExperimentResult, registry::CommandDescriptor};
 use infer_core::{ErrorCode, IdAllocator, Result, SessionId};
 use infer_ir::{ExecutionStats, LayerProbe, OpTrace};
@@ -80,7 +81,7 @@ impl<B: AgentBackend> AgentContext<B> {
     }
 
     pub(crate) fn record(&mut self, record: CallRecord) {
-        if self.calls.len() == crate::constants::MAX_CALL_HISTORY {
+        if self.calls.len() == MAX_CALL_HISTORY {
             self.calls.pop_front();
             self.dropped_calls = self.dropped_calls.saturating_add(1);
         }

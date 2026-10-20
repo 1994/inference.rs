@@ -1,7 +1,13 @@
 //! Same-address gated-norm compiler occupancy discovery; no production policy.
 use crate::device::{CudaDevice, device_error};
+use crate::resident::kernels::aux::norm;
+use cutile::bench::BenchOptions;
+use cutile::bench::do_bench_paired;
+use cutile::error::tensor_error;
 use cutile::{prelude::*, tile_kernel::CompileOptions};
 use infer_core::Result;
+use std::cell::Cell;
+use std::time::Duration;
 
 #[test]
 #[ignore = "requires CUDA/safe-run; bit equality before same-address AB/BA cold/warm discovery"]
@@ -77,16 +83,9 @@ fn capture(
     let zv = z.view(&[z.size() / 128, 128]).map_err(device_error)?;
     CudaGraph::scope(&device.stream, |scope| {
         scope.record(
-            crate::resident::kernels::aux::norm(
-                out.partition([1, 128]),
-                &xv,
-                w,
-                &zv,
-                1e-6f32,
-                0.0f32,
-            )
-            .generics(vec!["128".into(), "128".into(), "1".into()])
-            .compile_options(options),
+            norm(out.partition([1, 128]), &xv, w, &zv, 1e-6f32, 0.0f32)
+                .generics(vec!["128".into(), "128".into(), "1".into()])
+                .compile_options(options),
         )?;
         Ok(())
     })
@@ -102,9 +101,9 @@ fn cost(
 ) -> Result<()> {
     for reverse in [false, true] {
         for cold in [true, false] {
-            let options = cutile::bench::BenchOptions {
-                warmup: std::time::Duration::from_millis(30),
-                rep: std::time::Duration::from_millis(60),
+            let options = BenchOptions {
+                warmup: Duration::from_millis(30),
+                rep: Duration::from_millis(60),
                 min_reps: 10,
                 max_reps: 30,
                 clear_l2: cold,
@@ -117,11 +116,10 @@ fn cost(
             let run = |g: &CudaGraph<()>| {
                 g.launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             };
-            let (a, b) =
-                cutile::bench::do_bench_paired(&device.stream, &options, |_| run(a), |_| run(b))
-                    .map_err(device_error)?;
+            let (a, b) = do_bench_paired(&device.stream, &options, |_| run(a), |_| run(b))
+                .map_err(device_error)?;
             let (a, b) = if reverse { (b, a) } else { (a, b) };
             println!(
                 "{}",
@@ -135,8 +133,8 @@ fn cost(
 }
 
 thread_local! {
-    static MODEL_BASELINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static MODEL_SITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MODEL_BASELINE: Cell<bool> = const { Cell::new(false) };
+    static MODEL_SITES: Cell<usize> = const { Cell::new(0) };
 }
 pub fn model_options(
     dimension: usize,
@@ -144,7 +142,7 @@ pub fn model_options(
     rows: usize,
     prepared: CompileOptions,
 ) -> CompileOptions {
-    if MODEL_BASELINE.with(std::cell::Cell::get) {
+    if MODEL_BASELINE.with(Cell::get) {
         return CompileOptions::default();
     }
     if dimension == 128 && gated && [3072, 12288].contains(&rows) && prepared.occupancy.is_some() {
@@ -153,7 +151,7 @@ pub fn model_options(
     prepared
 }
 pub fn model_sites() -> usize {
-    MODEL_SITES.with(std::cell::Cell::get)
+    MODEL_SITES.with(Cell::get)
 }
 pub fn with_model_baseline<T>(run: impl FnOnce() -> T) -> T {
     struct Restore(bool);

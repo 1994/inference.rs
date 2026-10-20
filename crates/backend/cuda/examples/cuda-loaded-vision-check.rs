@@ -3,7 +3,13 @@
 //! The text model is loaded alongside the tower, so this exercises the real binding path rather
 //! than a standalone weight map.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use infer_backend_cuda::{
         device::CudaDevice,
         loading::{LoadOptions, LoadedModel},
@@ -11,14 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use infer_core::{Error, ModelId};
     use infer_models::{PromptImage, SafetensorsFile};
 
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let root = args
         .next()
         .ok_or_else(|| Error::invalid("model package path required"))?;
     let golden = args
         .next()
         .ok_or_else(|| Error::invalid("golden safetensors path required"))?;
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let device = CudaDevice::new(0)?;
     let options = LoadOptions {
         autotune: false,

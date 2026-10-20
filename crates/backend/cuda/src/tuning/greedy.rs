@@ -5,12 +5,16 @@ use crate::{
     device::{CudaDevice, device_error},
     resident::greedy::{Greedy, TILE_SEARCH},
 };
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::fs::read_to_string;
+use std::iter::once;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -111,7 +115,7 @@ fn median(values: &[f32]) -> f32 {
     }
 }
 fn driver_build() -> Option<String> {
-    std::fs::read_to_string("/proc/driver/nvidia/version")
+    read_to_string("/proc/driver/nvidia/version")
         .ok()?
         .lines()
         .find(|line| line.starts_with("NVRM version:"))
@@ -249,7 +253,7 @@ fn measure(
             .graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (first, second) = if candidate_first {
         (candidate, base)
@@ -309,7 +313,7 @@ fn fixture(rows: usize, vocabulary: usize) -> Result<(Vec<f32>, Vec<u32>)> {
     Ok((values, expected))
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if cfg!(debug_assertions)
         || compile.device_debug
         || compile
@@ -350,7 +354,7 @@ fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Resul
     for tile in ranked
         .into_iter()
         .map(|t| t.tile)
-        .chain(std::iter::once(BASELINE_TILE))
+        .chain(once(BASELINE_TILE))
     {
         if !session.permits_greedy_search() {
             return Ok(None);

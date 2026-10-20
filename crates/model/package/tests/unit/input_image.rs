@@ -1,11 +1,14 @@
 use super::*;
+use std::env::var;
+use std::fs::read;
+use std::path::Path;
 
 fn package_processor() -> Result<ImageProcessor> {
-    let Ok(path) = std::env::var("INFER_VISION_PACKAGE") else {
+    let Ok(path) = var("INFER_VISION_PACKAGE") else {
         return Err(Error::invalid("package not configured"));
     };
     ImageProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&path).join("preprocessor_config.json"))
+        &read(Path::new(&path).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )
 }
@@ -78,13 +81,13 @@ fn preprocessing_matches_the_reference_processor() -> Result<()> {
     // RGB8 resize must match; only final F32 normalization rounding may differ.
     const RESAMPLE_TOLERANCE: f32 = 1e-6;
     let (Ok(package), Ok(golden)) = (
-        std::env::var("INFER_VISION_PACKAGE"),
-        std::env::var("INFER_VISION_IMAGE_GOLDEN"),
+        var("INFER_VISION_PACKAGE"),
+        var("INFER_VISION_IMAGE_GOLDEN"),
     ) else {
         return Ok(());
     };
     let processor = ImageProcessor::from_json(
-        &std::fs::read(std::path::Path::new(&package).join("preprocessor_config.json"))
+        &read(Path::new(&package).join("preprocessor_config.json"))
             .map_err(|error| Error::invalid(error.to_string()))?,
     )?;
     let mut file = crate::SafetensorsFile::open(&golden)?;

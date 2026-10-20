@@ -9,6 +9,10 @@ use crate::image::{
     ImageProcessor, Normalization, PatchGrid, PreprocessedImage, RGB_CHANNELS, RgbImage, patchify,
 };
 use infer_core::{Error, Result};
+use std::iter::repeat_n;
+use std::num::NonZeroUsize;
+use std::thread::available_parallelism;
+use std::thread::scope as thread_scope;
 
 /// Frames sampled per second of source video when the configuration omits a rate.
 const DEFAULT_FPS: f64 = 2.0;
@@ -292,7 +296,7 @@ impl VideoProcessor {
             let last = *sampled
                 .last()
                 .ok_or_else(|| Error::invalid("video has no sampled frames"))?;
-            sampled.extend(std::iter::repeat_n(last, pad));
+            sampled.extend(repeat_n(last, pad));
         }
         let groups = sampled.len() / self.temporal_patch_size;
         // The reference timestamps average the first and last frame of each temporal group.
@@ -334,8 +338,8 @@ impl VideoProcessor {
 
 /// Resize every sampled frame, splitting the work across cores for longer clips.
 fn resize_frames(frames: &[&RgbImage], height: usize, width: usize) -> Result<Vec<Vec<f32>>> {
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
+    let workers = available_parallelism()
+        .map_or(1, NonZeroUsize::get)
         .min(frames.len());
     if workers <= 1 || frames.len() < PARALLEL_FRAMES {
         return Ok(frames
@@ -344,7 +348,7 @@ fn resize_frames(frames: &[&RgbImage], height: usize, width: usize) -> Result<Ve
             .collect());
     }
     let chunk = frames.len().div_ceil(workers);
-    std::thread::scope(|scope| {
+    thread_scope(|scope| {
         let handles: Vec<_> = frames
             .chunks(chunk)
             .map(|part| {

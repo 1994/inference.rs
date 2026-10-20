@@ -3,11 +3,15 @@ use super::{
     evidence::{Key, Shape, Times, Trial},
 };
 use crate::device::{CudaDevice, device_error};
+use crate::resident::kernels::aux::norm;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
 };
 use infer_core::{Error, Result};
+use std::fs::read_to_string;
+use std::iter::once;
 use std::time::Duration;
 pub(super) const JIT_OPT_LEVEL: u8 = 3;
 const INPUT_PERIOD: u16 = 71;
@@ -92,9 +96,9 @@ impl Buffers {
             .sync_on(&device.stream)
             .map_err(device_error)?;
         let mut ids = Vec::new();
-        for occupancy in std::iter::once(0).chain(CANDIDATES) {
+        for occupancy in once(0).chain(CANDIDATES) {
             ids.push(
-                crate::resident::kernels::aux::norm(
+                norm(
                     (&mut output).partition([1, shape.dimension]),
                     &x,
                     &self.weight,
@@ -135,7 +139,7 @@ impl Buffers {
             .map_err(device_error)?;
         CudaGraph::scope(&device.stream, |scope| {
             scope.record(
-                crate::resident::kernels::aux::norm(
+                norm(
                     (&mut self.output).partition([1, s.dimension]),
                     &x,
                     &self.weight,
@@ -163,7 +167,7 @@ impl Buffers {
     }
 }
 fn driver_build() -> Option<String> {
-    std::fs::read_to_string("/proc/driver/nvidia/version")
+    read_to_string("/proc/driver/nvidia/version")
         .ok()?
         .lines()
         .find(|l| l.starts_with("NVRM version:"))
@@ -207,7 +211,7 @@ pub fn measure(
         let run = |g: &CudaGraph<()>| {
             g.launch()
                 .sync_on(&device.stream)
-                .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                .map_err(|e| tensor_error(&e.to_string()))
         };
         let (a, b) = do_bench_paired(&device.stream, &opts, |_| run(left), |_| run(right))
             .map_err(device_error)?;

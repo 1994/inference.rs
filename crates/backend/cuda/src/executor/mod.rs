@@ -8,6 +8,7 @@ pub mod prefix;
 mod prefix_state;
 mod profiling;
 mod provider;
+use crate::registry::CudaKernels;
 pub use pool::PoolInspection;
 mod state;
 mod validation;
@@ -146,7 +147,7 @@ impl CudaBackend {
             greedy_only: true,
         };
         let mut registry = infer_kernel_api::KernelRegistry::default();
-        registry.register(&crate::registry::CudaKernels)?;
+        registry.register(&CudaKernels)?;
         let program = infer_compiler::compile(
             infer_core::ProgramId::ONE,
             infer_compiler::lower(
@@ -195,7 +196,7 @@ impl CudaBackend {
     /// Rejects invalid lowering, unavailable kernels or insufficient workspace.
     pub fn compile(&self, id: infer_core::ProgramId) -> Result<ExecutionProgram> {
         let mut registry = infer_kernel_api::KernelRegistry::default();
-        registry.register(&crate::registry::CudaKernels)?;
+        registry.register(&CudaKernels)?;
         let ir = infer_compiler::lower(
             self.model(),
             self.loaded.graph().clone(),

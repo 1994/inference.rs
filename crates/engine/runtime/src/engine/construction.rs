@@ -1,5 +1,14 @@
 //! Construction responsibilities.
 use super::{Engine, RuntimeConfig};
+use crate::cpu::storage::HostStorage;
+use crate::observation::Observations;
+use crate::observation::collector::Collector;
+use crate::pipeline::completion::cpu::OutputFlights;
+use crate::resource::ResourceWaiters;
+use crate::runner::RunnerConfig;
+use crate::runner::ThreadedBackend;
+use crate::stages::worker::OutputWorker;
+use infer_core::map::BoundedMap;
 use infer_core::{Error, ErrorCode, IdAllocator, ProgramId, Result, event::event_ring};
 use infer_ir::{ModelIr, PrecisionPlan};
 use infer_kernel_api::KernelRegistry;
@@ -8,6 +17,8 @@ use infer_scheduler::{CalibratedCosts, CostAwarePolicy, ResourceAdmission};
 use infer_spi::{BackendProvider, SchedulingPolicy, WorkloadProvider};
 use infer_state::SequenceStateManager;
 use infer_workloads::NativeWorkloads;
+use std::mem::replace;
+use std::time::Duration;
 use std::{collections::BTreeSet, collections::VecDeque};
 
 /// Upper bound on parent trace contexts the event collector retains.
@@ -73,22 +84,17 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             config.cost_model.clone(),
         )?;
         let admission_policy = ResourceAdmission::new(config.admission.clone())?;
-        let observations = crate::observation::Observations::new(config.history_capacity)?;
-        let host = crate::cpu::storage::HostStorage::new(
-            &config,
-            program.id,
-            program.backend,
-            model.vocab_size,
-        )?;
+        let observations = Observations::new(config.history_capacity)?;
+        let host = HostStorage::new(&config, program.id, program.backend, model.vocab_size)?;
         let mut planning_workspace = P::Workspace::default();
         policy.reserve_workspace(
             &mut planning_workspace,
             config.candidate_limit.min(config.max_requests),
             config.max_num_seqs,
         )?;
-        let tenants = infer_core::map::BoundedMap::new(config.max_requests)?;
-        let resources_pending = crate::resource::ResourceWaiters::new(config.max_requests)?;
-        let output_owners = infer_core::map::BoundedMap::new(config.max_requests)?;
+        let tenants = BoundedMap::new(config.max_requests)?;
+        let resources_pending = ResourceWaiters::new(config.max_requests)?;
+        let output_owners = BoundedMap::new(config.max_requests)?;
         let history_capacity = config.history_capacity;
         Ok(Self {
             backend,
@@ -96,7 +102,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             planning_workspace,
             host,
             output_worker: None,
-            output_pending: crate::pipeline::completion::cpu::OutputFlights::default(),
+            output_pending: OutputFlights::default(),
             output_owners,
             workloads: Box::new(NativeWorkloads),
             costs: Box::new(costs),
@@ -157,8 +163,8 @@ where
     pub fn into_threaded(
         mut self,
         queue: usize,
-        timeout: std::time::Duration,
-    ) -> Result<Engine<crate::runner::ThreadedBackend<B>, P>> {
+        timeout: Duration,
+    ) -> Result<Engine<ThreadedBackend<B>, P>> {
         if self.inflight.is_some()
             || !self.output_pending.is_empty()
             || !self.resources_pending.is_empty()
@@ -177,7 +183,7 @@ where
             .map_err(|_| Error::invalid("resource timeout overflow"))?;
         self.config.validate()?;
         self.collect_observations();
-        let store = std::mem::replace(
+        let store = replace(
             &mut self.observations.store,
             infer_observe::ObservationStore::new(self.config.history_capacity)?,
         );
@@ -185,7 +191,7 @@ where
             .event_reader
             .take()
             .ok_or_else(|| Error::invariant("event reader already transferred"))?;
-        self.observations.collector = Some(crate::observation::collector::Collector::new(
+        self.observations.collector = Some(Collector::new(
             reader,
             store,
             self.events.published(),
@@ -194,17 +200,17 @@ where
                 .saturating_add(self.config.max_requests)
                 .min(MAX_TRACKED_PARENTS),
         )?);
-        let output_worker = crate::stages::worker::OutputWorker::placed(
+        let output_worker = OutputWorker::placed(
             &self.fork_workloads()?.into(),
             self.config.max_num_seqs.min(self.config.max_requests),
             self.model.vocab_size,
             &self.config.cpu.placement.output,
         )?;
-        let backend = crate::runner::ThreadedBackend::with_states_placed(
+        let backend = ThreadedBackend::with_states_placed(
             self.backend,
             self.model.clone(),
             self.program.clone(),
-            crate::runner::RunnerConfig {
+            RunnerConfig {
                 control_capacity: queue,
                 max_num_seqs: self.config.max_num_seqs,
                 max_states: self.config.max_requests,

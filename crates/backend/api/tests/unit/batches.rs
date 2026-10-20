@@ -1,6 +1,7 @@
 use super::*;
 use infer_core::{DecisionId, ProgramId, RequestId, StateId, StepId};
 use infer_ir::{CostEstimate, ExecutionRole, PlannedWork};
+use std::thread::spawn;
 use std::{sync::mpsc, time::Duration};
 
 fn fixture() -> (Arc<StepPlan>, Vec<ExecutionTask>) {
@@ -85,7 +86,7 @@ fn pending_poll_never_waits_for_encoding_lock() -> Result<()> {
     let (entered, start) = mpsc::channel();
     let (release, gate) = mpsc::channel();
     let driver = arena.clone();
-    let owner = std::thread::spawn(move || -> Result<()> {
+    let owner = spawn(move || -> Result<()> {
         driver.apply(handle, |_, _| {
             entered
                 .send(())

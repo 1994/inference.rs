@@ -6,6 +6,7 @@ use infer_kernel_api::KernelRegistry;
 use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
+use std::thread::sleep;
 use std::{path::Path, path::PathBuf, time::Duration, time::Instant};
 
 fn root() -> PathBuf {
@@ -47,7 +48,7 @@ fn finish(e: &mut Engine<MetalBackend>) {
             e.inspect()
         );
         e.tick(e.now_us() + 1).unwrap();
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
 }
 #[expect(
@@ -61,7 +62,7 @@ fn quiesce(e: &mut Engine<MetalBackend>) {
         if e.quiesce(e.now_us() + 1).unwrap().1.is_some() {
             break;
         }
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
 }
 #[test]
@@ -265,7 +266,7 @@ fn execute(
         if let Some(mut o) = b.poll(&mut t).unwrap() {
             return o.remove(0).output;
         }
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
 }
 #[test]
@@ -415,7 +416,7 @@ fn checkpoint_during_recompute_preemption_preserves_progress_and_sampling() {
     while e.inspect().preemptions == 0 {
         assert!(Instant::now() < limit);
         e.tick(e.now_us() + 1).unwrap();
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
     quiesce(&mut e);
     let snapshot = e.snapshot().unwrap();

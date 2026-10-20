@@ -6,6 +6,7 @@ use self::{
     evidence::{Entry, Key, Shape},
 };
 use super::resident_gemm::ResidentTuningSession;
+use crate::constants::PREFILL_LANES;
 use crate::{device::CudaDevice, resident::ProgramWeights};
 use cutile::tile_kernel::CompileOptions;
 pub use evidence::Entry as NormEntry;
@@ -91,10 +92,7 @@ pub(crate) fn prepare(
         if !elements.is_multiple_of(head_dim) {
             continue;
         }
-        for width in widths
-            .into_iter()
-            .filter(|w| *w >= crate::constants::PREFILL_LANES)
-        {
+        for width in widths.into_iter().filter(|w| *w >= PREFILL_LANES) {
             if let Some(rows) = width.checked_mul(elements / head_dim)
                 && let Some(shape) = Shape::new(rows, head_dim, epsilon)
             {

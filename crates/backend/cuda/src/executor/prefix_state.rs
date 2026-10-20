@@ -1,4 +1,5 @@
 //! Prefix snapshots preserve head-major KV strides and whole recurrent state.
+use crate::constants::KV_CACHE_RANK;
 use crate::{
     device::{CudaDevice, device_error},
     resident::DeviceProgram,
@@ -46,7 +47,7 @@ impl ProgramSnapshot {
             for tensor in tensors {
                 let mut shape = dimensions(tensor)?;
                 if kv.contains(id) {
-                    if shape.len() != crate::constants::KV_CACHE_RANK || shape[1] < covered {
+                    if shape.len() != KV_CACHE_RANK || shape[1] < covered {
                         return Err(Error::invariant("prefix KV shape"));
                     }
                     shape[1] = covered;
@@ -65,7 +66,7 @@ impl ProgramSnapshot {
         for (id, (keys, values)) in program.fp8_states() {
             let allocate = |source: &Tensor<f8e4m3fn>| -> Result<Tensor<f8e4m3fn>> {
                 let mut shape = dimensions(source)?;
-                if shape.len() != crate::constants::KV_CACHE_RANK || shape[1] < covered {
+                if shape.len() != KV_CACHE_RANK || shape[1] < covered {
                     return Err(Error::invariant("prefix FP8 KV shape"));
                 }
                 shape[1] = covered;
@@ -171,8 +172,8 @@ fn copy_state<T: DType>(
         }
         return device.copy_d2d(dst, src, src.size());
     }
-    if d.len() != crate::constants::KV_CACHE_RANK
-        || s.len() != crate::constants::KV_CACHE_RANK
+    if d.len() != KV_CACHE_RANK
+        || s.len() != KV_CACHE_RANK
         || d[0] != s[0]
         || d[2] != s[2]
         || d[1] < covered

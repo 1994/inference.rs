@@ -3,19 +3,35 @@
 //! Every stage is compared against the official `transformers` implementation's output for the
 //! same input, so a wrong op is localized instead of surfacing as a wrong final embedding.
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use cutile::jit_cache::enable_default;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::device::CudaDevice as DeviceCudaDevice;
+#[cfg(target_os = "linux")]
+use infer_backend_cuda::vision::VisionWeights as VisionVisionWeights;
+#[cfg(target_os = "linux")]
+use std::env::args as env_args;
+#[cfg(target_os = "linux")]
+use std::env::var;
+#[cfg(target_os = "linux")]
+use std::env::var_os;
+#[cfg(target_os = "linux")]
+use std::error::Error as StdError;
+#[cfg(target_os = "linux")]
+use std::fs::read;
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), Box<dyn StdError>> {
     use cutile::half::bf16;
     use infer_backend_cuda::{device::CudaDevice, vision::VisionWeights};
     use infer_core::{Error, ModelId};
     use infer_models::{QuantizedPackage, vision as inventory};
 
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let root = args
         .next()
         .ok_or_else(|| Error::invalid("model package path required"))?;
     let golden = args
         .next()
-        .or_else(|| std::env::var("INFER_VISION_GOLDEN").ok())
+        .or_else(|| var("INFER_VISION_GOLDEN").ok())
         .ok_or_else(|| Error::invalid("golden safetensors path required"))?;
     let case_index: usize = match args.next() {
         Some(value) => value
@@ -23,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|error| Error::invalid(format!("golden case index: {error}")))?,
         None => 0,
     };
-    cutile::jit_cache::enable_default()?;
+    enable_default()?;
     let device = CudaDevice::new(0)?;
     let mut package = QuantizedPackage::open(&root, ModelId::ONE)?;
     let encoder = package
@@ -54,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let case = golden_case(&golden, case_index)?;
-    if std::env::var_os("INFER_VISION_TRACE_BLOCKS").is_some() {
+    if var_os("INFER_VISION_TRACE_BLOCKS").is_some() {
         trace_blocks(&device, &weights, &encoder, &case, &golden, case_index)?;
     }
     let errors = run_stages(&device, &weights, &encoder, &case, &root)?;
@@ -104,8 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Compare each block with the same reference input, separately from accumulated drift.
 #[cfg(target_os = "linux")]
 fn trace_blocks(
-    device: &infer_backend_cuda::device::CudaDevice,
-    weights: &infer_backend_cuda::vision::VisionWeights,
+    device: &DeviceCudaDevice,
+    weights: &VisionVisionWeights,
     encoder: &infer_spi::ModalityEncoder,
     case: &GoldenCase,
     golden: &str,
@@ -202,8 +218,8 @@ impl StageErrors {
 /// Run patch embed, position add, `LayerNorm`, `QKV` and attention against the reference.
 #[cfg(target_os = "linux")]
 fn run_stages(
-    device: &infer_backend_cuda::device::CudaDevice,
-    weights: &infer_backend_cuda::vision::VisionWeights,
+    device: &DeviceCudaDevice,
+    weights: &VisionVisionWeights,
     encoder: &infer_spi::ModalityEncoder,
     case: &GoldenCase,
     root: &str,
@@ -356,7 +372,7 @@ fn position_table(
     let name = format!("{}pos_embed.weight", encoder.prefix);
     let shard = if index.exists() {
         let index = SafetensorsIndex::parse(
-            &std::fs::read(&index).map_err(|error| Error::invalid(error.to_string()))?,
+            &read(&index).map_err(|error| Error::invalid(error.to_string()))?,
         )?;
         index
             .weight_map

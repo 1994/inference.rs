@@ -9,6 +9,7 @@
 //! The alignment between media placeholders and encodings is checked before any device work: a
 //! prompt whose media is not covered would otherwise execute as ordinary text and silently drop
 //! the image or clip.
+use crate::constants::PREFILL_LANES;
 use crate::resident::DeviceProgram;
 use infer_core::{Error, Result};
 use infer_ir::Modality;
@@ -151,7 +152,7 @@ pub fn prefill(
         bases.push(data.len() / hidden);
         data.extend_from_slice(encoded);
     }
-    let logits = if program.prefill_width() < crate::constants::PREFILL_LANES {
+    let logits = if program.prefill_width() < PREFILL_LANES {
         // A program loaded without a prompt graph keeps the per-token path; the media still runs
         // through the embedding override, just without chunk fusion.
         prefill_per_token(program, &prepared.tokens, &layout, &data, hidden, position)?

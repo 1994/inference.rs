@@ -13,6 +13,7 @@
 use crate::device::{CudaDevice, device_error};
 use cutile::{half::bf16, prelude::*};
 use infer_core::Result;
+use std::result::Result as StdResult;
 
 /// Tokens per chunk.
 pub(super) const CHUNK: usize = 64;
@@ -352,7 +353,7 @@ pub(super) fn record(
     [state, output]: [&mut Tensor<f32>; 2],
     metadata: &Tensor<i32>,
     (kh, vh, dim, lanes): (usize, usize, usize, usize),
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     scope.record(
         kernels::chunk_normalize(
             (&mut scratch.queries).partition([1, CHUNK, dim]),

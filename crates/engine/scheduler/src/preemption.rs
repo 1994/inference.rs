@@ -1,5 +1,6 @@
 //! Pure recompute selection; the runtime performs resets only after inspecting this plan.
 use crate::any_feasible;
+use crate::policy::preemption_indices;
 use infer_core::{Error, RequestId, Result};
 use infer_ir::{ExecutionRole, ReadyWork, ResourceSnapshot};
 use infer_spi::CostModelProvider;
@@ -68,7 +69,7 @@ pub fn recompute_plan_into(
     if ready.len() > workspace.ordered.capacity() || ready.len() > workspace.victims.capacity() {
         return Err(Error::invariant("preemption candidate capacity exceeded"));
     }
-    crate::policy::preemption_indices(ready, resources, now, &mut workspace.ordered);
+    preemption_indices(ready, resources, now, &mut workspace.ordered);
     let Some(focus) =
         existing.or_else(|| workspace.ordered.first().map(|index| ready[*index].request))
     else {

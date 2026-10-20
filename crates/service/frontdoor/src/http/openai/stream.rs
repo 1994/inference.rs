@@ -6,9 +6,11 @@
 //! delta is ever rewritten.
 use super::execution::{completion_reason, finish_reason, prepare};
 use super::{ApiResult, GenerationRequest, TextState};
+use crate::cpu::CpuPool;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
+use futures_util::stream::unfold;
 use infer_core::{Error, ErrorCode, RequestId};
 use infer_models::{OutputStreamParser, StreamEvent, TextStreamDecoder};
 use infer_runtime::EngineOutput;
@@ -38,7 +40,7 @@ enum Phase {
 struct Stream {
     request: RequestId,
     receiver: mpsc::Receiver<infer_core::Result<EngineOutput>>,
-    delivery: crate::cpu::CpuPool,
+    delivery: CpuPool,
     /// The decoder and parser leave this owner for the duration of a CPU job and come back.
     decoder: Option<TextStreamDecoder>,
     parser: Option<OutputStreamParser>,
@@ -272,7 +274,7 @@ pub(super) async fn stream(
     } else {
         "text_completion"
     };
-    let events = futures_util::stream::unfold(
+    let events = unfold(
         Stream {
             request: prepared.request,
             receiver: prepared.receiver,

@@ -1,6 +1,9 @@
 use super::kernels;
 use crate::device::CudaDevice;
+use crate::resident::recurrent::recurrent::delta as recurrent_delta;
 use cutile::prelude::*;
+use std::env::var_os;
+use std::error::Error;
 
 pub(super) fn values(n: usize, salt: usize) -> Vec<f32> {
     (0..n)
@@ -10,7 +13,7 @@ pub(super) fn values(n: usize, salt: usize) -> Vec<f32> {
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn chunk_delta_matches_independent_recurrence() -> Result<(), Box<dyn std::error::Error>> {
+fn chunk_delta_matches_independent_recurrence() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (kh, vh, dim, lanes) in [
@@ -41,7 +44,7 @@ pub(super) fn reference_fixture(
     (kh, vh, dim, lanes): (usize, usize, usize, usize),
     count: usize,
     offset: i32,
-) -> Result<ReferenceFixture, Box<dyn std::error::Error>> {
+) -> Result<ReferenceFixture, Box<dyn Error>> {
     let qkv = values(lanes * (2 * kh + vh) * dim, 17);
     let beta = values(lanes * vh, 13);
     let alpha = values(lanes * vh, 7);
@@ -113,7 +116,7 @@ fn check_case(
     geometry: (usize, usize, usize, usize),
     count: usize,
     offset: i32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let (kh, vh, dim, lanes) = geometry;
     let ReferenceFixture {
         qkv,
@@ -199,8 +202,7 @@ fn check_case(
 /// wrong: this decides which.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
--> Result<(), Box<dyn std::error::Error>> {
+fn per_lane_delta_matches_independent_recurrence_at_model_geometry() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (kh, vh, dim) = (16_usize, 48_usize, 128_usize);
@@ -230,7 +232,7 @@ fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
         api::memcpy(&mut state, &src).sync_on(&device.stream)?;
         let output = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
         let mut output = output.reshape(&[vh, 1, dim])?;
-        crate::resident::recurrent::recurrent::delta(
+        recurrent_delta(
             (&mut output).partition([1, 1, block]),
             (&mut state).partition([1, dim, block]),
             &qkv,
@@ -297,7 +299,7 @@ fn per_lane_delta_matches_independent_recurrence_at_model_geometry()
 /// output path under suspicion, so pin the transpose on its own.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn std::error::Error>> {
+fn chunk_delta_transpose_permutes_head_and_lane() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (lanes, value_heads, dim) = (3_usize, 2_usize, 4_usize);
@@ -341,7 +343,7 @@ fn recurrence_gap(
     lanes: usize,
     count: usize,
     (kh, vh, dim): (usize, usize, usize),
-) -> Result<(f32, f32), Box<dyn std::error::Error>> {
+) -> Result<(f32, f32), Box<dyn Error>> {
     let heads = 2 * kh + vh;
     let qkv = values(lanes * heads * dim, 17);
     let beta = values(lanes * vh, 13);
@@ -390,7 +392,7 @@ fn recurrence_gap(
         let alpha_one = device.upload(alpha[lane * vh..(lane + 1) * vh].to_vec(), &[vh])?;
         let out_one = api::zeros::<f32>(&[vh, dim]).sync_on(&device.stream)?;
         let mut out_one = out_one.reshape(&[vh, 1, dim])?;
-        crate::resident::recurrent::recurrent::delta(
+        recurrent_delta(
             (&mut out_one).partition([1, 1, dim]),
             (&mut state_l).partition([1, dim, dim]),
             &qkv_one,
@@ -442,7 +444,7 @@ fn recurrence_gap(
 /// where the difference enters: a single lane, a masked tail, or a longer chunk.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn chunk_and_per_lane_delta_gap_map() -> Result<(), Box<dyn std::error::Error>> {
+fn chunk_and_per_lane_delta_gap_map() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (lanes, count) in [
@@ -465,7 +467,7 @@ fn chunk_and_per_lane_delta_gap_map() -> Result<(), Box<dyn std::error::Error>> 
 /// greedy decode. Track the figure here until it is zero.
 #[test]
 #[ignore = "requires CUDA hardware; run inside safe-run"]
-fn ordered_delta_preserves_scalar_bits() -> Result<(), Box<dyn std::error::Error>> {
+fn ordered_delta_preserves_scalar_bits() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let geometry = (16, 48, 128, 128);
@@ -489,7 +491,7 @@ fn print_gap_indices(
     lanes: usize,
     count: usize,
 ) {
-    if std::env::var_os("INFER_GAP_INDEX").is_some() {
+    if var_os("INFER_GAP_INDEX").is_some() {
         let differing: Vec<usize> = chunk_out
             .iter()
             .zip(expected_out)
@@ -521,7 +523,7 @@ fn print_gap_indices(
 
 #[test]
 #[ignore = "requires CUDA hardware; new F32-state/F64-reference contract"]
-fn wy_delta_matches_independent_recurrence() -> Result<(), Box<dyn std::error::Error>> {
+fn wy_delta_matches_independent_recurrence() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (kh, vh, dim, lanes) in [
@@ -542,7 +544,7 @@ fn check_wy_case(
     geometry: (usize, usize, usize, usize),
     count: usize,
     offset: i32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     check_wy_fixture(
         device,
         geometry,
@@ -558,7 +560,7 @@ fn check_wy_fixture(
     count: usize,
     offset: i32,
     fixture: ReferenceFixture,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let (kh, vh, dim, lanes) = geometry;
     let ReferenceFixture {
         qkv,
@@ -649,7 +651,7 @@ fn check_wy_fixture(
 
 #[test]
 #[ignore = "requires CUDA hardware; actual captured prompt graph widths"]
-fn wy_actual_graph_widths_match_independent_recurrence() -> Result<(), Box<dyn std::error::Error>> {
+fn wy_actual_graph_widths_match_independent_recurrence() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for lanes in [64, 256] {
@@ -662,7 +664,7 @@ fn wy_actual_graph_widths_match_independent_recurrence() -> Result<(), Box<dyn s
 
 #[test]
 #[ignore = "requires CUDA hardware; weak decay and correlated K expose unstable inverse construction"]
-fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Error>> {
+fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let (kh, vh, dim, lanes) = (2_usize, 4_usize, 32_usize, 32_usize);
@@ -724,7 +726,7 @@ fn wy_low_decay_correlated_keys_match_f64() -> Result<(), Box<dyn std::error::Er
 
 #[test]
 #[ignore = "requires CUDA; exact ordered recurrence at captured prompt widths"]
-fn ordered_actual_graph_widths_agree_exactly() -> Result<(), Box<dyn std::error::Error>> {
+fn ordered_actual_graph_widths_agree_exactly() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for block in [8_usize, 16, 32, 64, 128] {
@@ -776,7 +778,7 @@ fn check_ordered_fixture(
     count: usize,
     offset: i32,
     fixture: ReferenceFixture,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let (kh, vh, dim, lanes) = geometry;
     eprintln!("ORDERED_FIXTURE geometry={geometry:?} block={block} count={count} offset={offset}");
     let ReferenceFixture {
@@ -827,7 +829,7 @@ fn check_ordered_fixture(
         let mut output = api::zeros::<f32>(&[vh, dim])
             .sync_on(&device.stream)?
             .reshape(&[vh, 1, dim])?;
-        crate::resident::recurrent::recurrent::delta(
+        recurrent_delta(
             (&mut output).partition([1, 1, dim]),
             (&mut scalar_state).partition([1, dim, dim]),
             &qkv_one,
@@ -916,7 +918,7 @@ fn compare_ordered_bits(
 
 fn ordered_correlated_fixture(
     (kh, vh, dim, lanes): (usize, usize, usize, usize),
-) -> Result<ReferenceFixture, Box<dyn std::error::Error>> {
+) -> Result<ReferenceFixture, Box<dyn Error>> {
     let mut qkv = values(lanes * (2 * kh + vh) * dim, 17);
     for lane in 0..lanes {
         for head in 0..2 * kh {

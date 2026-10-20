@@ -5,6 +5,9 @@ use super::{
 };
 use infer_runtime::{Engine, EngineOutput};
 use infer_spi::BackendProvider;
+use std::thread::current;
+use std::thread::park;
+use std::thread::park_timeout;
 use std::{
     collections::BTreeMap, collections::VecDeque, sync::Arc, sync::atomic::AtomicBool,
     sync::atomic::Ordering, time::Duration, time::Instant,
@@ -21,7 +24,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
         stop: Arc<AtomicBool>,
         clock_started: Instant,
     ) -> Self {
-        let owner = std::thread::current();
+        let owner = current();
         engine.set_waker(Arc::new(move || owner.unpark()));
         Self {
             clock_origin_us: engine.now_us(),
@@ -64,9 +67,9 @@ impl<B: BackendProvider> RuntimeActor<B> {
                 && self.quoting.is_empty()
                 && !self.stopping
             {
-                std::thread::park();
+                park();
             } else {
-                std::thread::park_timeout(Duration::from_micros(IDLE_PARK_TIMEOUT_MICROS));
+                park_timeout(Duration::from_micros(IDLE_PARK_TIMEOUT_MICROS));
             }
         }
         for reply in self.stop_replies {

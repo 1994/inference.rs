@@ -10,6 +10,7 @@ use ordered::OrderedSet;
 use scratch::CandidateScratch;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
+use std::sync::Arc;
 
 /// Number of dispatchable execution phases (prefill, decode, forward) counted by the queue.
 const PHASE_COUNT: usize = 3;
@@ -34,7 +35,7 @@ pub enum QueueState {
 pub struct QueueRequest {
     pub request: RequestId,
     pub phase: ExecutionRole,
-    pub tenant: std::sync::Arc<str>,
+    pub tenant: Arc<str>,
     pub virtual_finish: u64,
     pub last_service_us: u64,
     /// Earliest deadline minus its remaining service forecast, in monotonic microseconds.
@@ -101,8 +102,8 @@ pub struct QueueInspection {
 pub struct RequestQueue {
     capacity: usize,
     entries: BoundedMap<RequestId, Entry>,
-    tenants: BoundedMap<std::sync::Arc<str>, Tenant>,
-    names: Vec<Option<std::sync::Arc<str>>>,
+    tenants: BoundedMap<Arc<str>, Tenant>,
+    names: Vec<Option<Arc<str>>>,
     free_tenants: Vec<usize>,
     free_entries: Vec<usize>,
     ready: OrderedSet<RequestId>,

@@ -1,6 +1,8 @@
 //! Arguments executable responsibilities.
 use super::{backend, commands};
+use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -18,7 +20,7 @@ pub struct Cli {
         required_unless_present = "package",
         conflicts_with = "package"
     )]
-    pub(super) model_path: Option<std::path::PathBuf>,
+    pub(super) model_path: Option<PathBuf>,
     #[command(flatten)]
     pub(super) serve: commands::ServeOptions,
     #[arg(long, global = true, value_enum, default_value = "auto")]
@@ -104,7 +106,7 @@ impl Cli {
                 || self.serve.listen != commands::ServeOptions::default_listen())
         {
             return Err(clap::Error::raw(
-                clap::error::ErrorKind::ArgumentConflict,
+                ErrorKind::ArgumentConflict,
                 "model launch arguments cannot be combined with a subcommand; put subcommand options after its name",
             ));
         }

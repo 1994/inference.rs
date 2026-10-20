@@ -2,6 +2,7 @@
 use crate::BackendProvider;
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::{OutputReadout, TokenBuffer};
+use std::result::Result as StdResult;
 use std::{sync::Arc, sync::atomic::AtomicBool, sync::atomic::Ordering, sync::mpsc};
 
 mod pool;
@@ -159,10 +160,7 @@ impl ResourceResponder {
     /// Publish once. The returned reply retains ownership if the receiver disappeared.
     /// # Errors
     /// Returns the unpublished result when the receiving ticket has been dropped.
-    pub fn send(
-        self,
-        result: Result<ResourceReply>,
-    ) -> std::result::Result<(), Result<ResourceReply>> {
+    pub fn send(self, result: Result<ResourceReply>) -> StdResult<(), Result<ResourceReply>> {
         match self.reply {
             Responder::Channel(reply, _) => reply.send(result).map_err(|error| error.0),
             Responder::Pool(reply) => reply.send(result),

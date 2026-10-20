@@ -3,8 +3,13 @@ use infer_backend_metal::{MetalBackend, MetalConfig, MetalKernels};
 use infer_core::*;
 use infer_ir::*;
 use infer_kernel_api::KernelRegistry;
+use infer_model_recipes::decoder::lower;
 use infer_models::ModelPackage;
 use infer_spi::BackendProvider;
+use std::error::Error;
+use std::fs::read;
+use std::result::Result;
+use std::thread::sleep;
 use std::{path::Path, time::Duration, time::Instant};
 
 #[test]
@@ -18,7 +23,7 @@ fn actual_metal_gpu_matches_official_layer_hidden_logits_for_both_hybrid_configs
             .join("../../../examples")
             .join(name);
         let golden: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("golden.json")).unwrap()).unwrap();
+            serde_json::from_slice(&read(root.join("golden.json")).unwrap()).unwrap();
         let mut package = ModelPackage::open(&root, ModelId::new(1).unwrap()).unwrap();
         let mut backend = MetalBackend::from_package(&mut package, MetalConfig::default()).unwrap();
         backend.enable_layer_probes(1024 * 1024).unwrap();
@@ -27,12 +32,7 @@ fn actual_metal_gpu_matches_official_layer_hidden_logits_for_both_hybrid_configs
         registry.register(&MetalKernels).unwrap();
         let program = infer_compiler::compile(
             ProgramId::new(1).unwrap(),
-            infer_compiler::lower(
-                &model,
-                infer_model_recipes::decoder::lower(&model).unwrap(),
-                PrecisionPlan::f32(),
-            )
-            .unwrap(),
+            infer_compiler::lower(&model, lower(&model).unwrap(), PrecisionPlan::f32()).unwrap(),
             &registry,
             &backend.capabilities(),
             1 << 20,
@@ -64,7 +64,7 @@ fn check_prefix(
     state: StateId,
     prefix: &serde_json::Value,
     name: &str,
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let tokens: Vec<u32> = serde_json::from_value(prefix["tokens"].clone())?;
     let request = RequestId::new(1)?;
     let step = StepPlan {
@@ -100,7 +100,7 @@ fn check_prefix(
             break result.remove(0).output;
         }
         assert!(Instant::now() < deadline, "Metal completion timeout");
-        std::thread::sleep(Duration::from_millis(1));
+        sleep(Duration::from_millis(1));
     };
     for (label, expected, actual) in [
         (

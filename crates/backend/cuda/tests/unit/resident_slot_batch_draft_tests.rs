@@ -1,5 +1,8 @@
 use super::*;
+use crate::mlp::ProjectionWeight;
 use crate::resident::{DeviceProgram, FusionWeights};
+use crate::strategy::default_tiling;
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use cutile::half::bf16;
 use infer_core::OpId;
 use infer_ir::{DType, TensorNode, TensorOp, TensorSpec};
@@ -75,17 +78,15 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let weights = ProgramWeights {
         mrope: false,
         autotune: false,
-        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 0,
         prefill_width: 1,
         narrow_prefill_width: 0,
         attention_profile: crate::AttentionProfile::Canonical,
         fusion: Some(FusionWeights {
-            projection: crate::mlp::ProjectionWeight::Dense(
-                device.upload(values(32 * 64), &[32, 64])?,
-            ),
-            tiling: crate::strategy::default_tiling()?,
+            projection: ProjectionWeight::Dense(device.upload(values(32 * 64), &[32, 64])?),
+            tiling: default_tiling()?,
             norms: device.upload(vec![1.0; 64], &[2, 32])?,
             epsilon: 1e-6,
             offset: 0.0,

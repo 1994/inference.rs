@@ -1,7 +1,9 @@
 mod capture;
 mod restore;
 mod validation;
+use crate::preparation::request_bytes;
 use crate::{Engine, RequestRecord, RuntimeConfig, engine::TenantService};
+use infer_core::map::BoundedMap;
 use infer_core::{Error, IdAllocator, RequestId, Result};
 use infer_ir::{
     CanonicalRequest, CostObservation, ExecutionProgram, ModelIr, SchedulingDecision, StepPlan,
@@ -10,11 +12,12 @@ use infer_ir::{
 use infer_quality::ProgressGuard;
 use infer_state::SequenceStateManager;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ReplayAction {
-    Submit(std::sync::Arc<CanonicalRequest>),
+    Submit(Arc<CanonicalRequest>),
     Tick { now_us: u64 },
     Poll { now_us: u64 },
     Quiesce { now_us: u64 },
@@ -25,7 +28,7 @@ pub enum ReplayAction {
 impl ReplayAction {
     pub(crate) fn retained_bytes(&self) -> usize {
         match self {
-            Self::Submit(request) => crate::preparation::request_bytes(request),
+            Self::Submit(request) => request_bytes(request),
             Self::CostFeedback(observation) => observation
                 .work
                 .len()
@@ -69,7 +72,7 @@ pub struct RuntimeSnapshot {
     pub priority_cursor: Option<RequestId>,
     pub seen_requests: BTreeSet<RequestId>,
     pub retired_request_floor: u64,
-    pub(crate) tenants: infer_core::map::BoundedMap<std::sync::Arc<str>, TenantService>,
+    pub(crate) tenants: BoundedMap<Arc<str>, TenantService>,
     pub(crate) ids: IdAllocator,
     pub global_progress_epoch: u64,
     pub now_us: u64,

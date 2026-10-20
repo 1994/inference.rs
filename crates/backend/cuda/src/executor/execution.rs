@@ -1,11 +1,19 @@
 use super::{CudaBackend, CudaTicket, ModelOutput, Sequence, SlotLease, Speculation, prefix};
+use crate::constants::CB_DECODE_SLOTS;
+use crate::constants::CB_SLOT_TOKENS;
 use crate::constants::MIB;
+use crate::constants::MTP_KV_OFFSET;
+use crate::constants::PREFILL_LANES;
+use crate::device::CudaDevice;
+use crate::loading::LoadedModel;
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, Result, StateId};
 use infer_ir::{
     ExecutionInput, ExecutionProgram, ExecutionTask, OutputReadout, StepPlan, TaskOutput,
 };
 use std::collections::BTreeMap;
+use std::mem::take;
+use std::ops::Range;
 use std::sync::Arc;
 /// Token granularity at which a prefill state becomes a reusable prompt prefix.
 const PREFIX_GRANULARITY: usize = 256;
@@ -16,8 +24,8 @@ const PREFIX_GRANULARITY: usize = 256;
 /// tokens at a cacheable granularity. Capture head-major KV rows and complete recurrent
 /// and draft state so restoration resumes the same inference trajectory.
 fn cacheable_prefix(
-    device: &crate::device::CudaDevice,
-    loaded: &crate::loading::LoadedModel,
+    device: &CudaDevice,
+    loaded: &LoadedModel,
     state: &Sequence,
     task: &ExecutionTask,
 ) -> Option<prefix::CachedPrefix> {
@@ -47,7 +55,7 @@ fn cacheable_prefix(
                 device,
                 &spec.program,
                 loaded.draft_graph()?,
-                covered.saturating_sub(crate::constants::MTP_KV_OFFSET),
+                covered.saturating_sub(MTP_KV_OFFSET),
             )
             .ok()?,
             hidden: spec.last_hidden.clone(),
@@ -160,7 +168,7 @@ impl CudaBackend {
                     <= self
                         .slots
                         .as_ref()
-                        .map_or(crate::constants::CB_SLOT_TOKENS, SlotPool::capacity)
+                        .map_or(CB_SLOT_TOKENS, SlotPool::capacity)
             },
             |lease| lease.batched && lease.position == state.history.len(),
         )
@@ -184,8 +192,7 @@ impl CudaBackend {
             .states
             .values()
             .filter(|state| {
-                state.readout == OutputReadout::Logits
-                    && state.capacity <= crate::constants::CB_SLOT_TOKENS
+                state.readout == OutputReadout::Logits && state.capacity <= CB_SLOT_TOKENS
             })
             .map(|state| state.capacity)
             .max()
@@ -230,7 +237,7 @@ impl CudaBackend {
     /// verification graph the pool would discard on its first step.
     /// Failure leaves the lazy first-step path in charge.
     pub(super) fn warm_slot_pool(&mut self) {
-        let capacity = crate::constants::CB_SLOT_TOKENS.min(self.loaded.model().max_sequence);
+        let capacity = CB_SLOT_TOKENS.min(self.loaded.model().max_sequence);
         self.warm_slot_pool_at(capacity);
     }
 
@@ -264,9 +271,7 @@ impl CudaBackend {
     fn create_slot_pool(&mut self, capacity: usize) -> Option<SlotPool> {
         // Reserve the configured capture bucket, not the transient number of arrivals seen on
         // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
-        let maximum = self
-            .maximum_states
-            .clamp(2, crate::constants::CB_DECODE_SLOTS);
+        let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
         for width in (2..=maximum).rev() {
             loop {
                 match self.loaded.slot_pool(width, capacity) {
@@ -333,7 +338,7 @@ impl CudaBackend {
     fn run_segment(
         &mut self,
         tasks: &[ExecutionTask],
-        segment: std::ops::Range<usize>,
+        segment: Range<usize>,
         outputs: &mut [Option<TaskOutput>],
         snapshots: &mut Vec<prefix::CachedPrefix>,
     ) -> Result<()> {
@@ -360,7 +365,7 @@ impl CudaBackend {
     fn execute_slot_segment(
         &mut self,
         tasks: &[ExecutionTask],
-        segment: std::ops::Range<usize>,
+        segment: Range<usize>,
         outputs: &mut [Option<TaskOutput>],
     ) -> Result<Vec<usize>> {
         let pool = self
@@ -442,7 +447,7 @@ impl CudaBackend {
         }
         if state.speculation.is_some()
             && (matches!(task.tokens, ExecutionInput::Decode { .. })
-                || state.program.prefill_width() < crate::constants::PREFILL_LANES)
+                || state.program.prefill_width() < PREFILL_LANES)
         {
             self.loaded.ensure_verification(&mut state.program)?;
         }
@@ -482,7 +487,7 @@ impl CudaBackend {
 fn slot_replay(
     pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,
-    device: &crate::device::CudaDevice,
+    device: &CudaDevice,
     tasks: &[ExecutionTask],
     participants: &[(usize, usize)],
     newly: &[(usize, usize)],
@@ -577,7 +582,7 @@ fn slot_replay(
 fn slot_speculate(
     pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,
-    device: &crate::device::CudaDevice,
+    device: &CudaDevice,
     tasks: &[ExecutionTask],
     participants: &[(usize, usize)],
     outputs: &mut [Option<TaskOutput>],
@@ -713,7 +718,7 @@ impl Sequence {
             spec.program.step(
                 token,
                 position,
-                position - crate::constants::MTP_KV_OFFSET,
+                position - MTP_KV_OFFSET,
                 Some(&spec.last_hidden),
                 false,
             )?;
@@ -795,7 +800,7 @@ impl Sequence {
             .transpose()?;
         Ok(ModelOutput {
             next_token,
-            logits: std::mem::take(&mut rows[accepted.len()].1),
+            logits: take(&mut rows[accepted.len()].1),
             hidden: Vec::new(),
             tokens: accepted,
         })
@@ -818,9 +823,7 @@ impl Sequence {
         let mut device_primed = false;
         while offset < tokens.len() {
             let width = self.program.prefill_width();
-            let count = if width >= crate::constants::PREFILL_LANES
-                || width > 1 && tokens.len() - offset >= width
-            {
+            let count = if width >= PREFILL_LANES || width > 1 && tokens.len() - offset >= width {
                 width.min(tokens.len() - offset)
             } else {
                 1
@@ -916,7 +919,7 @@ impl Sequence {
             .ok_or_else(|| Error::invariant("draft priming"))?;
         // A host-held row (from decode or a previous host-primed chunk) seeds the draft once;
         // afterwards the draft keeps the previous row on the device.
-        let previous = std::mem::take(&mut spec.last_hidden);
+        let previous = take(&mut spec.last_hidden);
         super::profiling::phase("prime_draft", || {
             spec.program.prime_from_target(
                 tokens,
@@ -932,14 +935,11 @@ impl Sequence {
         let Some(mut spec) = self.speculation.take() else {
             return Ok(());
         };
-        let mut previous = std::mem::take(&mut spec.last_hidden);
+        let mut previous = take(&mut spec.last_hidden);
         let mut result = Ok(());
         // Chunk by the width the draft graph actually captured, not a fixed constant: the graph
         // is fixed-width, so a chunk wider than it is rejected and a narrower one wastes a replay.
-        let width = spec
-            .program
-            .prefill_width()
-            .max(crate::constants::PREFILL_LANES);
+        let width = spec.program.prefill_width().max(PREFILL_LANES);
         let mut start = 0;
         while start < rows.len() {
             let position = rows[start].0;
@@ -981,7 +981,7 @@ impl Sequence {
                 && let Err(error) = spec.program.step(
                     *token,
                     *index,
-                    *index - crate::constants::MTP_KV_OFFSET,
+                    *index - MTP_KV_OFFSET,
                     Some(&previous),
                     false,
                 )
@@ -1053,7 +1053,7 @@ impl Speculation {
             self.program.step(
                 *token,
                 index,
-                index - crate::constants::MTP_KV_OFFSET,
+                index - MTP_KV_OFFSET,
                 Some(&hidden_of[offset]),
                 false,
             )?;
@@ -1085,17 +1085,12 @@ fn propose(
             draft.step_greedy(
                 token,
                 index,
-                index - crate::constants::MTP_KV_OFFSET,
+                index - MTP_KV_OFFSET,
                 (index == start).then_some(previous),
             )?
         } else {
-            let (next_hidden, logits) = draft.step(
-                token,
-                index,
-                index - crate::constants::MTP_KV_OFFSET,
-                Some(&hidden),
-                true,
-            )?;
+            let (next_hidden, logits) =
+                draft.step(token, index, index - MTP_KV_OFFSET, Some(&hidden), true)?;
             hidden = next_hidden;
             sampler.pick(&logits, index + 1, proposed)?
         };

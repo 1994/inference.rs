@@ -1,4 +1,8 @@
 //! Release-mode CPU protocol gate; no synthetic number is labeled model inference throughput.
+use std::env::consts::ARCH;
+use std::env::consts::OS;
+use std::env::var_os;
+use std::error::Error;
 #[allow(
     unsafe_code,
     reason = "Standalone measurement shim delegates GlobalAlloc to mimalloc; never linked into production"
@@ -10,8 +14,8 @@ mod measure;
 mod primitives;
 #[global_allocator]
 static ALLOCATOR: allocator::CountingAllocator = allocator::CountingAllocator;
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::var_os("INFER_ENGINE_ONLY").is_some() {
+fn main() -> Result<(), Box<dyn Error>> {
+    if var_os("INFER_ENGINE_ONLY").is_some() {
         println!(
             "{}",
             serde_json::to_string_pretty(&[
@@ -48,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "primitives_scope":"Fixed map/arena/credits/pooled resource acknowledgement, logical KV batch growth/reset, and physical KV append/fork/COW/pin/release. Prefix publication and actual GPU execution are excluded.",
             "engine_scope":"Actual Engine CPU tick: admission/resource acknowledgement, prefill/decode scheduling, state reservations, packing, cost feedback/history, sampling, buffer recycling, completion and live cancellation. Each case runs 10000 ticks including the first prefill. engine_slo additionally enables completion deadline, TTFT and TPOT forecasts. Uses a persistent backend contract double; excludes native GPU execution/driver allocation, threaded owners, request parsing and network/telemetry export.",
             "allocator":"mimalloc with thread-local allocation/reallocation/deallocation counters",
-            "target":std::env::consts::ARCH,"os":std::env::consts::OS,"cycles":cycles,"primitives":primitives,"engine":engine,"engine_slo":engine_slo
+            "target":ARCH,"os":OS,"cycles":cycles,"primitives":primitives,"engine":engine,"engine_slo":engine_slo
         }))?
     );
     Ok(())

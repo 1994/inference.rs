@@ -6,6 +6,13 @@
 //! baseline unchanged, so adding this layer cannot alter existing behaviour.
 use super::{Choice, Key, Shape, Times, reference};
 use crate::device::CudaDevice;
+use crate::resident::attention_oxide::Support;
+use crate::resident::attention_oxide::shared_identity;
+use crate::resident::attention_oxide::vector_identity;
+use crate::tuning::MIN_CONFIRM_SPEEDUP;
+use crate::tuning::resolve_table;
+use crate::tuning::shipped_table;
+use crate::tuning::table_path;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +42,7 @@ impl Case {
         let minimum = if self.history == 0 {
             1.0 / MAX_SHORT_REGRESSION
         } else {
-            crate::tuning::MIN_CONFIRM_SPEEDUP
+            MIN_CONFIRM_SPEEDUP
         };
         self.cold.speedup() >= minimum && self.warm.speedup() >= minimum
     }
@@ -90,9 +97,9 @@ fn fingerprint(base: &str) -> String {
         Sha256::digest(format!(
             "{}:{}:{}:{}:{:x}",
             base,
-            crate::resident::attention_oxide::shared_identity(),
-            crate::resident::attention_oxide::vector_identity(),
-            crate::resident::attention_oxide::Support::combined_identity(),
+            shared_identity(),
+            vector_identity(),
+            Support::combined_identity(),
             Sha256::digest(include_str!("vector_combined.rs")),
         ))
     )
@@ -137,13 +144,13 @@ fn resolve(device: &CudaDevice, shape: Shape, baseline: Choice) -> Result<Choice
     {
         return Ok(entry.selected);
     }
-    let path = crate::tuning::table_path();
+    let path = table_path();
     let local = if key.driver_build.is_some() {
-        crate::tuning::resolve_table(path.as_deref())?
+        resolve_table(path.as_deref())?
     } else {
         None
     };
-    for table in [local.as_ref(), Some(crate::tuning::shipped_table()?)]
+    for table in [local.as_ref(), Some(shipped_table()?)]
         .into_iter()
         .flatten()
     {

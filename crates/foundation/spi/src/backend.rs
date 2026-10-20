@@ -5,6 +5,7 @@ use infer_ir::{
     DeviceCapabilities, ExecutionProgram, ExecutionTask, ExecutionTiming, KvCacheInspection,
     ModelIr, PageGrowth, StepPlan, TaskOutput,
 };
+use std::sync::Arc;
 
 /// Owned work crosses the submission boundary; a future CUDA implementation uses
 /// persistent buffers and a bounded SPSC descriptor ring behind this contract.
@@ -59,7 +60,7 @@ pub trait BackendProvider {
         0
     }
     /// Install a persistent owner notification. Implementations must not mutate the engine in callbacks.
-    fn set_waker(&mut self, _wake: std::sync::Arc<dyn Fn() + Send + Sync>) {}
+    fn set_waker(&mut self, _wake: Arc<dyn Fn() + Send + Sync>) {}
     /// Effective load-time graph geometry and speculation depth when the backend resolves
     /// them from device policy. Opaque compatibility drivers return None.
     fn execution_profile(&self) -> Option<infer_ir::ExecutionProfileInspection> {
@@ -229,7 +230,7 @@ pub trait BackendProvider {
     fn submit_shared(
         &mut self,
         program: &ExecutionProgram,
-        step: std::sync::Arc<StepPlan>,
+        step: Arc<StepPlan>,
         tasks: Vec<ExecutionTask>,
     ) -> Result<Self::Ticket> {
         self.submit(program, &step, tasks)
@@ -252,7 +253,7 @@ pub trait BackendProvider {
     fn submit_shared_borrowed(
         &mut self,
         program: &ExecutionProgram,
-        step: std::sync::Arc<StepPlan>,
+        step: Arc<StepPlan>,
         tasks: &[ExecutionTask],
     ) -> Result<Self::Ticket> {
         self.submit_borrowed(program, &step, tasks)

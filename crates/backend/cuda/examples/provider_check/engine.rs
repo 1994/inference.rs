@@ -4,6 +4,7 @@ use infer_core::{Error, ModelId, RequestId, Result};
 use infer_ir::{CanonicalRequest, PrecisionPlan, Qos, RequestInput, Sampling, Workload};
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig};
+use std::collections::BTreeMap;
 
 pub fn run(
     backend: CudaBackend,
@@ -42,7 +43,7 @@ pub fn run(
                 repetition_penalty: 1.0,
                 ..sampling.clone()
             },
-            extensions: std::collections::BTreeMap::new(),
+            extensions: BTreeMap::new(),
         })?;
     }
     for tick in 0..1000 {

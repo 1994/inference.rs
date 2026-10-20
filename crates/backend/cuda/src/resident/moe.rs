@@ -1,8 +1,13 @@
 //! Device-resident routing and selected-expert projections.
 use super::capture::{Capture, error};
+use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::FP8_BLOCK_COLUMNS;
+use crate::mlp::ProjectionWeight;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_ir::{TensorNode, TensorOp};
+use std::collections::BTreeMap;
+use std::result::Result as StdResult;
 
 /// Matches the fixed output Tensor tile declared by all selected-expert kernel entries.
 const EXPERT_PROJECTION_TILE: [usize; 2] = [1, 4];
@@ -11,7 +16,7 @@ const MAX_ROUTING_EXPERTS: usize = 4096;
 
 /// Contiguous expert-major matrices. Routing indexes this bank on the GPU.
 pub struct ExpertBank {
-    pub projection: crate::mlp::ProjectionWeight,
+    pub projection: ProjectionWeight,
     pub experts: usize,
     pub rows: usize,
     pub columns: usize,
@@ -38,7 +43,7 @@ impl Capture<'_> {
         &self,
         node: &TensorNode,
         output: Tensor<f32>,
-    ) -> std::result::Result<Tensor<f32>, DeviceError> {
+    ) -> StdResult<Tensor<f32>, DeviceError> {
         match node.op {
             TensorOp::MoeRoute {
                 experts,
@@ -65,7 +70,7 @@ impl Capture<'_> {
                 let mut output = output;
                 self.scope.record(
                     kernels::combine(
-                        (&mut output).partition([crate::constants::AUX_KERNEL_TILE]),
+                        (&mut output).partition([AUX_KERNEL_TILE]),
                         &self
                             .input(node.inputs[0])?
                             .view(&[active, hidden])
@@ -94,7 +99,7 @@ impl Capture<'_> {
         input: usize,
         rows: usize,
         routed_input: bool,
-    ) -> std::result::Result<Tensor<f32>, DeviceError> {
+    ) -> StdResult<Tensor<f32>, DeviceError> {
         let bank = self
             .weights
             .expert_banks
@@ -112,7 +117,7 @@ impl Capture<'_> {
             i32::from(routed_input).to_string(),
         ];
         match &bank.projection {
-            crate::mlp::ProjectionWeight::Dense(w) => {
+            ProjectionWeight::Dense(w) => {
                 self.scope.record(
                     kernels::dense(
                         (&mut output).partition(EXPERT_PROJECTION_TILE),
@@ -123,7 +128,7 @@ impl Capture<'_> {
                     .generics(generics),
                 )?;
             }
-            crate::mlp::ProjectionWeight::Fp8(w, scales) => {
+            ProjectionWeight::Fp8(w, scales) => {
                 generics.extend([
                     "1".into(),
                     i32::from(bank.quantized_inputs).to_string(),
@@ -140,7 +145,7 @@ impl Capture<'_> {
                     .generics(generics),
                 )?;
             }
-            crate::mlp::ProjectionWeight::Fp8Block(w, scales) => {
+            ProjectionWeight::Fp8Block(w, scales) => {
                 generics.extend([
                     "0".into(),
                     i32::from(bank.quantized_inputs).to_string(),
@@ -153,17 +158,13 @@ impl Capture<'_> {
                         &routes,
                         &w.view(&[bank.experts, rows, input]).map_err(error)?,
                         &scales
-                            .view(&[
-                                bank.experts,
-                                rows,
-                                input / crate::constants::FP8_BLOCK_COLUMNS,
-                            ])
+                            .view(&[bank.experts, rows, input / FP8_BLOCK_COLUMNS])
                             .map_err(error)?,
                     )
                     .generics(generics),
                 )?;
             }
-            crate::mlp::ProjectionWeight::Fp4(..) => {
+            ProjectionWeight::Fp4(..) => {
                 return Err(error(
                     "NVFP4 expert activation quantization requires an explicit numerical profile",
                 ));
@@ -175,7 +176,7 @@ impl Capture<'_> {
 
 pub(super) fn validate_node(
     node: &TensorNode,
-    specs: &std::collections::BTreeMap<infer_core::TensorId, &infer_ir::TensorSpec>,
+    specs: &BTreeMap<infer_core::TensorId, &infer_ir::TensorSpec>,
     weights: &super::ProgramWeights,
     input: usize,
     output: usize,

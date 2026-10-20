@@ -1,4 +1,16 @@
 use super::{SelectedBackend, Selection};
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use crate::constants::GIB_U64;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use crate::constants::MIB_U64;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use crate::support::memory::utilization_bytes;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::device::DeviceProfile;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::target::CudaTarget;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::tuning::TuningReport;
 use infer_core::{Error, Result};
 use std::path::Path;
 
@@ -25,14 +37,13 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
         let device = CudaDevice::new(0)?;
         let (free, total) = device.memory_info()?;
         // vLLM semantics: the utilization fraction bounds the whole engine, weights included.
-        let share =
-            crate::support::memory::utilization_bytes(total, selection.gpu_memory_utilization)?;
+        let share = utilization_bytes(total, selection.gpu_memory_utilization)?;
         let requested = share.min(if memory_bytes == 0 {
             total
         } else {
             memory_bytes
         });
-        let limit = requested.min(free.saturating_sub(crate::constants::GIB_U64));
+        let limit = requested.min(free.saturating_sub(GIB_U64));
         let budget = LoadBudget { limit, free, total };
         report_environment(device.profile()?, budget, selection, memory_bytes);
         let summary = preflight(path, device.target(), limit)
@@ -135,7 +146,7 @@ fn out_of_memory(message: &str) -> bool {
 /// log starts with everything that decided the outcome.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 fn report_environment(
-    profile: &infer_backend_cuda::device::DeviceProfile,
+    profile: &DeviceProfile,
     budget: LoadBudget,
     selection: &Selection,
     memory_bytes: u64,
@@ -155,7 +166,7 @@ fn report_environment(
         "device budget {} of {} total after {} reservation",
         human_bytes(budget.limit),
         human_bytes(budget.total),
-        human_bytes(crate::constants::GIB_U64)
+        human_bytes(GIB_U64)
     );
     tracing::info!(
         target: "infer::load",
@@ -205,12 +216,12 @@ fn optional_mib(bytes: u64) -> String {
     if bytes == 0 {
         "auto".to_owned()
     } else {
-        (bytes / crate::constants::MIB_U64).to_string()
+        (bytes / MIB_U64).to_string()
     }
 }
 
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-fn report_tuning(report: &infer_backend_cuda::tuning::TuningReport) {
+fn report_tuning(report: &TuningReport) {
     for decision in &report.measured {
         tracing::info!(
             target: "infer::load",
@@ -255,11 +266,7 @@ struct PackageSummary {
 }
 
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-fn preflight(
-    path: &Path,
-    target: &infer_backend_cuda::target::CudaTarget,
-    budget: u64,
-) -> Result<PackageSummary> {
+fn preflight(path: &Path, target: &CudaTarget, budget: u64) -> Result<PackageSummary> {
     use infer_models::{QuantizedPackage, WeightEncoding};
     let package = QuantizedPackage::open(path, infer_core::ModelId::ONE)?;
     // The checkpoint's provider declares the precision preference; the device answers what it can

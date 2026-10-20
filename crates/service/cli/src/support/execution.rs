@@ -2,28 +2,36 @@
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use crate::backend::SelectedBackend;
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use crate::constants::DEVICE_POLL_INTERVAL;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use crate::constants::MAX_IDLE_TICKS;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use infer_core::event::SemanticEvent;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::{Error, RequestId, Result};
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_ir::CanonicalRequest;
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_runtime::Engine;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use std::thread::sleep;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use std::time::Instant;
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
-pub fn run_to_idle(
-    engine: &mut Engine<SelectedBackend>,
-) -> Result<Vec<infer_core::event::SemanticEvent>> {
-    run_to_idle_started(engine, engine.now_us(), std::time::Instant::now())
+pub fn run_to_idle(engine: &mut Engine<SelectedBackend>) -> Result<Vec<SemanticEvent>> {
+    run_to_idle_started(engine, engine.now_us(), Instant::now())
 }
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 fn run_to_idle_started(
     engine: &mut Engine<SelectedBackend>,
     clock: u64,
-    started: std::time::Instant,
-) -> Result<Vec<infer_core::event::SemanticEvent>> {
+    started: Instant,
+) -> Result<Vec<SemanticEvent>> {
     let mut events = engine.drain_events();
     let start = engine.inspect().global_progress_epoch;
-    for tick in 0..crate::constants::MAX_IDLE_TICKS {
+    for tick in 0..MAX_IDLE_TICKS {
         if engine.is_idle() {
             return Ok(events);
         }
@@ -40,7 +48,7 @@ fn run_to_idle_started(
         )?;
         events.extend(engine.drain_events());
         if engine.program().backend.is_device() && engine.inspect().inflight_step.is_some() {
-            std::thread::sleep(crate::constants::DEVICE_POLL_INTERVAL);
+            sleep(DEVICE_POLL_INTERVAL);
         }
     }
     Err(Error::invariant(format!(
@@ -66,9 +74,9 @@ pub fn results(
 pub fn run_requests(
     engine: &mut Engine<SelectedBackend>,
     requests: Vec<CanonicalRequest>,
-) -> Result<Vec<infer_core::event::SemanticEvent>> {
+) -> Result<Vec<SemanticEvent>> {
     let clock = engine.now_us();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for request in requests {
         engine.submit(request)?;
     }

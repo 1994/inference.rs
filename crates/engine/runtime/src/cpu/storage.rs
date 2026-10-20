@@ -1,14 +1,19 @@
 //! Scheduler-owned preallocated CPU storage; no backend-specific implementation belongs here.
+use crate::persistence::checkpoint::CheckpointFlight;
+use crate::pipeline::dispatch::PreparedDispatch;
+use crate::stages::output::OutputJob;
 use crate::{
     RuntimeConfig, pipeline::scheduling::index::ReadyIndex,
     pipeline::scheduling::index::ReadyWindow, pipeline::scheduling::overlap::PreparedNext,
     requests::RequestArena,
 };
+use infer_core::credits::CreditPool;
+use infer_core::placement::PlacementReport;
 use infer_core::{Error, ErrorCode, ProgramId, RequestId, Result};
 use infer_ir::{BackendKind, CostEstimate, CostQuery, ExecutionRole};
 
 pub struct HostStorage {
-    pub placement: infer_core::placement::PlacementReport,
+    pub placement: PlacementReport,
     pub preemption: infer_scheduler::PreemptionWorkspace,
     pub history: super::history::HistoryStorage,
     pub decisions: infer_spi::DecisionStorage,
@@ -20,16 +25,16 @@ pub struct HostStorage {
     pub history_tokens: usize,
     pub history_bytes: usize,
     pub validation: infer_scheduler::ValidationScratch,
-    pub dispatch: Option<crate::pipeline::dispatch::PreparedDispatch>,
+    pub dispatch: Option<PreparedDispatch>,
     pub sampling: infer_workloads::SamplingWorkspace,
-    pub output_jobs: Vec<(usize, crate::stages::output::OutputJob)>,
+    pub output_jobs: Vec<(usize, OutputJob)>,
     pub resource_poll_buffer: Vec<RequestId>,
-    pub credits: infer_core::credits::CreditPool,
-    pub bytes: infer_core::credits::CreditPool,
+    pub credits: CreditPool,
+    pub bytes: CreditPool,
     pub wake_buffer: Vec<RequestId>,
     pub expiry_buffer: Vec<RequestId>,
     pub prepared_next: Option<PreparedNext>,
-    pub checkpoint: Option<crate::persistence::checkpoint::CheckpointFlight>,
+    pub checkpoint: Option<CheckpointFlight>,
     pub prepare_versions: Vec<u64>,
     pub requests: RequestArena,
     pub queues: infer_scheduler::RequestQueue,
@@ -87,16 +92,11 @@ impl HostStorage {
             history_tokens: 0,
             history_bytes: 0,
             validation: infer_scheduler::ValidationScratch::new(candidates, config.max_num_seqs)?,
-            dispatch: Some(crate::pipeline::dispatch::PreparedDispatch::new(
-                config.max_num_seqs,
-            )?),
+            dispatch: Some(PreparedDispatch::new(config.max_num_seqs)?),
             sampling: infer_workloads::SamplingWorkspace::with_capacity(vocabulary)?,
             output_jobs: scratch(config.max_num_seqs)?,
-            credits: infer_core::credits::CreditPool::new(
-                config.max_requests,
-                config.cpu.host_tokens,
-            )?,
-            bytes: infer_core::credits::CreditPool::new(
+            credits: CreditPool::new(config.max_requests, config.cpu.host_tokens)?,
+            bytes: CreditPool::new(
                 config.max_requests,
                 config.cpu.host_bytes - config.cpu.fixed_bytes_for(config, vocabulary)?,
             )?,

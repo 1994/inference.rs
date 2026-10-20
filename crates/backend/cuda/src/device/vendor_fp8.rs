@@ -4,6 +4,22 @@
 //! remain the fallback for an absent library, unsupported shape or failed exact tuning gate.
 use super::CudaDevice;
 use cuda_core::f8e4m3fn;
+use cuda_core::sys::CUcontext;
+use cuda_core::sys::CUdeviceptr;
+use cuda_core::sys::CUmemoryPool;
+use cuda_core::sys::CUmemorytype;
+use cuda_core::sys::CUmemorytype_enum_CU_MEMORYTYPE_DEVICE;
+use cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_CONTEXT;
+use cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+use cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_POINTER;
+use cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
+use cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
+use cuda_core::sys::CUstream;
+use cuda_core::sys::cuCtxGetCurrent;
+use cuda_core::sys::cuPointerGetAttribute;
+use cuda_core::sys::cuStreamGetCtx;
+use cuda_core::sys::cudaError_enum_CUDA_SUCCESS;
+use cutile::cuda_async::device_context::with_default_device_policy;
 use cutile::cuda_async::{
     device_future::DeviceFuture,
     device_operation::{DeviceOp, ExecutionContext, GraphNode},
@@ -11,6 +27,8 @@ use cutile::cuda_async::{
 };
 use cutile::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
+use std::ptr::null_mut;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
@@ -20,7 +38,7 @@ use std::{
 };
 
 type Handle = *mut c_void;
-type Stream = cuda_core::sys::CUstream;
+type Stream = CUstream;
 const SUCCESS: i32 = 0;
 const OP_N: i32 = 0;
 const OP_T: i32 = 1;
@@ -311,14 +329,12 @@ fn context(device: &CudaDevice) -> Option<Arc<Context>> {
     let api = api()?;
     device.stream.device().bind_to_thread().ok()?;
     let stream = device.stream.cu_stream();
-    let mut primary = std::ptr::null_mut();
+    let mut primary = null_mut();
     // SAFETY: The SDK call uses live lifetime-owned handles and pointers with the declared header ABI.
-    if unsafe { cuda_core::sys::cuStreamGetCtx(stream, &raw mut primary) }
-        != cuda_core::sys::cudaError_enum_CUDA_SUCCESS
-    {
+    if unsafe { cuStreamGetCtx(stream, &raw mut primary) } != cudaError_enum_CUDA_SUCCESS {
         return None;
     }
-    let mut handle = std::ptr::null_mut();
+    let mut handle = null_mut();
     // SAFETY: The SDK call uses live lifetime-owned handles and pointers with the declared header ABI.
     if unsafe { (api.create)(&raw mut handle) } != SUCCESS {
         return None;
@@ -339,20 +355,17 @@ fn context(device: &CudaDevice) -> Option<Arc<Context>> {
     unsafe_code,
     reason = "Audited metadata query rejects operands allocated in a foreign CUDA context before the Lt launch"
 )]
-fn same_context(
-    context: &Context,
-    pointer: cuda_core::sys::CUdeviceptr,
-) -> Result<(), DeviceError> {
-    let mut owner: cuda_core::sys::CUcontext = std::ptr::null_mut();
+fn same_context(context: &Context, pointer: CUdeviceptr) -> Result<(), DeviceError> {
+    let mut owner: CUcontext = null_mut();
     // SAFETY: The SDK call uses live lifetime-owned handles and pointers with the declared header ABI.
     let code = unsafe {
-        cuda_core::sys::cuPointerGetAttribute(
+        cuPointerGetAttribute(
             (&raw mut owner).cast::<c_void>(),
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_CONTEXT,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_CONTEXT,
             pointer,
         )
     };
-    if code == cuda_core::sys::cudaError_enum_CUDA_SUCCESS
+    if code == cudaError_enum_CUDA_SUCCESS
         && (owner as usize == context.primary
             || (owner.is_null() && same_device_pool(context, pointer)))
     {
@@ -374,46 +387,45 @@ fn same_context(
     unsafe_code,
     reason = "Audited CUDA header attribute-specific types prove same-device pool allocation accessibility before Lt use"
 )]
-fn same_device_pool(context: &Context, pointer: cuda_core::sys::CUdeviceptr) -> bool {
-    let mut current: cuda_core::sys::CUcontext = std::ptr::null_mut();
+fn same_device_pool(context: &Context, pointer: CUdeviceptr) -> bool {
+    let mut current: CUcontext = null_mut();
     // SAFETY: Each output is a live stack slot with its cuda.h attribute-specific type.
-    if unsafe { cuda_core::sys::cuCtxGetCurrent(&raw mut current) }
-        != cuda_core::sys::cudaError_enum_CUDA_SUCCESS
+    if unsafe { cuCtxGetCurrent(&raw mut current) } != cudaError_enum_CUDA_SUCCESS
         || current as usize != context.primary
     {
         return false;
     }
     let mut ordinal = -1_i32;
-    let mut memory_type: cuda_core::sys::CUmemorytype = 0;
-    let mut accessible: cuda_core::sys::CUdeviceptr = 0;
-    let mut pool: cuda_core::sys::CUmemoryPool = std::ptr::null_mut();
+    let mut memory_type: CUmemorytype = 0;
+    let mut accessible: CUdeviceptr = 0;
+    let mut pool: CUmemoryPool = null_mut();
     for (attribute, destination) in [
         (
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
             (&raw mut ordinal).cast::<c_void>(),
         ),
         (
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
             (&raw mut memory_type).cast::<c_void>(),
         ),
         (
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_POINTER,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_POINTER,
             (&raw mut accessible).cast::<c_void>(),
         ),
         (
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE,
             (&raw mut pool).cast::<c_void>(),
         ),
     ] {
         // SAFETY: Destinations match the exact signed-int, enum, CUdeviceptr and pool ABI.
-        if unsafe { cuda_core::sys::cuPointerGetAttribute(destination, attribute, pointer) }
-            != cuda_core::sys::cudaError_enum_CUDA_SUCCESS
+        if unsafe { cuPointerGetAttribute(destination, attribute, pointer) }
+            != cudaError_enum_CUDA_SUCCESS
         {
             return false;
         }
     }
     usize::try_from(ordinal).is_ok_and(|ordinal| ordinal == context.ordinal)
-        && memory_type == cuda_core::sys::CUmemorytype_enum_CU_MEMORYTYPE_DEVICE
+        && memory_type == CUmemorytype_enum_CU_MEMORYTYPE_DEVICE
         && accessible == pointer
         && !pool.is_null()
 }
@@ -422,43 +434,43 @@ fn same_device_pool(context: &Context, pointer: cuda_core::sys::CUdeviceptr) -> 
     unsafe_code,
     reason = "Audited failure diagnostics use CUDA header attribute-specific output types; these queries neither allocate nor launch GPU work"
 )]
-fn pointer_diagnostics(context: &Context, pointer: cuda_core::sys::CUdeviceptr) -> String {
-    let mut current: cuda_core::sys::CUcontext = std::ptr::null_mut();
+fn pointer_diagnostics(context: &Context, pointer: CUdeviceptr) -> String {
+    let mut current: CUcontext = null_mut();
     // SAFETY: current points to one live CUcontext-sized stack slot.
-    let current_status = unsafe { cuda_core::sys::cuCtxGetCurrent(&raw mut current) };
+    let current_status = unsafe { cuCtxGetCurrent(&raw mut current) };
     let mut ordinal = -1_i32;
     // SAFETY: DEVICE_ORDINAL writes one signed int as specified by cuda.h.
     let ordinal_status = unsafe {
-        cuda_core::sys::cuPointerGetAttribute(
+        cuPointerGetAttribute(
             (&raw mut ordinal).cast::<c_void>(),
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
             pointer,
         )
     };
-    let mut memory_type: cuda_core::sys::CUmemorytype = 0;
+    let mut memory_type: CUmemorytype = 0;
     // SAFETY: MEMORY_TYPE writes one CUmemorytype/unsigned-int enum as specified by cuda.h.
     let memory_status = unsafe {
-        cuda_core::sys::cuPointerGetAttribute(
+        cuPointerGetAttribute(
             (&raw mut memory_type).cast::<c_void>(),
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
             pointer,
         )
     };
-    let mut accessible: cuda_core::sys::CUdeviceptr = 0;
+    let mut accessible: CUdeviceptr = 0;
     // SAFETY: DEVICE_POINTER writes one CUdeviceptr, valid for the current CUDA context.
     let accessible_status = unsafe {
-        cuda_core::sys::cuPointerGetAttribute(
+        cuPointerGetAttribute(
             (&raw mut accessible).cast::<c_void>(),
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_POINTER,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_DEVICE_POINTER,
             pointer,
         )
     };
-    let mut pool: cuda_core::sys::CUmemoryPool = std::ptr::null_mut();
+    let mut pool: CUmemoryPool = null_mut();
     // SAFETY: MEMPOOL_HANDLE writes one CUmemoryPool opaque pointer as specified by cuda.h.
     let pool_status = unsafe {
-        cuda_core::sys::cuPointerGetAttribute(
+        cuPointerGetAttribute(
             (&raw mut pool).cast::<c_void>(),
-            cuda_core::sys::CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE,
+            CUpointer_attribute_enum_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE,
             pointer,
         )
     };
@@ -517,7 +529,7 @@ struct Prepared {
     descriptors: Arc<Descriptors>,
     algo: Algo,
 }
-impl std::ops::Deref for Prepared {
+impl Deref for Prepared {
     type Target = Descriptors;
     fn deref(&self) -> &Descriptors {
         &self.descriptors
@@ -657,7 +669,7 @@ fn launch(
                 output.device_pointer().cu_deviceptr() as *mut c_void,
                 prepared.layouts[3],
                 &raw const prepared.algo,
-                std::ptr::null_mut(),
+                null_mut(),
                 0,
                 context.stream,
             )
@@ -674,8 +686,8 @@ fn make_descriptors(context: &Context, shape: Shape) -> Result<Arc<Descriptors>,
     let api = context.api;
     let mut result = Descriptors {
         api,
-        desc: std::ptr::null_mut(),
-        layouts: [std::ptr::null_mut(); MATRIX_LAYOUTS],
+        desc: null_mut(),
+        layouts: [null_mut(); MATRIX_LAYOUTS],
     };
     status(
         // SAFETY: The SDK call uses live lifetime-owned handles and pointers with the declared header ABI.
@@ -721,7 +733,7 @@ fn heuristic_candidates(
     descriptors: &Descriptors,
 ) -> Result<Vec<Heuristic>, DeviceError> {
     let api = context.api;
-    let mut preference = std::ptr::null_mut();
+    let mut preference = null_mut();
     status(
         // SAFETY: The SDK call uses live lifetime-owned handles and pointers with the declared header ABI.
         unsafe { (api.pref_create)(&raw mut preference) },
@@ -798,10 +810,10 @@ pub struct Support {
     prepared: BTreeMap<Shape, Arc<Prepared>>,
     algorithms: BTreeMap<(Shape, AlgorithmConfig), Arc<Prepared>>,
     available: BTreeMap<Shape, Vec<AlgorithmConfig>>,
-    channel_scales: BTreeMap<cuda_core::sys::CUdeviceptr, Arc<Tensor<f32>>>,
+    channel_scales: BTreeMap<CUdeviceptr, Arc<Tensor<f32>>>,
     rejected: BTreeSet<Shape>,
     /// The Lt node is consumed during capture, so allocations are anchored here instead.
-    weights: BTreeMap<cuda_core::sys::CUdeviceptr, Arc<Tensor<f8e4m3fn>>>,
+    weights: BTreeMap<CUdeviceptr, Arc<Tensor<f8e4m3fn>>>,
 }
 impl Support {
     pub(crate) fn new_with(device: &CudaDevice, enabled: bool) -> Self {
@@ -1141,9 +1153,7 @@ impl IntoFuture for GemmFp8<'_> {
     type Output = Result<(), DeviceError>;
     type IntoFuture = DeviceFuture<(), Self>;
     fn into_future(self) -> Self::IntoFuture {
-        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-            policy.next_stream()
-        }) {
+        match with_default_device_policy(|policy| policy.next_stream()) {
             Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
             Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
         }

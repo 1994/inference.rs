@@ -1,10 +1,14 @@
 //! Options commands.
+use crate::constants::DEFAULT_LISTEN_PORT;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct ServeOptions {
     #[arg(long, default_value_t = Self::default_listen())]
-    pub listen: std::net::SocketAddr,
+    pub listen: SocketAddr,
     #[arg(long)]
     pub config: Option<PathBuf>,
     #[arg(long)]
@@ -13,11 +17,8 @@ pub struct ServeOptions {
     pub host_memory_mib: u64,
 }
 impl ServeOptions {
-    pub const fn default_listen() -> std::net::SocketAddr {
-        std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            crate::constants::DEFAULT_LISTEN_PORT,
-        )
+    pub const fn default_listen() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_LISTEN_PORT)
     }
 }
 #[derive(clap::Args)]

@@ -1,9 +1,12 @@
 //! Independent full-output softmax and FP8 cache reference for pre-capture search.
 mod history;
 use super::Shape;
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::device_error;
 use cuda_core::f8e4m3fn;
+use cutile::half::bf16;
 use infer_core::{Error, Result};
+use std::mem::replace;
 pub(super) const FIXTURES: usize = 4;
 pub(super) const KEY_SCALE: f32 = 0.5;
 pub(super) const VALUE_SCALE: f32 = 2.0;
@@ -75,7 +78,7 @@ pub(super) fn decode(value: f8e4m3fn) -> f32 {
 }
 impl Fixture {
     pub fn new(shape: Shape, index: usize) -> Result<Self> {
-        let capacity = (shape.lanes * 2).next_multiple_of(crate::constants::KV_BLOCK_TOKENS);
+        let capacity = (shape.lanes * 2).next_multiple_of(KV_BLOCK_TOKENS);
         let (base, count, offset) = match index {
             0 => (0, shape.lanes - 1, 0),
             1 => (shape.lanes, shape.lanes - 1, -1),
@@ -83,7 +86,7 @@ impl Fixture {
             UNIFORM_FIXTURE => (shape.lanes / 2, shape.lanes / 2, 0),
             _ => return Err(Error::invalid("attention fixture index")),
         };
-        let blocks = capacity / crate::constants::KV_BLOCK_TOKENS;
+        let blocks = capacity / KV_BLOCK_TOKENS;
         let table = (0..blocks)
             .map(|i| {
                 i32::try_from(if index == 1 { i ^ 1 } else { i })
@@ -152,16 +155,16 @@ impl Fixture {
         let rounded = fixture
             .query
             .iter()
-            .map(|&q| cutile::half::bf16::from_f32(q).to_f32())
+            .map(|&q| bf16::from_f32(q).to_f32())
             .collect();
-        let original = std::mem::replace(&mut fixture.query, rounded);
+        let original = replace(&mut fixture.query, rounded);
         // Fixture KV codes times power-of-two scales are exactly representable in BF16.
         fixture.expected = fixture.reference()?;
         fixture.query = original;
         Ok(fixture)
     }
     fn physical(&self, position: usize) -> Result<usize> {
-        let block = crate::constants::KV_BLOCK_TOKENS;
+        let block = KV_BLOCK_TOKENS;
         Ok(
             usize::try_from(self.table[position / block]).map_err(device_error)? * block
                 + position % block,

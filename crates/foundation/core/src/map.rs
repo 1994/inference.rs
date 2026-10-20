@@ -1,7 +1,11 @@
 //! Fixed Robin Hood lookup with backward-shift deletion; churn never grows or rehashes storage.
 use crate::{Error, ErrorCode, Result};
 use ahash::RandomState;
+use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::mem::replace;
+use std::mem::swap;
+use std::result::Result as StdResult;
 use std::{borrow::Borrow, hash::Hash};
 
 /// Largest fixed lookup capacity accepted by [`BoundedMap::new`].
@@ -112,7 +116,7 @@ impl<K: Eq + Hash, V> BoundedMap<K, V> {
         if let Some(slot) = self.locate(&key) {
             return Ok(self.buckets[slot]
                 .as_mut()
-                .map(|b| std::mem::replace(&mut b.value, value)));
+                .map(|b| replace(&mut b.value, value)));
         }
         if self.len == self.capacity {
             return Err(Error::new(ErrorCode::Capacity, "fixed map exhausted"));
@@ -130,7 +134,7 @@ impl<K: Eq + Hash, V> BoundedMap<K, V> {
         loop {
             if let Some(bucket) = &mut self.buckets[slot] {
                 if bucket.distance < incoming.distance {
-                    std::mem::swap(bucket, &mut incoming);
+                    swap(bucket, &mut incoming);
                 }
             } else {
                 self.buckets[slot] = Some(incoming);
@@ -185,7 +189,7 @@ struct Snapshot<K, V> {
     entries: Vec<(K, V)>,
 }
 impl<K: Eq + Hash + Serialize, V: Serialize> Serialize for BoundedMap<K, V> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
         Snapshot {
             capacity: self.capacity,
             entries: self.iter().collect::<Vec<_>>(),
@@ -196,16 +200,12 @@ impl<K: Eq + Hash + Serialize, V: Serialize> Serialize for BoundedMap<K, V> {
 impl<'de, K: Eq + Hash + Deserialize<'de>, V: Deserialize<'de>> Deserialize<'de>
     for BoundedMap<K, V>
 {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> StdResult<Self, D::Error> {
         let snapshot = Snapshot::<K, V>::deserialize(deserializer)?;
-        let mut map = Self::new(snapshot.capacity).map_err(serde::de::Error::custom)?;
+        let mut map = Self::new(snapshot.capacity).map_err(DeError::custom)?;
         for (key, value) in snapshot.entries {
-            if map
-                .insert(key, value)
-                .map_err(serde::de::Error::custom)?
-                .is_some()
-            {
-                return Err(serde::de::Error::custom("duplicate fixed map key"));
+            if map.insert(key, value).map_err(DeError::custom)?.is_some() {
+                return Err(DeError::custom("duplicate fixed map key"));
             }
         }
         Ok(map)

@@ -6,12 +6,14 @@ mod host;
 mod recorded;
 mod workspace;
 pub use super::attention_oxide::Bindings;
+use crate::constants::KV_BLOCK_TOKENS;
 use crate::device::{CudaDevice, device_error};
 use catalog::{DIM, HEADS, KV_HEADS, Variant};
 use cuda_core::{Function, LaunchConfig};
 use cutile::{cuda_async::launch::AsyncKernelLaunch, prelude::*};
 use infer_core::Result;
 use std::collections::BTreeMap;
+use std::result::Result as StdResult;
 pub use workspace::{Workspace, eligible};
 #[cfg(test)]
 pub use workspace::{eligible_with_role, node_eligible};
@@ -48,7 +50,7 @@ impl Support {
         arithmetic: Arithmetic,
     ) -> Result<Self> {
         if capacity == 0
-            || !capacity.is_multiple_of(crate::constants::KV_BLOCK_TOKENS)
+            || !capacity.is_multiple_of(KV_BLOCK_TOKENS)
             || i32::try_from(capacity).is_err()
             || i32::try_from(lanes).is_err()
         {
@@ -129,7 +131,7 @@ impl Support {
         b: &Bindings<'_, E>,
         (heads, kv_heads, dim, lanes, capacity): (usize, usize, usize, usize, usize),
         window: i32,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         Ok(catalog::geometry(
             heads,
             kv_heads,
@@ -154,7 +156,7 @@ impl Support {
             && b.metadata.is_contiguous()
             && b.metadata.size() >= catalog::METADATA_FIELDS
             && b.table.is_contiguous()
-            && b.table.size() >= capacity / crate::constants::KV_BLOCK_TOKENS)
+            && b.table.size() >= capacity / KV_BLOCK_TOKENS)
     }
     fn accepts<E: DType>(
         &self,
@@ -162,7 +164,7 @@ impl Support {
         shape: (usize, usize, usize, usize, usize),
         window: i32,
         scales: [f32; 2],
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         let bridge = match self.arithmetic {
             Arithmetic::Bf16 => {
                 (E::DTYPE == cuda_core::f8e4m3fn::DTYPE && size_of::<E>() == 1)
@@ -189,7 +191,7 @@ impl Support {
         window: i32,
         scales: [f32; 2],
         variant: Variant,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         let (_, _, _, lanes, capacity) = shape;
         if !self.accepts(&b, shape, window, scales)? {
             return Ok(false);

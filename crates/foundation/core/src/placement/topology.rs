@@ -1,8 +1,11 @@
 #[cfg(target_os = "linux")]
 use super::NumaPolicy;
 use super::ThreadPlacement;
+use crate::constants::MAX_TOPOLOGY_CPUS;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::fs::read_to_string;
 
 /// Byte length of a canonical PCI address (`domain:bus:slot.function`).
 const PCI_ADDRESS_LEN: usize = 12;
@@ -55,8 +58,8 @@ pub fn parse_cpu_list(input: &str) -> Result<Vec<usize>> {
             .parse::<usize>()
             .map_err(|_| Error::invalid("invalid CPU list"))?;
         if first > last
-            || last >= crate::constants::MAX_TOPOLOGY_CPUS
-            || cpus.len().saturating_add(last - first + 1) > crate::constants::MAX_TOPOLOGY_CPUS
+            || last >= MAX_TOPOLOGY_CPUS
+            || cpus.len().saturating_add(last - first + 1) > MAX_TOPOLOGY_CPUS
         {
             return Err(Error::invalid("CPU list exceeds topology limits"));
         }
@@ -96,12 +99,11 @@ impl PlacementPair {
         #[cfg(target_os = "linux")]
         {
             let topology = CpuTopology::discover()?;
-            let node =
-                std::fs::read_to_string(format!("/sys/bus/pci/devices/{pci_address}/numa_node"))
-                    .map_err(|error| Error::invalid(error.to_string()))?
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| Error::invalid("GPU NUMA node unavailable"))?;
+            let node = read_to_string(format!("/sys/bus/pci/devices/{pci_address}/numa_node"))
+                .map_err(|error| Error::invalid(error.to_string()))?
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| Error::invalid("GPU NUMA node unavailable"))?;
             if !topology.allowed_nodes.contains(&node) {
                 return Err(Error::invalid("GPU NUMA node outside memory cpuset"));
             }
@@ -164,8 +166,8 @@ fn validate_pci(address: &str) -> Result<()> {
 }
 #[cfg(target_os = "linux")]
 pub(super) fn allowed_nodes() -> Result<Vec<usize>> {
-    let status = std::fs::read_to_string("/proc/self/status")
-        .map_err(|error| Error::invalid(error.to_string()))?;
+    let status =
+        read_to_string("/proc/self/status").map_err(|error| Error::invalid(error.to_string()))?;
     let list = status
         .lines()
         .find_map(|line| line.strip_prefix("Mems_allowed_list:"))
@@ -174,9 +176,7 @@ pub(super) fn allowed_nodes() -> Result<Vec<usize>> {
 }
 #[cfg(target_os = "linux")]
 fn read_list(path: &str) -> Result<Vec<usize>> {
-    parse_cpu_list(
-        &std::fs::read_to_string(path).map_err(|error| Error::invalid(error.to_string()))?,
-    )
+    parse_cpu_list(&read_to_string(path).map_err(|error| Error::invalid(error.to_string()))?)
 }
 #[cfg(target_os = "linux")]
 fn physical_cores(cpus: &[usize]) -> Result<Vec<usize>> {

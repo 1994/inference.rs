@@ -1,5 +1,10 @@
 //! Text HTTP adapter.
 use super::{HttpError, HttpResult, RuntimeHandle, cpu, router, trace_parent};
+use crate::constants::MAX_REQUEST_BODY_BYTES;
+use crate::constants::TEXT_STAGING_EXPANSION;
+use crate::constants::TEXT_STAGING_OVERHEAD_BYTES;
+use crate::constants::TOKEN_STAGING_BYTES;
+use axum::extract::rejection::JsonRejection;
 use axum::{
     Json, Router, extract::DefaultBodyLimit, extract::State, http::HeaderMap, routing::post,
 };
@@ -7,11 +12,13 @@ use infer_core::{Error, ErrorCode, RequestId, Result};
 use infer_ir::{CanonicalRequest, WorkloadOutput};
 use infer_runtime::EngineOutput;
 use std::collections::BTreeMap;
+use std::result::Result as StdResult;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct TextState {
     pub(super) handle: RuntimeHandle,
-    pub(super) assets: std::sync::Arc<infer_models::TextAssets>,
+    pub(super) assets: Arc<infer_models::TextAssets>,
     pub(super) delivery: cpu::CpuPool,
 }
 #[derive(serde::Deserialize)]
@@ -29,10 +36,7 @@ pub struct NativeTextRequest {
     #[serde(default)]
     pub options: Option<infer_models::ChatOptions>,
 }
-pub fn router_with_text(
-    handle: RuntimeHandle,
-    assets: std::sync::Arc<infer_models::TextAssets>,
-) -> Router {
+pub fn router_with_text(handle: RuntimeHandle, assets: Arc<infer_models::TextAssets>) -> Router {
     let state = TextState {
         handle: handle.clone(),
         assets,
@@ -42,9 +46,7 @@ pub fn router_with_text(
         Router::new()
             .route("/native/v1/text", post(text_infer))
             .merge(super::openai::routes())
-            .layer(DefaultBodyLimit::max(
-                crate::constants::MAX_REQUEST_BODY_BYTES,
-            ))
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
             .with_state(state),
     )
 }
@@ -61,15 +63,15 @@ pub(super) fn text_preparation_bytes(request: &NativeTextRequest) -> Result<usiz
         )
         .ok_or_else(|| Error::invalid("text preparation size overflow"))?;
     bytes
-        .checked_mul(crate::constants::TEXT_STAGING_EXPANSION)
-        .and_then(|n| n.checked_add(crate::constants::TEXT_STAGING_OVERHEAD_BYTES))
+        .checked_mul(TEXT_STAGING_EXPANSION)
+        .and_then(|n| n.checked_add(TEXT_STAGING_OVERHEAD_BYTES))
         .ok_or_else(|| Error::invalid("text staging size overflow"))
 }
 
 pub(super) async fn text_infer(
     State(state): State<TextState>,
     headers: HeaderMap,
-    request: std::result::Result<Json<NativeTextRequest>, axum::extract::rejection::JsonRejection>,
+    request: StdResult<Json<NativeTextRequest>, JsonRejection>,
 ) -> HttpResult<Json<serde_json::Value>> {
     let Json(request) = request.map_err(HttpError::from)?;
     let assets = state.assets.clone();
@@ -124,9 +126,7 @@ pub(super) async fn text_infer(
                     state
                         .delivery
                         .run(
-                            tokens
-                                .len()
-                                .saturating_mul(crate::constants::TOKEN_STAGING_BYTES),
+                            tokens.len().saturating_mul(TOKEN_STAGING_BYTES),
                             move |_| assets.decode(&tokens, true),
                         )
                         .await?

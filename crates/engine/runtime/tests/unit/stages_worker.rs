@@ -2,6 +2,7 @@ use super::*;
 use crate::stages::output::OutputShape;
 use infer_core::ProgramId;
 use infer_ir::{CanonicalRequest, ModelIr, ModelOutput, Workload, WorkloadOutput, WorkloadPlan};
+use std::thread::sleep;
 use std::{time::Duration, time::Instant};
 
 struct GatedProjection {
@@ -64,7 +65,7 @@ fn deadline(limit: Instant) -> Result<()> {
     if Instant::now() >= limit {
         return Err(Error::invariant("CPU output acknowledgement timed out"));
     }
-    std::thread::sleep(Duration::from_micros(100));
+    sleep(Duration::from_micros(100));
     Ok(())
 }
 #[test]

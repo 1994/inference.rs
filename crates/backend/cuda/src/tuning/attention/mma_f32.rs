@@ -5,12 +5,21 @@ use super::{
     Choice, Key, Shape, Times,
     mma::{self, Case, Trial},
 };
+use crate::tuning::MAX_REPS;
+use crate::tuning::MIN_REPS;
+use crate::tuning::REP_MS;
+use crate::tuning::WARMUP_MS;
+use crate::tuning::resolve_table;
+use crate::tuning::table_path;
+use crate::tuning::update_table;
 use crate::{
     device::{CudaDevice, device_error},
     resident::attention_mma::catalog::{self, Variant},
     tuning::resident_gemm::ResidentTuningSession,
 };
 use capture::{Captured, Proof};
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
@@ -18,6 +27,7 @@ use cutile::{
 use infer_core::{Error, Result};
 use reference::Fixture;
 use serde::{Deserialize, Serialize};
+use std::fs::read_to_string;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -109,7 +119,7 @@ pub(crate) fn select(
     }
 }
 fn key(device: &CudaDevice, shape: Shape) -> Result<Key> {
-    let driver_build = std::fs::read_to_string("/proc/driver/nvidia/version")
+    let driver_build = read_to_string("/proc/driver/nvidia/version")
         .ok()
         .and_then(|text| {
             text.lines()
@@ -150,9 +160,9 @@ fn resolve(
     {
         return Ok(e.selected);
     }
-    let path = crate::tuning::table_path();
+    let path = table_path();
     let table = if key.driver_build.is_some() {
-        crate::tuning::resolve_table(path.as_deref())?
+        resolve_table(path.as_deref())?
     } else {
         None
     };
@@ -190,7 +200,7 @@ fn resolve(
         return Ok(untuned());
     };
     let cached = key.driver_build.is_some()
-        && crate::tuning::update_table(path.as_deref(), |table| {
+        && update_table(path.as_deref(), |table| {
             table.resident_mma_f32_attention.retain(|e| e.key != key);
             table.resident_mma_f32_attention.push(e.clone());
         });
@@ -210,10 +220,10 @@ fn measure(
     reverse: bool,
 ) -> Result<Times> {
     let options = BenchOptions {
-        warmup: Duration::from_millis(crate::tuning::WARMUP_MS),
-        rep: Duration::from_millis(crate::tuning::REP_MS),
-        min_reps: crate::tuning::MIN_REPS,
-        max_reps: crate::tuning::MAX_REPS,
+        warmup: Duration::from_millis(WARMUP_MS),
+        rep: Duration::from_millis(REP_MS),
+        min_reps: MIN_REPS,
+        max_reps: MAX_REPS,
         clear_l2: cold,
     };
     let (left, right) = if reverse {
@@ -225,7 +235,7 @@ fn measure(
         c.graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (a, b) = do_bench_paired(&device.stream, &options, |_| run(left), |_| run(right))
         .map_err(device_error)?;
@@ -273,7 +283,7 @@ fn cases(
     Ok(Some((result, proof)))
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let options = cutile::cutile_compiler::hints::CompileOptions::default();
+    let options = CompileOptions::default();
     if cfg!(debug_assertions)
         || options.device_debug
         || options.opt_level.is_some_and(|l| l != CUDA_OPT_LEVEL)

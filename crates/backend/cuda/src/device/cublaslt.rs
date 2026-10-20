@@ -8,17 +8,23 @@
 //! Layouts follow the row-major to column-major mapping a projection needs:
 //! `out[m, n] = activations[m, k] * weights[n, k]^T`, so `A` is the activation with `OP_T`
 //! (`lda = k`), `B` is the weight with `OP_N` (`ldb = k`), and `C` is the output with `ldc = m`.
+use crate::device::CudaDevice;
+use crate::kernels::linear::cast_bf16;
 use crate::tuning::prefill::DENSE_CAST_TILE;
+use crate::tuning::prefill::delegate_dense;
+use cuda_core::sys::CUstream;
+use cutile::cuda_async::device_context::with_default_device_policy;
 use cutile::cuda_async::device_future::DeviceFuture;
 use cutile::cuda_async::device_operation::{DeviceOp, ExecutionContext, GraphNode};
 use cutile::cuda_async::error::DeviceError;
 use cutile::{half::bf16, prelude::*};
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::ptr::null_mut;
 use std::sync::{Arc, Mutex, OnceLock};
 
 type Handle = *mut c_void;
-type CudaStream = cuda_core::sys::CUstream;
+type CudaStream = CUstream;
 
 const OP_N: i32 = 0;
 const OP_T: i32 = 1;
@@ -148,7 +154,7 @@ unsafe impl Sync for Context {}
 /// A cuBLAS handle belongs to the CUDA device it was created on and launches on the stream it was
 /// bound to, so one handle cannot serve a second device instance. The cache is keyed by both, and
 /// every launch validates that the stream it is handed is the one the handle was built for.
-pub fn context_for(device: &crate::device::CudaDevice) -> Option<Arc<Context>> {
+pub fn context_for(device: &CudaDevice) -> Option<Arc<Context>> {
     type Cache = Mutex<HashMap<(usize, usize), Arc<Context>>>;
     static CONTEXTS: OnceLock<Cache> = OnceLock::new();
     let key = (device.ordinal(), device.stream.cu_stream() as usize);
@@ -178,11 +184,11 @@ fn destroy(api: &Api, handle: Handle) {
     unsafe_code,
     reason = "Audited handle creation: one cuBLAS handle per process, packed with the device scalars every launch reads"
 )]
-fn build(device: &crate::device::CudaDevice) -> Option<Context> {
+fn build(device: &CudaDevice) -> Option<Context> {
     let api = api()?;
     // cuBLAS creates its handle on the device current for this thread, so bind before creating it.
     device.stream.device().bind_to_thread().ok()?;
-    let mut handle: Handle = std::ptr::null_mut();
+    let mut handle: Handle = null_mut();
     // SAFETY: the handle is created here and owned by the returned context.
     let created = unsafe { (api.create)(&raw mut handle) };
     if created != 0 {
@@ -278,7 +284,7 @@ unsafe fn launch(
     reason = "Audited launch: the three tensors outlive the call and their extents are checked against each other"
 )]
 pub fn gemm_bf16(
-    device: &crate::device::CudaDevice,
+    device: &CudaDevice,
     activations: &Tensor<bf16>,
     weights: &Tensor<bf16>,
     out: &Tensor<f32>,
@@ -322,20 +328,20 @@ pub fn gemm_bf16(
 /// The scratch is keyed by element count and allocated the first time a shape needs it, which
 /// happens while a graph is being built and never while one is being captured.
 pub struct Support {
-    device: crate::device::CudaDevice,
+    device: CudaDevice,
     context: Option<Arc<Context>>,
     activations: HashMap<usize, Tensor<bf16>>,
 }
 
 impl Support {
     /// Large BF16 projections use the tuning policy and the available vendor library.
-    pub fn new(device: &crate::device::CudaDevice) -> Self {
+    pub fn new(device: &CudaDevice) -> Self {
         Self::new_with(device, true)
     }
 
     /// Build the support with delegation decided by the caller, for benchmarks and tests that
     /// must not depend on the environment.
-    pub fn new_with(device: &crate::device::CudaDevice, enabled: bool) -> Self {
+    pub fn new_with(device: &CudaDevice, enabled: bool) -> Self {
         Self {
             device: device.clone(),
             context: enabled.then(|| context_for(device)).flatten(),
@@ -374,7 +380,7 @@ impl Support {
         let Some(context) = self.context.clone() else {
             return Ok(());
         };
-        if !crate::tuning::prefill::delegate_dense(m, n, k) {
+        if !delegate_dense(m, n, k) {
             return Ok(());
         }
         let (Ok(m_i), Ok(n_i), Ok(k_i)) = (i32::try_from(m), i32::try_from(n), i32::try_from(k))
@@ -430,7 +436,7 @@ impl Support {
             return Ok(false);
         };
         let activation_elements = m.saturating_mul(k);
-        if !crate::tuning::prefill::delegate_dense(m, n, k)
+        if !delegate_dense(m, n, k)
             || activation_elements % DENSE_CAST_TILE != 0
             || input.size() != activation_elements
         {
@@ -449,7 +455,7 @@ impl Support {
             .get_mut(&activation_elements)
             .ok_or_else(|| DeviceError::Internal("cuBLAS scratch".to_string()))?;
         scope.record(
-            crate::kernels::linear::cast_bf16((&mut *scratch).partition([DENSE_CAST_TILE]), input)
+            cast_bf16((&mut *scratch).partition([DENSE_CAST_TILE]), input)
                 .generics(vec![DENSE_CAST_TILE.to_string()]),
         )?;
         let op = GemmBf16::new(context, m, n, k, scratch, weight, out)
@@ -559,9 +565,7 @@ impl IntoFuture for GemmBf16<'_> {
     type IntoFuture = DeviceFuture<(), Self>;
 
     fn into_future(self) -> Self::IntoFuture {
-        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-            policy.next_stream()
-        }) {
+        match with_default_device_policy(|policy| policy.next_stream()) {
             Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
             Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
         }

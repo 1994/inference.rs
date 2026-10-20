@@ -1,15 +1,17 @@
 //! Reproducible device timings against independent SDPA fixture outputs.
 use super::program::{AttentionMode, attention_kernel};
 use crate::device::{CudaDevice, device_error};
+use cutile::jit_cache::enable_default;
 use infer_core::{Error, Result};
+use std::env::var;
 
 #[test]
 #[ignore = "requires GPU and INFER_ATTENTION_BENCH fixtures; run under tools/bench/safe-run.sh"]
 fn attention_benchmark_against_sdpa() -> Result<()> {
-    let path = std::env::var("INFER_ATTENTION_BENCH")
+    let path = var("INFER_ATTENTION_BENCH")
         .map_err(|_| Error::invalid("INFER_ATTENTION_BENCH safetensors path required"))?;
     let mut file = infer_models::SafetensorsFile::open(path)?;
-    cutile::jit_cache::enable_default().map_err(device_error)?;
+    enable_default().map_err(device_error)?;
     let device = CudaDevice::new(0)?;
     for index in 0..6 {
         let prefix = format!("c{index}");

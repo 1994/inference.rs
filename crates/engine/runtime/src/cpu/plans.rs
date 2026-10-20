@@ -1,6 +1,7 @@
 //! Persistent immutable metadata slots. Readers retain an Arc until their fence/output work ends.
 use infer_core::{DecisionId, Error, ErrorCode, ProgramId, Result, StepId};
 use infer_ir::{CostEstimate, ExecutionRole, StepPlan};
+use std::mem::swap;
 use std::sync::Arc;
 
 /// Immutable step-metadata slots; a slot cannot be reused while a reader holds its `Arc`.
@@ -57,7 +58,7 @@ impl StepPool {
             })?;
         let storage =
             Arc::get_mut(slot).ok_or_else(|| Error::invariant("step slot reader appeared"))?;
-        std::mem::swap(storage, plan);
+        swap(storage, plan);
         plan.work.clear();
         Ok(slot.clone())
     }

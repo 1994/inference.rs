@@ -1,7 +1,9 @@
 use crate::Engine;
+use crate::resource::ResourcePhase;
 use infer_core::{Error, Result};
 use infer_ir::ResourceSnapshot;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     pub(crate) fn execution_state_bytes(&self) -> Result<u64> {
@@ -32,7 +34,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
     pub(crate) fn reuse_ready_prefixes(&mut self) -> Result<()> {
         self.fill_candidate_ids()?;
-        let ids = std::mem::take(&mut self.host.ready_index.candidates);
+        let ids = take(&mut self.host.ready_index.candidates);
         let result = ids.iter().copied().try_for_each(|id| self.reuse_prefix(id));
         self.host.ready_index.candidates = ids;
         result
@@ -69,7 +71,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .ok_or_else(|| Error::invariant("prefix owner lost"))?
             .prefix_attempted = true;
         // The same acknowledgement path applies to direct and threaded backend owners.
-        self.park_resource(id, ticket, crate::resource::ResourcePhase::Prefix)?;
+        self.park_resource(id, ticket, ResourcePhase::Prefix)?;
         Ok(())
     }
 }

@@ -5,6 +5,8 @@ use super::{
     budget::{enabled, opted_in, ordered},
     kernels, prepared,
 };
+use crate::constants::GDN_PROJECTED_INPUTS;
+use crate::tuning::recurrent::select;
 use crate::{
     device::{CudaDevice, device_error},
     resident::{ActivationArena, ProgramWeights},
@@ -13,6 +15,8 @@ use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorNode, TensorOp};
 use std::collections::BTreeMap;
+use std::env::var_os;
+use std::result::Result as StdResult;
 
 #[derive(Default)]
 pub struct Workspace {
@@ -57,25 +61,20 @@ impl Workspace {
                     value_dim,
                 } = node.op
                     && key_dim == value_dim
-                    && node.inputs[..crate::constants::GDN_PROJECTED_INPUTS]
+                    && node.inputs[..GDN_PROJECTED_INPUTS]
                         .iter()
                         .all(|id| !weights.constants.contains_key(id))
                 {
                     let shape = [key_heads, value_heads, key_dim, lanes];
                     let selected = if key_dim == ORDERED_DIM && ORDERED_WIDTHS.contains(&lanes) {
                         Some(ORDERED_BLOCK)
-                    } else if std::env::var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some() {
+                    } else if var_os("INFER_CUDA_RECURRENT_VALUE_SPLIT").is_some() {
                         Some(
                             super::super::capture_state::value_block(value_dim)
                                 .map_err(device_error)?,
                         )
                     } else {
-                        crate::tuning::recurrent::select(
-                            device,
-                            shape,
-                            weights.autotune,
-                            &weights.resident_tuning,
-                        )
+                        select(device, shape, weights.autotune, &weights.resident_tuning)
                     };
                     if let Some(block) = selected {
                         wy_blocks.insert(node.outputs[0], block);
@@ -118,7 +117,7 @@ impl Workspace {
         weights: &ProgramWeights,
         states: &mut super::super::batch::States,
         metadata: &Tensor<i32>,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         #[cfg(test)]
         if super::LEGACY_CAPTURE.get() {
             return Ok(false);
@@ -154,7 +153,7 @@ impl Workspace {
         {
             return Err(error("chunk delta dimensions"));
         }
-        if node.inputs[..crate::constants::GDN_PROJECTED_INPUTS]
+        if node.inputs[..GDN_PROJECTED_INPUTS]
             .iter()
             .any(|id| weights.constants.contains_key(id))
         {
@@ -176,7 +175,7 @@ impl Workspace {
             .shape()
             .iter()
             .map(|&x| usize::try_from(x).map_err(error))
-            .collect::<std::result::Result<_, _>>()?;
+            .collect::<StdResult<_, _>>()?;
         let mut output = output.reshape(&[self.lanes, value_heads, value_dim])?;
         // The measured ordered path splits independent value columns without changing sums.
         // Other shapes use their existing qualified block policy.
@@ -227,7 +226,7 @@ fn record_delta(
     metadata: &Tensor<i32>,
     [key_heads, value_heads, key_dim, lanes, block]: [usize; DELTA_GEOMETRY_RANK],
     wy: bool,
-) -> std::result::Result<(), DeviceError> {
+) -> StdResult<(), DeviceError> {
     let qkv = arena.get(node.inputs[0]).map_err(error)?.view(&[
         lanes,
         2 * key_heads + value_heads,

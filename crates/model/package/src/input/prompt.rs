@@ -4,11 +4,18 @@
 //! placeholder into one token per *merged* visual patch, so the token stream and the vision
 //! embeddings line up one-to-one. Every mismatch is an error: a prompt that cannot be aligned
 //! with its media must never fall back to the text-only path.
+use crate::image::ImageProcessor;
 use crate::image::PreprocessedImage;
+use crate::image::RgbImage;
+use crate::input::text::TextAssets;
+use crate::mrope::ROTARY_AXES;
+use crate::mrope::image_positions;
 use crate::video::{RawVideo, VideoProcessor};
+use crate::vision::merge_unit;
 use infer_core::{Error, Result};
 use infer_ir::Modality;
 use infer_spi::{ImportedModel, ModalityEncoder};
+use std::iter::repeat_n;
 use std::ops::Range;
 
 /// One preprocessed image attached to a prompt.
@@ -35,7 +42,7 @@ impl PromptImage {
 /// # Errors
 /// Rejects grids that do not divide by the merge unit or overflow.
 pub fn visual_tokens(grid: (usize, usize, usize), encoder: &ModalityEncoder) -> Result<usize> {
-    let unit = crate::vision::merge_unit(encoder)?;
+    let unit = merge_unit(encoder)?;
     let patches = grid
         .0
         .checked_mul(grid.1)
@@ -164,7 +171,7 @@ pub fn expand_placeholders(
             return Err(Error::invalid("media contributes no visual tokens"));
         }
         let start = expanded.len();
-        expanded.extend(std::iter::repeat_n(placeholder, count));
+        expanded.extend(repeat_n(placeholder, count));
         spans.push(start..expanded.len());
     }
     Ok(ExpandedPrompt {
@@ -179,7 +186,7 @@ pub struct MediaSpan {
     /// Token range the item's embeddings replace.
     pub range: Range<usize>,
     /// Absolute three-axis rotary coordinate of every token in the span; absent for 1-D `RoPE`.
-    pub rotary: Option<Vec<[usize; crate::mrope::ROTARY_AXES]>>,
+    pub rotary: Option<Vec<[usize; ROTARY_AXES]>>,
 }
 
 /// Media alignment of a prepared prompt.
@@ -190,7 +197,7 @@ pub struct MediaLayout {
     /// Next rotary coordinate after the prompt: where the first decoded token starts.
     pub next_rotary: usize,
     /// Three-axis coordinate of every prompt token; absent for 1-D `RoPE`.
-    pub positions: Option<Vec<[usize; crate::mrope::ROTARY_AXES]>>,
+    pub positions: Option<Vec<[usize; ROTARY_AXES]>>,
 }
 
 /// Align every media span with the placeholder tokens and rotary geometry of the model.
@@ -249,7 +256,7 @@ pub fn media_layout(
     let positions = if imported.model.position.multimodal_sections.is_empty() {
         None
     } else {
-        Some(crate::mrope::image_positions(prepared, merge)?)
+        Some(image_positions(prepared, merge)?)
     };
     if let Some(positions) = &positions {
         for span in &mut spans {
@@ -374,8 +381,8 @@ pub struct PreparedPrompt {
 /// Rejects a missing encoder or placeholder, a placeholder/media mismatch, malformed image buffers
 /// or a preprocessing failure.
 pub fn prepare(
-    assets: &crate::input::text::TextAssets,
-    processor: &crate::image::ImageProcessor,
+    assets: &TextAssets,
+    processor: &ImageProcessor,
     imported: &ImportedModel,
     text: &str,
     images: &[RawImage],
@@ -397,7 +404,7 @@ pub fn prepare(
     let mut prepared = Vec::with_capacity(images.len());
     let mut counts = Vec::with_capacity(images.len());
     for image in images {
-        let processed = processor.preprocess(&crate::image::RgbImage {
+        let processed = processor.preprocess(&RgbImage {
             height: image.height,
             width: image.width,
             pixels: image.pixels.clone(),
@@ -426,7 +433,7 @@ pub fn prepare(
 /// Rejects a missing encoder or placeholder, a placeholder/media mismatch, malformed frames or a
 /// preprocessing failure.
 pub fn prepare_video(
-    assets: &crate::input::text::TextAssets,
+    assets: &TextAssets,
     processor: &VideoProcessor,
     imported: &ImportedModel,
     text: &str,
@@ -558,7 +565,7 @@ fn expand_video_tokens(
             expanded.extend_from_slice(&segment.timestamp);
             expanded.push(vision_start);
             let start = expanded.len();
-            expanded.extend(std::iter::repeat_n(placeholder, segment.count));
+            expanded.extend(repeat_n(placeholder, segment.count));
             spans.push(start..expanded.len());
             expanded.push(vision_end);
         }
@@ -567,7 +574,7 @@ fn expand_video_tokens(
 }
 
 /// Tokenize a single literal that must map to exactly one token.
-fn single_token(assets: &crate::input::text::TextAssets, literal: &str) -> Result<u32> {
+fn single_token(assets: &TextAssets, literal: &str) -> Result<u32> {
     let ids = assets.encode(literal, false)?;
     match ids.as_slice() {
         [token] => Ok(*token),
@@ -585,7 +592,7 @@ pub struct VisualPlacement {
     /// Hidden state of that visual token.
     pub embedding: Vec<f32>,
     /// Absolute three-axis rotary coordinate; absent for ordinary one-dimensional `RoPE`.
-    pub rotary_position: Option<[usize; crate::mrope::ROTARY_AXES]>,
+    pub rotary_position: Option<[usize; ROTARY_AXES]>,
 }
 
 /// Align encoded media with the expanded prompt.

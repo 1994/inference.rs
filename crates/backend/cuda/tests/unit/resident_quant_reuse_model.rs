@@ -1,11 +1,15 @@
 //! Same-weight whole-model gate for adjacent shared-input projection quantization reuse.
 use super::support::states;
 use super::{LoadOptions, LoadedModel};
+use crate::resident::nvfp4_gemm::QuantPairPlan;
+use crate::tuning::table_path;
 use crate::{
     device::CudaDevice,
     resident::{BatchOutput, DeviceProgram, nvfp4_gemm::with_quant_reuse_disabled},
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
+use std::fs::read;
 
 pub(super) fn bits(actual: &[f32], expected: &[f32], label: &str) {
     assert_eq!(actual.len(), expected.len(), "{label} length");
@@ -43,9 +47,9 @@ pub(super) fn program_states(
 }
 
 pub(super) fn prompt() -> Result<Vec<u32>> {
-    let path = std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens: Vec<u32> =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| Error::invalid(e.to_string()))?)
+        serde_json::from_slice(&read(path).map_err(|e| Error::invalid(e.to_string()))?)
             .map_err(|e| Error::invalid(e.to_string()))?;
     if tokens.len() != 511 {
         return Err(Error::invalid(
@@ -154,11 +158,10 @@ fn pooled(
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS; safe-run"]
 fn shared_quantization_preserves_checkpoint_model_bits() -> Result<()> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = prompt()?;
-    let cache_path = crate::tuning::table_path()
-        .ok_or_else(|| Error::invalid("frozen tuning table required"))?;
-    let cache = std::fs::read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let cache_path = table_path().ok_or_else(|| Error::invalid("frozen tuning table required"))?;
+    let cache = read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -173,7 +176,7 @@ fn shared_quantization_preserves_checkpoint_model_bits() -> Result<()> {
             ..LoadOptions::default()
         },
     )?;
-    let plan = crate::resident::nvfp4_gemm::QuantPairPlan::new(&loaded.graph, &loaded.weights);
+    let plan = QuantPairPlan::new(&loaded.graph, &loaded.weights);
     let planned = (0..loaded.graph.nodes.len())
         .filter(|&index| plan.role(index).is_some())
         .count();
@@ -252,7 +255,7 @@ fn shared_quantization_preserves_checkpoint_model_bits() -> Result<()> {
     }
     assert_eq!(
         cache,
-        std::fs::read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     Ok(())
 }

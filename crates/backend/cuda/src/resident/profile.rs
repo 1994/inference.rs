@@ -11,11 +11,23 @@
 //! reducing instrumentation overhead when separating host time from device time.
 
 use crate::device::{CudaDevice, device_error};
+use cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT;
+use cuda_core::sys::CUevent_record_flags_enum_CU_EVENT_RECORD_EXTERNAL;
+use cuda_core::sys::cuEventRecordWithFlags;
+use cuda_core::sys::cudaError_enum_CUDA_SUCCESS;
 use cuda_core::{CudaContext, CudaEvent};
+use cutile::cuda_async::device_context::with_default_device_policy;
+use cutile::cuda_async::device_future::DeviceFuture;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
 use infer_ir::{TensorNode, TensorOp};
 use std::collections::BTreeMap;
+use std::env::var;
+use std::env::var_os;
+use std::fs::OpenOptions;
+use std::path::Path;
+use std::path::PathBuf;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 /// Environment variable enabling in-graph prefill profiling; the value is the JSONL output path.
@@ -43,7 +55,7 @@ impl GraphProfile {
             context,
             segments: Vec::new(),
             events: Vec::new(),
-            graph_only: std::env::var("INFER_CUDA_PROFILE_GRAPH_ONLY").is_ok_and(|v| v == "1"),
+            graph_only: var("INFER_CUDA_PROFILE_GRAPH_ONLY").is_ok_and(|v| v == "1"),
             node_count: 0,
         }
     }
@@ -54,7 +66,7 @@ impl GraphProfile {
         scope: &Scope,
         node: usize,
         op: &TensorNode,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         self.node_count += 1;
         if self.graph_only && !self.segments.is_empty() {
             return Ok(());
@@ -73,14 +85,14 @@ impl GraphProfile {
     }
 
     /// Record the closing event after the last node.
-    pub(super) fn finish(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+    pub(super) fn finish(&mut self, scope: &Scope) -> StdResult<(), DeviceError> {
         self.mark(scope)
     }
 
-    fn mark(&mut self, scope: &Scope) -> std::result::Result<(), DeviceError> {
+    fn mark(&mut self, scope: &Scope) -> StdResult<(), DeviceError> {
         let event = Arc::new(
             self.context
-                .new_event(Some(cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT))
+                .new_event(Some(CUevent_flags_enum_CU_EVENT_DEFAULT))
                 .map_err(DeviceError::Driver)?,
         );
         scope.record(RecordEvent(Arc::clone(&event)))?;
@@ -124,7 +136,7 @@ impl GraphProfile {
 /// Owns the boundary events of both width-32 prefill graphs; declared after them in
 /// `BatchGraph` so graph executables are destroyed before the events they record.
 pub(super) struct PrefillProfile {
-    path: std::path::PathBuf,
+    path: PathBuf,
     prefill: GraphProfile,
     prefill_last: GraphProfile,
 }
@@ -133,10 +145,10 @@ impl PrefillProfile {
     /// Enabled when `INFER_CUDA_PREFILL_PROFILE` names a writable output path.
     #[must_use]
     pub(super) fn from_env(device: &CudaDevice) -> Option<Self> {
-        let path = std::env::var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
+        let path = var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
         let context = CudaContext::new(device.stream.device().ordinal()).ok()?;
         Some(Self {
-            path: std::path::PathBuf::from(path),
+            path: PathBuf::from(path),
             prefill: GraphProfile::new(Arc::clone(&context)),
             prefill_last: GraphProfile::new(context),
         })
@@ -171,17 +183,17 @@ impl PrefillProfile {
 /// Owns the boundary events of the shared slot decode graph; declared after the graph
 /// in `SlotDecodeGraph` so the executable drops before the events it records.
 pub(super) struct SlotProfile {
-    path: std::path::PathBuf,
+    path: PathBuf,
     graph: GraphProfile,
 }
 
 impl SlotProfile {
     /// Enabled when `INFER_CUDA_PREFILL_PROFILE` names a writable output path.
     pub(super) fn from_env(device: &CudaDevice) -> Option<Self> {
-        let path = std::env::var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
+        let path = var_os(PROFILE_ENV).filter(|value| !value.is_empty())?;
         let context = CudaContext::new(device.stream.device().ordinal()).ok()?;
         Some(Self {
-            path: std::path::PathBuf::from(path),
+            path: PathBuf::from(path),
             graph: GraphProfile::new(context),
         })
     }
@@ -204,9 +216,9 @@ impl SlotProfile {
     }
 }
 
-fn append(path: &std::path::Path, line: &serde_json::Value) -> Result<()> {
+fn append(path: &Path, line: &serde_json::Value) -> Result<()> {
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
@@ -250,18 +262,18 @@ struct RecordEvent(Arc<CudaEvent>);
 impl DeviceOp for RecordEvent {
     type Output = ();
 
-    unsafe fn execute(self, context: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    unsafe fn execute(self, context: &ExecutionContext) -> StdResult<(), DeviceError> {
         context.retain(Arc::clone(&self.0))?;
         // SAFETY: both handles are live RAII wrappers on the same device; the external
         // flag is the documented way to keep capture-time event records observable.
         let status = unsafe {
-            cuda_core::sys::cuEventRecordWithFlags(
+            cuEventRecordWithFlags(
                 self.0.cu_event(),
                 context.get_cuda_stream().cu_stream(),
-                cuda_core::sys::CUevent_record_flags_enum_CU_EVENT_RECORD_EXTERNAL,
+                CUevent_record_flags_enum_CU_EVENT_RECORD_EXTERNAL,
             )
         };
-        if status != cuda_core::sys::cudaError_enum_CUDA_SUCCESS {
+        if status != cudaError_enum_CUDA_SUCCESS {
             return Err(DeviceError::Internal(format!(
                 "profile event record CUDA status {status}"
             )));
@@ -273,13 +285,11 @@ impl DeviceOp for RecordEvent {
 impl GraphNode for RecordEvent {}
 
 impl IntoFuture for RecordEvent {
-    type Output = std::result::Result<(), DeviceError>;
-    type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
+    type Output = StdResult<(), DeviceError>;
+    type IntoFuture = DeviceFuture<(), Self>;
 
     fn into_future(self) -> Self::IntoFuture {
-        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-            policy.next_stream()
-        }) {
+        match with_default_device_policy(|policy| policy.next_stream()) {
             Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
             Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
         }

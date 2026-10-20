@@ -1,6 +1,7 @@
 //! Lifecycle responsibilities.
 use super::SequenceStateManager;
 use infer_core::{Error, ErrorCode, Result, StateId, StatePageId};
+use std::mem::take;
 
 impl SequenceStateManager {
     /// # Errors
@@ -12,7 +13,7 @@ impl SequenceStateManager {
             .get_mut(&id)
             .ok_or_else(|| Error::invariant("state disappeared during reset"))?;
         s.committed_tokens = 0;
-        let mut pages = std::mem::take(&mut s.pages);
+        let mut pages = take(&mut s.pages);
         self.unreference(&pages);
         pages.clear();
         self.sequences

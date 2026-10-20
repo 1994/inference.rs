@@ -5,6 +5,8 @@ use super::{
         REASONING_OPEN, StreamEvent, TOOL_CALL_CLOSE, TOOL_CALL_OPEN, ToolDialect,
     },
 };
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolRecognition {
@@ -38,7 +40,7 @@ enum Phase {
 #[derive(Debug, Clone)]
 pub struct OutputStreamParser {
     dialect: ToolDialect,
-    declared: Option<std::collections::BTreeSet<String>>,
+    declared: Option<BTreeSet<String>>,
     phase: Phase,
     /// Received text not yet published, consumed or held back.
     buffer: String,
@@ -60,10 +62,7 @@ pub struct OutputStreamParser {
 impl OutputStreamParser {
     /// Create a parser for one response.
     #[must_use]
-    pub const fn new(
-        dialect: ToolDialect,
-        declared: Option<std::collections::BTreeSet<String>>,
-    ) -> Self {
+    pub const fn new(dialect: ToolDialect, declared: Option<BTreeSet<String>>) -> Self {
         Self {
             dialect,
             declared,
@@ -395,7 +394,7 @@ pub fn assemble(events: Vec<StreamEvent>, truncated: bool) -> ParsedOutput {
     let mut content = String::new();
     let mut reasoning = String::new();
     let mut calls = Vec::new();
-    let mut pending = std::collections::BTreeMap::new();
+    let mut pending = BTreeMap::new();
     for event in events {
         match event {
             StreamEvent::Text(text) => content.push_str(&text),
@@ -455,7 +454,7 @@ pub fn parse(text: &str) -> infer_core::Result<ParsedOutput> {
 pub fn parse_with(
     text: &str,
     dialect: ToolDialect,
-    declared: Option<&std::collections::BTreeSet<String>>,
+    declared: Option<&BTreeSet<String>>,
 ) -> infer_core::Result<ParsedOutput> {
     let mut parser = OutputStreamParser::new(dialect, declared.cloned());
     let mut events = parser.feed(text)?;

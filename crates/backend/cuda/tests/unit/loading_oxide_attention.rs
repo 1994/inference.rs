@@ -5,14 +5,15 @@ use crate::{
     resident::attention_oxide::{captures, with_cutile},
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
 
 #[test]
 #[ignore = "requires CUDA/checkpoint/frozen511tokens/safe-run; complete model output and state equivalence"]
 fn rust_attention_preserves_checkpoint_model_bits() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = reference::prompt()?;
-    let width = std::env::var("INFER_TEST_PREFILL_WIDTH")
+    let width = var("INFER_TEST_PREFILL_WIDTH")
         .unwrap_or_else(|_| "256".into())
         .parse::<usize>()
         .map_err(|e| Error::invalid(e.to_string()))?;
