@@ -23,7 +23,16 @@ impl ProgramReadouts {
         graph: &infer_ir::DataflowGraph,
         weights: &ProgramWeights,
         vocabulary: usize,
+        forward_captured: bool,
     ) -> Result<Self> {
+        if !forward_captured {
+            return Ok(Self {
+                hidden: take_result(arena, graph.hidden)?,
+                logits: take_result(arena, graph.logits)?,
+                greedy: None,
+                token_readout: None,
+            });
+        }
         let hidden = take_result(arena, graph.hidden)?;
         let logits = take_result(arena, graph.logits)?;
         let greedy = DeviceGreedy::new(device, &logits, vocabulary, weights)?;

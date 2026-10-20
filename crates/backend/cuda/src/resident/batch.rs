@@ -89,6 +89,14 @@ struct PromptCaptures {
     state_prefill: Option<CudaGraph<()>>,
 }
 
+pub(super) struct ProgramCaptures {
+    pub batch: Option<BatchGraph>,
+    pub prompt_batch: Option<BatchGraph>,
+    pub prompt_narrow: Option<BatchGraph>,
+    pub forward: CudaGraph<()>,
+    pub prefill: CudaGraph<()>,
+}
+
 pub(super) struct BatchGraph {
     graph: Option<CudaGraph<()>>,
     readbacks: Readbacks,
@@ -167,7 +175,8 @@ pub(super) struct SlotDecodeGraph {
     state_only: Option<CudaGraph<()>>,
     readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
-    metadata: Vec<Tensor<i32>>,
+    metadata_owner: Tensor<i32>,
+    metadata_upload: Vec<i32>,
     // Batched hidden rows stay allocated for the graph's writes but are never read back.
     hidden: Arc<Tensor<f32>>,
     pub(super) external_hidden: bool,
@@ -258,7 +267,7 @@ impl BatchBuilder<'_> {
             return Err(Error::invalid("slot decode lanes"));
         }
         let mut arena = slot_arena(self.device, self.graph, width)?;
-        let metadata = slot_metadata(self.device, width)?;
+        let (metadata_owner, metadata) = batched_metadata(self.device, width)?;
         let mut profile = profile::SlotProfile::from_env(self.device);
         let graph = self.capture_slots(
             &mut arena,
@@ -291,7 +300,8 @@ impl BatchBuilder<'_> {
             graph,
             state_only,
             readbacks: Readbacks::default(),
-            metadata,
+            metadata_owner,
+            metadata_upload: Vec::with_capacity(width * METADATA_FIELDS),
             hidden,
             external_hidden: self.weights.fusion.is_some(),
             logits,
@@ -382,6 +392,34 @@ impl BatchBuilder<'_> {
         });
         self.nvfp4.end_quant_capture();
         result.map_err(device_error)
+    }
+
+    pub(super) fn build_program(
+        &mut self,
+        geometry: super::program::ProgramGeometry,
+        arena: &mut ActivationArena,
+        metadata: &Tensor<i32>,
+        fusion: &mut Option<super::program::FusionWorkspace>,
+        forward_captured: bool,
+    ) -> Result<ProgramCaptures> {
+        let (batch, prompt_batch, prompt_narrow) = self.build_pair(geometry)?;
+        let forward = if forward_captured {
+            self.capture_single(arena, metadata, fusion, false)?
+        } else {
+            CudaGraph::scope(&self.device.stream, |_| Ok(())).map_err(device_error)?
+        };
+        let prefill = if forward_captured {
+            self.capture_single(arena, metadata, fusion, true)?
+        } else {
+            CudaGraph::scope(&self.device.stream, |_| Ok(())).map_err(device_error)?
+        };
+        Ok(ProgramCaptures {
+            batch,
+            prompt_batch,
+            prompt_narrow,
+            forward,
+            prefill,
+        })
     }
 
     pub(super) fn capture_single(
@@ -1885,11 +1923,10 @@ impl SlotDecodeGraph {
         reason = "disjoint field borrows of the graph"
     )]
     fn stage_lanes(
-        metadata: &mut [Tensor<i32>],
+        metadata: &mut Vec<i32>,
         cursors: &[usize],
         width: usize,
         external_hidden: bool,
-        graph: &CudaGraph<()>,
         lanes: &[SlotLane],
         capacity: usize,
         vocabulary: usize,
@@ -1911,8 +1948,9 @@ impl SlotDecodeGraph {
             }
             per_slot[slot] = Some((token, rope_pos, state_pos));
         }
-        for (slot, metadata) in metadata.iter_mut().enumerate() {
-            let values = match per_slot[slot] {
+        metadata.clear();
+        for entry in per_slot.iter().take(width) {
+            let values = match *entry {
                 Some((token, rope_pos, state_pos)) => [
                     i32::try_from(rope_pos).map_err(device_error)?,
                     i32::try_from(token).map_err(device_error)?,
@@ -1921,7 +1959,7 @@ impl SlotDecodeGraph {
                 ],
                 None => [0, 0, INACTIVE_LANE_STATE_POSITION, 0],
             };
-            super::metadata::update(graph, metadata, values)?;
+            metadata.extend_from_slice(&values);
         }
         Ok(())
     }
@@ -1967,15 +2005,15 @@ impl SlotDecodeGraph {
                 .ok_or_else(|| Error::invalid("state-only draft graph"))?
         };
         Self::stage_lanes(
-            &mut self.metadata,
+            &mut self.metadata_upload,
             &self.cursors,
             self.width,
             self.external_hidden,
-            graph,
             lanes,
             capacity,
             vocabulary,
         )?;
+        device.copy_host_slice(&mut self.metadata_owner, &self.metadata_upload)?;
         let vocabulary = self.logits.size() / self.width;
         let mut sources = Vec::with_capacity(2 * lanes.len());
         for &(slot, ..) in lanes {
@@ -2058,15 +2096,15 @@ impl SlotDecodeGraph {
             .as_ref()
             .ok_or_else(|| Error::invalid("state-only draft graph"))?;
         Self::stage_lanes(
-            &mut self.metadata,
+            &mut self.metadata_upload,
             &self.cursors,
             self.width,
             self.external_hidden,
-            graph,
             lanes,
             capacity,
             vocabulary,
         )?;
+        device.copy_host_slice(&mut self.metadata_owner, &self.metadata_upload)?;
         // SAFETY: the engine is single-stream, so this replay is ordered after the staged
         // metadata and uploads and before any later replay; every buffer it touches is
         // pool-owned, and the pool's drop barrier drains the stream before anything frees.
@@ -2158,7 +2196,10 @@ fn gdn_ba_projection(node: &TensorNode, weights: &ProgramWeights) -> bool {
     reason = "Audited metadata lane views: the owner is returned and stored with the rows, \
               each view addresses a disjoint lane, and graphs retain the owner"
 )]
-fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, Vec<Tensor<i32>>)> {
+pub(super) fn batched_metadata(
+    device: &CudaDevice,
+    width: usize,
+) -> Result<(Tensor<i32>, Vec<Tensor<i32>>)> {
     let fields = METADATA_FIELDS;
     let elements = width
         .checked_mul(fields)
@@ -2173,16 +2214,6 @@ fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, V
         rows.push(unsafe { super::arena::row_view(&owner, width, lane)? });
     }
     Ok((owner, rows))
-}
-
-fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> {
-    (0..width)
-        .map(|_| {
-            api::zeros::<i32>(&[METADATA_FIELDS])
-                .sync_on(&device.stream)
-                .map_err(device_error)
-        })
-        .collect()
 }
 
 /// Views of the shared prompt arena and logits row for one program's prompt graphs.

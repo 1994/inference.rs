@@ -1062,7 +1062,8 @@ impl Sequence {
             offset += count;
         }
         if device_primed && let Some(spec) = self.speculation.as_mut() {
-            spec.last_hidden = spec.program.primed_hidden()?;
+            spec.last_hidden =
+                super::profiling::phase("prime_readback", || spec.program.primed_hidden())?;
         }
         if !matches!(task.tokens, ExecutionInput::Decode { .. }) {
             self.prime_draft(&priming)?;

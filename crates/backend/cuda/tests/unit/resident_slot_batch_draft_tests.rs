@@ -289,3 +289,91 @@ fn check_state_only(
     }
     Ok(())
 }
+
+/// Non-identity block tables must scatter a private prefix, isolate live slots, and
+/// overwrite a released slot's old data before its blocks serve another request.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn paged_kv_scatter_survives_exhaustion_and_block_reuse() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (graph, mut weights) = fixture(&device)?;
+    weights.fusion = None;
+    weights.kv_scales.insert(TensorId::new(4)?, [0.01, 0.02]);
+    let mut pool = SlotPool::new(&device, &graph, &weights, 3, 96, 32, (32, 0), Some(160))?;
+    let mut references = (0..3)
+        .map(|_| DeviceProgram::new(&device, &graph, &weights, 96, 32, 32))
+        .collect::<Result<Vec<_>>>()?;
+    for (slot, count) in [(0, 33), (1, 65)] {
+        assert!(pool.take_slot(slot));
+        assert!(pool.assign(slot, count + 1, &device)?);
+        for position in 0..count {
+            references[slot].step(
+                u32::try_from((position + slot * 7) % 32).unwrap(),
+                position,
+                position,
+                None,
+                false,
+            )?;
+        }
+        pool.bind(
+            slot,
+            references[slot].states(),
+            references[slot].fp8_states(),
+            count,
+            &device,
+        )?;
+    }
+    assert!(pool.take_slot(2));
+    assert!(!pool.assign(2, 1, &device)?);
+    assert!(pool.assign(0, pool.capacity() + 1, &device).is_err());
+    let table = device.read_borrowed(&pool.tables[0])?;
+    assert_ne!(&table[..2], &[0, 1]);
+    for active in [vec![1, 0], vec![0], vec![1]] {
+        let lanes: Vec<_> = active
+            .iter()
+            .map(|&slot| {
+                let position = references[slot].position();
+                (
+                    slot,
+                    u32::try_from((position + slot * 7) % 32).unwrap(),
+                    position,
+                    position,
+                )
+            })
+            .collect();
+        let actual = pool.run_lanes(&device, &lanes)?;
+        for ((&slot, &(.., token, position, _)), actual) in active.iter().zip(&lanes).zip(&actual) {
+            let expected = references[slot].step(token, position, position, None, true)?;
+            close(actual, &(Vec::new(), expected.1));
+        }
+    }
+    pool.release(0);
+    assert!(pool.assign(2, 34, &device)?);
+    for position in 0..33 {
+        references[2].step(
+            u32::try_from((position * 3 + 5) % 32).unwrap(),
+            position,
+            position,
+            None,
+            false,
+        )?;
+    }
+    pool.bind(
+        2,
+        references[2].states(),
+        references[2].fp8_states(),
+        33,
+        &device,
+    )?;
+    let actual = pool.run_lanes(&device, &[(2, 17, 33, 33), (1, 19, 67, 67)])?;
+    let expected = references[2].step(17, 33, 33, None, true)?;
+    close(&actual[0], &(Vec::new(), expected.1));
+    let expected = references[1].step(19, 67, 67, None, true)?;
+    close(&actual[1], &(Vec::new(), expected.1));
+    pool.release(1);
+    pool.release(2);
+    assert_eq!(pool.paging.as_ref().unwrap().free.len(), 5);
+    assert_eq!(pool.free_slots(), 3);
+    Ok(())
+}

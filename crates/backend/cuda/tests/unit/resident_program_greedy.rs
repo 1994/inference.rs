@@ -1,3 +1,4 @@
+use super::super::ProgramGeometry;
 use super::*;
 use crate::resident::BatchOutput;
 use crate::resident::PromptScratchRegistry;
@@ -295,5 +296,101 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
             "position={position}"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+#[expect(
+    unsafe_code,
+    reason = "Slot views stay inside their owning pool lifetime; all replays use its single leased slot"
+)]
+fn slot_program_external_rows_follow_captured_geometry() -> Result<()> {
+    use crate::resident::slot_batch::SlotPool;
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let width = 48;
+    let graph = fixture_graph(width)?;
+    let mut weights = fixture_weights(&device, width)?;
+    let mut reference = DeviceProgram::new(&device, &graph, &weights, 64, width, width)?;
+    weights.prefill_width = 2048;
+    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, width, (width, 0), None)?;
+    assert!(pool.take_slot(0));
+    // SAFETY: the program drops before the pool and only this test replays slot zero.
+    let views = unsafe { pool.slot_views(0)? };
+    let mut home =
+        DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
+    assert_eq!(home.lane_external_owner.size(), width);
+    assert_eq!(home.lane_external.len(), 1);
+    assert_eq!(home.lane_fusion.len(), 1);
+    let previous = vec![0.125; width];
+    let expected = reference.step_greedy(7, 0, 0, Some(&previous))?;
+    let actual = home.step_greedy(7, 0, 0, Some(&previous))?;
+    assert_eq!(actual, expected);
+    let expected = device.read(&reference.logits)?;
+    let actual = device.read(&home.logits)?;
+    assert_eq!(
+        actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+#[expect(
+    unsafe_code,
+    reason = "The state handle drops before its pool; the slot is leased exclusively by this test"
+)]
+fn slot_target_handle_runs_only_through_the_pool() -> Result<()> {
+    use crate::resident::slot_batch::SlotPool;
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let width = 48;
+    let graph = fixture_graph(width)?;
+    let mut weights = fixture_weights(&device, width)?;
+    weights.fusion = None;
+    let mut reference = DeviceProgram::new(&device, &graph, &weights, 64, width, width)?;
+    weights.prefill_width = 2048;
+    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, width, (width, 0), None)?;
+    assert!(pool.take_slot(0));
+    // SAFETY: the handle drops before its pool and only this test owns the slot.
+    let views = unsafe { pool.slot_views(0)? };
+    let mut home =
+        DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
+    assert!(!home.forward_captured);
+    assert!(home.step(7, 0, 0, None, true).is_err());
+    home.reset()?;
+    let expected = reference.step(7, 0, 0, None, true)?;
+    let actual = pool.run_lanes(&device, &[(0, 7, 0, 0)])?;
+    assert_eq!(
+        actual[0].1.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        expected.1.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// A shared worker can capture fewer prompt rows than the model's global preference.
+/// Every delegated scratch must be prepared before capture at that actual geometry.
+#[test]
+#[ignore = "requires CUDA hardware and cuBLAS; run under safe-run"]
+fn delegated_worker_prewarms_its_actual_prompt_geometry() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 2048;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.prefill_width = 2048;
+    let geometry = ProgramGeometry::from_flags(0, 512, 0, false, true);
+    let program = DeviceProgram::new_impl(
+        &device,
+        &graph,
+        &weights,
+        (1024, hidden, hidden),
+        geometry,
+        None,
+    )?;
+    assert!(program.delegated.is_enabled());
+    assert_eq!(program.prefill_width(), 512);
     Ok(())
 }

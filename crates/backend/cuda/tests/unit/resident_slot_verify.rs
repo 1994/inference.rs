@@ -117,7 +117,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
 #[test]
 #[ignore = "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh"]
 fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
-    for (width, verify) in [(2, 2), (2, 3), (3, 3), (4, 3), (2, 5)] {
+    for (width, verify) in [(2, 2), (2, 3), (3, 3), (4, 3), (8, 3), (16, 3), (2, 5)] {
         check_pool_width(width, verify, 32)?;
     }
     // Long-capacity pooled split-KV must match unsplit private graphs, including inactive lanes.
@@ -160,8 +160,8 @@ fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> 
             tokens.truncate(verify);
             *accepted = (*accepted).min(tokens.len() - 1);
         }
-        if width == 4 {
-            plans.push((3, vec![25, 26, 27], 1));
+        if width >= 4 {
+            plans.push((width - 1, vec![25, 26, 27], 1));
         }
         let mut lanes = Vec::new();
         let mut expected = Vec::new();

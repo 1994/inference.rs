@@ -8,6 +8,7 @@ use super::{
     program::ProgramWeights,
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
+use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::F32_BYTES;
 use crate::constants::KV_BLOCK_TOKENS;
 use crate::constants::MAX_VERIFICATION_WIDTH;
@@ -227,7 +228,7 @@ impl SlotPool {
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
         let capacity = super::capacity::padded(capacity)?;
-        if !(2..=MAX_VERIFICATION_WIDTH).contains(&width)
+        if !(2..=CB_DECODE_SLOTS).contains(&width)
             || capacity == 0
             || hidden == 0
             || vocabulary == 0

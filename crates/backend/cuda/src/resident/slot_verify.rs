@@ -40,7 +40,8 @@ pub(super) struct SlotVerifyGraph {
     fused: bool,
     readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
-    metadata: Vec<Tensor<i32>>,
+    metadata_owner: Tensor<i32>,
+    metadata_upload: Vec<i32>,
     hidden: Arc<Tensor<f32>>,
     logits: Arc<Tensor<f32>>,
     /// Slot state sets the graph interleaves.
@@ -390,14 +391,7 @@ impl BatchBuilder<'_> {
             lanes,
             usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
         )?;
-        let mut metadata = Vec::with_capacity(lanes);
-        for _ in 0..lanes {
-            metadata.push(
-                api::zeros::<i32>(&[METADATA_FIELDS])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            );
-        }
+        let (metadata_owner, metadata) = super::batch::batched_metadata(self.device, lanes)?;
         let mut profile = profile::SlotProfile::from_env(self.device);
         let mut staging = if fused {
             super::slot_recurrent::allocate_staging(self.device, &self.graph.nodes, &arena, slots)?
@@ -432,7 +426,8 @@ impl BatchBuilder<'_> {
             restore,
             fused,
             readbacks: Readbacks::default(),
-            metadata,
+            metadata_owner,
+            metadata_upload: Vec::with_capacity(lanes * METADATA_FIELDS),
             hidden,
             logits,
             slots,
@@ -467,8 +462,9 @@ impl SlotVerifyGraph {
         }
         let per_lane = verify_lanes(lanes, &self.cursors, self.verify, capacity, vocabulary)?;
         let total = self.slots * self.verify;
-        for (lane, metadata) in self.metadata.iter_mut().enumerate() {
-            let values = match per_lane[lane] {
+        self.metadata_upload.clear();
+        for entry in per_lane.iter().take(total) {
+            let values = match *entry {
                 Some((token, rope_pos, state_pos)) => [
                     i32::try_from(rope_pos).map_err(device_error)?,
                     i32::try_from(token).map_err(device_error)?,
@@ -477,8 +473,9 @@ impl SlotVerifyGraph {
                 ],
                 None => [0, 0, INACTIVE_LANE_STATE_POSITION, 0],
             };
-            super::metadata::update(&self.graph, metadata, values)?;
+            self.metadata_upload.extend_from_slice(&values);
         }
+        device.copy_host_slice(&mut self.metadata_owner, &self.metadata_upload)?;
         let hidden_size = self.hidden.size() / total;
         let vocabulary = self.logits.size() / total;
         let mut sources = Vec::with_capacity(2 * total);
