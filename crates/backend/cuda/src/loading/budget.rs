@@ -40,6 +40,9 @@ const READBACK_COPIES: u64 = 2;
 /// Private/shared verification crossed with full/other readout.
 const PRICE_GEOMETRIES: usize = 4;
 
+/// Conservative control words per pooled lane, covering metadata and token readout.
+const POOLED_CONTROL_WORDS: usize = 16;
+
 /// Exact storage price for one immutable program geometry.
 #[derive(Clone, Copy, Default)]
 struct SequencePrice {
@@ -405,7 +408,7 @@ fn pool_storage_bytes(
         };
     bytes = add(bytes, mul(mul(hidden as u64, external_rows)?, F32)?)?;
     // A block table per slot, plus scalar and per-lane control words.
-    let controls = width * capacity.div_ceil(KV_BLOCK_TOKENS) + (1 + lanes) * 16;
+    let controls = width * capacity.div_ceil(KV_BLOCK_TOKENS) + (1 + lanes) * POOLED_CONTROL_WORDS;
     bytes = add(bytes, mul(controls as u64, F32)?)?;
     Ok(bytes)
 }
