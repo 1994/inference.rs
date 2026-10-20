@@ -482,10 +482,16 @@ impl CudaBackend {
         ) {
             // A failed replay poisons the participating sequences, never the pool.
             for &(index, slot) in &participants {
-                if let Some(state) = self.states.get_mut(&tasks[index].state) {
-                    state.poisoned = true;
-                    state.slot = None;
+                let Some(state) = self.states.get_mut(&tasks[index].state) else {
+                    continue;
+                };
+                state.poisoned = true;
+                // A home slot stays leased to its sequence until that sequence is released;
+                // returning it here would let another request bind the same storage.
+                if state.home == Some(slot) {
+                    continue;
                 }
+                state.slot = None;
                 pool.release(slot);
             }
             return Err(error);
@@ -512,7 +518,8 @@ impl CudaBackend {
                 "slot-leased CUDA sequence cannot run serially",
             ));
         }
-        if state.speculation.is_some()
+        if state.home.is_none()
+            && state.speculation.is_some()
             && (matches!(task.tokens, ExecutionInput::Decode { .. })
                 || state.program.prefill_width() < PREFILL_LANES)
         {

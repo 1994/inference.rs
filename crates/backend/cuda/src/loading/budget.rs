@@ -312,6 +312,41 @@ fn prompt_scratch_bytes(
             recurrent_prefill_required_bytes(graph, weights, width)?,
         )?;
         bytes = add(bytes, required_bytes(weights, width, profile))?;
+        bytes = add(bytes, prompt_partials_bytes(graph, weights, width)?)?;
+    }
+    Ok(bytes)
+}
+
+/// Split-K partial rows for every FP4 prompt projection at `width`, allocated once by the
+/// shared prompt scratch and reused by every sequence.
+fn prompt_partials_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    width: usize,
+) -> Result<u64> {
+    let sizes = graph
+        .tensors
+        .iter()
+        .map(|tensor| Ok((tensor.id, tensor.elements()? as u64)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut partials = BTreeSet::new();
+    let mut bytes = 0;
+    for node in &graph.nodes {
+        if node.op != TensorOp::Linear
+            || weights.input_scales.contains_key(&node.inputs[1])
+            || !matches!(
+                weights.projections.get(&node.inputs[1]),
+                Some(ProjectionWeight::Fp4(..))
+            )
+        {
+            continue;
+        }
+        let rows = *sizes
+            .get(&node.outputs[0])
+            .ok_or_else(|| Error::invalid("prefill linear output"))?;
+        if partials.insert(rows) {
+            bytes = add(bytes, mul(rows, (PREFILL_SPLIT_K * width) as u64 * F32)?)?;
+        }
     }
     Ok(bytes)
 }
