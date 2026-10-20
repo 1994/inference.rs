@@ -2,6 +2,7 @@
 use super::{backend, commands};
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -129,7 +130,7 @@ mod tests;
 
 /// Whether `--limit-mm-per-prompt` limits every modality to zero items.
 fn parse_text_only(value: &str) -> Result<bool, String> {
-    let limits: std::collections::BTreeMap<String, u64> =
+    let limits: BTreeMap<String, u64> =
         serde_json::from_str(value).map_err(|error| format!("modality limits: {error}"))?;
     Ok(!limits.is_empty() && limits.values().all(|&limit| limit == 0))
 }
