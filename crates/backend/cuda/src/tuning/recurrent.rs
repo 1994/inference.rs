@@ -8,6 +8,8 @@ use super::{
 };
 use crate::device::{CudaDevice, device_error};
 use capture::{Captured, fingerprint};
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::{
     bench::{BenchOptions, do_bench_paired},
     prelude::*,
@@ -15,6 +17,7 @@ use cutile::{
 use infer_core::{Error, Result};
 use reference::Fixture;
 use serde::{Deserialize, Serialize};
+use std::fs::read_to_string;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -150,7 +153,7 @@ fn resolve(
     autotune: bool,
     session: &ResidentTuningSession,
 ) -> Result<usize> {
-    let driver_build = std::fs::read_to_string("/proc/driver/nvidia/version")
+    let driver_build = read_to_string("/proc/driver/nvidia/version")
         .ok()
         .and_then(|s| {
             s.lines()
@@ -237,7 +240,7 @@ fn measure(
         x.graph
             .launch()
             .sync_on(&device.stream)
-            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+            .map_err(|e| tensor_error(&e.to_string()))
     };
     let (a, b) = do_bench_paired(&device.stream, &options, |_| run(left), |_| run(right))
         .map_err(device_error)?;
@@ -282,7 +285,7 @@ fn trial(
     })
 }
 fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Result<Option<Entry>> {
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if cfg!(debug_assertions)
         || compile.device_debug
         || compile.opt_level.is_some_and(|x| x != CUDA_OPT_LEVEL)

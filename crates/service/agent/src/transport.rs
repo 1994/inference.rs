@@ -1,6 +1,10 @@
+use crate::constants::INITIAL_FRAME_CAPACITY;
+use crate::constants::JSONRPC_PARSE_ERROR;
+use crate::constants::JSONRPC_SERVER_ERROR;
 use crate::{AgentBackend, AgentService, protocol::RpcError, protocol::error_response};
 use infer_core::{Error, ErrorCode, Result};
 use serde_json::Value;
+use std::io::Error as IoError;
 use std::{io::BufRead, io::Write};
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -13,7 +17,7 @@ pub fn serve<B: AgentBackend>(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<()> {
-    let mut frame = Vec::with_capacity(crate::constants::INITIAL_FRAME_CAPACITY);
+    let mut frame = Vec::with_capacity(INITIAL_FRAME_CAPACITY);
     loop {
         frame.clear();
         let mut oversized = false;
@@ -41,17 +45,14 @@ pub fn serve<B: AgentBackend>(
         let response = if oversized {
             Some(error_response(
                 Value::Null,
-                &RpcError::new(
-                    crate::constants::JSONRPC_SERVER_ERROR,
-                    "agent frame exceeds 1 MiB",
-                ),
+                &RpcError::new(JSONRPC_SERVER_ERROR, "agent frame exceeds 1 MiB"),
             ))
         } else {
             match serde_json::from_slice(&frame) {
                 Ok(value) => service.handle(value),
                 Err(error) => Some(error_response(
                     Value::Null,
-                    &RpcError::new(crate::constants::JSONRPC_PARSE_ERROR, error.to_string()),
+                    &RpcError::new(JSONRPC_PARSE_ERROR, error.to_string()),
                 )),
             }
         };
@@ -64,6 +65,6 @@ pub fn serve<B: AgentBackend>(
     }
 }
 
-fn io_error(error: &std::io::Error) -> Error {
+fn io_error(error: &IoError) -> Error {
     Error::new(ErrorCode::Backend, error.to_string())
 }

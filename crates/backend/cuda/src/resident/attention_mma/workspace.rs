@@ -11,6 +11,7 @@ use cutile::{
 };
 use infer_core::Result;
 use infer_ir::{DataflowGraph, TensorOp};
+use std::result::Result as StdResult;
 
 pub struct Workspace {
     pub support: Support,
@@ -54,7 +55,7 @@ impl<T: DType> Buffers<T> {
             used + size_of::<i32>() as u64,
         ]
     }
-    fn retain(&mut self, ctx: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    fn retain(&mut self, ctx: &ExecutionContext) -> StdResult<(), DeviceError> {
         for tensor in [
             &mut self.query,
             &mut self.keys,
@@ -89,10 +90,7 @@ impl Scratch {
             Self::F16(buffers) => buffers.pointers(),
         }
     }
-    pub(super) fn retain(
-        &mut self,
-        ctx: &ExecutionContext,
-    ) -> std::result::Result<(), DeviceError> {
+    pub(super) fn retain(&mut self, ctx: &ExecutionContext) -> StdResult<(), DeviceError> {
         match self {
             Self::Bf16(buffers) => buffers.retain(ctx),
             Self::F16(buffers) => buffers.retain(ctx),

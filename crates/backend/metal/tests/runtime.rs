@@ -7,6 +7,8 @@ use infer_models::ModelPackage;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::BackendProvider;
 use infer_workloads::ProjectionWorkloads;
+use std::fs::read;
+use std::thread::sleep;
 use std::{path::Path, path::PathBuf, time::Duration, time::Instant};
 
 fn root() -> PathBuf {
@@ -55,7 +57,7 @@ fn drain(engine: &mut Engine<MetalBackend>, start: u64) {
         engine.tick(now).unwrap();
         engine.drain_events();
         assert!(Instant::now() < deadline, "Metal runtime progress timeout");
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     }
     panic!("Metal tick limit");
 }
@@ -65,7 +67,7 @@ fn metal_generation_prefix_and_physical_checkpoint_preserve_official_trajectory(
         return;
     }
     let golden: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root().join("golden.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read(root().join("golden.json")).unwrap()).unwrap();
     for chunk in [1, 3, 64] {
         let (mut engine, _) = load(
             MetalConfig {
@@ -112,7 +114,7 @@ fn metal_generation_prefix_and_physical_checkpoint_preserve_official_trajectory(
         if let Some(snapshot) = snapshot {
             break snapshot;
         }
-        std::thread::sleep(Duration::from_micros(100));
+        sleep(Duration::from_micros(100));
     };
     let mut changed = snapshot.clone();
     changed.backend_identity = "host-incorrect-target".into();
@@ -151,10 +153,9 @@ fn metal_projection_readouts_match_independent_torch_for_four_workloads() {
         return;
     }
     let golden: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root().join("readout-golden.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&read(root().join("readout-golden.json")).unwrap()).unwrap();
     let input: Vec<CanonicalRequest> =
-        serde_json::from_slice(&std::fs::read(root().join("../requests.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read(root().join("../requests.json")).unwrap()).unwrap();
     for chunk in [1, 64] {
         let (engine, _) = load(
             MetalConfig::default(),
@@ -385,7 +386,7 @@ fn metal_completion_ticket_cannot_cross_executor_instances_with_same_step_id() {
     for (backend, ticket) in [(a, &mut ta), (b, &mut tb)] {
         while backend.poll(ticket).unwrap().is_none() {
             assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
+            sleep(Duration::from_millis(1));
         }
         backend.release_state(state).unwrap();
         assert_eq!(backend.inspect().allocated_bytes, 0);

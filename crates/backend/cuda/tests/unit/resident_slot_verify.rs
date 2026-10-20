@@ -1,12 +1,15 @@
 use super::*;
+use crate::tuning::resident_gemm::ResidentTuningSession;
 use crate::{
     mlp::ProjectionWeight,
-    resident::{DeviceProgram, ProgramWeights, slot_batch::SlotPool},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry, slot_batch::SlotPool},
 };
 use cutile::half::bf16;
+use cutile::jit_cache::enable_default;
 use infer_core::{OpId, TensorId};
 use infer_ir::{DType, DataflowGraph, TensorNode, TensorSpec};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let mut graph = DataflowGraph::default();
@@ -88,9 +91,9 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
     let embedding = device.upload(dense, &[32, 32])?;
     let weights = ProgramWeights {
         mrope: false,
-        prompt_scratch: crate::resident::PromptScratchRegistry::default(),
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
-        resident_tuning: Arc::new(crate::tuning::resident_gemm::ResidentTuningSession::default()),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 3,
@@ -100,7 +103,7 @@ fn fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         embeddings: BTreeMap::from([(TensorId::ONE, Arc::clone(&embedding))]),
-        fp8_inputs: std::collections::BTreeSet::new(),
+        fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::from([(TensorId::new(6)?, ProjectionWeight::Dense(embedding))]),
         expert_banks: BTreeMap::new(),
@@ -123,7 +126,7 @@ fn pooled_verify_preserves_independent_prefixes_and_reuse() -> Result<()> {
 }
 
 fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> {
-    cutile::jit_cache::enable_default().map_err(device_error)?;
+    enable_default().map_err(device_error)?;
     let device = CudaDevice::new(0)?;
     let (graph, mut weights) = fixture(&device)?;
     weights.batch_width = verify;

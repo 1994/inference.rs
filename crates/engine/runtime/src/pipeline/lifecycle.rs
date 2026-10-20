@@ -8,6 +8,7 @@ use infer_ir::WorkloadOutput;
 use infer_observe::DiagnosticCode;
 use infer_quality::RequestMeasurement;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::take;
 
 impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     /// # Errors
@@ -65,7 +66,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     }
 
     pub(crate) fn expire_requests(&mut self, emitted: &mut Vec<EngineOutput>) -> Result<()> {
-        let mut ids = std::mem::take(&mut self.host.expiry_buffer);
+        let mut ids = take(&mut self.host.expiry_buffer);
         self.host
             .queues
             .expired_into(self.now_us, self.config.cpu.maintenance_items, &mut ids);

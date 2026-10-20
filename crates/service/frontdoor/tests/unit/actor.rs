@@ -1,10 +1,15 @@
 #[path = "../../../../engine/runtime/tests/support/mod.rs"]
 mod support;
+use crate::cpu::CpuConfig;
 use infer_core::{ErrorCode, ModelId};
 use infer_ir::PrecisionPlan;
 use infer_kernel_api::KernelRegistry;
 use infer_runtime::RuntimeConfig;
+use std::collections::BTreeSet;
+use std::thread::spawn;
 use std::time::Duration;
+use tokio::time::sleep;
+use tokio::time::timeout;
 
 use super::*;
 
@@ -14,13 +19,13 @@ async fn automatic_request_ids_are_shared_concurrent_and_never_wrap() -> Result<
     let mut workers = Vec::new();
     for _ in 0..8 {
         let handle = handle.clone();
-        workers.push(std::thread::spawn(move || {
+        workers.push(spawn(move || {
             (0..32)
                 .map(|_| handle.allocate_request_id())
                 .collect::<Result<Vec<_>>>()
         }));
     }
-    let mut ids = std::collections::BTreeSet::new();
+    let mut ids = BTreeSet::new();
     for worker in workers {
         for id in worker.join().unwrap()? {
             assert!(ids.insert(id));
@@ -52,7 +57,7 @@ fn handle() -> Result<RuntimeHandle> {
             &registry,
             RuntimeConfig::default(),
         )?,
-        crate::cpu::CpuConfig {
+        CpuConfig {
             workers: 1,
             max_jobs: 4,
             ..Default::default()
@@ -80,7 +85,7 @@ async fn blocked_exporter_cannot_block_requests_controls_or_delivery() -> Result
         if handle.observation.inspect().retained_jobs == 2 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(1)).await;
     }
     assert_eq!(handle.observation.inspect().retained_jobs, 2);
     assert!(!query.is_finished());
@@ -97,7 +102,7 @@ async fn blocked_exporter_cannot_block_requests_controls_or_delivery() -> Result
     let request = serde_json::from_value(serde_json::json!({"id":1,"model":1,"input":{"Sequence":{"tokens":[1,2,3]}},"workload":{"Generate":{"max_new_tokens":2}}})).map_err(|e| Error::invalid(e.to_string()))?;
     let mut stream = handle.submit(request).await?;
     loop {
-        let output = tokio::time::timeout(Duration::from_secs(2), stream.recv())
+        let output = timeout(Duration::from_secs(2), stream.recv())
             .await
             .map_err(|e| Error::invariant(e.to_string()))?
             .ok_or_else(|| Error::invariant("output closed before terminal"))??;

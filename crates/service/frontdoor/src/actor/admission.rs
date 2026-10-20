@@ -4,6 +4,7 @@ use infer_core::{Error, ErrorCode, Result};
 use infer_observe::trace::TraceContext;
 use infer_runtime::EngineOutput;
 use infer_spi::BackendProvider;
+use std::mem::take;
 
 impl<B: BackendProvider> RuntimeActor<B> {
     pub(super) fn poll_admissions(&mut self, generated: &mut Vec<EngineOutput>) {
@@ -95,7 +96,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
         Ok(())
     }
     pub(super) fn cancel_closed_streams(&mut self, generated: &mut Vec<EngineOutput>) {
-        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut scratch = take(&mut self.scratch);
         scratch.clear();
         scratch.extend(
             self.subscribers

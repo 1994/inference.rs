@@ -1,6 +1,7 @@
 //! Persistent acknowledgement cells retain credit until both ticket and responder retire.
 use super::{ResourceReply, ResourceResponder, ResourceTicket};
 use infer_core::{Error, ErrorCode, Result};
+use std::result::Result as StdResult;
 use std::{
     sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::AtomicU8,
     sync::atomic::AtomicUsize, sync::atomic::Ordering,
@@ -62,10 +63,7 @@ pub(super) struct Reply {
     published: bool,
 }
 impl Reply {
-    pub fn send(
-        mut self,
-        result: Result<ResourceReply>,
-    ) -> std::result::Result<(), Result<ResourceReply>> {
+    pub fn send(mut self, result: Result<ResourceReply>) -> StdResult<(), Result<ResourceReply>> {
         let Ok(mut value) = self.reader.cell.value.lock() else {
             return Err(result);
         };

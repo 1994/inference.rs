@@ -4,6 +4,12 @@ use crate::support::{configured_engine, read_json};
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::ErrorCode;
 use infer_core::{Error, Result};
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use std::sync::Arc;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use tokio::net::TcpListener;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use tokio::runtime::Runtime;
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Result<()> {
@@ -25,11 +31,11 @@ pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Resul
         .filter(|p| p.join("tokenizer.json").exists())
         .map(|p| infer_models::TextAssets::open(p, engine.model().max_sequence))
         .transpose()?
-        .map(std::sync::Arc::new);
-    tokio::runtime::Runtime::new()
+        .map(Arc::new);
+    Runtime::new()
         .map_err(|e| Error::new(ErrorCode::Backend, e.to_string()))?
         .block_on(async move {
-            let listener = tokio::net::TcpListener::bind(listen)
+            let listener = TcpListener::bind(listen)
                 .await
                 .map_err(|e| Error::new(ErrorCode::Backend, e.to_string()))?;
             let handle = infer_frontdoor::RuntimeHandle::start(engine)?;

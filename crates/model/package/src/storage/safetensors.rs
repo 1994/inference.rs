@@ -1,5 +1,14 @@
+use crate::constants::F32_BYTES;
+use crate::constants::F32_BYTES_U64;
 use infer_core::{Error, ErrorCode, Result};
+use serde::de::Error as DeError;
+use serde::de::MapAccess;
+use serde::de::Visitor as DeVisitor;
 use serde::{Deserialize, Serialize};
+use std::fmt::Formatter;
+use std::fmt::Result as FmtResult;
+use std::io::Error as IoError;
+use std::result::Result as StdResult;
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path, path::PathBuf};
 
 const MAX_HEADER: u64 = 16 * 1024 * 1024;
@@ -212,23 +221,21 @@ impl SafetensorsFile {
         // Deserialize as entries to reject duplicate names instead of silently overwriting.
         struct Entries(BTreeMap<String, serde_json::Value>);
         impl<'de> Deserialize<'de> for Entries {
-            fn deserialize<D: serde::Deserializer<'de>>(
-                d: D,
-            ) -> std::result::Result<Self, D::Error> {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> StdResult<Self, D::Error> {
                 struct Visitor;
-                impl<'de> serde::de::Visitor<'de> for Visitor {
+                impl<'de> DeVisitor<'de> for Visitor {
                     type Value = Entries;
-                    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    fn expecting(&self, f: &mut Formatter<'_>) -> FmtResult {
                         f.write_str("a unique tensor map")
                     }
-                    fn visit_map<M: serde::de::MapAccess<'de>>(
+                    fn visit_map<M: MapAccess<'de>>(
                         self,
                         mut m: M,
-                    ) -> std::result::Result<Entries, M::Error> {
+                    ) -> StdResult<Entries, M::Error> {
                         let mut entries = BTreeMap::new();
                         while let Some((k, v)) = m.next_entry::<String, serde_json::Value>()? {
                             if entries.insert(k, v).is_some() {
-                                return Err(serde::de::Error::custom("duplicate tensor name"));
+                                return Err(DeError::custom("duplicate tensor name"));
                             }
                         }
                         Ok(Entries(entries))
@@ -350,7 +357,7 @@ impl SafetensorsFile {
             )));
         }
         let output_bytes = (count as u64)
-            .checked_mul(crate::constants::F32_BYTES_U64)
+            .checked_mul(F32_BYTES_U64)
             .ok_or_else(|| Error::invalid("read size overflow"))?;
         let input_bytes = (count as u64)
             .checked_mul(header.dtype.bytes())
@@ -371,7 +378,7 @@ impl SafetensorsFile {
         let bytes = self.payload(offset, input_bytes)?;
         let data: Vec<f32> = match header.dtype {
             TensorDtype::F32 => bytes
-                .as_chunks::<{ crate::constants::F32_BYTES }>()
+                .as_chunks::<{ F32_BYTES }>()
                 .0
                 .iter()
                 .map(|b| f32::from_le_bytes(*b))
@@ -400,7 +407,7 @@ impl SafetensorsFile {
     clippy::needless_pass_by_value,
     reason = "Result::map_err transfers its owned I/O error directly into this error adapter"
 )]
-fn io_error(e: std::io::Error) -> Error {
+fn io_error(e: IoError) -> Error {
     Error::invalid(e.to_string())
 }
 fn half_to_f32(bits: u16) -> f32 {
@@ -429,7 +436,7 @@ fn validate_float_bytes(input: &[u8], dtype: TensorDtype) -> Result<()> {
     let valid =
         match dtype {
             TensorDtype::F32 => input
-                .as_chunks::<{ crate::constants::F32_BYTES }>()
+                .as_chunks::<{ F32_BYTES }>()
                 .0
                 .iter()
                 .all(|b| f32::from_le_bytes(*b).is_finite()),
@@ -497,7 +504,7 @@ pub fn write_safetensors(
     for (name, tensor) in tensors {
         tensor.validate()?;
         let bytes = (tensor.data.len() as u64)
-            .checked_mul(crate::constants::F32_BYTES_U64)
+            .checked_mul(F32_BYTES_U64)
             .ok_or_else(|| Error::invalid("tensor export overflow"))?;
         let end = offset
             .checked_add(bytes)

@@ -1,4 +1,6 @@
 use super::*;
+use crate::device::device_error;
+use crate::tuning::attention::SCHEMA as ATTENTION_SCHEMA;
 fn entry() -> Entry {
     let shape = Shape {
         heads: 24,
@@ -54,9 +56,9 @@ fn entry() -> Entry {
 fn bf16_profile_has_its_own_tuning_identity() {
     // The BF16 FA4 choice reuses its independent schema/table section, never the canonical
     // FP8-KV cache. A canonical entry therefore cannot satisfy this profile.
-    assert_ne!(SCHEMA, crate::tuning::attention::SCHEMA);
+    assert_ne!(SCHEMA, ATTENTION_SCHEMA);
     assert!(SCHEMA.contains("fa4-bf16"));
-    assert!(crate::tuning::attention::SCHEMA.contains("prefill-fp8-kv"));
+    assert!(ATTENTION_SCHEMA.contains("prefill-fp8-kv"));
     assert!(catalog::PROFILE.contains("fa4-bf16-qkv"));
     // FP16 has its own schema and artifact identity; a BF16 entry can never satisfy it.
     assert_ne!(attention_mma::f16::SCHEMA, SCHEMA);
@@ -66,7 +68,7 @@ fn bf16_profile_has_its_own_tuning_identity() {
         attention_mma::artifact_identity()
     );
     let mut entry = entry();
-    entry.key.schema = crate::tuning::attention::SCHEMA.into();
+    entry.key.schema = ATTENTION_SCHEMA.into();
     assert!(!entry.valid());
 }
 
@@ -131,7 +133,7 @@ fn hardware_mma_aot_graph_and_tuning() -> Result<()> {
     );
     println!(
         "MMA_ATTENTION_TUNING {}",
-        serde_json::to_string(&entry).map_err(crate::device::device_error)?
+        serde_json::to_string(&entry).map_err(device_error)?
     );
     Ok(())
 }

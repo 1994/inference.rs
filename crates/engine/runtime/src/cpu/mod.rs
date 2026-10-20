@@ -3,8 +3,17 @@ mod history;
 pub mod plans;
 pub mod storage;
 use crate::RuntimeConfig;
+use crate::constants::MAX_POLL_INTERVAL_US;
+use infer_core::event::CpuStage;
+use infer_core::event::EventKind;
+use infer_core::event::ObjectKind;
+use infer_core::event::SemanticEvent;
+use infer_core::placement::PlacementPair;
+use infer_core::placement::PlacementReport;
+use infer_core::placement::ThreadPlacement;
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 /// Default number of maintenance items drained per owner iteration.
 const DEFAULT_MAINTENANCE_ITEMS: usize = 64;
@@ -71,7 +80,7 @@ pub struct CpuRuntimeInspection {
     pub retained_host_bytes: usize,
     pub candidate_capacity: usize,
     pub logical_cpus: usize,
-    pub placement: infer_core::placement::PlacementReport,
+    pub placement: PlacementReport,
     pub prepared_next: bool,
 }
 impl CpuRuntimeConfig {
@@ -105,7 +114,7 @@ impl CpuRuntimeConfig {
             || self.host_bytes == 0
             || self.poll_min_us == 0
             || self.poll_max_us < self.poll_min_us
-            || self.poll_max_us > crate::constants::MAX_POLL_INTERVAL_US
+            || self.poll_max_us > MAX_POLL_INTERVAL_US
         {
             return Err(Error::invalid("invalid CPU owner budgets"));
         }
@@ -179,20 +188,14 @@ impl<B: infer_spi::BackendProvider, P: infer_spi::SchedulingPolicy> crate::Engin
         }
         Ok(())
     }
-    pub(crate) fn cpu_stage(
-        &mut self,
-        stage: infer_core::event::CpuStage,
-        id: u64,
-        start: std::time::Instant,
-        items: usize,
-    ) {
+    pub(crate) fn cpu_stage(&mut self, stage: CpuStage, id: u64, start: Instant, items: usize) {
         if self.replaying {
             return;
         }
-        self.emit_semantic(infer_core::event::SemanticEvent {
+        self.emit_semantic(SemanticEvent {
             timestamp_us: self.now_us,
-            kind: infer_core::event::EventKind::CpuStageTiming,
-            object_kind: infer_core::event::ObjectKind::Program,
+            kind: EventKind::CpuStageTiming,
+            object_kind: ObjectKind::Program,
             reserved: stage as u32,
             object_id: self.program.id.get(),
             correlation_id: id,
@@ -206,9 +209,9 @@ impl<B: infer_spi::BackendProvider, P: infer_spi::SchedulingPolicy> crate::Engin
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OwnerPlacement {
-    pub scheduler: infer_core::placement::ThreadPlacement,
-    pub device: infer_core::placement::ThreadPlacement,
-    pub output: infer_core::placement::ThreadPlacement,
+    pub scheduler: ThreadPlacement,
+    pub device: ThreadPlacement,
+    pub output: ThreadPlacement,
 }
 
 impl OwnerPlacement {
@@ -216,11 +219,11 @@ impl OwnerPlacement {
     /// # Errors
     /// Rejects unknown PCI NUMA locality, unavailable cores/nodes or non-Linux hosts.
     pub fn for_gpu(pci_address: &str) -> Result<Self> {
-        let pair = infer_core::placement::PlacementPair::for_gpu(pci_address)?;
+        let pair = PlacementPair::for_gpu(pci_address)?;
         Ok(Self {
             scheduler: pair.scheduler,
             device: pair.device,
-            output: infer_core::placement::ThreadPlacement::default(),
+            output: ThreadPlacement::default(),
         })
     }
 }

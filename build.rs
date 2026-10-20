@@ -1,8 +1,9 @@
 //! Shared build contract: Cargo build script and standalone packaging planner.
 //! Never recursively invokes Cargo: archive assembly runs after compilation.
+use std::result::Result as StdResult;
 use std::{env, error::Error, fs, path::PathBuf};
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = StdResult<T, Box<dyn Error>>;
 
 struct Plan<'a> {
     target: &'a str,

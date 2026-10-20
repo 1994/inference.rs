@@ -2,13 +2,14 @@
 use super::{Model, decode, mtp::Mtp, options::Options};
 use infer_models::{ChatMessage, ChatOptions, TextAssets};
 use serde_json::{Value, json};
+use std::error::Error;
+use std::fs::read;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-pub fn run(options: &Options) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(options: &Options) -> Result<(), Box<dyn Error>> {
     options.validate()?;
-    let manifest: Value = serde_json::from_slice(&std::fs::read(
-        options.dataset.as_ref().ok_or("dataset required")?,
-    )?)?;
+    let manifest: Value =
+        serde_json::from_slice(&read(options.dataset.as_ref().ok_or("dataset required")?)?)?;
     let records = manifest["samples"].as_array().ok_or("samples required")?;
     if records.is_empty() {
         return Err("empty dataset".into());

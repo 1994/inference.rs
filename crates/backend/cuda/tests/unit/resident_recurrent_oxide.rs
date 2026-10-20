@@ -4,6 +4,7 @@ use super::{
     tests::reference_fixture,
 };
 use crate::device::{CudaDevice, device_error};
+use cutile::error::tensor_error;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
 const KH: usize = 16;
@@ -332,7 +333,7 @@ fn rust_gdn_complete_pipeline_cost() -> Result<()> {
                     graph
                         .launch()
                         .sync_on(&device.stream)
-                        .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                        .map_err(|e| tensor_error(&e.to_string()))
                 };
                 let (a, b) =
                     do_bench_paired(&device.stream, &options, |_| run(left), |_| run(right))

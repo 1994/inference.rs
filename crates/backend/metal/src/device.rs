@@ -8,12 +8,29 @@
     unexpected_cfgs,
     reason = "objc 0.2 selector macros emit a legacy cargo-clippy feature check"
 )]
+use crate::constants::F32_BYTES;
+use crate::constants::F32_BYTES_U64;
+use crate::constants::INPUT_BINDING_COUNT;
+use crate::constants::MAX_DECODE_THREADGROUP;
+use crate::constants::NANOS_PER_SECOND;
+use crate::constants::OUTPUT_BINDING;
+use crate::constants::PAGE_TABLE_BINDING;
+use crate::constants::PARAMS_BINDING;
+use crate::constants::STATE_BINDING;
+use crate::constants::TILED_PREFILL_SIMD_WIDTH;
+use crate::constants::TILED_PREFILL_THREADGROUP;
+use crate::constants::TILED_PREFILL_TILE_COLUMNS;
+use crate::constants::TILED_PREFILL_TILE_ROWS;
+use crate::constants::TOKEN_BINDING;
 use infer_core::{Error, ErrorCode, Result};
 use metal::{
     Buffer, BufferRef, CommandBufferRef, CommandQueue, CompileOptions, ComputePipelineState,
     Device, MTLResourceOptions, MTLSize, objc,
 };
 use std::collections::BTreeMap;
+use std::ptr::copy_nonoverlapping;
+use std::ptr::write_bytes;
+use std::slice::from_raw_parts;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
@@ -55,8 +72,8 @@ pub fn command_timing(command: &CommandBufferRef) -> (u64, u64) {
     // SAFETY: Same retained completed command and documented f64 return type.
     let end: f64 = unsafe { msg_send![command, GPUEndTime] };
     (
-        (start * crate::constants::NANOS_PER_SECOND).max(0.0) as u64,
-        ((end - start) * crate::constants::NANOS_PER_SECOND).max(0.0) as u64,
+        (start * NANOS_PER_SECOND).max(0.0) as u64,
+        ((end - start) * NANOS_PER_SECOND).max(0.0) as u64,
     )
 }
 #[derive(Clone)]
@@ -104,7 +121,7 @@ impl MetalDevice {
         let destination = unsafe { buffer.contents().cast::<u8>().add(offset) };
         // SAFETY: The source slice and checked, retained idle allocation have disjoint ranges.
         unsafe {
-            std::ptr::copy_nonoverlapping(input.as_ptr(), destination, input.len());
+            copy_nonoverlapping(input.as_ptr(), destination, input.len());
         }
         Ok(())
     }
@@ -157,7 +174,7 @@ impl MetalDevice {
     pub fn upload(&self, data: &[f32]) -> Result<Buffer> {
         let bytes = data
             .len()
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal buffer size overflow"))?;
         if bytes == 0 || bytes as u64 > self.device.max_buffer_length() {
             return Err(Error::new(
@@ -174,7 +191,7 @@ impl MetalDevice {
     pub fn upload_indices(&self, data: &[u32]) -> Result<Buffer> {
         let bytes = data
             .len()
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(F32_BYTES)
             .ok_or_else(|| Error::invalid("page table overflow"))?;
         if bytes == 0 || bytes as u64 > self.device.max_buffer_length() {
             return Err(Error::invalid("page table bounds"));
@@ -188,7 +205,7 @@ impl MetalDevice {
     pub fn write_idle(buffer: &BufferRef, offset: usize, values: &[f32]) -> Result<()> {
         if offset
             .checked_add(values.len())
-            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+            .and_then(|n| n.checked_mul(F32_BYTES))
             .is_none_or(|n| n as u64 > buffer.length())
             || values.iter().any(|v| !v.is_finite())
         {
@@ -200,7 +217,7 @@ impl MetalDevice {
         // SAFETY: The retained, idle shared buffer and input slice do not overlap;
         // their complete ranges were checked above.
         unsafe {
-            std::ptr::copy_nonoverlapping(values.as_ptr(), destination, values.len());
+            copy_nonoverlapping(values.as_ptr(), destination, values.len());
         }
         Ok(())
     }
@@ -215,7 +232,7 @@ impl MetalDevice {
         if values
             .len()
             .checked_add(offset)
-            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+            .and_then(|n| n.checked_mul(F32_BYTES))
             .is_none_or(|n| n as u64 > buffer.length())
         {
             return Err(Error::invalid("page table write bounds"));
@@ -223,7 +240,7 @@ impl MetalDevice {
         // SAFETY: The submission owner holds the completion gate; page tables
         // are retained, u32-aligned shared allocations and the bounds are checked.
         unsafe {
-            std::ptr::copy_nonoverlapping(
+            copy_nonoverlapping(
                 values.as_ptr(),
                 buffer.contents().cast::<u32>().wrapping_add(offset),
                 values.len(),
@@ -237,12 +254,12 @@ impl MetalDevice {
             .map_err(|_| Error::invalid("Metal clear exceeds address space"))?;
         // SAFETY: Retained shared storage has no device readers or writers under the owner's fence.
         unsafe {
-            std::ptr::write_bytes(buffer.contents().cast::<u8>(), 0, length);
+            write_bytes(buffer.contents().cast::<u8>(), 0, length);
         }
         Ok(())
     }
     pub fn zeros(&self, n: usize) -> Result<Buffer> {
-        if n.checked_mul(crate::constants::F32_BYTES)
+        if n.checked_mul(F32_BYTES)
             .is_none_or(|bytes| bytes as u64 > self.device.max_buffer_length())
         {
             return Err(Error::new(
@@ -250,12 +267,12 @@ impl MetalDevice {
                 "Metal buffer exceeds device limit",
             ));
         }
-        let buffer = self.allocate_bytes(n.max(1) as u64 * crate::constants::F32_BYTES_U64)?;
+        let buffer = self.allocate_bytes(n.max(1) as u64 * F32_BYTES_U64)?;
         let length = usize::try_from(buffer.length())
             .map_err(|_| Error::invalid("allocation exceeds address space"))?;
         // SAFETY: This unpublished shared allocation is idle, retained, and valid for its full byte length.
         unsafe {
-            std::ptr::write_bytes(buffer.contents().cast::<u8>(), 0, length);
+            write_bytes(buffer.contents().cast::<u8>(), 0, length);
         }
         Ok(buffer)
     }
@@ -266,14 +283,14 @@ impl MetalDevice {
     pub fn read_into_idle(buffer: &BufferRef, offset: usize, output: &mut [f32]) -> Result<()> {
         if offset
             .checked_add(output.len())
-            .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+            .and_then(|n| n.checked_mul(F32_BYTES))
             .is_none_or(|bytes| bytes as u64 > buffer.length())
         {
             return Err(Error::invalid("Metal readback bounds"));
         }
         // SAFETY: Shared Metal storage is retained, F32-aligned and idle under the executor's fence.
         let values = unsafe {
-            std::slice::from_raw_parts(
+            from_raw_parts(
                 buffer.contents().cast::<f32>().wrapping_add(offset),
                 output.len(),
             )
@@ -283,15 +300,14 @@ impl MetalDevice {
     }
     /// Caller holds the executor's completion gate: no GPU writer may be active.
     pub fn read_idle(buffer: &BufferRef, n: usize) -> Result<Vec<f32>> {
-        if n.checked_mul(crate::constants::F32_BYTES)
+        if n.checked_mul(F32_BYTES)
             .is_none_or(|bytes| bytes as u64 > buffer.length())
         {
             return Err(Error::invalid("Metal readback bounds"));
         }
         // SAFETY: Shared Metal allocation is retained, aligned for f32, and the
         // executor calls this only after command completion (or for immutable weights).
-        let values =
-            unsafe { std::slice::from_raw_parts(buffer.contents().cast::<f32>(), n) }.to_vec();
+        let values = unsafe { from_raw_parts(buffer.contents().cast::<f32>(), n) }.to_vec();
         if values.iter().any(|v| !v.is_finite()) {
             return Err(Error::new(ErrorCode::Backend, "non-finite Metal tensor"));
         }
@@ -308,9 +324,9 @@ impl MetalDevice {
         let tiled = name == "linear"
             && params.rows > 1
             && self.pipelines["linear_prefill"].thread_execution_width()
-                == crate::constants::TILED_PREFILL_SIMD_WIDTH
+                == TILED_PREFILL_SIMD_WIDTH
             && self.pipelines["linear_prefill"].max_total_threads_per_threadgroup()
-                >= crate::constants::TILED_PREFILL_THREADGROUP;
+                >= TILED_PREFILL_THREADGROUP;
         let pipeline = &self.pipelines[if tiled { "linear_prefill" } else { name }];
         let threads = if name == "linear" && !tiled {
             threads
@@ -324,7 +340,7 @@ impl MetalDevice {
         };
         let encoder = command.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
-        for index in 0..crate::constants::INPUT_BINDING_COUNT {
+        for index in 0..INPUT_BINDING_COUNT {
             encoder.set_buffer(
                 index as u64,
                 Some(
@@ -337,27 +353,23 @@ impl MetalDevice {
                 0,
             );
         }
-        encoder.set_buffer(crate::constants::STATE_BINDING, Some(bindings.state), 0);
-        encoder.set_buffer(crate::constants::OUTPUT_BINDING, Some(bindings.output), 0);
-        encoder.set_buffer(
-            crate::constants::PAGE_TABLE_BINDING,
-            Some(bindings.page_table),
-            0,
-        );
-        encoder.set_buffer(crate::constants::TOKEN_BINDING, Some(bindings.tokens), 0);
+        encoder.set_buffer(STATE_BINDING, Some(bindings.state), 0);
+        encoder.set_buffer(OUTPUT_BINDING, Some(bindings.output), 0);
+        encoder.set_buffer(PAGE_TABLE_BINDING, Some(bindings.page_table), 0);
+        encoder.set_buffer(TOKEN_BINDING, Some(bindings.tokens), 0);
         encoder.set_bytes(
-            crate::constants::PARAMS_BINDING,
+            PARAMS_BINDING,
             size_of::<Params>() as u64,
             (&raw const params).cast(),
         );
         if tiled {
             encoder.dispatch_thread_groups(
                 MTLSize::new(
-                    u64::from(params.n).div_ceil(crate::constants::TILED_PREFILL_TILE_COLUMNS),
-                    u64::from(params.rows).div_ceil(crate::constants::TILED_PREFILL_TILE_ROWS),
+                    u64::from(params.n).div_ceil(TILED_PREFILL_TILE_COLUMNS),
+                    u64::from(params.rows).div_ceil(TILED_PREFILL_TILE_ROWS),
                     1,
                 ),
-                MTLSize::new(crate::constants::TILED_PREFILL_THREADGROUP, 1, 1),
+                MTLSize::new(TILED_PREFILL_THREADGROUP, 1, 1),
             );
         } else {
             encoder.dispatch_threads(
@@ -365,7 +377,7 @@ impl MetalDevice {
                 MTLSize::new(
                     (threads as u64)
                         .min(pipeline.max_total_threads_per_threadgroup())
-                        .clamp(1, crate::constants::MAX_DECODE_THREADGROUP),
+                        .clamp(1, MAX_DECODE_THREADGROUP),
                     1,
                     1,
                 ),
@@ -392,13 +404,13 @@ impl MetalDevice {
         count: usize,
     ) -> Result<()> {
         let bytes = count
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal copy overflow"))? as u64;
         let offset = offset
-            .checked_mul(crate::constants::F32_BYTES)
+            .checked_mul(F32_BYTES)
             .ok_or_else(|| Error::invalid("Metal copy overflow"))? as u64;
         let source_offset = (source_offset as u64)
-            .checked_mul(crate::constants::F32_BYTES_U64)
+            .checked_mul(F32_BYTES_U64)
             .ok_or_else(|| Error::invalid("copy source overflow"))?;
         if source_offset
             .checked_add(bytes)

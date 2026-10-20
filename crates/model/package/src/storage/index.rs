@@ -2,6 +2,9 @@
 use infer_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::path::Component;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SafetensorsIndex {
@@ -25,9 +28,9 @@ impl SafetensorsIndex {
                 || shard
                     .split('/')
                     .any(|p| p.is_empty() || p == ".." || p == ".")
-                || std::path::Path::new(shard)
+                || Path::new(shard)
                     .components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                    .any(|c| !matches!(c, Component::Normal(_)))
             {
                 return Err(Error::invalid("invalid/escaping weight shard path"));
             }
@@ -86,7 +89,7 @@ impl SafetensorsIndex {
         self.weight_map
             .values()
             .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
+            .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
     }

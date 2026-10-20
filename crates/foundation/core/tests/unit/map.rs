@@ -1,9 +1,10 @@
 use super::*;
+use std::collections::HashMap;
 #[test]
 fn churn_preserves_storage_and_matches_reference() -> Result<()> {
     let mut map = BoundedMap::new(128)?;
     let pointer = map.buckets.as_ptr();
-    let mut reference = std::collections::HashMap::new();
+    let mut reference = HashMap::new();
     let mut seed = 17_u64;
     for step in 0..100_000 {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);

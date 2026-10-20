@@ -1,5 +1,7 @@
 //! One batch may mix incremental prefill/decode/forward for a compatible program.
 use crate::FallbackCosts;
+use crate::constants::PARTS_PER_MILLION;
+use crate::constants::PERCENT;
 use infer_core::{DecisionId, Error, RequestId, Result, StepId};
 use infer_ir::{
     CostEstimate, CostQuery, DeferReason, ExecutionRole, ReadyWork, ResourceSnapshot,
@@ -24,7 +26,7 @@ pub fn validate_scheduler(c: &SchedulerConfig) -> Result<()> {
         || c.fair_quantum_tokens == 0
         || c.fair_quantum_tokens > MAX_FAIR_QUANTUM_TOKENS
         || c.max_wait_us == 0
-        || c.urgent_budget_percent > crate::constants::PERCENT
+        || c.urgent_budget_percent > PERCENT
         || c.max_singleton_gpu_us == 0
         || c.max_planning_probes == 0
         || c.max_planning_probes > MAX_PLANNING_PROBES
@@ -126,11 +128,8 @@ pub fn service_charge(us: u64, weight: u32) -> u64 {
     if weight == 0 {
         return u64::MAX;
     }
-    u64::try_from(
-        (u128::from(us) * u128::from(crate::constants::PARTS_PER_MILLION))
-            .div_ceil(u128::from(weight)),
-    )
-    .unwrap_or(u64::MAX)
+    u64::try_from((u128::from(us) * u128::from(PARTS_PER_MILLION)).div_ceil(u128::from(weight)))
+        .unwrap_or(u64::MAX)
 }
 #[derive(Clone, Copy)]
 struct Priority {
@@ -212,7 +211,7 @@ fn priority(
     let wait = now.saturating_sub(item.last_service_us);
     let slack = slack(item, now);
     let urgent = slack.is_some_and(|s| s <= i64::try_from(r.gpu_budget_us).unwrap_or(i64::MAX))
-        && (u128::from(urgent_used) * u128::from(crate::constants::PERCENT))
+        && (u128::from(urgent_used) * u128::from(PERCENT))
             < u128::from(r.gpu_budget_us) * u128::from(r.scheduler.urgent_budget_percent);
     let (class, reason) = if wait >= r.scheduler.max_wait_us {
         (0, SelectionReason::Aging)

@@ -1,13 +1,16 @@
 use super::*;
 use infer_core::ModelId;
+use std::env::var;
+use std::fs::read;
+use std::path::Path;
 
 const IMAGE: u32 = 248_056;
 
 fn shipped() -> Result<ImportedModel> {
-    let root = std::env::var("INFER_VISION_PACKAGE").unwrap_or_else(|_| {
+    let root = var("INFER_VISION_PACKAGE").unwrap_or_else(|_| {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../../examples/qwen3.8-27b").into()
     });
-    let config = std::fs::read(std::path::Path::new(&root).join("config.json"))
+    let config = read(Path::new(&root).join("config.json"))
         .map_err(|error| Error::invalid(error.to_string()))?;
     let provider = infer_models::default_registry().resolve(&config)?;
     provider.import(ModelId::ONE, &config)

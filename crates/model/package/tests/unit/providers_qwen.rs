@@ -50,24 +50,24 @@ fn qwen3_vl_configuration_imports_with_its_image_encoder() -> Result<()> {
     assert_eq!(imported.model.position.multimodal_sections, [24, 20, 20]);
     assert!(imported.model.position.interleaved);
     assert!((imported.model.position.rope_theta - 5_000_000.0).abs() < f64::EPSILON);
-    let image = crate::prompt::require_encoder(&imported, &Modality::Image)?;
+    let image = require_encoder(&imported, &Modality::Image)?;
     assert_eq!(image.prefix, "model.visual.");
     assert_eq!(image.depth, 24);
     assert_eq!(image.hidden_size, 1024);
     assert_eq!(image.intermediate_size, 4096);
     assert_eq!(image.out_hidden_size, 2048);
     assert_eq!(
-        crate::vision::slots(image)?.len(),
+        slots(image)?.len(),
         12 * image.depth + 9,
         "the vision inventory must follow the declared depth"
     );
-    assert_eq!(
-        crate::prompt::placeholders(&imported, &Modality::Image)?,
-        [151_655]
-    );
+    assert_eq!(placeholders(&imported, &Modality::Image)?, [151_655]);
     Ok(())
 }
 use super::*;
+use crate::prompt::placeholders;
+use crate::prompt::require_encoder;
+use crate::vision::slots;
 #[test]
 fn imports_pinned_qwen38_hybrid_architecture() {
     let imported = QwenProvider

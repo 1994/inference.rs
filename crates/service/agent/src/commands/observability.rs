@@ -1,4 +1,6 @@
 use super::{NoParams, add, object};
+use crate::constants::DEFAULT_EVENT_LIMIT;
+use crate::constants::MAX_EVENT_LIMIT;
 use crate::{AgentBackend, AgentContext, registry::CommandEffect, registry::CommandRegistry};
 use infer_core::{RequestId, Result};
 use serde::Deserialize;
@@ -15,7 +17,7 @@ impl Default for Events {
     fn default() -> Self {
         Self {
             after: 0,
-            limit: crate::constants::DEFAULT_EVENT_LIMIT,
+            limit: DEFAULT_EVENT_LIMIT,
             request_id: None,
         }
     }
@@ -68,7 +70,7 @@ pub(super) fn register<B: AgentBackend>(
         "Query semantic history non-destructively with a cursor and explicit loss",
         CommandEffect::ReadOnly,
         object(
-            json!({"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":crate::constants::MAX_EVENT_LIMIT},"request_id":{"type":"integer","minimum":1}}),
+            json!({"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":MAX_EVENT_LIMIT},"request_id":{"type":"integer","minimum":1}}),
             &[],
         ),
         events,

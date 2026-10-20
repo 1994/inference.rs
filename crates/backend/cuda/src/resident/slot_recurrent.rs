@@ -350,9 +350,12 @@ pub(crate) mod fused {
 use super::{
     ActivationArena, ProgramWeights, batch::States, capture::error, capture_state::value_block,
 };
+use crate::constants::{CONV_KERNEL_SIZE, CONV_KERNEL_TILE, GDN_PROJECTED_INPUTS};
+use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
 use infer_core::TensorId;
 use infer_ir::{TensorNode, TensorOp};
+use std::collections::BTreeMap;
 
 /// Candidate lanes of one slot that the fused kernels cover.
 pub(super) const LANES: usize = 3;
@@ -365,13 +368,13 @@ pub(super) struct SlotLanes<'a> {
 
 /// Per (slot, node index), each commit input's three lane rows, copied out of the arena by the
 /// verify graph: the arena reuses those slots for later nodes before acceptance is known.
-pub(super) type Staging = std::collections::BTreeMap<(usize, usize), Vec<[Tensor<f32>; LANES]>>;
+pub(super) type Staging = BTreeMap<(usize, usize), Vec<[Tensor<f32>; LANES]>>;
 
 /// Activations a covered node's commit re-reads; weights are read in place.
 fn commit_inputs(node: &TensorNode) -> &[TensorId] {
     match node.op {
         TensorOp::Conv { .. } => &node.inputs[..1],
-        _ => &node.inputs[..crate::constants::GDN_PROJECTED_INPUTS],
+        _ => &node.inputs[..GDN_PROJECTED_INPUTS],
     }
 }
 
@@ -379,7 +382,7 @@ fn commit_inputs(node: &TensorNode) -> &[TensorId] {
 /// # Errors
 /// Rejects unbatched activations and failed device allocation.
 pub(super) fn allocate_staging(
-    device: &crate::device::CudaDevice,
+    device: &CudaDevice,
     nodes: &[TensorNode],
     arena: &ActivationArena,
     slots: usize,
@@ -393,7 +396,7 @@ pub(super) fn allocate_staging(
                 let row = || {
                     api::zeros::<f32>(&[size])
                         .sync_on(&device.stream)
-                        .map_err(crate::device::device_error)
+                        .map_err(device_error)
                 };
                 inputs.push([row()?, row()?, row()?]);
             }
@@ -408,7 +411,7 @@ pub(super) const fn covers(node: &TensorNode) -> bool {
     node.outputs.len() == 1
         && node.states.len() == 1
         && match node.op {
-            TensorOp::Conv { kernel, .. } => kernel == crate::constants::CONV_KERNEL_SIZE,
+            TensorOp::Conv { kernel, .. } => kernel == CONV_KERNEL_SIZE,
             TensorOp::Delta {
                 key_heads,
                 value_heads,
@@ -493,8 +496,8 @@ pub(super) fn record_verify(
                 let (mut o0, mut o1, mut o2) = (o0, o1, o2);
                 let x = rows(weights, arena, node.inputs[0], slot)?;
                 let weight = lane_input(weights, arena, node.inputs[1], slot.lanes[0])?;
-                let w = weight.view(&[channels, crate::constants::CONV_KERNEL_SIZE])?;
-                let tile = crate::constants::CONV_KERNEL_TILE;
+                let w = weight.view(&[channels, CONV_KERNEL_SIZE])?;
+                let tile = CONV_KERNEL_TILE;
                 scope.record(fused::conv_verify3(
                     (&mut o0).partition([tile]),
                     (&mut o1).partition([tile]),
@@ -619,7 +622,7 @@ pub(super) fn record_commit(
             let [x] = staged else {
                 return Err(error("convolution staging layout"));
             };
-            let tile = crate::constants::CONV_KERNEL_TILE;
+            let tile = CONV_KERNEL_TILE;
             scope.record(fused::conv_commit3(
                 h0.partition([tile]),
                 h1.partition([tile]),

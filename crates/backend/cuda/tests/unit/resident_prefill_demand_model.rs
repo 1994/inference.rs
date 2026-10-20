@@ -1,13 +1,19 @@
 //! Exact state-effect closure experiment; both programs own the same arenas and graphs.
 use super::quant_reuse_model_tests::{greedy, outputs, program_states, prompt};
 use super::{LoadOptions, LoadedModel};
+use crate::resident::DeviceProgram;
+use crate::tuning::table_path;
 use crate::{
     device::CudaDevice,
     resident::prefill_demand::{StateDemand, with_state_prefill},
 };
+use cutile::cutile_compiler::hints::CompileOptions;
 use infer_core::{Error, ModelId, Result};
 use infer_ir::TensorOp;
 use serde_json::json;
+use std::env::var;
+use std::fs::read;
+use std::time::Instant;
 
 fn report(loaded: &LoadedModel) -> Result<()> {
     let plan = StateDemand::new(&loaded.graph);
@@ -48,11 +54,10 @@ fn report(loaded: &LoadedModel) -> Result<()> {
 #[test]
 #[ignore = "requires CUDA, frozen INFER_TEST_MODEL/TOKENS/table; safe-run; complete F32/FP8 state and vocabulary comparisons"]
 fn checkpoint_state_prefill_demand_preserves_complete_bits() -> Result<()> {
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = prompt()?;
-    let cache_path = crate::tuning::table_path()
-        .ok_or_else(|| Error::invalid("frozen tuning table required"))?;
-    let cache = std::fs::read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let cache_path = table_path().ok_or_else(|| Error::invalid("frozen tuning table required"))?;
+    let cache = read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -117,18 +122,18 @@ fn checkpoint_state_prefill_demand_preserves_complete_bits() -> Result<()> {
     }
     assert_eq!(
         cache,
-        std::fs::read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     Ok(())
 }
 
 fn timed_prompt(
-    program: &mut crate::resident::DeviceProgram,
+    program: &mut DeviceProgram,
     tokens: &[u32],
     width: usize,
     enabled: bool,
 ) -> Result<(f64, Vec<f32>)> {
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let logits = with_state_prefill(enabled, || {
         let mut logits = Vec::new();
         for (chunk, input) in tokens.chunks(width).enumerate() {
@@ -152,15 +157,14 @@ fn checkpoint_state_prefill_demand_paired_cost() -> Result<()> {
     if cfg!(debug_assertions) {
         return Err(Error::invalid("cost requires release"));
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     if compile.device_debug || compile.opt_level.is_some_and(|level| level != 3) {
         return Err(Error::invalid("cost requires CUDA O3"));
     }
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = prompt()?;
-    let cache_path =
-        crate::tuning::table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
-    let cache = std::fs::read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let cache_path = table_path().ok_or_else(|| Error::invalid("frozen table required"))?;
+    let cache = read(&cache_path).map_err(|e| Error::invalid(e.to_string()))?;
     CudaDevice::enable_kernel_cache()?;
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -223,7 +227,7 @@ fn checkpoint_state_prefill_demand_paired_cost() -> Result<()> {
     }
     assert_eq!(
         cache,
-        std::fs::read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
+        read(cache_path).map_err(|e| Error::invalid(e.to_string()))?
     );
     Ok(())
 }

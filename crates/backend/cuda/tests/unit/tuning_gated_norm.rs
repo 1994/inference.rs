@@ -1,5 +1,7 @@
 //! Cache integrity and actual automatic profiling of native gated norms.
 use super::*;
+use crate::device::device_error;
+use std::fs::read;
 #[test]
 #[ignore = "requires CUDA/safe-run and a private frozen tuning table; seeds measured profile"]
 fn gated_norm_profile_preserves_all_other_entries() -> Result<()> {
@@ -7,8 +9,7 @@ fn gated_norm_profile_preserves_all_other_entries() -> Result<()> {
     let path = super::super::table_path()
         .ok_or_else(|| Error::invalid("private tuning table required"))?;
     let before: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).map_err(crate::device::device_error)?)
-            .map_err(crate::device::device_error)?;
+        serde_json::from_slice(&read(&path).map_err(device_error)?).map_err(device_error)?;
     let device = CudaDevice::new(0)?;
     let session = ResidentTuningSession::default();
     for rows in [3072, 12288] {
@@ -21,8 +22,7 @@ fn gated_norm_profile_preserves_all_other_entries() -> Result<()> {
         resolve(&device, shape, true, &session)?;
     }
     let after: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).map_err(crate::device::device_error)?)
-            .map_err(crate::device::device_error)?;
+        serde_json::from_slice(&read(&path).map_err(device_error)?).map_err(device_error)?;
     let before = before
         .as_object()
         .ok_or_else(|| Error::invariant("tuning table object"))?;

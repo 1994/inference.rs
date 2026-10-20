@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 fn shape() -> Shape {
     Shape {
         heads: 24,
@@ -156,7 +157,7 @@ fn hardware_query_sharing_search_and_cached_reuse() -> Result<()> {
             .ok_or_else(|| Error::invalid("attention hardware proof did not complete"))?;
         assert!(entry.valid());
         assert_eq!(entry.selected, selected);
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         for _ in 0..16 {
             assert_eq!(select(&device, shape, false, &session), selected);
         }

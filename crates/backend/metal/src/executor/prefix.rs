@@ -1,5 +1,6 @@
 //! Prefix responsibilities.
 use super::{CachedPrefix, MetalBackend, MetalDevice, Sequence, bytes};
+use crate::constants::F32_BYTES_U64;
 use infer_core::{Error, Result};
 
 impl MetalBackend {
@@ -15,7 +16,7 @@ impl MetalBackend {
                     b,
                     &s.tensors[id],
                     0,
-                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
+                    usize::try_from(b.length() / F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
             }
@@ -66,7 +67,7 @@ impl MetalBackend {
             .iter()
             .map(|(id, b)| {
                 let snapshot = self.gpu.zeros(
-                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
+                    usize::try_from(b.length() / F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
                 MetalDevice::copy(
@@ -74,7 +75,7 @@ impl MetalBackend {
                     b,
                     &snapshot,
                     0,
-                    usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
+                    usize::try_from(b.length() / F32_BYTES_U64)
                         .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
                 )?;
                 Ok((*id, snapshot))

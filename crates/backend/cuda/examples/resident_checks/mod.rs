@@ -5,14 +5,20 @@ mod projection_weights;
 mod quantization;
 mod rounded_projection;
 
+use cutile::half::bf16;
+use cutile::jit_cache::enable_default;
+use infer_backend_cuda::mlp::ProjectionWeight;
+use infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession;
 use infer_backend_cuda::{
     device::CudaDevice,
-    resident::{DeviceProgram, ProgramWeights},
+    resident::{DeviceProgram, ProgramWeights, PromptScratchRegistry},
 };
 use infer_core::{Error, OpId, Result, TensorId};
 use infer_ir::{DType, DataflowGraph, StateKind, TensorNode, TensorOp, TensorSpec, TensorStorage};
 use infer_state::physical::{PagedRows, PhysicalTensor};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 #[expect(
     clippy::cast_precision_loss,
@@ -54,16 +60,14 @@ fn check_projection(
     inputs: Vec<Vec<f32>>,
     size: usize,
     state: Option<(StateKind, Vec<usize>, PhysicalTensor)>,
-    projection: Option<infer_backend_cuda::mlp::ProjectionWeight>,
+    projection: Option<ProjectionWeight>,
 ) -> Result<()> {
     let mut graph = DataflowGraph::default();
     let mut weights = ProgramWeights {
         mrope: false,
-        prompt_scratch: infer_backend_cuda::resident::PromptScratchRegistry::default(),
+        prompt_scratch: PromptScratchRegistry::default(),
         autotune: false,
-        resident_tuning: std::sync::Arc::new(
-            infer_backend_cuda::tuning::resident_gemm::ResidentTuningSession::default(),
-        ),
+        resident_tuning: Arc::new(ResidentTuningSession::default()),
         chunked_recurrent: false,
         batch_width: 3,
         prefill_width: 3,
@@ -72,7 +76,7 @@ fn check_projection(
         kv_scales: BTreeMap::new(),
         tiling: BTreeMap::new(),
         fusion: None,
-        fp8_inputs: std::collections::BTreeSet::new(),
+        fp8_inputs: BTreeSet::new(),
         input_scales: BTreeMap::new(),
         projections: BTreeMap::new(),
         expert_banks: BTreeMap::new(),
@@ -196,7 +200,7 @@ fn add_external(
         .flat_map(|token| {
             values(width, f32::from(token))
                 .into_iter()
-                .map(cutile::half::bf16::from_f32)
+                .map(bf16::from_f32)
         })
         .collect();
     weights
@@ -317,7 +321,7 @@ fn add_rope(device: &CudaDevice, op: &TensorOp, weights: &mut ProgramWeights) ->
 }
 
 pub fn run() -> Result<()> {
-    cutile::jit_cache::enable_default().map_err(|e| Error::invalid(e.to_string()))?;
+    enable_default().map_err(|e| Error::invalid(e.to_string()))?;
     let device = CudaDevice::new(0)?;
     fusion::run(&device)?;
     projections(&device)?;

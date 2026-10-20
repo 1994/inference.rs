@@ -10,6 +10,9 @@ use infer_runtime::{Engine, EngineOutput, RuntimeConfig};
 use infer_spi::WorkloadProvider;
 use infer_workloads::NativeWorkloads;
 use std::{sync::Arc, sync::Mutex, sync::mpsc, time::Duration};
+use tokio::sync::mpsc::Receiver;
+use tokio::time::sleep;
+use tokio::time::timeout;
 
 #[derive(Clone)]
 struct ProjectionGate {
@@ -61,11 +64,9 @@ fn request(id: u64, embed: bool) -> Result<CanonicalRequest> {
     };
     serde_json::from_value(serde_json::json!({"id":id,"model":1,"input":{"Sequence":{"tokens":[1,2,3]}},"workload":workload,"sampling":{"temperature":0.7,"top_k":3,"seed":7,"eos_token":null}})).map_err(|e| Error::invalid(e.to_string()))
 }
-async fn terminal(
-    stream: &mut tokio::sync::mpsc::Receiver<Result<EngineOutput>>,
-) -> Result<FinishReason> {
+async fn terminal(stream: &mut Receiver<Result<EngineOutput>>) -> Result<FinishReason> {
     loop {
-        let event = tokio::time::timeout(Duration::from_secs(3), stream.recv())
+        let event = timeout(Duration::from_secs(3), stream.recv())
             .await
             .map_err(|e| Error::invariant(e.to_string()))?
             .ok_or_else(|| Error::invariant("stream closed before terminal"))??;
@@ -110,10 +111,10 @@ async fn stalled_projection_does_not_block_sampling_control_or_terminal_delivery
                 started = true;
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            sleep(Duration::from_millis(1)).await;
         }
         assert!(started);
-        let inspection = tokio::time::timeout(Duration::from_millis(25), handle.inspect())
+        let inspection = timeout(Duration::from_millis(25), handle.inspect())
             .await
             .map_err(|e| Error::invariant(e.to_string()))??;
         assert_eq!(inspection.output_waiters, 1);

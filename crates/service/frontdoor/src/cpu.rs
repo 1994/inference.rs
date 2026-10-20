@@ -1,11 +1,17 @@
 //! Fixed CPU workers with admission bytes, queue bounds and cancellable asynchronous replies.
+use infer_core::placement::ThreadPlacement;
 use infer_core::{Error, ErrorCode, Result};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
+use std::thread::available_parallelism;
 use std::{
     sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::AtomicUsize,
     sync::atomic::Ordering, sync::mpsc, time::Duration, time::Instant,
 };
 use tokio::sync::oneshot;
+use tokio::time::timeout as time_timeout;
 
 /// CPU threads reserved for non-inference work when sizing the default worker pool.
 const DEFAULT_WORKER_RESERVE: usize = 7;
@@ -25,7 +31,7 @@ const MAX_WORKERS: usize = 256;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CpuConfig {
-    pub placement: infer_core::placement::ThreadPlacement,
+    pub placement: ThreadPlacement,
     pub workers: usize,
     pub max_jobs: usize,
     pub max_bytes: usize,
@@ -35,12 +41,12 @@ pub struct CpuConfig {
 }
 impl Default for CpuConfig {
     fn default() -> Self {
-        let workers = std::thread::available_parallelism()
-            .map_or(2, std::num::NonZeroUsize::get)
+        let workers = available_parallelism()
+            .map_or(2, NonZeroUsize::get)
             .saturating_sub(DEFAULT_WORKER_RESERVE)
             .clamp(1, MAX_DEFAULT_WORKERS);
         Self {
-            placement: infer_core::placement::ThreadPlacement::default(),
+            placement: ThreadPlacement::default(),
             workers,
             max_jobs: workers * 2,
             max_bytes: DEFAULT_MAX_STAGING_BYTES,
@@ -177,7 +183,7 @@ impl CpuPool {
             budget.peak.fetch_max(active, Ordering::Relaxed);
             let _active = Active(budget.clone());
             // A bad CPU provider fails its reply without destroying the fixed worker pool.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+            let _ = catch_unwind(AssertUnwindSafe(job));
         }
     }
     pub(super) fn reserve(&self, bytes: usize) -> Result<Credit> {
@@ -255,7 +261,7 @@ impl CpuPool {
                 let _ = reply.send(result);
             }))
             .map_err(|_| Error::new(ErrorCode::Capacity, "CPU queue unavailable"))?;
-        tokio::time::timeout(timeout, response)
+        time_timeout(timeout, response)
             .await
             .map_err(|_| Error::new(ErrorCode::Capacity, "CPU preparation deadline exceeded"))?
             .map_err(|_| Error::new(ErrorCode::Backend, "CPU preparation worker failed"))?

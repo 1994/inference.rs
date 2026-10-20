@@ -2,6 +2,7 @@
 //! not just a reusable device address; page tables expose the index to kernels.
 use infer_core::{Error, ErrorCode, OwnerId, Result, new_owner_id};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -227,7 +228,7 @@ impl BlockPool {
     pub fn check_owners<'a>(&self, owners: impl Iterator<Item = &'a [BlockLease]>) -> Result<()> {
         let mut counts = vec![0usize; self.capacity()];
         for table in owners {
-            let mut unique = std::collections::BTreeSet::new();
+            let mut unique = BTreeSet::new();
             if table.iter().any(|lease| !unique.insert(lease.index)) {
                 return Err(Error::invalid("aliased block owner table"));
             }
@@ -236,7 +237,7 @@ impl BlockPool {
                 counts[l.index as usize] += 1;
             }
         }
-        let mut free = std::collections::BTreeSet::new();
+        let mut free = BTreeSet::new();
         for i in &self.free {
             if *i as usize >= self.capacity() || !free.insert(*i) {
                 return Err(Error::invariant("corrupt page free list"));

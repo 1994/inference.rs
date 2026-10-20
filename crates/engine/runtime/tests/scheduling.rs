@@ -2,6 +2,9 @@ mod support;
 
 use infer_kernel_api::KernelRegistry;
 use infer_spi::{AdmissionPolicy, BackendProvider, SchedulingPolicy};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::slice::from_ref;
 use support::ProtocolBackend;
 
 use infer_core::*;
@@ -49,7 +52,7 @@ fn request(id: u64, input: usize) -> CanonicalRequest {
         workload: Workload::Generate { max_new_tokens: 8 },
         qos: Qos::default(),
         sampling: Sampling::default(),
-        extensions: std::collections::BTreeMap::new(),
+        extensions: BTreeMap::new(),
     }
 }
 #[expect(
@@ -649,7 +652,7 @@ fn bounded_runtime_window_uses_remaining_ttft_service() -> Result<()> {
 
 struct PressureBackend {
     inner: ProtocolBackend,
-    blocked: std::collections::BTreeSet<StateId>,
+    blocked: BTreeSet<StateId>,
 }
 impl BackendProvider for PressureBackend {
     type Ticket = <ProtocolBackend as BackendProvider>::Ticket;
@@ -712,7 +715,7 @@ impl BackendProvider for PressureBackend {
 fn all_blocked_priority_candidates_do_not_hide_a_feasible_request() -> Result<()> {
     let b = PressureBackend {
         inner: backend(),
-        blocked: std::collections::BTreeSet::new(),
+        blocked: BTreeSet::new(),
     };
     let mut e = Engine::new(
         b,
@@ -782,14 +785,14 @@ fn continuous_calibration_covers_the_queue_and_resumes_its_checkpoint_cursor() -
             source: TimingSource::CudaGpu,
         },
     });
-    original.replay(std::slice::from_ref(&feedback))?;
+    original.replay(from_ref(&feedback))?;
     original.poll_completed(1)?;
     let checkpoint = original.snapshot()?;
     assert_eq!(checkpoint.priority_cursor, Some(RequestId::ONE));
     let mut restored = Engine::restore(backend(), &registry(), checkpoint.clone())?;
     for tick in 2..=4 {
         for e in [&mut original, &mut restored] {
-            e.replay(std::slice::from_ref(&feedback))?;
+            e.replay(from_ref(&feedback))?;
             e.poll_completed(tick)?;
         }
         let a = original.snapshot()?;

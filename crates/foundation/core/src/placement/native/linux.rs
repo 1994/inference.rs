@@ -2,6 +2,7 @@ use super::super::{PlacementReport, ThreadPlacement, ThreadQos};
 pub(in crate::placement) use super::affinity::allowed as allowed_cpus;
 use super::{affinity, mask::Mask, numa::Policy};
 use crate::{Error, Result};
+use std::io::Error as IoError;
 pub(in crate::placement) struct Guard {
     old_cpus: Option<Mask>,
     old_numa: Option<Policy>,
@@ -73,5 +74,5 @@ impl Drop for Guard {
     }
 }
 pub(super) fn os_error(operation: &str) -> Error {
-    Error::invalid(format!("{operation}: {}", std::io::Error::last_os_error()))
+    Error::invalid(format!("{operation}: {}", IoError::last_os_error()))
 }

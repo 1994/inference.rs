@@ -1,5 +1,6 @@
 //! One description of the graph rows retained by capture, workspace preparation and admission.
 use super::ProgramWeights;
+use crate::constants::PREFILL_LANES;
 
 /// Each prompt width owns an activation arena; projection buffers share distinct widths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,9 +11,8 @@ pub struct ProgramGeometry {
 }
 impl ProgramGeometry {
     pub(crate) const fn new(weights: &ProgramWeights, requested: bool) -> Self {
-        let verification = requested || weights.prefill_width < crate::constants::PREFILL_LANES;
-        let wide_prompt =
-            verification || weights.narrow_prefill_width < crate::constants::PREFILL_LANES;
+        let verification = requested || weights.prefill_width < PREFILL_LANES;
+        let wide_prompt = verification || weights.narrow_prefill_width < PREFILL_LANES;
         Self::from_flags(
             weights.batch_width,
             weights.prefill_width,
@@ -31,12 +31,12 @@ impl ProgramGeometry {
         Self {
             verification: if verification && batch > 1 { batch } else { 0 },
             prompts: [
-                if wide_prompt && wide >= crate::constants::PREFILL_LANES {
+                if wide_prompt && wide >= PREFILL_LANES {
                     wide
                 } else {
                     0
                 },
-                if narrow >= crate::constants::PREFILL_LANES && (narrow < wide || !wide_prompt) {
+                if narrow >= PREFILL_LANES && (narrow < wide || !wide_prompt) {
                     narrow
                 } else {
                     0

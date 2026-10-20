@@ -1,9 +1,10 @@
 use super::fused;
+use crate::constants::CONV_KERNEL_TILE;
+use std::error::Error;
 
 // Tile IR is only specialized at launch; compile the snapshot-free kernels on header-only CI.
 #[test]
-fn snapshot_free_recurrent_kernels_compile_without_a_device()
--> Result<(), Box<dyn std::error::Error>> {
+fn snapshot_free_recurrent_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
     use cutile::cutile_compiler::compile_api::KernelCompiler;
     let lanes = |names: &[&'static str]| -> Vec<(&'static str, &'static [i32])> {
         names.iter().map(|&name| (name, &[1][..])).collect()
@@ -86,7 +87,7 @@ fn snapshot_free_recurrent_kernels_compile_without_a_device()
 use crate::{device::CudaDevice, resident::recurrent::recurrent};
 use cutile::prelude::*;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult = Result<(), Box<dyn Error>>;
 
 fn upload(
     device: &CudaDevice,
@@ -124,8 +125,8 @@ fn conv_reference(
     metadata: &[Arc<Tensor<i32>>],
     count: usize,
     channels: usize,
-) -> Result<Reference<Vec<Vec<f32>>>, Box<dyn std::error::Error>> {
-    let tile = crate::constants::CONV_KERNEL_TILE;
+) -> Result<Reference<Vec<Vec<f32>>>, Box<dyn Error>> {
+    let tile = CONV_KERNEL_TILE;
     // Reference: conv4 lane after lane, keeping the state after `count` active lanes.
     let mut state = (0..3)
         .map(|h| upload(device, values(channels, h + 3), &[channels]))
@@ -170,7 +171,7 @@ fn delta_reference(
     metadata: &[Arc<Tensor<i32>>],
     count: usize,
     shape: [usize; 3],
-) -> Result<Reference<Vec<f32>>, Box<dyn std::error::Error>> {
+) -> Result<Reference<Vec<f32>>, Box<dyn Error>> {
     let [key_heads, value_heads, dim] = shape;
     let state_len = value_heads * dim * dim;
     let generics = vec![
@@ -210,7 +211,7 @@ fn conv_verify_and_commit_match_sequential_lanes() -> TestResult {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     let channels = 256;
-    let tile = crate::constants::CONV_KERNEL_TILE;
+    let tile = CONV_KERNEL_TILE;
     let w = upload(&device, values(channels * 4, 5), &[channels, 4])?;
     let inputs = (0..3)
         .map(|lane| upload(&device, values(channels, lane + 11), &[channels]))

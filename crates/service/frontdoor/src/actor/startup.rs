@@ -1,8 +1,12 @@
 //! Startup responsibilities.
 use super::{RuntimeActor, RuntimeHandle, mpsc, observation_bytes};
+use crate::cpu::CpuConfig;
+use crate::cpu::CpuPool;
+use crate::ingress::Registry;
 use infer_core::Result;
 use infer_runtime::Engine;
 use infer_spi::BackendProvider;
+use std::sync::atomic::AtomicU64;
 use std::{sync::Arc, sync::atomic::AtomicBool, time::Duration, time::Instant};
 
 /// Microseconds in one millisecond, for the device control timeout conversion.
@@ -21,12 +25,12 @@ impl RuntimeHandle {
     where
         B::Ticket: Send,
     {
-        let config = crate::cpu::CpuConfig {
+        let config = CpuConfig {
             device_control_timeout_ms: engine
                 .config()
                 .resource_timeout_us
                 .div_ceil(MICROS_PER_MILLI),
-            ..crate::cpu::CpuConfig::default()
+            ..CpuConfig::default()
         };
         Self::start_with_config(engine, config)
     }
@@ -34,27 +38,25 @@ impl RuntimeHandle {
     /// Rejects invalid CPU limits, unforkable preparation providers or startup failures.
     pub fn start_with_config<B: BackendProvider + Send + 'static>(
         engine: Engine<B>,
-        config: crate::cpu::CpuConfig,
+        config: CpuConfig,
     ) -> Result<Self>
     where
         B::Ticket: Send,
     {
         config.validate()?;
-        let request_ids = Arc::new(std::sync::atomic::AtomicU64::new(
-            engine.request_id_high_watermark(),
-        ));
+        let request_ids = Arc::new(AtomicU64::new(engine.request_id_high_watermark()));
         let preparer = engine.request_preparer()?;
-        let cpu = crate::cpu::CpuPool::new(config.clone())?;
-        let delivery = crate::cpu::CpuPool::named(
-            crate::cpu::CpuConfig {
+        let cpu = CpuPool::new(config.clone())?;
+        let delivery = CpuPool::named(
+            CpuConfig {
                 workers: 1,
                 max_jobs: config.max_jobs,
                 ..config.clone()
             },
             "delivery",
         )?;
-        let observation = crate::cpu::CpuPool::named(
-            crate::cpu::CpuConfig {
+        let observation = CpuPool::named(
+            CpuConfig {
                 workers: 1,
                 max_jobs: 2,
                 ..config.clone()
@@ -89,7 +91,7 @@ impl RuntimeHandle {
             delivery,
             observation,
             observation_bytes,
-            ingress: crate::ingress::Registry::new(config.max_jobs, config.max_bytes),
+            ingress: Registry::new(config.max_jobs, config.max_bytes),
             config,
         })
     }

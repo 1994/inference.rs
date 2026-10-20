@@ -1,3 +1,4 @@
+use axum::extract::rejection::JsonRejection;
 use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
 use infer_core::{Error, ErrorCode};
 use serde_json::{Value, json};
@@ -65,8 +66,8 @@ impl From<Error> for ApiError {
     }
 }
 
-impl From<axum::extract::rejection::JsonRejection> for ApiError {
-    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
+impl From<JsonRejection> for ApiError {
+    fn from(rejection: JsonRejection) -> Self {
         Self {
             status: if rejection.status() == StatusCode::UNPROCESSABLE_ENTITY {
                 StatusCode::BAD_REQUEST

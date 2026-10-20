@@ -1,5 +1,7 @@
 use super::*;
 use crate::device::device_error;
+use crate::tuning::MIN_REPS;
+use crate::tuning::TilingTable;
 fn shape() -> Shape {
     Shape {
         heads: 24,
@@ -11,8 +13,8 @@ fn shape() -> Shape {
 }
 fn entry() -> Entry {
     let times = || Times {
-        baseline_ms: vec![2.0; crate::tuning::MIN_REPS],
-        candidate_ms: vec![1.0; crate::tuning::MIN_REPS],
+        baseline_ms: vec![2.0; MIN_REPS],
+        candidate_ms: vec![1.0; MIN_REPS],
     };
     let cases = || {
         HISTORIES
@@ -53,14 +55,14 @@ fn cache_requires_full_bits_and_both_history_orders() {
             1 => bad.history_verified_elements -= 1,
             2 => bad.reverse.clear(),
             3 => bad.forward[1].history = 0,
-            4 => bad.reverse[2].cold.candidate_ms = vec![2.0; crate::tuning::MIN_REPS],
-            5 => bad.forward[0].warm.candidate_ms = vec![2.2; crate::tuning::MIN_REPS],
+            4 => bad.reverse[2].cold.candidate_ms = vec![2.0; MIN_REPS],
+            5 => bad.forward[0].warm.candidate_ms = vec![2.2; MIN_REPS],
             6 => bad.max_f64_error = super::super::MAX_ERROR,
             7 => bad.key.schema = "stale-contract".into(),
             8 => bad.key.fingerprint = "missing-artifact".into(),
             9 => bad.selected = Choice::Tiled { query_tile: 16 },
             10 => bad.key.shape.lanes = usize::MAX,
-            11 => bad.forward[1].cold.candidate_ms = vec![f32::NAN; crate::tuning::MIN_REPS],
+            11 => bad.forward[1].cold.candidate_ms = vec![f32::NAN; MIN_REPS],
             _ => unreachable!(),
         }
         assert!(!bad.valid(), "variant {index}");
@@ -68,7 +70,7 @@ fn cache_requires_full_bits_and_both_history_orders() {
 }
 #[test]
 fn legacy_cache_and_rejected_shared_candidate_remain_exact() -> Result<()> {
-    let old: crate::tuning::TilingTable = serde_json::from_str("{}").map_err(device_error)?;
+    let old: TilingTable = serde_json::from_str("{}").map_err(device_error)?;
     assert!(old.resident_shared_attention.is_empty());
     assert!(!supported(Shape {
         lanes: 64,
@@ -76,13 +78,13 @@ fn legacy_cache_and_rejected_shared_candidate_remain_exact() -> Result<()> {
     }));
     let mut rejected = entry();
     rejected.selected = Choice::RustSimt;
-    rejected.reverse[1].cold.candidate_ms = vec![3.0; crate::tuning::MIN_REPS];
+    rejected.reverse[1].cold.candidate_ms = vec![3.0; MIN_REPS];
     assert!(rejected.valid());
-    let table = crate::tuning::TilingTable {
+    let table = TilingTable {
         resident_shared_attention: vec![rejected],
         ..Default::default()
     };
-    let restored: crate::tuning::TilingTable =
+    let restored: TilingTable =
         serde_json::from_str(&serde_json::to_string(&table).map_err(device_error)?)
             .map_err(device_error)?;
     assert!(restored.resident_shared_attention[0].valid());

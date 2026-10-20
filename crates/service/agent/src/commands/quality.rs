@@ -1,4 +1,5 @@
 use super::{NoParams, add, object};
+use crate::constants::MAX_BENCHMARK_REQUESTS;
 use crate::{
     AgentBackend, AgentContext, experiment, experiment::BenchmarkPlan, experiment::ExperimentPlan,
     registry::CommandEffect, registry::CommandRegistry,
@@ -47,7 +48,7 @@ pub(super) fn register<B: AgentBackend>(
         |context, params: NumericParams| verify(context, &params),
     )?;
     let workload = object(
-        json!({"requests":{"type":"array","minItems":1,"maxItems":crate::constants::MAX_BENCHMARK_REQUESTS,"items":{"type":"object","description":"CanonicalRequest"}},"ttft_slo_us":{"type":"integer","minimum":1},"tpot_slo_us":{"type":"integer","minimum":1}}),
+        json!({"requests":{"type":"array","minItems":1,"maxItems":MAX_BENCHMARK_REQUESTS,"items":{"type":"object","description":"CanonicalRequest"}},"ttft_slo_us":{"type":"integer","minimum":1},"tpot_slo_us":{"type":"integer","minimum":1}}),
         &["requests", "ttft_slo_us", "tpot_slo_us"],
     );
     add(

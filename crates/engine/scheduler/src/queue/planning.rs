@@ -1,5 +1,7 @@
 use super::{BlockedOn, FairKey, QueueState, RequestQueue};
 use infer_core::{Error, RequestId, Result, StepId};
+use std::collections::BTreeMap;
+use std::mem::replace;
 use std::{
     cmp::Reverse,
     ops::Bound::{Excluded, Unbounded},
@@ -238,7 +240,7 @@ impl RequestQueue {
             return Err(Error::invariant("queue lifecycle capacity corrupt"));
         }
         let mut expected = Self::new(self.capacity)?;
-        let mut flights = std::collections::BTreeMap::<StepId, Vec<RequestId>>::new();
+        let mut flights = BTreeMap::<StepId, Vec<RequestId>>::new();
         // Preserve interned slots; HashMap iteration never determines scheduling order.
         for (slot, name) in self.names.iter().enumerate() {
             if let Some(name) = name {
@@ -279,13 +281,13 @@ impl RequestQueue {
         expected.free_tenants.clone_from(&self.free_tenants);
         let mut slots = vec![false; self.capacity];
         for slot in &self.free_entries {
-            if *slot >= self.capacity || std::mem::replace(&mut slots[*slot], true) {
+            if *slot >= self.capacity || replace(&mut slots[*slot], true) {
                 return Err(Error::invariant("request free slots corrupt"));
             }
         }
         for (id, entry) in self.entries.iter() {
             if entry.slot >= self.capacity
-                || std::mem::replace(&mut slots[entry.slot], true)
+                || replace(&mut slots[entry.slot], true)
                 || self.names.get(entry.tenant).and_then(Option::as_ref)
                     != Some(&entry.request.tenant)
             {

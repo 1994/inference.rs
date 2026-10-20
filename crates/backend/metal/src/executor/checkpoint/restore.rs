@@ -5,6 +5,8 @@ use infer_ir::{StateKind, TensorStorage};
 use infer_state::blocks::BlockLease;
 use metal::MTLCommandBufferStatus;
 use std::collections::BTreeMap;
+use std::mem::swap;
+use std::mem::take;
 
 /// Serialized checkpoint bytes tolerated per byte of resident device memory.
 const CHECKPOINT_SIZE_LIMIT_FACTOR: u64 = 16;
@@ -162,9 +164,9 @@ impl MetalBackend {
             let sequence = staged.restore_sequence(s, s.capacity, &mut shared)?;
             staged.sequences.insert(*id, sequence);
         }
-        self.sequences = std::mem::take(&mut staged.sequences);
-        std::mem::swap(&mut self.kv, &mut staged.kv);
-        std::mem::swap(&mut self.kv_buffers, &mut staged.kv_buffers);
+        self.sequences = take(&mut staged.sequences);
+        swap(&mut self.kv, &mut staged.kv);
+        swap(&mut self.kv_buffers, &mut staged.kv_buffers);
         self.tokens_executed = saved.tokens_executed;
         self.prefix_hits = saved.prefix_hits;
         Ok(())

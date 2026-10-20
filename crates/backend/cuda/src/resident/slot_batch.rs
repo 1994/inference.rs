@@ -8,6 +8,9 @@ use super::{
     program::ProgramWeights,
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
+use crate::constants::F32_BYTES;
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::MAX_VERIFICATION_WIDTH;
 use crate::device::{CudaDevice, device_error};
 use cuda_core::{CudaContext, PinnedHostBuffer};
 use cutile::prelude::*;
@@ -16,7 +19,7 @@ use infer_ir::{DataflowGraph, StateKind, TensorStorage};
 
 /// Pinned ring depth per external-hidden lane: one upload per draft or catch-up step,
 /// and a lane's chain between stream barriers never exceeds the maximum verify width.
-const EXTERNAL_UPLOAD_RING: usize = crate::constants::MAX_VERIFICATION_WIDTH + 1;
+const EXTERNAL_UPLOAD_RING: usize = MAX_VERIFICATION_WIDTH + 1;
 
 /// Per-lane external hidden rows and their pinned upload rings.
 type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
@@ -88,7 +91,7 @@ fn state_bytes(states: &States, fp8: &Fp8Caches) -> u64 {
         .values()
         .map(|(keys, values)| (keys.size() + values.size()) as u64)
         .sum();
-    float_elements.saturating_mul(crate::constants::F32_BYTES as u64) + packed_elements
+    float_elements.saturating_mul(F32_BYTES as u64) + packed_elements
 }
 
 /// Free-slot stack and the pool's lifetime lease counters.
@@ -172,7 +175,7 @@ impl SlotPool {
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
         let capacity = super::capacity::padded(capacity)?;
-        if !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&width)
+        if !(2..=MAX_VERIFICATION_WIDTH).contains(&width)
             || capacity == 0
             || hidden == 0
             || vocabulary == 0
@@ -470,7 +473,7 @@ impl SlotPool {
         // Step 1 of the KV refactor: the kernels resolve KV positions through this table, so it
         // must cover the slot's whole capacity. Step 2 replaces the identity contents with the
         // allocator's blocks and rewrites them here on every bind.
-        let blocks = i32::try_from(self.capacity.div_ceil(crate::constants::KV_BLOCK_TOKENS))
+        let blocks = i32::try_from(self.capacity.div_ceil(KV_BLOCK_TOKENS))
             .map_err(|_| Error::invalid("slot block count"))?;
         if self
             .tables

@@ -1,9 +1,11 @@
 //! Actual-model acceptance through the engine SPI, including request ownership checks.
 #[cfg(target_os = "linux")]
+use std::error::Error;
+#[cfg(target_os = "linux")]
 #[path = "provider_check/mod.rs"]
 mod check;
 #[cfg(target_os = "linux")]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     check::run()
 }
 #[cfg(not(target_os = "linux"))]

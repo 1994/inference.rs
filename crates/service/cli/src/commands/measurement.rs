@@ -5,6 +5,8 @@ use super::{
     selected_engine, write_json,
 };
 use super::{CompareOptions, print, read_json};
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use crate::constants::MAX_IDLE_TICKS;
 use infer_core::{Error, Result};
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_ir::{RequestInput, Workload};
@@ -108,7 +110,7 @@ pub fn benchmark(options: BenchmarkOptions, backend_choice: backend::Selection) 
         ids.push(request.id);
         engine.submit(request)?;
     }
-    for _ in 0..crate::constants::MAX_IDLE_TICKS {
+    for _ in 0..MAX_IDLE_TICKS {
         if engine.is_idle() {
             break;
         }

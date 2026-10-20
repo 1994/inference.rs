@@ -4,6 +4,7 @@ use infer_ir::{
     DeviceCapabilities, ExecutionProgram, ExecutionTask, ModelIr, ModelOutput, OutputReadout,
     StepPlan, TaskOutput,
 };
+use infer_model_recipes::decoder::lower;
 use infer_spi::BackendProvider;
 struct State {
     output: Option<ModelOutput>,
@@ -72,7 +73,7 @@ impl BackendProvider for Backend {
         }
     }
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
-        infer_model_recipes::decoder::lower(model)
+        lower(model)
     }
     fn validate_program(&self, _: &ModelIr, _: &ExecutionProgram) -> Result<()> {
         Ok(())

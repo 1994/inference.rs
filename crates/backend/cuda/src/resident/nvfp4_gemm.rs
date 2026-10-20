@@ -1,6 +1,11 @@
 //! Model-declared W4A4 projection with block-16 E4M3 activation scales.
 mod quant_reuse;
 mod workspace;
+use crate::mlp::ProjectionWeight as MlpProjectionWeight;
+use cutile::prelude::DeviceError;
+use cutile::prelude::Scope;
+use cutile::prelude::Tensor as PreludeTensor;
+use cutile::prelude::TensorView;
 pub use quant_reuse::QuantPairPlan;
 #[cfg(test)]
 pub use quant_reuse::with_quant_reuse_disabled;
@@ -234,14 +239,14 @@ pub(crate) mod kernels {
 
 /// Record only when the checkpoint declares an activation scale for packed FP4 weights.
 pub(super) fn record(
-    scope: &cutile::prelude::Scope,
+    scope: &Scope,
     workspace: &mut Workspace,
-    weight: &crate::mlp::ProjectionWeight,
+    weight: &MlpProjectionWeight,
     input_scale: Option<super::program::ActivationQuantization>,
-    input: &cutile::prelude::TensorView<'_, f32>,
-    output: &mut cutile::prelude::Tensor<f32>,
+    input: &TensorView<'_, f32>,
+    output: &mut PreludeTensor<f32>,
     columns: usize,
-) -> Result<bool, cutile::prelude::DeviceError> {
+) -> Result<bool, DeviceError> {
     workspace.clear_quant_reuse();
     record_input(
         scope,
@@ -261,15 +266,15 @@ pub(super) fn record(
     reason = "The certified view adds its actual device pointer to the unchanged projection contract"
 )]
 pub(super) fn record_with_input_pointer(
-    scope: &cutile::prelude::Scope,
+    scope: &Scope,
     workspace: &mut Workspace,
-    weight: &crate::mlp::ProjectionWeight,
+    weight: &MlpProjectionWeight,
     input_scale: Option<super::program::ActivationQuantization>,
-    input: &cutile::prelude::TensorView<'_, f32>,
-    output: &mut cutile::prelude::Tensor<f32>,
+    input: &TensorView<'_, f32>,
+    output: &mut PreludeTensor<f32>,
     columns: usize,
     input_pointer: u64,
-) -> Result<bool, cutile::prelude::DeviceError> {
+) -> Result<bool, DeviceError> {
     record_input(
         scope,
         workspace,
@@ -287,15 +292,15 @@ pub(super) fn record_with_input_pointer(
     reason = "One dispatcher preserves both certified and legacy projection contracts"
 )]
 fn record_input(
-    scope: &cutile::prelude::Scope,
+    scope: &Scope,
     workspace: &mut Workspace,
-    weight: &crate::mlp::ProjectionWeight,
+    weight: &MlpProjectionWeight,
     input_scale: Option<super::program::ActivationQuantization>,
-    input: &cutile::prelude::TensorView<'_, f32>,
-    output: &mut cutile::prelude::Tensor<f32>,
+    input: &TensorView<'_, f32>,
+    output: &mut PreludeTensor<f32>,
     columns: usize,
     input_pointer: Option<u64>,
-) -> Result<bool, cutile::prelude::DeviceError> {
+) -> Result<bool, DeviceError> {
     use super::program::ActivationQuantization;
     use crate::mlp::ProjectionWeight;
     match (weight, input_scale) {

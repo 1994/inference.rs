@@ -1,5 +1,6 @@
 //! State responsibilities.
 use super::{MetalBackend, MetalDevice, MetalKernels, Sequence};
+use crate::constants::F32_BYTES_U64;
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::{
     BackendKind, ExecutionProgram, KvCacheInspection, ModelIr, PrecisionPlan, StateKind,
@@ -53,7 +54,7 @@ impl MetalBackend {
                 b,
                 &child.tensors[id],
                 0,
-                usize::try_from(b.length() / crate::constants::F32_BYTES_U64)
+                usize::try_from(b.length() / F32_BYTES_U64)
                     .map_err(|_| Error::invalid("Metal buffer exceeds address space"))?,
             )?;
         }
@@ -98,7 +99,7 @@ impl MetalBackend {
     pub(super) fn base_bytes(&self) -> Result<u64> {
         self.weights.values().try_fold(
             self.scratch_bytes
-                .checked_add(crate::constants::F32_BYTES_U64)
+                .checked_add(F32_BYTES_U64)
                 .ok_or_else(|| Error::invalid("Metal base budget overflow"))?
                 .checked_add(self.config.prefix_cache_bytes.saturating_mul(2))
                 .and_then(|n| n.checked_add(self.kv_block_bytes * self.kv.capacity() as u64))

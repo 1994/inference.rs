@@ -2,6 +2,7 @@
 use super::RuntimeActor;
 use infer_runtime::EngineOutput;
 use infer_spi::BackendProvider;
+use std::mem::take;
 
 impl<B: BackendProvider> RuntimeActor<B> {
     pub(super) fn deliver(&mut self, generated: &mut Vec<EngineOutput>) {
@@ -44,7 +45,7 @@ impl<B: BackendProvider> RuntimeActor<B> {
         }
     }
     pub(super) fn reap_completed(&mut self) {
-        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut scratch = take(&mut self.scratch);
         scratch.clear();
         scratch.extend(
             self.engine

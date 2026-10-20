@@ -1,5 +1,8 @@
 //! Completed executor output is validated before committing cursors or producing client output.
+use crate::stages::decode::commit;
+use crate::stages::prefill::commit as prefill_commit;
 use crate::{Engine, EngineOutput, InFlight, stages::output::ProcessedOutput};
+use infer_core::event::CpuStage;
 use infer_core::{Error, FinishReason, RequestStatus, Result, event::EventKind, event::ObjectKind};
 use infer_ir::{
     CostObservation, ExecutionRole, ModelOutput, PlannedWork, StepPlan, TaskOutput, Workload,
@@ -7,7 +10,10 @@ use infer_ir::{
 };
 use infer_observe::DiagnosticCode;
 use infer_spi::{BackendProvider, SchedulingPolicy};
+use std::mem::replace;
+use std::mem::take as mem_take;
 use std::ops::ControlFlow;
+use std::time::Instant;
 
 pub mod cpu;
 
@@ -48,7 +54,7 @@ impl CompletedBatch {
             return Err(Error::invariant("output consumed twice"));
         }
         self.consumed |= bit;
-        Ok(std::mem::replace(
+        Ok(replace(
             &mut self.outputs[slot].output,
             ModelOutput {
                 next_token: None,
@@ -150,11 +156,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         outputs: Vec<TaskOutput>,
         emitted: &mut Vec<EngineOutput>,
     ) -> Result<()> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let id = running.step.id.get();
         let items = running.step.work.len();
         let result = self.commit_execution_inner(running, outputs, emitted);
-        self.cpu_stage(infer_core::event::CpuStage::Completion, id, start, items);
+        self.cpu_stage(CpuStage::Completion, id, start, items);
         result
     }
     fn commit_execution_inner(
@@ -278,7 +284,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         {
             self.backend.recycle_output(work.state, buffer)?;
         }
-        let decided = std::mem::take(&mut output.tokens);
+        let decided = mem_take(&mut output.tokens);
         let r = self
             .host
             .requests
@@ -289,9 +295,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         }
         let committed = self.state.get(work.state)?.committed_tokens;
         let next = if work.role == ExecutionRole::Decode {
-            crate::stages::decode::commit(r, work.token_count)?
+            commit(r, work.token_count)?
         } else {
-            crate::stages::prefill::commit(r, work.token_count)?
+            prefill_commit(r, work.token_count)?
         };
         self.state.commit(work.state, committed.max(next))?;
         r.status.transition(RequestStatus::Runnable)?;

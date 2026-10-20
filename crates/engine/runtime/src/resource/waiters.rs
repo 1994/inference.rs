@@ -1,6 +1,7 @@
 //! An intrusive FIFO gives bounded, fair resource polling without heap nodes or empty-slot scans.
 use super::PendingResource;
 use infer_core::{Error, RequestHandle, RequestId, Result, arena::Arena, map::BoundedMap};
+use std::borrow::Borrow;
 struct Entry {
     id: RequestId,
     value: PendingResource,
@@ -30,18 +31,15 @@ impl ResourceWaiters {
     pub const fn is_empty(&self) -> bool {
         self.index.is_empty()
     }
-    pub fn contains_key(&self, id: impl std::borrow::Borrow<RequestId>) -> bool {
+    pub fn contains_key(&self, id: impl Borrow<RequestId>) -> bool {
         self.index.contains_key(id.borrow())
     }
-    pub fn get(&self, id: impl std::borrow::Borrow<RequestId>) -> Option<&PendingResource> {
+    pub fn get(&self, id: impl Borrow<RequestId>) -> Option<&PendingResource> {
         self.entries
             .get(*self.index.get(id.borrow())?)
             .map(|entry| &entry.value)
     }
-    pub fn get_mut(
-        &mut self,
-        id: impl std::borrow::Borrow<RequestId>,
-    ) -> Option<&mut PendingResource> {
+    pub fn get_mut(&mut self, id: impl Borrow<RequestId>) -> Option<&mut PendingResource> {
         self.entries
             .get_mut(*self.index.get(id.borrow())?)
             .map(|entry| &mut entry.value)
@@ -68,7 +66,7 @@ impl ResourceWaiters {
         self.tail = Some(handle);
         Ok(())
     }
-    pub fn remove(&mut self, id: impl std::borrow::Borrow<RequestId>) -> Option<PendingResource> {
+    pub fn remove(&mut self, id: impl Borrow<RequestId>) -> Option<PendingResource> {
         let handle = self.index.remove(id.borrow())?;
         let entry = self.entries.remove(handle)?;
         if let Some(previous) = entry.previous {

@@ -1,13 +1,18 @@
 //! Dispatch executable responsibilities.
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use crate::support::agent;
+use crate::support::flush_logs;
+use crate::support::init_logging;
 use crate::{arguments::Cli, arguments::Command, backend, commands, support::print};
 use clap::Parser;
 use infer_core::Result;
+use std::env::consts::ARCH;
+use std::env::consts::OS;
 use std::io;
+use std::process::exit;
 
 pub fn run() {
-    crate::support::init_logging();
+    init_logging();
     let cli = Cli::parse();
     let selection = backend::Selection {
         kind: cli.backend,
@@ -32,8 +37,8 @@ pub fn run() {
     ) {
         let _ = serde_json::to_writer(io::stderr().lock(), &error);
         eprintln!();
-        crate::support::flush_logs();
-        std::process::exit(1);
+        flush_logs();
+        exit(1);
     }
 }
 
@@ -68,7 +73,7 @@ pub fn execute(command: Command, backend_choice: backend::Selection) -> Result<(
         Command::InspectPackage(options) => commands::inspect_package(options),
         Command::Tokenize(options) => commands::tokenize(options),
         Command::Doctor => print(
-            &serde_json::json!({"host_arch":std::env::consts::ARCH,"host_os":std::env::consts::OS,"backends":backend::catalog(),"qwen38_config_import":true,"safetensors_weight_binding":true,"native_tokenizer":true,"incremental_hybrid_state":true,"cuda_execution":"resident CUDA BackendProvider; requires Linux --features cuda","qwen38_27b_execution_validated":false,"native_workloads":["generate","embed","rerank","decision"]}),
+            &serde_json::json!({"host_arch":ARCH,"host_os":OS,"backends":backend::catalog(),"qwen38_config_import":true,"safetensors_weight_binding":true,"native_tokenizer":true,"incremental_hybrid_state":true,"cuda_execution":"resident CUDA BackendProvider; requires Linux --features cuda","qwen38_27b_execution_validated":false,"native_workloads":["generate","embed","rerank","decision"]}),
         ),
         #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
         Command::Agent(options) => agent(

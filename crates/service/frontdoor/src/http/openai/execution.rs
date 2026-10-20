@@ -1,9 +1,13 @@
 use super::{ApiResult, GenerationRequest, TextState, ToolPolicy};
+use crate::constants::TOKEN_STAGING_BYTES;
+use crate::cpu::CpuContext;
 use axum::http::HeaderMap;
 use infer_core::{Error, ErrorCode, FinishReason, RequestId};
 use infer_ir::{CanonicalRequest, RequestInput, Workload, WorkloadOutput};
 use infer_runtime::{CompletedRequest, EngineOutput};
 use serde_json::{Value, json};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use std::{
     collections::BTreeMap,
     sync::Arc,
@@ -43,7 +47,7 @@ struct Encoding {
 
 impl Encoding {
     /// Encode the prompt and describe the workload to run over it.
-    fn encode(self, context: &crate::cpu::CpuContext) -> infer_core::Result<CanonicalRequest> {
+    fn encode(self, context: &CpuContext) -> infer_core::Result<CanonicalRequest> {
         context.check()?;
         let tokens = if let Some(messages) = self.messages {
             let rendered = self.assets.render_chat(
@@ -134,8 +138,8 @@ pub(super) async fn prepare(
     };
     let prompt = request.prompt.take();
     let tools = policy.template();
-    let created = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_err(|e| Error::new(ErrorCode::Backend, e.to_string()))?
         .as_secs();
     let prompt_tokens = Arc::new(AtomicUsize::new(0));
@@ -256,9 +260,7 @@ async fn response(
     let text = state
         .delivery
         .run(
-            tokens
-                .len()
-                .saturating_mul(crate::constants::TOKEN_STAGING_BYTES),
+            tokens.len().saturating_mul(TOKEN_STAGING_BYTES),
             move |_| assets.decode(&tokens, true),
         )
         .await?;

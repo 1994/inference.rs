@@ -1,16 +1,22 @@
 //! Server CLI support.
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::Result;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use std::sync::Arc;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use tokio::net::TcpListener;
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
+use tokio::signal::ctrl_c;
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub async fn axum_serve(
-    listener: tokio::net::TcpListener,
+    listener: TcpListener,
     handle: infer_frontdoor::RuntimeHandle,
     shutdown: infer_frontdoor::RuntimeHandle,
-    assets: Option<std::sync::Arc<infer_models::TextAssets>>,
+    assets: Option<Arc<infer_models::TextAssets>>,
 ) -> Result<()> {
     let stop = async move {
-        let _ = tokio::signal::ctrl_c().await;
+        let _ = ctrl_c().await;
         let _ = shutdown.shutdown().await;
     };
     if let Some(assets) = assets {

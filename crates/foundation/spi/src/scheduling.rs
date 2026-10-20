@@ -4,6 +4,7 @@ use infer_core::{Result, StepId};
 use infer_ir::{
     AdmissionDecision, AdmissionInput, ReadyWork, ResourceSnapshot, SchedulingDecision,
 };
+use std::any::type_name;
 
 /// Immutable planning inputs; reusable storage belongs to the engine rather than the policy.
 pub struct PlanningContext<'a> {
@@ -56,7 +57,7 @@ pub trait SchedulingPolicy {
         self.plan_reusing(context, workspace)
     }
     fn identity(&self) -> &str {
-        std::any::type_name::<Self>()
+        type_name::<Self>()
     }
     /// # Errors
     /// Returns an invalid-input or unsupported error if the request, model, or backend cannot produce a valid plan.
@@ -84,7 +85,7 @@ pub trait SchedulingPolicy {
 }
 pub trait AdmissionPolicy {
     fn identity(&self) -> &str {
-        std::any::type_name::<Self>()
+        type_name::<Self>()
     }
     /// # Errors
     /// Returns an invalid-input or estimation error if admission inputs cannot be evaluated.

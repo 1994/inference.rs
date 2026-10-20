@@ -1,11 +1,17 @@
 //! Isolated Candle performance reference. No dependency is added to the production engine.
+use candle_core::safetensors::load;
 use candle_core::{DType, Device, Tensor};
 use std::collections::HashMap;
+use std::env::args as env_args;
+use std::error::Error;
+use std::fs::read;
+use std::path::Path;
+use std::result::Result as StdResult;
 
 mod device;
 mod measure;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = StdResult<T, Box<dyn Error>>;
 
 struct Inputs {
     q: Tensor,
@@ -65,7 +71,7 @@ impl Inputs {
             let mut offsets: Vec<u32> = (0..count)
                 .step_by(frame)
                 .map(u32::try_from)
-                .collect::<std::result::Result<_, _>>()?;
+                .collect::<StdResult<_, _>>()?;
             offsets.push(u32::try_from(count)?);
             let len = offsets.len();
             Ok(Tensor::from_vec(offsets, len, device)?)
@@ -163,7 +169,7 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         return Err("attention gate requires release".into());
     }
-    let mut args = std::env::args().skip(1);
+    let mut args = env_args().skip(1);
     let path = args
         .next()
         .ok_or("usage: candle-reference FIXTURES [f16|bf16]")?;
@@ -172,11 +178,10 @@ fn main() -> Result<()> {
         Some("bf16") => DType::BF16,
         _ => return Err("explicit reference dtype required".into()),
     };
-    let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::path::Path::new(&path).with_extension("json"),
-    )?)?;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&read(Path::new(&path).with_extension("json"))?)?;
     let device = device::reference_device()?;
-    let tensors = candle_core::safetensors::load(path, &device)?;
+    let tensors = load(path, &device)?;
     for shape in manifest["cases"].as_array().ok_or("missing cases")? {
         let inputs = Inputs::new(&tensors, shape, &device)?;
         let name = shape["id"].as_str().ok_or("missing case id")?;

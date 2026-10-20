@@ -1,5 +1,6 @@
 //! Validation responsibilities.
 use super::{Engine, RequestRecord, RuntimeSnapshot, validate_active_record};
+use crate::preparation::validate_plan;
 use infer_core::{Error, RequestId, RequestStatus, Result};
 use infer_scheduler::CostAwarePolicy;
 use infer_spi::{
@@ -100,7 +101,7 @@ impl<B: BackendProvider> Engine<B, CostAwarePolicy> {
                 .plan(&record.request, &snapshot.model, snapshot.program.id)?;
         // A restored record must still satisfy the length limits resolved for this engine, so a
         // checkpoint cannot reintroduce a request the current deployment would reject.
-        crate::preparation::validate_plan(
+        validate_plan(
             &record.request,
             &record.plan,
             &snapshot.model,

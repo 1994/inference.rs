@@ -1,5 +1,7 @@
 //! Independent F64 attention from actual checkpoint Q/K/V, including every appended cache byte.
 use super::{LoadOptions, LoadedModel};
+use crate::constants::KV_BLOCK_TOKENS;
+use crate::tuning::table_path as tuning_table_path;
 use crate::{
     device::CudaDevice,
     resident::{DeviceProgram, attention_prefill_taps as taps},
@@ -8,6 +10,9 @@ use crate::{
 use cuda_core::f8e4m3fn;
 use infer_core::{Error, ModelId, Result, TensorId};
 use std::collections::BTreeMap;
+use std::env::var;
+use std::fs::read as fs_read;
+use std::sync::OnceLock;
 type Cache = BTreeMap<TensorId, (Vec<f8e4m3fn>, Vec<f8e4m3fn>)>;
 const TOLERANCE: f64 = 1e-4;
 fn decode(code: u8) -> f32 {
@@ -21,7 +26,7 @@ fn decode(code: u8) -> f32 {
     if code & 128 == 0 { value } else { -value }
 }
 fn encode(value: f32) -> u8 {
-    static LEVELS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    static LEVELS: OnceLock<Vec<f32>> = OnceLock::new();
     assert!(value.is_finite());
     let value = value.clamp(-448.0, 448.0);
     let sign = if value.is_sign_negative() { 128 } else { 0 };
@@ -71,7 +76,7 @@ impl Chunk {
         Ok(usize::try_from(p).ok())
     }
     fn physical(&self, p: usize) -> Result<usize> {
-        let b = crate::constants::KV_BLOCK_TOKENS;
+        let b = KV_BLOCK_TOKENS;
         Ok(
             usize::try_from(self.table[p / b]).map_err(|e| Error::invalid(e.to_string()))? * b
                 + p % b,
@@ -207,13 +212,11 @@ fn check(
 #[ignore = "requires CUDA, INFER_TEST_MODEL, frozen 511-token INFER_TEST_TOKENS; safe-run"]
 fn checkpoint_attention_full_f64_and_original_append() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens_path =
-        std::env::var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
-    let tokens: Vec<u32> = serde_json::from_slice(
-        &std::fs::read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?,
-    )
-    .map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&fs_read(tokens_path).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
     assert_eq!(tokens.len(), 511);
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -227,9 +230,9 @@ fn checkpoint_attention_full_f64_and_original_append() -> Result<()> {
             ..LoadOptions::default()
         },
     )?;
-    let table_path = crate::tuning::table_path()
-        .ok_or_else(|| Error::invalid("frozen tuning cache required"))?;
-    let original_cache = std::fs::read(&table_path).map_err(|e| Error::invalid(e.to_string()))?;
+    let table_path =
+        tuning_table_path().ok_or_else(|| Error::invalid("frozen tuning cache required"))?;
+    let original_cache = fs_read(&table_path).map_err(|e| Error::invalid(e.to_string()))?;
     for width in [64, 256] {
         loaded.weights.prefill_width = width;
         loaded.weights.narrow_prefill_width = 0;
@@ -250,7 +253,7 @@ fn checkpoint_attention_full_f64_and_original_append() -> Result<()> {
         }
     }
     assert_eq!(
-        std::fs::read(table_path).map_err(|e| Error::invalid(e.to_string()))?,
+        fs_read(table_path).map_err(|e| Error::invalid(e.to_string()))?,
         original_cache
     );
     Ok(())

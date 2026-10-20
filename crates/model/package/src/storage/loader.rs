@@ -1,4 +1,7 @@
 //! Bounded, backend-independent weight loading. No device is published until all uploads succeed.
+use crate::constants::F32_BYTES;
+use crate::constants::F32_BYTES_U64;
+use crate::storage::safetensors::convert_float_bytes;
 use crate::{ModelPackage, TensorDtype, WeightBinding};
 use infer_core::{Error, ErrorCode, Result};
 use serde::{Deserialize, Serialize};
@@ -69,13 +72,12 @@ impl WeightLoadPlan {
     /// Returns invalid-input, unsupported-format, or capacity errors for the requested load.
     pub fn build(package: &ModelPackage, options: LoadOptions) -> Result<Self> {
         package.validate_weight_bindings()?;
-        if options.chunk_bytes < crate::constants::F32_BYTES || options.staging_budget_bytes == 0 {
+        if options.chunk_bytes < F32_BYTES || options.staging_budget_bytes == 0 {
             return Err(Error::invalid(
                 "weight loading needs a chunk of at least four bytes",
             ));
         }
-        let chunk_bytes =
-            options.chunk_bytes / crate::constants::F32_BYTES * crate::constants::F32_BYTES;
+        let chunk_bytes = options.chunk_bytes / F32_BYTES * F32_BYTES;
         let mut tensors = Vec::with_capacity(package.manifest.bindings.len());
         let mut resident_bytes = 0u64;
         let mut staging_bytes = 0usize;
@@ -94,7 +96,7 @@ impl WeightLoadPlan {
                         usize::try_from(binding.dtype.bytes())
                             .map_err(|_| Error::invalid("weight byte width"))?,
                     )
-                    .and_then(|n| n.checked_mul(crate::constants::F32_BYTES))
+                    .and_then(|n| n.checked_mul(F32_BYTES))
                     .ok_or_else(|| Error::invalid("conversion staging overflow"))?
             };
             staging_bytes = staging_bytes.max(
@@ -172,11 +174,11 @@ pub fn load_weights<T: WeightTarget>(
                 digest.update(input);
                 target.upload(&mut tensor, offset, input)
             } else {
-                let bytes = crate::storage::safetensors::convert_float_bytes(input, binding.dtype)?;
+                let bytes = convert_float_bytes(input, binding.dtype)?;
                 digest.update(&bytes);
                 target.upload(
                     &mut tensor,
-                    offset / binding.dtype.bytes() * crate::constants::F32_BYTES_U64,
+                    offset / binding.dtype.bytes() * F32_BYTES_U64,
                     &bytes,
                 )
             }

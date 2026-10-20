@@ -1,6 +1,7 @@
 //! Archive buffers retain capacities across empty decisions and first publication.
 use infer_core::{DecisionId, Error, ProgramId, Result, StepId};
 use infer_ir::{CostEstimate, ExecutionRole, SchedulingDecision, StepPlan};
+use std::collections::VecDeque;
 
 pub struct HistoryStorage {
     spare: Vec<SchedulingDecision>,
@@ -66,7 +67,7 @@ impl HistoryStorage {
 impl HistoryStorage {
     pub fn prepare_archive(
         &mut self,
-        archive: &mut std::collections::VecDeque<SchedulingDecision>,
+        archive: &mut VecDeque<SchedulingDecision>,
         capacity: usize,
     ) -> Result<()> {
         archive.reserve(capacity.saturating_sub(archive.len()));

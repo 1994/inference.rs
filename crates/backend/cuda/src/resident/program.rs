@@ -1,10 +1,18 @@
 use super::ActivationArena;
+use crate::device::ReadbackSource;
+use crate::device::Readbacks;
+use crate::device::cublaslt::Support;
+use crate::tuning::gated_norm::prepare;
+use crate::tuning::resident_gemm::ResidentTuningSession;
+use infer_models::mrope::ROTARY_AXES;
+use std::collections::BTreeSet;
+use std::slice::from_ref;
 mod geometry;
 mod greedy;
 use crate::{
     constants::{
-        CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, MAX_HIDDEN_SIZE, METADATA_FIELDS, MIB,
-        PREFILL_LANES,
+        CONV_KERNEL_SIZE, CONV_STATE_TENSORS, F32_BYTES, KV_CACHE_RANK, MAX_HIDDEN_SIZE,
+        METADATA_FIELDS, MIB, PREFILL_LANES,
     },
     device::{CudaDevice, device_error},
     mlp::ProjectionWeight,
@@ -72,7 +80,7 @@ pub struct ProgramWeights {
     /// Measure uncovered resident GEMM geometries before graph capture.
     pub autotune: bool,
     /// One finite new-shape tuning allowance for this loaded model, shared with its draft.
-    pub resident_tuning: Arc<crate::tuning::resident_gemm::ResidentTuningSession>,
+    pub resident_tuning: Arc<ResidentTuningSession>,
     pub batch_width: usize,
     /// Widest captured prompt graph.
     pub prefill_width: usize,
@@ -88,7 +96,7 @@ pub struct ProgramWeights {
     pub attention_profile: crate::AttentionProfile,
     pub projections: BTreeMap<TensorId, ProjectionWeight>,
     pub input_scales: BTreeMap<TensorId, f32>,
-    pub fp8_inputs: std::collections::BTreeSet<TensorId>,
+    pub fp8_inputs: BTreeSet<TensorId>,
     /// Capture the chunked gated-delta prompt kernel rather than the per-token one.
     pub chunked_recurrent: bool,
     pub expert_banks: BTreeMap<TensorId, super::moe::ExpertBank>,
@@ -158,13 +166,13 @@ pub struct DeviceProgram {
     graph: CudaGraph<()>,
     greedy: Option<greedy::DeviceGreedy>,
     token_readout: Option<super::token_readout::TokenReadout>,
-    readbacks: crate::device::Readbacks,
+    readbacks: Readbacks,
     prefill: CudaGraph<()>,
     metadata: Tensor<i32>,
     /// Identity block table over this program's own KV cache; see `capture::Capture::table`.
     table: Tensor<i32>,
     nvfp4: super::nvfp4_gemm::Workspace,
-    delegated: crate::device::cublaslt::Support,
+    delegated: Support,
     attention: super::attention_decode::Workspace,
     external: Tensor<f32>,
     // Declared after the graphs: the state tensors outlive every capture that references them,
@@ -343,9 +351,7 @@ fn copy_prefix<T: DType>(
     }
     let shape = src.shape();
     if let Some((rows, capacity)) = kv {
-        if shape.len() != crate::constants::KV_CACHE_RANK
-            || usize::try_from(shape[1]).ok() != Some(capacity)
-        {
+        if shape.len() != KV_CACHE_RANK || usize::try_from(shape[1]).ok() != Some(capacity) {
             return Err(Error::invariant("program KV copy layout"));
         }
         let heads = usize::try_from(shape[0]).map_err(device_error)?;
@@ -447,7 +453,7 @@ impl DeviceProgram {
             lane_external: &mut self.lane_external,
             lane_external_owner: Some(&self.lane_external_owner),
             lane_fusion: &mut self.lane_fusion,
-            tables: std::slice::from_ref(&self.table),
+            tables: from_ref(&self.table),
             capacity: self.capacity,
             width: weights.batch_width,
         };
@@ -642,13 +648,10 @@ impl DeviceProgram {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         geometry: ProgramGeometry,
-    ) -> Result<(
-        super::nvfp4_gemm::Workspace,
-        crate::device::cublaslt::Support,
-    )> {
-        crate::tuning::gated_norm::prepare(device, graph, weights, geometry.prompts);
+    ) -> Result<(super::nvfp4_gemm::Workspace, Support)> {
+        prepare(device, graph, weights, geometry.prompts);
         let nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights, geometry)?;
-        let mut delegated = crate::device::cublaslt::Support::new(device);
+        let mut delegated = Support::new(device);
         warm_delegated(&mut delegated, weights);
         Ok((nvfp4, delegated))
     }
@@ -702,7 +705,7 @@ impl DeviceProgram {
             lane_external: &mut lane_external,
             lane_external_owner: Some(&lane_external_owner),
             lane_fusion: &mut lane_fusion,
-            tables: std::slice::from_ref(&table),
+            tables: from_ref(&table),
             capacity,
             width: weights.batch_width,
         };
@@ -737,7 +740,7 @@ impl DeviceProgram {
             graph: graph_exec,
             greedy,
             token_readout,
-            readbacks: crate::device::Readbacks::default(),
+            readbacks: Readbacks::default(),
             prefill,
             metadata,
             external,
@@ -786,7 +789,7 @@ impl DeviceProgram {
     ) -> Result<(Vec<f32>, Vec<f32>)> {
         self.execute_step(
             token,
-            [position; infer_models::mrope::ROTARY_AXES],
+            [position; ROTARY_AXES],
             kv_position,
             external,
             read_logits,
@@ -805,15 +808,9 @@ impl DeviceProgram {
                 .step_readout(token, position, position, None, true, read_hidden)
                 .map(|row| super::batch::BatchReadout::host(vec![row]));
         }
-        self.prepare_step(
-            token,
-            [position; infer_models::mrope::ROTARY_AXES],
-            position,
-            None,
-            true,
-        )?;
+        self.prepare_step(token, [position; ROTARY_AXES], position, None, true)?;
         let sources = [
-            read_hidden.then(|| crate::device::ReadbackSource::whole(Arc::clone(&self.hidden))),
+            read_hidden.then(|| ReadbackSource::whole(Arc::clone(&self.hidden))),
             None,
         ];
         let (rows, tokens) = self
@@ -841,7 +838,7 @@ impl DeviceProgram {
     pub fn step_positioned(
         &mut self,
         token: u32,
-        position: [usize; infer_models::mrope::ROTARY_AXES],
+        position: [usize; ROTARY_AXES],
         kv_position: usize,
         external: Option<&[f32]>,
         read_logits: bool,
@@ -852,7 +849,7 @@ impl DeviceProgram {
     fn execute_step(
         &mut self,
         token: u32,
-        position: [usize; infer_models::mrope::ROTARY_AXES],
+        position: [usize; ROTARY_AXES],
         kv_position: usize,
         external: Option<&[f32]>,
         read_logits: bool,
@@ -876,10 +873,8 @@ impl DeviceProgram {
                 &self.device,
                 graph,
                 &[
-                    read_hidden
-                        .then(|| crate::device::ReadbackSource::whole(Arc::clone(&self.hidden))),
-                    read_logits
-                        .then(|| crate::device::ReadbackSource::whole(Arc::clone(&self.logits))),
+                    read_hidden.then(|| ReadbackSource::whole(Arc::clone(&self.hidden))),
+                    read_logits.then(|| ReadbackSource::whole(Arc::clone(&self.logits))),
                 ],
             )?
             .into_iter();
@@ -897,7 +892,7 @@ impl DeviceProgram {
     fn prepare_step(
         &mut self,
         token: u32,
-        position: [usize; infer_models::mrope::ROTARY_AXES],
+        position: [usize; ROTARY_AXES],
         kv_position: usize,
         external: Option<ExternalInput<'_>>,
         read_logits: bool,
@@ -1327,7 +1322,7 @@ impl DeviceProgram {
         media: &Tensor<f32>,
         rows: &[(usize, usize)],
         hidden: usize,
-        rotary: Option<&[[usize; infer_models::mrope::ROTARY_AXES]]>,
+        rotary: Option<&[[usize; ROTARY_AXES]]>,
         read_logits: bool,
     ) -> Result<super::BatchOutput> {
         let width = self.prefill_width();
@@ -1562,7 +1557,7 @@ fn attention_only(graph: &DataflowGraph) -> bool {
 ///
 /// cuBLAS chooses workspace and algorithm the first time it sees a configuration, and a capturing
 /// stream rejects that host-side work, so the warmup has to happen here.
-fn warm_delegated(delegated: &mut crate::device::cublaslt::Support, weights: &ProgramWeights) {
+fn warm_delegated(delegated: &mut Support, weights: &ProgramWeights) {
     if !delegated.is_enabled() {
         return;
     }

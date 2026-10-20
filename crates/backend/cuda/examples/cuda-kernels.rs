@@ -1,6 +1,8 @@
 #[cfg(target_os = "linux")]
+use infer_backend_cuda::device::CudaDevice;
+#[cfg(target_os = "linux")]
 fn main() -> infer_core::Result<()> {
-    let device = infer_backend_cuda::device::CudaDevice::new(0)?;
+    let device = CudaDevice::new(0)?;
     let x = device.upload(vec![1.0f32, 2.0, 3.0, 4.0], &[4])?;
     let w = device.upload(vec![1.0f32; 32], &[8, 4])?;
     let y = device.matvec(x, w)?;
@@ -16,7 +18,7 @@ fn main() -> infer_core::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn quantized(device: &infer_backend_cuda::device::CudaDevice) -> infer_core::Result<()> {
+fn quantized(device: &CudaDevice) -> infer_core::Result<()> {
     use cuda_core::{f4e2m1fnx2, f8e4m3fn};
     use infer_backend_cuda::strategy::{DecodeSearch, LinearStrategy};
     let x = device.upload(vec![1.0f32; 32], &[32])?;

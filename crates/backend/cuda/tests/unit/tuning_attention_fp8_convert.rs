@@ -9,8 +9,15 @@ use crate::{
     resident::attention_oxide::Support,
 };
 use cuda_core::f8e4m3fn;
+use cutile::bench::BenchOptions;
+use cutile::bench::do_bench_paired;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
 use infer_core::{Error, Result};
+use std::env::var;
+use std::fs::read_to_string;
+use std::ptr::from_mut;
+use std::time::Duration;
 #[expect(
     unsafe_code,
     reason = "test binds retained 256-element buffers on the owning stream and synchronizes before release"
@@ -33,10 +40,7 @@ fn conversion_gate(device: &CudaDevice, ptx: &str) -> Result<()> {
     KernelOutputStored::retain(&(&mut output).partition([256]), &ctx).map_err(device_error)?;
     let mut a = input.device_pointer().cu_deviceptr();
     let mut b = output.device_pointer().cu_deviceptr();
-    let mut args = [
-        std::ptr::from_mut(&mut a).cast(),
-        std::ptr::from_mut(&mut b).cast(),
-    ];
+    let mut args = [from_mut(&mut a).cast(), from_mut(&mut b).cast()];
     // SAFETY: the owning module and function remain live through the synchronous test.
     let raw = unsafe { function.cu_function() };
     // SAFETY: the complete buffers/module are live, leases exclude other streams; one thread writes one cell.
@@ -63,9 +67,8 @@ fn conversion_gate(device: &CudaDevice, ptx: &str) -> Result<()> {
     Ok(())
 }
 fn ptx() -> Result<String> {
-    let path =
-        std::env::var("INFER_TEST_ATTENTION_PTX").map_err(|e| Error::invalid(e.to_string()))?;
-    std::fs::read_to_string(path).map_err(|e| Error::invalid(e.to_string()))
+    let path = var("INFER_TEST_ATTENTION_PTX").map_err(|e| Error::invalid(e.to_string()))?;
+    read_to_string(path).map_err(|e| Error::invalid(e.to_string()))
 }
 #[test]
 #[ignore = "requires CUDA/safe-run; exhaustive codes and full bits/F64 before any timing"]
@@ -120,9 +123,9 @@ fn fp8_hardware_complete_pipeline_cost() -> Result<()> {
             baseline.verify_variant(&device, &fixture, &candidate)?;
             for reverse in [false, true] {
                 for cold in [true, false] {
-                    let options = cutile::bench::BenchOptions {
-                        warmup: std::time::Duration::from_millis(50),
-                        rep: std::time::Duration::from_millis(100),
+                    let options = BenchOptions {
+                        warmup: Duration::from_millis(50),
+                        rep: Duration::from_millis(100),
                         min_reps: 10,
                         max_reps: 30,
                         clear_l2: cold,
@@ -136,15 +139,11 @@ fn fp8_hardware_complete_pipeline_cost() -> Result<()> {
                         graph
                             .launch()
                             .sync_on(&device.stream)
-                            .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                            .map_err(|e| tensor_error(&e.to_string()))
                     };
-                    let (a, b) = cutile::bench::do_bench_paired(
-                        &device.stream,
-                        &options,
-                        |_| run(left),
-                        |_| run(right),
-                    )
-                    .map_err(device_error)?;
+                    let (a, b) =
+                        do_bench_paired(&device.stream, &options, |_| run(left), |_| run(right))
+                            .map_err(device_error)?;
                     let (a, b) = if reverse { (b, a) } else { (a, b) };
                     println!(
                         "{}",

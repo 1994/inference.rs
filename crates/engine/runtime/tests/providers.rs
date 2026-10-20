@@ -2,6 +2,7 @@ use infer_kernel_api::KernelRegistry;
 use infer_runtime::{Engine, RuntimeConfig};
 use infer_spi::{ProviderMetadata, SPI_VERSION, WorkloadProvider};
 use infer_workloads::{NativeWorkloads, WorkloadRegistry};
+use std::collections::BTreeMap;
 
 mod support;
 
@@ -83,7 +84,7 @@ fn registered_provider_runs_through_core_and_checkpoint_requires_same_registry()
         },
         qos: Qos::default(),
         sampling: Sampling::default(),
-        extensions: std::collections::BTreeMap::new(),
+        extensions: BTreeMap::new(),
     };
     engine.submit(request).unwrap();
     let snapshot = engine.snapshot().unwrap();

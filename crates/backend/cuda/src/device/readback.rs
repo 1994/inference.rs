@@ -1,12 +1,18 @@
 //! Owned pinned destinations; host slices are exposed only after submission completion.
 use super::{CudaDevice, device_error};
+use crate::constants::MIB;
+use cuda_core::sys::cuMemcpyDtoHAsync_v2;
+use cuda_core::sys::cudaError_enum_CUDA_SUCCESS;
 use cuda_core::{CudaContext, DType, DeviceCopy, PinnedHostBuffer};
+use cutile::cuda_async::device_context::with_default_device_policy;
+use cutile::cuda_async::device_future::DeviceFuture;
 use cutile::{prelude::*, tensor::KernelInputStored};
 use infer_core::{Error, ErrorCode, Result};
+use std::result::Result as StdResult;
 use std::sync::{Arc, Mutex};
 
 /// Total pinned bytes admitted across one batch of readback copies.
-const MAX_READBACK_STAGING_BYTES: usize = 64 * crate::constants::MIB;
+const MAX_READBACK_STAGING_BYTES: usize = 64 * MIB;
 
 #[cfg(test)]
 #[path = "../../tests/unit/device_readback_check.rs"]
@@ -254,7 +260,7 @@ struct PinnedCopy<T: DType + DeviceCopy> {
 impl<T: DType + DeviceCopy> DeviceOp for PinnedCopy<T> {
     type Output = ();
 
-    unsafe fn execute(self, context: &ExecutionContext) -> std::result::Result<(), DeviceError> {
+    unsafe fn execute(self, context: &ExecutionContext) -> StdResult<(), DeviceError> {
         self.source.retain(context)?;
         context.retain(Arc::clone(&self.destination))?;
         if self
@@ -288,14 +294,14 @@ impl<T: DType + DeviceCopy> DeviceOp for PinnedCopy<T> {
         // Both allocations outlive the submission. Host reads happen only after
         // sync_on; failures poison the owner and submission cleanup retains work.
         let status = unsafe {
-            cuda_core::sys::cuMemcpyDtoHAsync_v2(
+            cuMemcpyDtoHAsync_v2(
                 destination.as_mut_ptr().cast(),
                 self.source.device_pointer().cu_deviceptr() + offset,
                 bytes,
                 context.get_cuda_stream().cu_stream(),
             )
         };
-        if status != cuda_core::sys::cudaError_enum_CUDA_SUCCESS {
+        if status != cudaError_enum_CUDA_SUCCESS {
             return Err(DeviceError::Internal(format!(
                 "pinned D2H CUDA status {status}"
             )));
@@ -305,12 +311,10 @@ impl<T: DType + DeviceCopy> DeviceOp for PinnedCopy<T> {
 }
 
 impl<T: DType + DeviceCopy> IntoFuture for PinnedCopy<T> {
-    type Output = std::result::Result<(), DeviceError>;
-    type IntoFuture = cutile::cuda_async::device_future::DeviceFuture<(), Self>;
+    type Output = StdResult<(), DeviceError>;
+    type IntoFuture = DeviceFuture<(), Self>;
     fn into_future(self) -> Self::IntoFuture {
-        match cutile::cuda_async::device_context::with_default_device_policy(|policy| {
-            policy.next_stream()
-        }) {
+        match with_default_device_policy(|policy| policy.next_stream()) {
             Ok(Ok(stream)) => Self::IntoFuture::scheduled(self, ExecutionContext::new(stream)),
             Ok(Err(error)) | Err(error) => Self::IntoFuture::failed(error),
         }

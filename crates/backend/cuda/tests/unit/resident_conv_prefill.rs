@@ -1,6 +1,9 @@
 use super::kernels;
 use crate::device::CudaDevice;
+use cutile::cutile_compiler::hints::CompileOptions;
+use cutile::error::tensor_error;
 use cutile::prelude::*;
+use std::error::Error;
 
 fn values(count: usize, salt: usize) -> Vec<f32> {
     (0..count)
@@ -9,8 +12,7 @@ fn values(count: usize, salt: usize) -> Vec<f32> {
 }
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
-fn parallel_conv_matches_causal_reference_and_partial_state()
--> Result<(), Box<dyn std::error::Error>> {
+fn parallel_conv_matches_causal_reference_and_partial_state() -> Result<(), Box<dyn Error>> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
     for (lanes, channels) in [(32, 17), (32, 128), (128, 10240)] {
@@ -85,13 +87,13 @@ fn parallel_conv_matches_causal_reference_and_partial_state()
 
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run in release"]
-fn parallel_conv_performance() -> Result<(), Box<dyn std::error::Error>> {
+fn parallel_conv_performance() -> Result<(), Box<dyn Error>> {
     use cutile::bench::{BenchOptions, do_bench_paired};
     use std::time::Duration;
     if cfg!(debug_assertions) {
         return Err("performance gate requires release".into());
     }
-    let compile = cutile::cutile_compiler::hints::CompileOptions::default();
+    let compile = CompileOptions::default();
     assert!(!compile.device_debug && compile.opt_level.is_none_or(|level| level == 3));
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
@@ -159,13 +161,13 @@ fn parallel_conv_performance() -> Result<(), Box<dyn std::error::Error>> {
                 baseline
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
             |_| {
                 candidate
                     .launch()
                     .sync_on(&device.stream)
-                    .map_err(|e| cutile::error::tensor_error(&e.to_string()))
+                    .map_err(|e| tensor_error(&e.to_string()))
             },
         )?;
         println!(

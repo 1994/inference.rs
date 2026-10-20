@@ -1,4 +1,6 @@
 //! Kernel strategy independent of model names, storage and device ownership.
+use crate::constants::DEFAULT_TILE_COLUMNS;
+use crate::constants::DEFAULT_TILE_ROWS;
 use infer_core::{Error, Result};
 use serde::Serialize;
 
@@ -96,10 +98,7 @@ impl LinearStrategy for DecodeSearch {
 /// # Errors
 /// Returns an error if the built-in default violates the supported dimensions.
 pub fn default_tiling() -> Result<LinearTiling> {
-    LinearTiling::new(
-        crate::constants::DEFAULT_TILE_ROWS,
-        crate::constants::DEFAULT_TILE_COLUMNS,
-    )
+    LinearTiling::new(DEFAULT_TILE_ROWS, DEFAULT_TILE_COLUMNS)
 }
 
 #[cfg(test)]

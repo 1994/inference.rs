@@ -1,15 +1,18 @@
 use super::mask::Mask;
+use crate::placement::topology::allowed_nodes;
 use crate::{
     Error, Result,
     placement::{NumaPolicy, parse_cpu_list},
 };
+use std::fs::read_to_string;
+use std::ptr::null;
 pub(super) struct Policy {
     mode: i32,
     mask: Mask,
 }
 impl Policy {
     pub fn current() -> Result<Self> {
-        let possible = std::fs::read_to_string("/sys/devices/system/node/possible")
+        let possible = read_to_string("/sys/devices/system/node/possible")
             .map_err(|error| Error::invalid(format!("read possible NUMA nodes: {error}")))?;
         let nodes = parse_cpu_list(&possible)?;
         let bits = nodes
@@ -27,7 +30,7 @@ impl Policy {
                 // Linux's nodemask ABI subtracts one from maxnode before copying bits.
                 // Include the highest bit of an exactly word-sized bitmap without requesting an extra word.
                 mask.bits() + 1,
-                std::ptr::null::<u8>(),
+                null::<u8>(),
                 0usize,
             )
         } != 0
@@ -41,7 +44,7 @@ impl Policy {
             NumaPolicy::Bind(node) => (2, node),
             NumaPolicy::Prefer(node) => (1, node),
         };
-        if !crate::placement::topology::allowed_nodes()?.contains(&node) {
+        if !allowed_nodes()?.contains(&node) {
             return Err(Error::invalid("NUMA node outside allowed memory set"));
         }
         let mut mask = Mask::new(self.mask.bits())?;
@@ -50,7 +53,7 @@ impl Policy {
     }
     pub fn apply(&self) -> Result<()> {
         let pointer = if self.mode == 0 {
-            std::ptr::null()
+            null()
         } else {
             self.mask.pointer()
         };

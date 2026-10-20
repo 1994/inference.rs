@@ -9,6 +9,8 @@ pub mod tuning;
 mod verification;
 mod weights;
 use infer_backend_cuda::device::CudaDevice;
+use infer_backend_cuda::resident::DeviceProgram;
+use infer_backend_cuda::strategy::LinearTiling;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{StateKind, TensorOp, TensorStorage};
 use infer_models::{QuantizedPackage, WeightSource};
@@ -51,14 +53,14 @@ pub fn prepare_graphs(
 }
 
 pub struct Model {
-    resident: Option<infer_backend_cuda::resident::DeviceProgram>,
+    resident: Option<DeviceProgram>,
     device_embeddings: resident::Embeddings,
     capacity: usize,
     fp8_kv: bool,
     verify_width: usize,
     prefill_width: usize,
     batch_verify: bool,
-    tuning: BTreeMap<String, infer_backend_cuda::strategy::LinearTiling>,
+    tuning: BTreeMap<String, LinearTiling>,
     pub package: QuantizedPackage,
     pub device: CudaDevice,
     projections: BTreeMap<TensorId, Projection>,

@@ -1,3 +1,6 @@
+use crate::constants::GENERATED_TOKEN_STAGING_BYTES;
+use crate::constants::TEXT_STAGING_EXPANSION;
+use crate::constants::TEXT_STAGING_OVERHEAD_BYTES;
 use infer_core::{Error, Result};
 use infer_models::{ChatMessage, ToolCall};
 use serde_json::Value;
@@ -299,11 +302,11 @@ impl GenerationRequest {
                     })
                 }))
             });
-        text.and_then(|n| n.checked_mul(crate::constants::TEXT_STAGING_EXPANSION))
-            .and_then(|n| n.checked_add(crate::constants::TEXT_STAGING_OVERHEAD_BYTES))
+        text.and_then(|n| n.checked_mul(TEXT_STAGING_EXPANSION))
+            .and_then(|n| n.checked_add(TEXT_STAGING_OVERHEAD_BYTES))
             .and_then(|n| {
                 generated
-                    .checked_mul(crate::constants::GENERATED_TOKEN_STAGING_BYTES)
+                    .checked_mul(GENERATED_TOKEN_STAGING_BYTES)
                     .and_then(|tail| n.checked_add(tail))
             })
             .ok_or_else(|| Error::invalid("text preparation budget overflow"))

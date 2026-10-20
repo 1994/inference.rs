@@ -1,5 +1,6 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::{fmt, num::NonZeroU64, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
@@ -100,7 +101,7 @@ impl IdAllocator {
     /// Reserve a contiguous identity transaction without constructing an intermediate vector.
     /// # Errors
     /// Rejects zero allocator cursors or exhaustion without advancing the counter.
-    pub fn reserve_range(&mut self, count: usize) -> Result<std::ops::Range<u64>> {
+    pub fn reserve_range(&mut self, count: usize) -> Result<Range<u64>> {
         let count =
             u64::try_from(count).map_err(|_| Error::invariant("ID range exceeds namespace"))?;
         if self.next == 0 {

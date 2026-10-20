@@ -14,6 +14,9 @@ use std::{
     sync::Arc, sync::atomic::AtomicUsize, sync::atomic::Ordering, sync::mpsc, time::Duration,
 };
 use support::ProtocolBackend;
+use tokio::sync::mpsc::Receiver;
+use tokio::time::sleep;
+use tokio::time::timeout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GateAt {
@@ -92,11 +95,9 @@ impl BackendProvider for Gated {
 fn request(id: u64) -> Result<CanonicalRequest> {
     serde_json::from_value(serde_json::json!({"id":id,"model":1,"input":{"Sequence":{"tokens":[1,2,3]}},"workload":{"Generate":{"max_new_tokens":2}}})).map_err(|e| Error::invalid(e.to_string()))
 }
-async fn terminal(
-    receiver: &mut tokio::sync::mpsc::Receiver<Result<EngineOutput>>,
-) -> Result<FinishReason> {
+async fn terminal(receiver: &mut Receiver<Result<EngineOutput>>) -> Result<FinishReason> {
     loop {
-        let event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        let event = timeout(Duration::from_secs(3), receiver.recv())
             .await
             .map_err(|e| Error::invariant(e.to_string()))?
             .ok_or_else(|| Error::invariant("stream closed"))??;
@@ -139,7 +140,7 @@ async fn blocked_cpu_encoding_preserves_control_progress_and_fence_owned_state()
         if started.try_recv().is_ok() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(1)).await;
     }
     assert_eq!(owned.load(Ordering::Acquire), 1);
     handle.cancel(RequestId::ONE).await?;
@@ -191,7 +192,7 @@ async fn cancellation_during_preparation_prevents_late_admission() -> Result<()>
             observed = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(1)).await;
     }
     assert!(observed);
     handle.cancel(RequestId::ONE).await?;
@@ -243,10 +244,10 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
                 entered = true;
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            sleep(Duration::from_millis(1)).await;
         }
         assert!(entered);
-        let inspection = tokio::time::timeout(Duration::from_millis(25), handle.inspect())
+        let inspection = timeout(Duration::from_millis(25), handle.inspect())
             .await
             .map_err(|e| Error::invariant(e.to_string()))??;
         assert!(inspection.resource_release_pending);

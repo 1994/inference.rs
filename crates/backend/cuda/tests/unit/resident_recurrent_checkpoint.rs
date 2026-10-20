@@ -1,8 +1,10 @@
 use super::checkpoint;
+use crate::constants::CONV_KERNEL_TILE;
 use crate::{device::CudaDevice, resident::recurrent::recurrent};
 use cutile::prelude::*;
+use std::error::Error;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult = Result<(), Box<dyn Error>>;
 
 fn upload<T: DType>(
     device: &CudaDevice,
@@ -53,10 +55,10 @@ fn run_conv(
         return Err("original convolution fixture layout".into());
     };
     recurrent::conv4(
-        (&mut buffers.original_output).partition([crate::constants::CONV_KERNEL_TILE]),
-        h0.partition([crate::constants::CONV_KERNEL_TILE]),
-        h1.partition([crate::constants::CONV_KERNEL_TILE]),
-        h2.partition([crate::constants::CONV_KERNEL_TILE]),
+        (&mut buffers.original_output).partition([CONV_KERNEL_TILE]),
+        h0.partition([CONV_KERNEL_TILE]),
+        h1.partition([CONV_KERNEL_TILE]),
+        h2.partition([CONV_KERNEL_TILE]),
         input,
         weights,
         metadata,
@@ -69,13 +71,13 @@ fn run_conv(
         return Err("convolution checkpoint fixture layout".into());
     };
     checkpoint::conv4_checkpoint(
-        (&mut buffers.candidate_output).partition([crate::constants::CONV_KERNEL_TILE]),
-        h0.partition([crate::constants::CONV_KERNEL_TILE]),
-        h1.partition([crate::constants::CONV_KERNEL_TILE]),
-        h2.partition([crate::constants::CONV_KERNEL_TILE]),
-        c0.partition([crate::constants::CONV_KERNEL_TILE]),
-        c1.partition([crate::constants::CONV_KERNEL_TILE]),
-        c2.partition([crate::constants::CONV_KERNEL_TILE]),
+        (&mut buffers.candidate_output).partition([CONV_KERNEL_TILE]),
+        h0.partition([CONV_KERNEL_TILE]),
+        h1.partition([CONV_KERNEL_TILE]),
+        h2.partition([CONV_KERNEL_TILE]),
+        c0.partition([CONV_KERNEL_TILE]),
+        c1.partition([CONV_KERNEL_TILE]),
+        c2.partition([CONV_KERNEL_TILE]),
         input,
         weights,
         metadata,

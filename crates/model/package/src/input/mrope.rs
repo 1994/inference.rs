@@ -2,6 +2,7 @@
 use crate::{PreparedPrompt, VisualPlacement};
 use infer_core::{Error, Result};
 use infer_ir::PositionSpec;
+use std::collections::BTreeMap;
 
 /// Number of temporal and spatial rotary axes.
 pub const ROTARY_AXES: usize = 3;
@@ -104,7 +105,7 @@ pub fn placed_positions(
     tokens: usize,
     media: &[VisualPlacement],
 ) -> Result<(Vec<[usize; ROTARY_AXES]>, usize)> {
-    let mut placed = std::collections::BTreeMap::new();
+    let mut placed = BTreeMap::new();
     for item in media {
         if item.position >= tokens || placed.insert(item.position, item.rotary_position).is_some() {
             return Err(Error::invalid(

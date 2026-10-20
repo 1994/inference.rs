@@ -2,6 +2,7 @@ use super::{
     capture::{Capture, CaptureMode, error},
     kernels::aux,
 };
+use crate::constants::METADATA_FIELDS;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 
@@ -69,7 +70,7 @@ impl Capture<'_> {
                     heads.to_string(),
                 ]),
             )?;
-        } else if self.metadata.size() == crate::constants::METADATA_FIELDS * 2
+        } else if self.metadata.size() == METADATA_FIELDS * 2
             && let Some(axes) = self.weights.rope_axes.get(&node.id)
         {
             self.scope.record(

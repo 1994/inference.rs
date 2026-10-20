@@ -1,6 +1,8 @@
 use infer_core::{Error, Result};
 use infer_frontdoor::{cpu::CpuConfig, cpu::CpuPool};
+use std::panic::resume_unwind;
 use std::{sync::Arc, sync::Barrier, sync::mpsc, time::Duration};
+use tokio::time::sleep;
 
 fn config() -> CpuConfig {
     CpuConfig {
@@ -105,7 +107,7 @@ async fn timeout_keeps_byte_credit_until_the_actual_cpu_job_exits() -> Result<()
         if pool.inspect().retained_jobs == 0 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(1)).await;
     }
     assert_eq!(pool.inspect().retained_jobs, 0);
     assert_eq!(pool.run(1, |_| Ok(7)).await?, 7);
@@ -117,9 +119,7 @@ async fn failed_provider_does_not_destroy_worker_or_leak_admission_credit() -> R
         workers: 1,
         ..config()
     })?;
-    let result = pool
-        .run::<()>(32, |_| std::panic::resume_unwind(Box::new(())))
-        .await;
+    let result = pool.run::<()>(32, |_| resume_unwind(Box::new(()))).await;
     assert!(result.is_err());
     assert_eq!(pool.run(32, |_| Ok(9)).await?, 9);
     assert_eq!(pool.inspect().retained_bytes, 0);

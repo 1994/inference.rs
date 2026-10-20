@@ -8,12 +8,34 @@ use super::{
     profile,
     prompt_scratch::PromptScratch,
 };
+use crate::constants::ATTENTION_SPLIT_THRESHOLD;
+use crate::constants::CB_DECODE_SLOTS;
+use crate::constants::EXTRA_WIDE_PREFILL_LANES;
+use crate::constants::F32_BYTES;
+use crate::constants::INACTIVE_LANE_STATE_POSITION;
+use crate::constants::MAX_PREFILL_LANES;
+use crate::constants::MAX_VERIFICATION_WIDTH;
+use crate::constants::METADATA_FIELDS;
+use crate::constants::MID_PREFILL_LANES;
+use crate::constants::MTP_KV_OFFSET;
+use crate::constants::PREFILL_LANES;
+use crate::constants::PREFILL_SPLIT_K;
+use crate::constants::WIDE_PREFILL_LANES;
+use crate::constants::WIDER_PREFILL_LANES;
+use crate::constants::WIDEST_PREFILL_LANES;
+use crate::device::Readbacks;
+use crate::device::cublaslt::Support;
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use crate::mlp::ProjectionWeight;
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorNode, TensorOp, TensorStorage};
+use infer_models::mrope::ROTARY_AXES;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::mem::take;
+use std::result::Result as StdResult;
+use std::sync::Mutex;
 
 pub type States = BTreeMap<TensorId, Vec<Tensor<f32>>>;
 pub type BatchOutput = Vec<(Vec<f32>, Vec<f32>)>;
@@ -34,7 +56,7 @@ pub(super) struct PromptOverrides<'a> {
     /// `lanes[lane]` selects that lane's external embedding slot.
     pub lanes: &'a [bool],
     /// Per-lane `(t, h, w)`; absent means `[position + lane; 3]`.
-    pub rotary: Option<&'a [[usize; infer_models::mrope::ROTARY_AXES]]>,
+    pub rotary: Option<&'a [[usize; ROTARY_AXES]]>,
 }
 
 /// Per-lane metadata plus the batched owner, the shared prompt sidecar and rotary table.
@@ -69,7 +91,7 @@ struct PromptCaptures {
 
 pub(super) struct BatchGraph {
     graph: Option<CudaGraph<()>>,
-    readbacks: crate::device::Readbacks,
+    readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
     prefill: CudaGraph<()>,
     prefill_last: CudaGraph<()>,
@@ -84,7 +106,7 @@ pub(super) struct BatchGraph {
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     /// Shared prompt scratch the prompt graphs captured against.
-    _prompt_scratch: Option<Arc<std::sync::Mutex<PromptScratch>>>,
+    _prompt_scratch: Option<Arc<Mutex<PromptScratch>>>,
     metadata: Vec<Tensor<i32>>,
     /// Owner of the batched metadata rows when the prompt graph uses one allocation.
     metadata_owner: Option<Tensor<i32>>,
@@ -119,7 +141,7 @@ pub(super) struct BatchBuilder<'a> {
     pub graph: &'a DataflowGraph,
     pub weights: &'a ProgramWeights,
     pub nvfp4: &'a mut super::nvfp4_gemm::Workspace,
-    pub delegated: Option<&'a mut crate::device::cublaslt::Support>,
+    pub delegated: Option<&'a mut Support>,
     pub attention: &'a mut super::attention_decode::Workspace,
     pub states: &'a mut States,
     pub fp8_states: &'a mut Fp8Caches,
@@ -143,7 +165,7 @@ pub(super) struct BatchBuilder<'a> {
 pub(super) struct SlotDecodeGraph {
     graph: CudaGraph<()>,
     state_only: Option<CudaGraph<()>>,
-    readbacks: crate::device::Readbacks,
+    readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
     metadata: Vec<Tensor<i32>>,
     // Batched hidden rows stay allocated for the graph's writes but are never read back.
@@ -173,7 +195,7 @@ impl BatchBuilder<'_> {
         &mut self,
         geometry: super::program::ProgramGeometry,
     ) -> Result<(Option<BatchGraph>, Option<BatchGraph>, Option<BatchGraph>)> {
-        if self.weights.batch_width > crate::constants::MAX_VERIFICATION_WIDTH {
+        if self.weights.batch_width > MAX_VERIFICATION_WIDTH {
             return Err(Error::invalid("verification width exceeds 9"));
         }
         let batch = if geometry.verification > 1 {
@@ -184,7 +206,7 @@ impl BatchBuilder<'_> {
         };
         let wide = self.weights.prefill_width;
         let narrow = geometry.prompts[1];
-        if wide < crate::constants::PREFILL_LANES && wide > 1 && wide != self.weights.batch_width {
+        if wide < PREFILL_LANES && wide > 1 && wide != self.weights.batch_width {
             return Err(Error::invalid(
                 "prefill width must match verification width or be 32",
             ));
@@ -207,7 +229,7 @@ impl BatchBuilder<'_> {
     /// State positions a fused program writes, relative to its `RoPE` positions.
     fn state_offset(weights: &ProgramWeights) -> i32 {
         if weights.fusion.is_some() {
-            -i32::try_from(crate::constants::MTP_KV_OFFSET).unwrap_or(0)
+            -i32::try_from(MTP_KV_OFFSET).unwrap_or(0)
         } else {
             0
         }
@@ -228,7 +250,7 @@ impl BatchBuilder<'_> {
         lane_fp8: &mut [Fp8Caches],
     ) -> Result<SlotDecodeGraph> {
         let width = lane_states.len();
-        if !(2..=crate::constants::CB_DECODE_SLOTS).contains(&width)
+        if !(2..=CB_DECODE_SLOTS).contains(&width)
             || lane_fp8.len() != width
             || self.lane_external.len() < width
             || self.lane_fusion.len() < width
@@ -268,7 +290,7 @@ impl BatchBuilder<'_> {
             token_readout,
             graph,
             state_only,
-            readbacks: crate::device::Readbacks::default(),
+            readbacks: Readbacks::default(),
             metadata,
             hidden,
             external_hidden: self.weights.fusion.is_some(),
@@ -392,21 +414,21 @@ impl BatchBuilder<'_> {
 
     pub fn build(&mut self) -> Result<BatchGraph> {
         let width = self.width;
-        if !(2..=crate::constants::MAX_VERIFICATION_WIDTH).contains(&width)
+        if !(2..=MAX_VERIFICATION_WIDTH).contains(&width)
             && ![
-                crate::constants::PREFILL_LANES,
-                crate::constants::MID_PREFILL_LANES,
-                crate::constants::MAX_PREFILL_LANES,
-                crate::constants::WIDE_PREFILL_LANES,
-                crate::constants::EXTRA_WIDE_PREFILL_LANES,
-                crate::constants::WIDER_PREFILL_LANES,
-                crate::constants::WIDEST_PREFILL_LANES,
+                PREFILL_LANES,
+                MID_PREFILL_LANES,
+                MAX_PREFILL_LANES,
+                WIDE_PREFILL_LANES,
+                EXTRA_WIDE_PREFILL_LANES,
+                WIDER_PREFILL_LANES,
+                WIDEST_PREFILL_LANES,
             ]
             .contains(&width)
         {
             return Err(Error::invalid("verification width"));
         }
-        if width >= crate::constants::PREFILL_LANES {
+        if width >= PREFILL_LANES {
             return self.build32();
         }
         // Verification records stateless nodes once over a batched arena whose rows the lanes
@@ -459,7 +481,7 @@ impl BatchBuilder<'_> {
             token_readout,
             graph,
             state_offset: Self::state_offset(self.weights),
-            readbacks: crate::device::Readbacks::default(),
+            readbacks: Readbacks::default(),
             prefill,
             prefill_last,
             #[cfg(test)]
@@ -521,7 +543,7 @@ impl BatchBuilder<'_> {
             .map_err(|_| Error::invariant("prompt scratch poisoned"))?;
         let (mut arena, mut prompt_row) = shared_prompt_views(&shared)?;
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
-        let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+        let prefill_info = api::zeros::<i32>(&[METADATA_FIELDS])
             .sync_on(&self.device.stream)
             .map_err(device_error)?;
         let prefill_rotary = self.prompt_rotary()?;
@@ -545,7 +567,7 @@ impl BatchBuilder<'_> {
             token_readout: None,
             graph: None,
             state_offset: Self::state_offset(self.weights),
-            readbacks: crate::device::Readbacks::default(),
+            readbacks: Readbacks::default(),
             prefill: captures.prefill,
             prefill_last: captures.prefill_last,
             #[cfg(test)]
@@ -628,7 +650,7 @@ impl BatchBuilder<'_> {
             return Ok(None);
         }
         Ok(Some(
-            api::zeros::<i32>(&[self.width * infer_models::mrope::ROTARY_AXES])
+            api::zeros::<i32>(&[self.width * ROTARY_AXES])
                 .sync_on(&self.device.stream)
                 .map_err(device_error)?,
         ))
@@ -679,7 +701,7 @@ impl BatchBuilder<'_> {
             }
             partials.insert(
                 rows,
-                api::zeros::<f32>(&[crate::constants::PREFILL_SPLIT_K * self.width, rows])
+                api::zeros::<f32>(&[PREFILL_SPLIT_K * self.width, rows])
                     .sync_on(&self.device.stream)
                     .map_err(device_error)?,
             );
@@ -696,7 +718,7 @@ impl BatchBuilder<'_> {
         node: &TensorNode,
         arena: &mut ActivationArena,
         metadata: &Tensor<i32>,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         match dispatch32(node, self.weights) {
             Dispatch32::Linear if !self.weights.constants.contains_key(&node.inputs[0]) => {
                 super::batch_projection::record_slots(
@@ -739,7 +761,7 @@ impl BatchBuilder<'_> {
         node: &TensorNode,
         lanes: &mut [Lane],
         prefill: Option<bool>,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         let width = lanes.len();
         let TensorOp::Attention {
             query_heads,
@@ -755,7 +777,7 @@ impl BatchBuilder<'_> {
         };
         let eligible = prefill.is_none()
             && width == super::attention_decode::VERIFY_LANES
-            && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
+            && window.is_none_or(|w| w >= ATTENTION_SPLIT_THRESHOLD)
             && self.attention.supports_verify(query_heads, head_dim)
             && !self.weights.constants.contains_key(&node.inputs[0])
             && self.fp8_states.contains_key(&id)
@@ -795,7 +817,7 @@ impl BatchBuilder<'_> {
                 .shape()
                 .iter()
                 .map(|&dim| usize::try_from(dim).map_err(error))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+                .collect::<StdResult<Vec<_>, _>>()?;
             outputs.push((slot, shape, output.reshape(&[query_heads, head_dim])?));
         }
         let recorded = {
@@ -808,7 +830,7 @@ impl BatchBuilder<'_> {
                         .view(&[query_heads, head_dim])
                         .map_err(error)
                 })
-                .collect::<std::result::Result<Vec<_>, DeviceError>>()?;
+                .collect::<StdResult<Vec<_>, DeviceError>>()?;
             let [first, second, third] = outputs.as_mut_slice() else {
                 return Err(error("verification lanes"));
             };
@@ -937,7 +959,7 @@ impl BatchBuilder<'_> {
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
         let pairs = gdn_ba_pairs(self.graph, self.weights);
         let swiglu = super::prefill_projection::swiglu_plan(self.graph, self.weights);
-        let absorbed: std::collections::BTreeSet<usize> = swiglu
+        let absorbed: BTreeSet<usize> = swiglu
             .values()
             .flat_map(|&(silu, multiply, ..)| [silu, multiply])
             .collect();
@@ -1041,7 +1063,7 @@ impl BatchBuilder<'_> {
             &mut super::recurrent_prefill::Workspace,
             &mut Option<super::fusion_batch::Workspace>,
         ),
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let (metadata, metadata_batch, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
         if let Some(workspace) = fusion.as_mut()
@@ -1074,7 +1096,7 @@ impl BatchBuilder<'_> {
         arena: &mut ActivationArena,
         metadata: &[Tensor<i32>],
         partials: &mut BTreeMap<usize, Tensor<f32>>,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let mut no_fusion = None;
         match dispatch32(node, self.weights) {
             Dispatch32::Linear => {
@@ -1142,7 +1164,7 @@ impl BatchBuilder<'_> {
         arena: &mut ActivationArena,
         prefill_info: &Tensor<i32>,
         prefill_rotary: Option<&Tensor<i32>>,
-    ) -> std::result::Result<bool, DeviceError> {
+    ) -> StdResult<bool, DeviceError> {
         let dynamic = !node
             .inputs
             .iter()
@@ -1180,7 +1202,7 @@ impl BatchBuilder<'_> {
         arena: &mut ActivationArena,
         metadata: &Tensor<i32>,
         mode: CaptureMode,
-    ) -> std::result::Result<(), DeviceError> {
+    ) -> StdResult<(), DeviceError> {
         let mut no_fusion = None;
         Capture {
             scope,
@@ -1235,7 +1257,7 @@ impl BatchBuilder<'_> {
                 for source in &self.states[&spec.id] {
                     bytes = source
                         .size()
-                        .checked_mul(crate::constants::F32_BYTES)
+                        .checked_mul(F32_BYTES)
                         .and_then(|n| bytes.checked_add(n))
                         .ok_or_else(|| Error::invalid("checkpoint overflow"))?;
                     if u64::try_from(bytes).map_err(device_error)?
@@ -1270,7 +1292,7 @@ impl BatchBuilder<'_> {
             };
             lanes.push(Lane {
                 arena,
-                metadata: api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+                metadata: api::zeros::<i32>(&[METADATA_FIELDS])
                     .sync_on(&self.device.stream)
                     .map_err(device_error)?,
                 checkpoints,
@@ -1363,7 +1385,7 @@ impl BatchGraph {
         read_hidden: bool,
         plain_greedy: bool,
     ) -> Result<BatchReadout> {
-        if self.width >= crate::constants::PREFILL_LANES {
+        if self.width >= PREFILL_LANES {
             return self
                 .run32(
                     device,
@@ -1483,12 +1505,12 @@ impl BatchGraph {
         position: usize,
         state_offset: i32,
         overrides: PromptOverrides<'_>,
-    ) -> Result<Vec<[i32; crate::constants::METADATA_FIELDS]>> {
+    ) -> Result<Vec<[i32; METADATA_FIELDS]>> {
         let mut rows = Vec::with_capacity(width);
         for lane in 0..width {
             let token = tokens.get(lane).copied().unwrap_or(0);
             let pos = i32::try_from(position + lane).map_err(device_error)?;
-            let state_pos = if width >= crate::constants::PREFILL_LANES && lane >= tokens.len() {
+            let state_pos = if width >= PREFILL_LANES && lane >= tokens.len() {
                 -1
             } else {
                 pos.saturating_add(state_offset)
@@ -1691,7 +1713,7 @@ impl BatchGraph {
                     Vec::new()
                 };
                 let logits = if lane + 1 == tokens.len() {
-                    std::mem::take(&mut logits)
+                    take(&mut logits)
                 } else {
                     Vec::new()
                 };
@@ -1706,7 +1728,7 @@ impl BatchGraph {
         device: &CudaDevice,
         lanes: usize,
         position: usize,
-        rotary: Option<&[[usize; infer_models::mrope::ROTARY_AXES]]>,
+        rotary: Option<&[[usize; ROTARY_AXES]]>,
     ) -> Result<()> {
         let Some(table) = self.prefill_rotary.as_mut() else {
             return Ok(());
@@ -1714,17 +1736,14 @@ impl BatchGraph {
         if rotary.is_some_and(|rotary| rotary.len() != lanes) {
             return Err(Error::invalid("prompt rotary table width"));
         }
-        let mut values = vec![0i32; self.width * infer_models::mrope::ROTARY_AXES];
+        let mut values = vec![0i32; self.width * ROTARY_AXES];
         for lane in 0..lanes {
             // Prompt-local coordinates shift with the base, like the 1-D fallback does.
-            let axes = rotary.map_or(
-                [position + lane; infer_models::mrope::ROTARY_AXES],
-                |rotary| {
-                    let axes = rotary[lane];
-                    [axes[0] + position, axes[1] + position, axes[2] + position]
-                },
-            );
-            let base = lane * infer_models::mrope::ROTARY_AXES;
+            let axes = rotary.map_or([position + lane; ROTARY_AXES], |rotary| {
+                let axes = rotary[lane];
+                [axes[0] + position, axes[1] + position, axes[2] + position]
+            });
+            let base = lane * ROTARY_AXES;
             values[base] = i32::try_from(axes[0]).map_err(device_error)?;
             values[base + 1] = i32::try_from(axes[1]).map_err(device_error)?;
             values[base + 2] = i32::try_from(axes[2]).map_err(device_error)?;
@@ -1900,7 +1919,7 @@ impl SlotDecodeGraph {
                     i32::try_from(state_pos).map_err(device_error)?,
                     i32::from(external_hidden),
                 ],
-                None => [0, 0, crate::constants::INACTIVE_LANE_STATE_POSITION, 0],
+                None => [0, 0, INACTIVE_LANE_STATE_POSITION, 0],
             };
             super::metadata::update(graph, metadata, values)?;
         }
@@ -2140,7 +2159,7 @@ fn gdn_ba_projection(node: &TensorNode, weights: &ProgramWeights) -> bool {
               each view addresses a disjoint lane, and graphs retain the owner"
 )]
 fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, Vec<Tensor<i32>>)> {
-    let fields = crate::constants::METADATA_FIELDS;
+    let fields = METADATA_FIELDS;
     let elements = width
         .checked_mul(fields)
         .ok_or_else(|| Error::invalid("metadata size overflow"))?;
@@ -2159,7 +2178,7 @@ fn batched_metadata(device: &CudaDevice, width: usize) -> Result<(Tensor<i32>, V
 fn slot_metadata(device: &CudaDevice, width: usize) -> Result<Vec<Tensor<i32>>> {
     (0..width)
         .map(|_| {
-            api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
+            api::zeros::<i32>(&[METADATA_FIELDS])
                 .sync_on(&device.stream)
                 .map_err(device_error)
         })

@@ -9,6 +9,7 @@ use crate::{
     },
 };
 use infer_core::{Error, ModelId, Result};
+use std::env::var;
 fn pooled(
     loaded: &LoadedModel,
     actual: &DeviceProgram,
@@ -105,7 +106,7 @@ fn pooled(
 #[ignore = "requires CUDA/checkpoint/safe-run; actual pool inactive/reactivate/rebind full states"]
 fn full_model_pool_parallel_quantization() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
-    let path = std::env::var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens = prompt()?;
     let loaded = LoadedModel::open(
         CudaDevice::new(0)?,

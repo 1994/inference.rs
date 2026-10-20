@@ -1,6 +1,9 @@
 //! Completion lifecycle.
 use super::{CommandTrace, MetalBackend, MetalDevice, MetalTicket};
+use crate::constants::MAX_TICKET_TASKS;
+use crate::device::command_timing;
 use infer_core::{Error, ErrorCode, Result};
+use std::mem::take;
 mod probes;
 use infer_ir::{ModelOutput, TaskOutput};
 use metal::MTLCommandBufferStatus;
@@ -19,7 +22,7 @@ impl MetalBackend {
                 self.inflight_states.clear();
                 t.done = true;
                 t.tasks.clear();
-                self.ticket_work = std::mem::take(&mut t.tasks);
+                self.ticket_work = take(&mut t.tasks);
                 return Err(Error::new(ErrorCode::Backend, "Metal GPU command failed"));
             }
             _ => return Ok(None),
@@ -33,7 +36,7 @@ impl MetalBackend {
         let mut outputs = self
             .completion_pool
             .pop()
-            .unwrap_or_else(|| Vec::with_capacity(crate::constants::MAX_TICKET_TASKS));
+            .unwrap_or_else(|| Vec::with_capacity(MAX_TICKET_TASKS));
         for (task, start) in t.tasks.iter().zip(&t.starts) {
             let s = self
                 .sequences
@@ -92,11 +95,11 @@ impl MetalBackend {
             self.kv.publish_prefix(cached)?;
         }
         t.tasks.clear();
-        self.ticket_work = std::mem::take(&mut t.tasks);
+        self.ticket_work = take(&mut t.tasks);
         Ok(Some(outputs))
     }
     fn record_command(&mut self, t: &MetalTicket) {
-        let (gpu_start_ns, gpu_duration_ns) = crate::device::command_timing(&t.command);
+        let (gpu_start_ns, gpu_duration_ns) = command_timing(&t.command);
         if self.commands.len() == self.config.trace_capacity {
             self.commands.pop_front();
         }

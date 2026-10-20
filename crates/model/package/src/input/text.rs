@@ -1,16 +1,26 @@
+use crate::constants::MIB;
+use crate::constants::MIB_U64;
+use crate::input::tool::MAX_TOOL_CALLS;
+use crate::input::tool::ToolCall;
+use crate::input::tool::ToolDialect;
 use crate::package_path;
 use infer_core::{Error, ErrorCode, Result};
+use minijinja_contrib::pycompat::unknown_method_callback;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::mem::take;
+use std::result::Result as StdResult;
+use std::sync::Arc;
 use std::{collections::BTreeMap, path::Path};
 use tokenizers::Tokenizer;
 
 /// Maximum accepted `tokenizer.json` asset size.
-const TOKENIZER_JSON_MAX_BYTES: u64 = 64 * crate::constants::MIB_U64;
+const TOKENIZER_JSON_MAX_BYTES: u64 = 64 * MIB_U64;
 /// Maximum accepted tokenizer-config or chat-template asset size.
-const TEXT_ASSET_MAX_BYTES: u64 = 2 * crate::constants::MIB_U64;
+const TEXT_ASSET_MAX_BYTES: u64 = 2 * MIB_U64;
 /// Maximum accepted chat or input text size.
-const TEXT_MAX_BYTES: usize = 2 * crate::constants::MIB;
+const TEXT_MAX_BYTES: usize = 2 * MIB;
 /// Maximum chat messages accepted by the template renderer.
 const MAX_CHAT_MESSAGES: usize = 256;
 /// Template evaluation fuel bounding render work per chat request.
@@ -26,7 +36,7 @@ pub struct ChatMessage {
     pub content: String,
     /// Assistant calls, kept so a full tool round can be replayed into the template.
     #[serde(default)]
-    pub tool_calls: Vec<crate::input::tool::ToolCall>,
+    pub tool_calls: Vec<ToolCall>,
     /// Identifier associating a `tool` result with the assistant call it answers.
     #[serde(default)]
     pub tool_call_id: Option<String>,
@@ -44,7 +54,7 @@ impl ChatMessage {
     }
 }
 /// Deserialize a text field that may be `null`.
-fn nullable_text<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+fn nullable_text<'de, D>(deserializer: D) -> StdResult<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -94,21 +104,21 @@ impl Default for ChatOptions {
     }
 }
 pub struct TextAssets {
-    tokenizer: std::sync::Arc<Tokenizer>,
+    tokenizer: Arc<Tokenizer>,
     template: Option<String>,
     special: BTreeMap<String, serde_json::Value>,
     pub fingerprint: String,
     max_tokens: usize,
     pub generation: crate::GenerationDefaults,
     /// Tool-call dialect this package's template asks the model to emit.
-    tool_dialect: crate::input::tool::ToolDialect,
+    tool_dialect: ToolDialect,
     /// Whether the tokenizer's decoder can be applied to a token sub-list independently.
     streaming_decode: bool,
     tool_supported: bool,
 }
 fn read(path: &Path, budget: u64) -> Result<Vec<u8>> {
     use std::io::Read;
-    let file = std::fs::File::open(path).map_err(|e| Error::invalid(e.to_string()))?;
+    let file = File::open(path).map_err(|e| Error::invalid(e.to_string()))?;
     if file
         .metadata()
         .map_err(|e| Error::invalid(e.to_string()))?
@@ -195,19 +205,18 @@ impl TextAssets {
             hash.update(&bytes);
             template = Some(String::from_utf8(bytes).map_err(|e| Error::invalid(e.to_string()))?);
         }
-        let tool_supported = template.as_deref().is_some_and(|template| {
-            crate::input::tool::ToolDialect::from_template(template).is_some()
-        });
-        let tool_dialect = template.as_deref().map_or(
-            crate::input::tool::ToolDialect::JsonBlock,
-            crate::input::tool::ToolDialect::detect,
-        );
+        let tool_supported = template
+            .as_deref()
+            .is_some_and(|template| ToolDialect::from_template(template).is_some());
+        let tool_dialect = template
+            .as_deref()
+            .map_or(ToolDialect::JsonBlock, ToolDialect::detect);
         // Word-piece style decoders insert a separator between consecutive tokens, so decoding
         // pieces independently loses it. Only byte-level concatenation is decomposable.
         let streaming_decode = byte_level_decoder(&bytes);
         Ok(Self {
             generation: crate::GenerationDefaults::open(root)?,
-            tokenizer: std::sync::Arc::new(tokenizer),
+            tokenizer: Arc::new(tokenizer),
             template,
             special,
             fingerprint: format!("{:x}", hash.finalize()),
@@ -224,7 +233,7 @@ impl TextAssets {
     }
     /// Tool-call dialect bound to this package's template.
     #[must_use]
-    pub const fn tool_dialect(&self) -> crate::input::tool::ToolDialect {
+    pub const fn tool_dialect(&self) -> ToolDialect {
         self.tool_dialect
     }
     /// Whether this package can publish a stable incremental decode.
@@ -240,7 +249,7 @@ impl TextAssets {
     #[must_use]
     pub fn stream_decoder(&self) -> TextStreamDecoder {
         TextStreamDecoder {
-            tokenizer: std::sync::Arc::clone(&self.tokenizer),
+            tokenizer: Arc::clone(&self.tokenizer),
             pending: Vec::new(),
         }
     }
@@ -306,7 +315,7 @@ impl TextAssets {
                     // result carries the identifier it answers.
                     || (!m.tool_calls.is_empty() && m.role != "assistant")
                     || (m.tool_call_id.is_some() && m.role != "tool")
-                    || m.tool_calls.len() > crate::input::tool::MAX_TOOL_CALLS
+                    || m.tool_calls.len() > MAX_TOOL_CALLS
             })
         {
             return Err(Error::invalid("invalid/budget-exceeding chat messages"));
@@ -314,10 +323,10 @@ impl TextAssets {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
         env.set_fuel(Some(TEMPLATE_FUEL));
-        env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+        env.set_unknown_method_callback(unknown_method_callback);
         env.add_function(
             "raise_exception",
-            |message: String| -> std::result::Result<String, minijinja::Error> {
+            |message: String| -> StdResult<String, minijinja::Error> {
                 Err(minijinja::Error::new(
                     minijinja::ErrorKind::InvalidOperation,
                     message,
@@ -382,7 +391,7 @@ fn byte_level_decoder(bytes: &[u8]) -> bool {
 /// arrive, which keeps every published prefix stable: nothing already sent is ever rewritten.
 /// The decode cost is bounded by the bytes of one character rather than by the whole response.
 pub struct TextStreamDecoder {
-    tokenizer: std::sync::Arc<Tokenizer>,
+    tokenizer: Arc<Tokenizer>,
     /// Tokens whose decoded text is not yet known to be complete.
     pending: Vec<u32>,
 }
@@ -416,7 +425,7 @@ impl TextStreamDecoder {
         if self.pending.is_empty() {
             return Ok(String::new());
         }
-        let pending = std::mem::take(&mut self.pending);
+        let pending = take(&mut self.pending);
         self.decode(&pending)
     }
     fn decode(&self, tokens: &[u32]) -> Result<String> {

@@ -1,3 +1,4 @@
+use crate::moe::execute as moe_execute;
 use infer_core::{Error, Result};
 use infer_ir::TensorOp;
 use infer_state::physical::PhysicalTensor;
@@ -71,7 +72,7 @@ pub fn execute(
         TensorOp::MoeRoute { .. }
         | TensorOp::ExpertLinear { .. }
         | TensorOp::MoeCombine { .. }
-        | TensorOp::Scale => crate::moe::execute(op, inputs),
+        | TensorOp::Scale => moe_execute(op, inputs),
         TensorOp::Linear => linear(inputs),
         TensorOp::Norm {
             epsilon,
