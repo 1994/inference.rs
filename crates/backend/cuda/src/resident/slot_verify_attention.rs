@@ -1,7 +1,7 @@
 //! One KV read serves the three verification candidates of each pool slot.
 use super::{
     ActivationArena,
-    arena::batch_rows,
+    arena::row_tensor,
     attention_decode::VERIFY_LANES,
     batch::{BatchBuilder, States},
     capture::{Capture, CaptureMode, error},
@@ -11,6 +11,7 @@ use crate::constants::ATTENTION_SPLIT_THRESHOLD;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 use std::result::Result as StdResult;
+use std::sync::Arc;
 
 impl BatchBuilder<'_> {
     /// Append all candidates before attending; per-lane metadata still enforces causality.
@@ -48,11 +49,8 @@ impl BatchBuilder<'_> {
         let output = arena.buffers[slot]
             .take()
             .ok_or_else(|| error("slot attention output"))?;
-        let mut rows = batch_rows(&output, metadata.len())
-            .map_err(error)?
-            .into_iter()
-            .map(|row| row.reshape(&[query_heads, head_dim]))
-            .collect::<StdResult<Vec<_>, _>>()?;
+        let (mut rows, output) =
+            attention_output_rows(output, metadata.len(), query_heads, head_dim)?;
         for (index, [first, second, third]) in rows
             .as_chunks_mut::<VERIFY_LANES>()
             .0
@@ -114,4 +112,22 @@ impl BatchBuilder<'_> {
         }
         Ok(())
     }
+}
+
+/// Preserve the arena owner's exclusive storage while capture binds borrowed row outputs.
+/// Owned shared aliases would prevent a later node from reusing this arena buffer mutably.
+fn attention_output_rows(
+    mut output: Tensor<f32>,
+    lanes: usize,
+    heads: usize,
+    dim: usize,
+) -> StdResult<(Vec<Tensor<f32>>, Tensor<f32>), DeviceError> {
+    let mut rows = Vec::with_capacity(lanes);
+    for lane in 0..lanes {
+        let (row, owner) = row_tensor(output, lanes, lane).map_err(error)?;
+        output = Arc::try_unwrap(owner)
+            .map_err(|_| error("slot attention arena owner still aliased"))?;
+        rows.push(row.reshape(&[heads, dim])?);
+    }
+    Ok((rows, output))
 }

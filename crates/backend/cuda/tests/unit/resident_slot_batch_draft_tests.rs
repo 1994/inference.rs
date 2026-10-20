@@ -378,15 +378,48 @@ fn paged_kv_scatter_survives_exhaustion_and_block_reuse() -> Result<()> {
     Ok(())
 }
 
+fn paged_attention_reuse_fixture(device: &CudaDevice) -> Result<(DataflowGraph, ProgramWeights)> {
+    let (mut graph, mut weights) = fixture(device)?;
+    // Make the attention output temporary: the final Add reuses its physical arena slot.
+    // Keeping owned shared row aliases would panic when that slot is written again.
+    graph.tensors.push(TensorSpec {
+        id: TensorId::new(6)?,
+        shape: vec![32],
+        dtype: DType::F32,
+        storage: TensorStorage::Activation,
+    });
+    graph.nodes.push(TensorNode {
+        id: OpId::new(4)?,
+        layer: None,
+        op: TensorOp::Add,
+        inputs: vec![TensorId::new(5)?, TensorId::new(5)?],
+        outputs: vec![TensorId::new(6)?],
+        states: Vec::new(),
+    });
+    graph.hidden = Some(TensorId::new(5)?);
+    graph.logits = Some(TensorId::new(6)?);
+    weights.fusion = None;
+    weights.kv_scales.insert(TensorId::new(4)?, [0.01, 0.02]);
+    graph.plan_lifetimes()?;
+    let slot = |id| {
+        graph
+            .lifetimes
+            .iter()
+            .find(|life| life.tensor == id)
+            .unwrap()
+            .slot
+    };
+    assert_eq!(slot(TensorId::new(3)?), slot(TensorId::new(6)?));
+    Ok((graph, weights))
+}
+
 /// Three candidates read one paged cache while preserving each candidate's causal prefix.
 #[test]
 #[ignore = "requires CUDA hardware; run under safe-run"]
 fn paged_verify_attention_matches_scalar_causality_and_reuse() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let (graph, mut weights) = fixture(&device)?;
-    weights.fusion = None;
-    weights.kv_scales.insert(TensorId::new(4)?, [0.01, 0.02]);
+    let (graph, weights) = paged_attention_reuse_fixture(&device)?;
     let mut pool = SlotPool::new(&device, &graph, &weights, 4, 128, 32, (32, 3), Some(384))?;
     let mut serial = (0..4)
         .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, 32, 32))
