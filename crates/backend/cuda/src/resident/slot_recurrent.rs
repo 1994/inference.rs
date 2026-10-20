@@ -133,17 +133,82 @@ pub(crate) mod fused {
         ));
     }
 
-    /// Delta-rule outputs of the three verification lanes of one slot, each read against the
-    /// state its predecessors would leave, without writing the state: [`delta_commit3`] applies
-    /// the accepted prefix once acceptance is known, so no rollback snapshot is needed. A padding
-    /// lane leaves the running state unchanged and outputs zero.
+    /// Normalize a query or key with the reference delta kernel's reduction order.
+    fn normalize<const D: i32>(value: Tile<f32, { [D] }>) -> Tile<f32, { [D] }> {
+        let square: Tile<f32, { [] }> = reduce_sum(value * value, 0i32);
+        let inverse = rsqrt(
+            square.reshape(shape![1]) + 1e-6f32.broadcast(shape![1]),
+            ftz::Disabled,
+        );
+        value * inverse.broadcast(shape![D])
+    }
+
+    fn sigmoid(value: Tile<f32, { [1] }>) -> Tile<f32, { [1] }> {
+        let one = 1.0f32.broadcast(shape![1]);
+        one / (one + exp(0.0f32.broadcast(shape![1]) - value))
+    }
+
+    fn delta_decay(alpha: Tile<f32, { [1] }>, rate: Tile<f32, { [1] }>) -> Tile<f32, { [1] }> {
+        let one = 1.0f32.broadcast(shape![1]);
+        let large = cmpf(
+            alpha,
+            20.0f32.broadcast(shape![1]),
+            predicate::GreaterThan,
+            cmp_ordering::Ordered,
+        );
+        let soft = select(large, alpha, log(one + exp(alpha)));
+        exp(0.0f32.broadcast(shape![1]) - rate * soft)
+    }
+
+    /// One lane's state transition, shared by verification and accepted-prefix commit.
+    fn delta_update<const D: i32, const SW: i32>(
+        old: Tile<f32, { [D, SW] }>,
+        key: Tile<f32, { [D] }>,
+        value: Tile<f32, { [SW] }>,
+        beta: Tile<f32, { [1] }>,
+        decay: Tile<f32, { [1] }>,
+        active: Tile<bool, { [1] }>,
+    ) -> Tile<f32, { [D, SW] }> {
+        let key = normalize(key);
+        let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
+        let kb = key.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let predicted: Tile<f32, { [SW] }> = reduce_sum(decayed * kb, 0i32);
+        let diff = (value - predicted.reshape(shape![SW])) * beta.broadcast(shape![SW]);
+        let next: Tile<f32, { [D, SW] }> =
+            decayed + kb * diff.reshape(shape![1, SW]).broadcast(shape![D, SW]);
+        select(
+            active.reshape(shape![1, 1]).broadcast(shape![D, SW]),
+            next,
+            old,
+        )
+    }
+
+    fn delta_output<const D: i32, const SW: i32>(
+        state: Tile<f32, { [D, SW] }>,
+        query: Tile<f32, { [D] }>,
+        active: Tile<bool, { [1] }>,
+    ) -> Tile<f32, { [1, 1, SW] }> {
+        let square: Tile<f32, { [] }> = reduce_sum(query * query, 0i32);
+        let inverse = rsqrt(
+            square.reshape(shape![1]) + 1e-6f32.broadcast(shape![1]),
+            ftz::Disabled,
+        );
+        let d: f32 = convert_scalar(D);
+        let dinv = rsqrt(d.broadcast(shape![1]), ftz::Disabled);
+        let query = query * (inverse * dinv).broadcast(shape![D]);
+        let qb = query.reshape(shape![D, 1]).broadcast(shape![D, SW]);
+        let result: Tile<f32, { [SW] }> = reduce_sum(state * qb, 0i32);
+        select(
+            active.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
+            result.reshape(shape![1, 1, SW]),
+            0.0f32.broadcast(shape![1, 1, SW]),
+        )
+    }
+
+    /// Score three lanes without changing the slot state; commit applies the accepted prefix.
     #[expect(
         clippy::too_many_arguments,
         reason = "CUDA state kernel binds three verification lanes' rows explicitly"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "The DSL cannot pass generic tile shapes through helpers, so the lanes are inline"
     )]
     #[cutile::entry()]
     fn delta_verify3<const KH: i32, const VH: i32, const D: i32, const SW: i32>(
@@ -168,159 +233,51 @@ pub(crate) mod fused {
     ) {
         let pid = get_tile_block_id();
         let key = pid.0 / (VH / KH);
-        let one = 1.0f32.broadcast(shape![1]);
-        let zero = 0.0f32.broadcast(shape![1]);
-        let epsilon = 1e-6f32.broadcast(shape![1]);
-        let threshold = 20.0f32.broadcast(shape![1]);
         let head_bias = bias.partition(shape![1]).load([pid.0]);
         let rate = exp(a_log.partition(shape![1]).load([pid.0]));
-        let zero_out: Tile<f32, { [1, 1, SW] }> = 0.0f32.broadcast(shape![1, 1, SW]);
-        let d: f32 = convert_scalar(D);
-        let dinv = rsqrt(d.broadcast(shape![1]), ftz::Disabled);
         let initial: Tile<f32, { [D, SW] }> = state
             .partition(shape![1, D, SW])
             .load([pid.0, 0i32, pid.2])
             .reshape(shape![D, SW]);
-        let active0: Tile<bool, { [1] }> = lane_active(metadata0);
+        let active0 = lane_active(metadata0);
         let qp0 = qkv0.partition(shape![D]);
-        let q0: Tile<f32, { [D] }> = qp0.load([key]);
-        let qs0: Tile<f32, { [] }> = reduce_sum(q0 * q0, 0i32);
-        let qinv0 = rsqrt(qs0.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let q0 = q0 * (qinv0 * dinv).broadcast(shape![D]);
         let k0: Tile<f32, { [D] }> = qp0.load([KH + key]);
         let v0: Tile<f32, { [SW] }> = qkv0
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks0: Tile<f32, { [] }> = reduce_sum(k0 * k0, 0i32);
-        let kinv0 = rsqrt(ks0.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k0 = k0 * kinv0.broadcast(shape![D]);
-        let bt0 = beta0.partition(shape![1]).load([pid.0]);
-        let bt0 = one / (one + exp(zero - bt0));
-        let at0 = alpha0.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft0 = log(one + exp(at0));
-        let large0 = cmpf(
-            at0,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft0 = select(large0, at0, soft0);
-        let decay0 = exp(zero - rate * soft0);
-        let decayed0 = initial * decay0.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb0 = k0.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted0: Tile<f32, { [SW] }> = reduce_sum(decayed0 * kb0, 0i32);
-        let diff0 = (v0 - predicted0.reshape(shape![SW])) * bt0.broadcast(shape![SW]);
-        let next0: Tile<f32, { [D, SW] }> =
-            decayed0 + kb0 * diff0.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after0 = select(
-            active0.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next0,
-            initial,
-        );
-        let qb0 = q0.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let result0: Tile<f32, { [SW] }> = reduce_sum(after0 * qb0, 0i32);
-        out0.store(select(
-            active0.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
-            result0.reshape(shape![1, 1, SW]),
-            zero_out,
-        ));
-        let active1: Tile<bool, { [1] }> = lane_active(metadata1);
+        let bt0 = sigmoid(beta0.partition(shape![1]).load([pid.0]));
+        let decay0 = delta_decay(alpha0.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after0 = delta_update(initial, k0, v0, bt0, decay0, active0);
+        let q0: Tile<f32, { [D] }> = qp0.load([key]);
+        out0.store(delta_output(after0, q0, active0));
+        let active1 = lane_active(metadata1);
         let qp1 = qkv1.partition(shape![D]);
-        let q1: Tile<f32, { [D] }> = qp1.load([key]);
-        let qs1: Tile<f32, { [] }> = reduce_sum(q1 * q1, 0i32);
-        let qinv1 = rsqrt(qs1.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let q1 = q1 * (qinv1 * dinv).broadcast(shape![D]);
         let k1: Tile<f32, { [D] }> = qp1.load([KH + key]);
         let v1: Tile<f32, { [SW] }> = qkv1
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks1: Tile<f32, { [] }> = reduce_sum(k1 * k1, 0i32);
-        let kinv1 = rsqrt(ks1.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k1 = k1 * kinv1.broadcast(shape![D]);
-        let bt1 = beta1.partition(shape![1]).load([pid.0]);
-        let bt1 = one / (one + exp(zero - bt1));
-        let at1 = alpha1.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft1 = log(one + exp(at1));
-        let large1 = cmpf(
-            at1,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft1 = select(large1, at1, soft1);
-        let decay1 = exp(zero - rate * soft1);
-        let decayed1 = after0 * decay1.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb1 = k1.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted1: Tile<f32, { [SW] }> = reduce_sum(decayed1 * kb1, 0i32);
-        let diff1 = (v1 - predicted1.reshape(shape![SW])) * bt1.broadcast(shape![SW]);
-        let next1: Tile<f32, { [D, SW] }> =
-            decayed1 + kb1 * diff1.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after1 = select(
-            active1.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next1,
-            after0,
-        );
-        let qb1 = q1.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let result1: Tile<f32, { [SW] }> = reduce_sum(after1 * qb1, 0i32);
-        out1.store(select(
-            active1.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
-            result1.reshape(shape![1, 1, SW]),
-            zero_out,
-        ));
-        let active2: Tile<bool, { [1] }> = lane_active(metadata2);
+        let bt1 = sigmoid(beta1.partition(shape![1]).load([pid.0]));
+        let decay1 = delta_decay(alpha1.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after1 = delta_update(after0, k1, v1, bt1, decay1, active1);
+        let q1: Tile<f32, { [D] }> = qp1.load([key]);
+        out1.store(delta_output(after1, q1, active1));
+        let active2 = lane_active(metadata2);
         let qp2 = qkv2.partition(shape![D]);
-        let q2: Tile<f32, { [D] }> = qp2.load([key]);
-        let qs2: Tile<f32, { [] }> = reduce_sum(q2 * q2, 0i32);
-        let qinv2 = rsqrt(qs2.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let q2 = q2 * (qinv2 * dinv).broadcast(shape![D]);
         let k2: Tile<f32, { [D] }> = qp2.load([KH + key]);
         let v2: Tile<f32, { [SW] }> = qkv2
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks2: Tile<f32, { [] }> = reduce_sum(k2 * k2, 0i32);
-        let kinv2 = rsqrt(ks2.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k2 = k2 * kinv2.broadcast(shape![D]);
-        let bt2 = beta2.partition(shape![1]).load([pid.0]);
-        let bt2 = one / (one + exp(zero - bt2));
-        let at2 = alpha2.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft2 = log(one + exp(at2));
-        let large2 = cmpf(
-            at2,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft2 = select(large2, at2, soft2);
-        let decay2 = exp(zero - rate * soft2);
-        let decayed2 = after1 * decay2.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb2 = k2.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted2: Tile<f32, { [SW] }> = reduce_sum(decayed2 * kb2, 0i32);
-        let diff2 = (v2 - predicted2.reshape(shape![SW])) * bt2.broadcast(shape![SW]);
-        let next2: Tile<f32, { [D, SW] }> =
-            decayed2 + kb2 * diff2.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after2 = select(
-            active2.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next2,
-            after1,
-        );
-        let qb2 = q2.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let result2: Tile<f32, { [SW] }> = reduce_sum(after2 * qb2, 0i32);
-        out2.store(select(
-            active2.reshape(shape![1, 1, 1]).broadcast(shape![1, 1, SW]),
-            result2.reshape(shape![1, 1, SW]),
-            zero_out,
-        ));
+        let bt2 = sigmoid(beta2.partition(shape![1]).load([pid.0]));
+        let decay2 = delta_decay(alpha2.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after2 = delta_update(after1, k2, v2, bt2, decay2, active2);
+        let q2: Tile<f32, { [D] }> = qp2.load([key]);
+        out2.store(delta_output(after2, q2, active2));
     }
 
-    /// Apply the first `count` verification lanes' delta-rule updates to one slot's state, with
-    /// the arithmetic of [`delta_verify3`]; a padding lane is never applied.
+    /// Apply the accepted prefix, ignoring padding and every lane after the first padding.
     #[expect(
         clippy::too_many_arguments,
         reason = "CUDA state kernel binds three verification lanes' rows explicitly"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "The DSL cannot pass generic tile shapes through helpers, so the lanes are inline"
     )]
     #[cutile::entry()]
     fn delta_commit3<const KH: i32, const VH: i32, const D: i32, const SW: i32>(
@@ -343,47 +300,20 @@ pub(crate) mod fused {
     ) {
         let pid = get_tile_block_id();
         let key = pid.0 / (VH / KH);
-        let one = 1.0f32.broadcast(shape![1]);
-        let zero = 0.0f32.broadcast(shape![1]);
-        let epsilon = 1e-6f32.broadcast(shape![1]);
-        let threshold = 20.0f32.broadcast(shape![1]);
         let head_bias = bias.partition(shape![1]).load([pid.0]);
         let rate = exp(a_log.partition(shape![1]).load([pid.0]));
         let initial: Tile<f32, { [D, SW] }> = state.load_like(state).reshape(shape![D, SW]);
-        let applied0: Tile<bool, { [1] }> =
+        let applied0 =
             lane_active(metadata0) & ge_tile(count.broadcast(shape![1]), 1i32.broadcast(shape![1]));
         let qp0 = qkv0.partition(shape![D]);
         let k0: Tile<f32, { [D] }> = qp0.load([KH + key]);
         let v0: Tile<f32, { [SW] }> = qkv0
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks0: Tile<f32, { [] }> = reduce_sum(k0 * k0, 0i32);
-        let kinv0 = rsqrt(ks0.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k0 = k0 * kinv0.broadcast(shape![D]);
-        let bt0 = beta0.partition(shape![1]).load([pid.0]);
-        let bt0 = one / (one + exp(zero - bt0));
-        let at0 = alpha0.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft0 = log(one + exp(at0));
-        let large0 = cmpf(
-            at0,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft0 = select(large0, at0, soft0);
-        let decay0 = exp(zero - rate * soft0);
-        let decayed0 = initial * decay0.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb0 = k0.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted0: Tile<f32, { [SW] }> = reduce_sum(decayed0 * kb0, 0i32);
-        let diff0 = (v0 - predicted0.reshape(shape![SW])) * bt0.broadcast(shape![SW]);
-        let next0: Tile<f32, { [D, SW] }> =
-            decayed0 + kb0 * diff0.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after0 = select(
-            applied0.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next0,
-            initial,
-        );
-        let applied1: Tile<bool, { [1] }> = applied0
+        let bt0 = sigmoid(beta0.partition(shape![1]).load([pid.0]));
+        let decay0 = delta_decay(alpha0.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after0 = delta_update(initial, k0, v0, bt0, decay0, applied0);
+        let applied1 = applied0
             & lane_active(metadata1)
             & ge_tile(count.broadcast(shape![1]), 2i32.broadcast(shape![1]));
         let qp1 = qkv1.partition(shape![D]);
@@ -391,33 +321,10 @@ pub(crate) mod fused {
         let v1: Tile<f32, { [SW] }> = qkv1
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks1: Tile<f32, { [] }> = reduce_sum(k1 * k1, 0i32);
-        let kinv1 = rsqrt(ks1.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k1 = k1 * kinv1.broadcast(shape![D]);
-        let bt1 = beta1.partition(shape![1]).load([pid.0]);
-        let bt1 = one / (one + exp(zero - bt1));
-        let at1 = alpha1.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft1 = log(one + exp(at1));
-        let large1 = cmpf(
-            at1,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft1 = select(large1, at1, soft1);
-        let decay1 = exp(zero - rate * soft1);
-        let decayed1 = after0 * decay1.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb1 = k1.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted1: Tile<f32, { [SW] }> = reduce_sum(decayed1 * kb1, 0i32);
-        let diff1 = (v1 - predicted1.reshape(shape![SW])) * bt1.broadcast(shape![SW]);
-        let next1: Tile<f32, { [D, SW] }> =
-            decayed1 + kb1 * diff1.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after1 = select(
-            applied1.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next1,
-            after0,
-        );
-        let applied2: Tile<bool, { [1] }> = applied1
+        let bt1 = sigmoid(beta1.partition(shape![1]).load([pid.0]));
+        let decay1 = delta_decay(alpha1.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after1 = delta_update(after0, k1, v1, bt1, decay1, applied1);
+        let applied2 = applied1
             & lane_active(metadata2)
             & ge_tile(count.broadcast(shape![1]), 3i32.broadcast(shape![1]));
         let qp2 = qkv2.partition(shape![D]);
@@ -425,32 +332,9 @@ pub(crate) mod fused {
         let v2: Tile<f32, { [SW] }> = qkv2
             .partition(shape![SW])
             .load([(2i32 * KH + pid.0) * (D / SW) + pid.2]);
-        let ks2: Tile<f32, { [] }> = reduce_sum(k2 * k2, 0i32);
-        let kinv2 = rsqrt(ks2.reshape(shape![1]) + epsilon, ftz::Disabled);
-        let k2 = k2 * kinv2.broadcast(shape![D]);
-        let bt2 = beta2.partition(shape![1]).load([pid.0]);
-        let bt2 = one / (one + exp(zero - bt2));
-        let at2 = alpha2.partition(shape![1]).load([pid.0]) + head_bias;
-        let soft2 = log(one + exp(at2));
-        let large2 = cmpf(
-            at2,
-            threshold,
-            predicate::GreaterThan,
-            cmp_ordering::Ordered,
-        );
-        let soft2 = select(large2, at2, soft2);
-        let decay2 = exp(zero - rate * soft2);
-        let decayed2 = after1 * decay2.reshape(shape![1, 1]).broadcast(shape![D, SW]);
-        let kb2 = k2.reshape(shape![D, 1]).broadcast(shape![D, SW]);
-        let predicted2: Tile<f32, { [SW] }> = reduce_sum(decayed2 * kb2, 0i32);
-        let diff2 = (v2 - predicted2.reshape(shape![SW])) * bt2.broadcast(shape![SW]);
-        let next2: Tile<f32, { [D, SW] }> =
-            decayed2 + kb2 * diff2.reshape(shape![1, SW]).broadcast(shape![D, SW]);
-        let after2 = select(
-            applied2.reshape(shape![1, 1]).broadcast(shape![D, SW]),
-            next2,
-            after1,
-        );
+        let bt2 = sigmoid(beta2.partition(shape![1]).load([pid.0]));
+        let decay2 = delta_decay(alpha2.partition(shape![1]).load([pid.0]) + head_bias, rate);
+        let after2 = delta_update(after1, k2, v2, bt2, decay2, applied2);
         state.store(after2.reshape(shape![1, D, SW]));
     }
 }

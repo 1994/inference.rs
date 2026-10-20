@@ -59,6 +59,14 @@ enum PromptReadout {
     StateOnly,
 }
 
+/// Prompt readout variants captured against the same shared scratch.
+struct PromptCaptures {
+    prefill: CudaGraph<()>,
+    prefill_last: CudaGraph<()>,
+    #[cfg(test)]
+    state_prefill: Option<CudaGraph<()>>,
+}
+
 pub(super) struct BatchGraph {
     graph: Option<CudaGraph<()>>,
     readbacks: crate::device::Readbacks,
@@ -493,10 +501,6 @@ impl BatchBuilder<'_> {
         Ok((arena, Some(row)))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Prompt graphs capture hidden and logits readouts against one shared scratch"
-    )]
     fn build32(&mut self) -> Result<BatchGraph> {
         #[cfg(test)]
         self.attention.taps.prepare(
@@ -516,19 +520,13 @@ impl BatchBuilder<'_> {
             .lock()
             .map_err(|_| Error::invariant("prompt scratch poisoned"))?;
         let (mut arena, mut prompt_row) = shared_prompt_views(&shared)?;
-        let PromptScratch {
-            partials,
-            recurrent,
-            fusion,
-            ..
-        } = &mut *shared;
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
             .sync_on(&self.device.stream)
             .map_err(device_error)?;
         let prefill_rotary = self.prompt_rotary()?;
         let mut profile = profile::PrefillProfile::from_env(self.device);
-        let prefill = self.capture32(
+        let captures = self.capture_prompt_readouts(
             &mut arena,
             (
                 metadata.as_slice(),
@@ -536,42 +534,10 @@ impl BatchBuilder<'_> {
                 &prefill_info,
                 prefill_rotary.as_ref(),
             ),
-            PromptReadout::Hidden,
-            profile.as_mut(),
-            (&mut *partials, &mut *recurrent, &mut *fusion),
+            &mut profile,
+            &mut shared,
             prompt_row.as_mut(),
         )?;
-        let prefill_last = self.capture32(
-            &mut arena,
-            (
-                metadata.as_slice(),
-                &metadata_owner,
-                &prefill_info,
-                prefill_rotary.as_ref(),
-            ),
-            PromptReadout::Logits,
-            profile.as_mut(),
-            (&mut *partials, &mut *recurrent, &mut *fusion),
-            prompt_row.as_mut(),
-        )?;
-        #[cfg(test)]
-        let state_prefill = if super::prefill_demand::enabled() {
-            Some(self.capture32(
-                &mut arena,
-                (
-                    metadata.as_slice(),
-                    &metadata_owner,
-                    &prefill_info,
-                    prefill_rotary.as_ref(),
-                ),
-                PromptReadout::StateOnly,
-                None,
-                (&mut *partials, &mut *recurrent, &mut *fusion),
-                prompt_row.as_mut(),
-            )?)
-        } else {
-            None
-        };
         drop(shared);
         let hidden = vec![take_result(&mut arena, self.graph.hidden)?];
         let logits = vec![take_result(&mut arena, self.graph.logits)?];
@@ -580,10 +546,10 @@ impl BatchBuilder<'_> {
             graph: None,
             state_offset: Self::state_offset(self.weights),
             readbacks: crate::device::Readbacks::default(),
-            prefill,
-            prefill_last,
+            prefill: captures.prefill,
+            prefill_last: captures.prefill_last,
             #[cfg(test)]
-            state_prefill,
+            state_prefill: captures.state_prefill,
             restore: Vec::new(),
             _partials: BTreeMap::new(),
             prompt_row,
@@ -601,6 +567,57 @@ impl BatchBuilder<'_> {
             capacity: self.capacity,
             profile,
             _arena: Some(arena),
+        })
+    }
+
+    fn capture_prompt_readouts(
+        &mut self,
+        arena: &mut ActivationArena,
+        metadata: PromptMetadata<'_>,
+        profile: &mut Option<profile::PrefillProfile>,
+        scratch: &mut PromptScratch,
+        mut prompt_row: Option<&mut Tensor<f32>>,
+    ) -> Result<PromptCaptures> {
+        let PromptScratch {
+            partials,
+            recurrent,
+            fusion,
+            ..
+        } = scratch;
+        let prefill = self.capture32(
+            arena,
+            metadata,
+            PromptReadout::Hidden,
+            profile.as_mut(),
+            (partials, recurrent, fusion),
+            prompt_row.as_deref_mut(),
+        )?;
+        let prefill_last = self.capture32(
+            arena,
+            metadata,
+            PromptReadout::Logits,
+            profile.as_mut(),
+            (partials, recurrent, fusion),
+            prompt_row.as_deref_mut(),
+        )?;
+        #[cfg(test)]
+        let state_prefill = if super::prefill_demand::enabled() {
+            Some(self.capture32(
+                arena,
+                metadata,
+                PromptReadout::StateOnly,
+                None,
+                (partials, recurrent, fusion),
+                prompt_row,
+            )?)
+        } else {
+            None
+        };
+        Ok(PromptCaptures {
+            prefill,
+            prefill_last,
+            #[cfg(test)]
+            state_prefill,
         })
     }
 
