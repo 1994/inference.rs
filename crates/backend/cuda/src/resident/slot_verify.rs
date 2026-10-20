@@ -251,11 +251,9 @@ impl BatchBuilder<'_> {
         (states, metadata): (&[States], &[Tensor<i32>]),
         (staging, index, value_split): (&mut super::slot_recurrent::Staging, usize, usize),
     ) -> StdResult<(), DeviceError> {
+        staging.record_node(scope, node, arena, index)?;
         for (slot, states) in states.iter().enumerate() {
             let lanes = slot_lanes(slot, metadata)?;
-            let staged = staging
-                .get_mut(&(slot, index))
-                .ok_or_else(|| error("slot verify staging"))?;
             super::slot_recurrent::record_verify(
                 scope,
                 node,
@@ -264,7 +262,6 @@ impl BatchBuilder<'_> {
                 &lanes,
                 self.weights,
                 value_split,
-                staged,
             )?;
         }
         Ok(())

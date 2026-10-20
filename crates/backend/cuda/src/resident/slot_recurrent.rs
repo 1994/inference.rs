@@ -351,9 +351,10 @@ use super::{ActivationArena, ProgramWeights, batch::States, capture::error};
 use crate::constants::{CONV_KERNEL_SIZE, CONV_KERNEL_TILE, GDN_PROJECTED_INPUTS};
 use crate::device::{CudaDevice, device_error};
 use cutile::prelude::*;
-use infer_core::TensorId;
+use infer_core::{Error, TensorId};
 use infer_ir::{TensorNode, TensorOp};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Candidate lanes of one slot that the fused kernels cover.
 pub(super) const LANES: usize = 3;
@@ -364,9 +365,48 @@ pub(super) struct SlotLanes<'a> {
     pub metadata: [&'a Tensor<i32>; LANES],
 }
 
-/// Per (slot, node index), each commit input's three lane rows, copied out of the arena by the
-/// verify graph: the arena reuses those slots for later nodes before acceptance is known.
-pub(super) type Staging = BTreeMap<(usize, usize), Vec<[Tensor<f32>; LANES]>>;
+/// One node input's candidate rows for a slot.
+type StagedInputs = Vec<[Tensor<f32>; LANES]>;
+
+/// Commit views precede their owning batched buffers in drop order. Verification copies
+/// each input once for all slots; commits keep the same per-slot/candidate row layout.
+#[derive(Default)]
+pub(super) struct Staging {
+    entries: BTreeMap<(usize, usize), StagedInputs>,
+    roots: BTreeMap<(usize, usize), Tensor<f32>>,
+}
+
+impl Staging {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn get(&self, key: &(usize, usize)) -> Option<&StagedInputs> {
+        self.entries.get(key)
+    }
+
+    /// Preserve every slot's commit input before the arena reuses its allocation.
+    pub(super) fn record_node(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &ActivationArena,
+        index: usize,
+    ) -> Result<(), DeviceError> {
+        for (input, &id) in commit_inputs(node).iter().enumerate() {
+            let source = arena.get(id).map_err(error)?;
+            let target = self
+                .roots
+                .get_mut(&(index, input))
+                .ok_or_else(|| error("batched recurrent staging input"))?;
+            if source.size() != target.size() {
+                return Err(error("batched recurrent staging geometry"));
+            }
+            scope.record(api::memcpy(target, source))?;
+        }
+        Ok(())
+    }
+}
 
 /// Activations a covered node's commit re-reads; weights are read in place.
 pub(super) fn commit_inputs(node: &TensorNode) -> &[TensorId] {
@@ -385,23 +425,46 @@ pub(super) fn allocate_staging(
     arena: &ActivationArena,
     slots: usize,
 ) -> infer_core::Result<Staging> {
+    let lanes = slots
+        .checked_mul(LANES)
+        .ok_or_else(|| Error::invalid("batched recurrent staging overflow"))?;
+    if lanes != arena.lanes() {
+        return Err(Error::invalid("batched recurrent staging lanes"));
+    }
     let mut staging = Staging::new();
     for (index, node) in nodes.iter().enumerate().filter(|(_, node)| covers(node)) {
-        for slot in 0..slots {
-            let mut inputs = Vec::new();
-            for &id in commit_inputs(node) {
-                let size = arena.get(id)?.size() / arena.lanes();
-                let row = || {
-                    api::zeros::<f32>(&[size])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)
-                };
-                inputs.push([row()?, row()?, row()?]);
+        for (input, &id) in commit_inputs(node).iter().enumerate() {
+            let mut root = api::zeros::<f32>(&[arena.get(id)?.size()])
+                .sync_on(&device.stream)
+                .map_err(device_error)?;
+            for slot in 0..slots {
+                let base = slot * LANES;
+                let (first, owner) = staging_row(root, lanes, base)?;
+                let (second, owner) = staging_row(owner, lanes, base + 1)?;
+                let (third, owner) = staging_row(owner, lanes, base + 2)?;
+                root = owner;
+                staging
+                    .entries
+                    .entry((slot, index))
+                    .or_default()
+                    .push([first, second, third]);
             }
-            staging.insert((slot, index), inputs);
+            staging.roots.insert((index, input), root);
         }
     }
     Ok(staging)
+}
+
+/// Borrow a row while returning the unique parent for its persistent staging anchor.
+fn staging_row(
+    root: Tensor<f32>,
+    lanes: usize,
+    lane: usize,
+) -> infer_core::Result<(Tensor<f32>, Tensor<f32>)> {
+    let (row, owner) = super::arena::row_tensor(root, lanes, lane)?;
+    let root =
+        Arc::try_unwrap(owner).map_err(|_| Error::invariant("unique recurrent staging owner"))?;
+    Ok((row, root))
 }
 
 /// Value-dimension block of the fused kernels: one CTA per value head per split. Every
@@ -491,10 +554,6 @@ fn rows<'a>(
     reason = "Audited row alias: the three output rows are disjoint lanes of one arena slot, \
               which outlives the captured graph"
 )]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The captured verify node binds scope, geometry, state, lanes and staging explicitly"
-)]
 pub(super) fn record_verify(
     scope: &Scope,
     node: &TensorNode,
@@ -503,9 +562,7 @@ pub(super) fn record_verify(
     slot: &SlotLanes<'_>,
     weights: &ProgramWeights,
     value_split: usize,
-    staged: &mut [[Tensor<f32>; LANES]],
 ) -> Result<(), DeviceError> {
-    stage_inputs(scope, node, arena, slot, staged)?;
     let index = arena.slot(node.outputs[0]).map_err(error)?;
     let buffer = arena.buffers[index]
         .take()
@@ -605,35 +662,6 @@ pub(super) fn record_verify(
     recorded
 }
 
-/// Copy one slot's commit inputs out of the arena into its staging rows.
-#[expect(
-    unsafe_code,
-    reason = "Audited row alias: the source rows lie inside a live arena slot that outlives the \
-              captured graph"
-)]
-fn stage_inputs(
-    scope: &Scope,
-    node: &TensorNode,
-    arena: &ActivationArena,
-    slot: &SlotLanes<'_>,
-    staged: &mut [[Tensor<f32>; LANES]],
-) -> Result<(), DeviceError> {
-    let ids = commit_inputs(node);
-    if ids.len() != staged.len() {
-        return Err(error("slot verify staging layout"));
-    }
-    for (&id, rows) in ids.iter().zip(staged) {
-        let source = arena.get(id).map_err(error)?;
-        for (lane, row) in slot.lanes.into_iter().zip(rows.iter_mut()) {
-            // SAFETY: see the expectation above.
-            let view =
-                unsafe { super::arena::row_view(source, arena.lanes(), lane) }.map_err(error)?;
-            scope.record(api::memcpy(row, &view))?;
-        }
-    }
-    Ok(())
-}
-
 /// Record the commit of one slot's first `count` verification lanes for a covered node.
 #[expect(
     clippy::too_many_arguments,
@@ -724,3 +752,7 @@ pub(super) fn record_commit(
 #[cfg(test)]
 #[path = "../../tests/unit/resident_slot_recurrent.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/slot_staging.rs"]
+mod staging_tests;
