@@ -592,14 +592,6 @@ impl BatchBuilder<'_> {
             (partials, recurrent, fusion),
             prompt_row.as_deref_mut(),
         )?;
-        let prefill_last = self.capture32(
-            arena,
-            metadata,
-            PromptReadout::Logits,
-            profile.as_mut(),
-            (partials, recurrent, fusion),
-            prompt_row.as_deref_mut(),
-        )?;
         #[cfg(test)]
         let state_prefill = if super::prefill_demand::enabled() {
             Some(self.capture32(
@@ -608,11 +600,19 @@ impl BatchBuilder<'_> {
                 PromptReadout::StateOnly,
                 None,
                 (partials, recurrent, fusion),
-                prompt_row,
+                prompt_row.as_deref_mut(),
             )?)
         } else {
             None
         };
+        let prefill_last = self.capture32(
+            arena,
+            metadata,
+            PromptReadout::Logits,
+            profile.as_mut(),
+            (partials, recurrent, fusion),
+            prompt_row,
+        )?;
         Ok(PromptCaptures {
             prefill,
             prefill_last,
