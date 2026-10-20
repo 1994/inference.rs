@@ -460,3 +460,39 @@ fn independent_validator_rejects_foreign_programs_and_aliased_states() -> Result
     assert!(validate_decision(&decision, &ready, &r, ProgramId::ONE, &FallbackCosts).is_err());
     Ok(())
 }
+
+/// The serving-derived budget must preserve decode priority without artificial prompt tails.
+#[test]
+fn a_full_prompt_replay_coexists_with_decodes_without_slicing_the_next_prompt() {
+    let mut r = resources();
+    r.max_num_seqs = 16;
+    r.scheduler.prefill_chunk_tokens = 1024;
+    r.max_num_batched_tokens = r.scheduler.prefill_chunk_tokens + r.max_num_seqs - 1;
+    r.gpu_budget_us = 10_000;
+    let mut items: Vec<_> = (1..=14)
+        .map(|id| work(id, ExecutionRole::Decode, 1))
+        .collect();
+    items.extend([
+        work(15, ExecutionRole::Prefill, 4096),
+        work(16, ExecutionRole::Prefill, 4096),
+    ]);
+    let step = plan(&items, &r, 0).step.unwrap();
+    assert_eq!(
+        step.work
+            .iter()
+            .filter(|item| item.role == ExecutionRole::Decode)
+            .count(),
+        14
+    );
+    let prompts: Vec<_> = step
+        .work
+        .iter()
+        .filter(|item| item.role == ExecutionRole::Prefill)
+        .collect();
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0].token_count, 1024);
+    assert_eq!(
+        step.work.iter().map(|item| item.token_count).sum::<usize>(),
+        1038
+    );
+}

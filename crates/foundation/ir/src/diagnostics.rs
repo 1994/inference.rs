@@ -50,8 +50,12 @@ pub struct ExecutionStats {
 /// geometry and speculation depth actually ran instead of restating the request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionProfileInspection {
-    /// Token rows one captured prompt graph processes per replay.
+    /// Default prompt chunk width for private programs. A pooled worker may split it
+    /// into smaller captured replays without changing long-context scheduling.
     pub prefill_width: usize,
+    /// Actual pooled worker width, when a shared worker is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pooled_prefill_width: Option<usize>,
     /// Candidate rows one captured verification graph processes per replay.
     pub batch_width: usize,
     /// Resolved speculative draft depth, whichever algorithm supplies the proposals.

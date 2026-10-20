@@ -41,10 +41,7 @@ pub fn derive_config(
             .execution_profile()
             .map_or(CUDA_PREFILL_CHUNK_TOKENS, |profile| profile.prefill_width)
             .max(1);
-        config.scheduler.prefill_chunk_tokens = config.scheduler.prefill_chunk_tokens.max(width);
-        config.max_num_batched_tokens = config
-            .max_num_batched_tokens
-            .max(config.scheduler.prefill_chunk_tokens);
+        cuda_prefill_limits(config, width);
         // One decode step of a large model already exceeds the generic 10 ms step budget, and
         // the cost model prices an unseen batch shape linearly, so a second decode was always
         // deferred and batched shapes were never observed: concurrent requests ran one at a
@@ -62,3 +59,20 @@ pub fn derive_config(
     }
     config.validate()
 }
+
+/// Keep one fixed-width prompt replay whole beside the round's ready decode requests.
+/// Without this headroom a single decode trims a full chunk by one token and creates
+/// another padded prompt replay for the remainder. Larger configured budgets are retained.
+fn cuda_prefill_limits(config: &mut RuntimeConfig, width: usize) {
+    config.scheduler.prefill_chunk_tokens = config.scheduler.prefill_chunk_tokens.max(width);
+    let decode_slots = config.max_num_seqs.saturating_sub(1);
+    let complete_round = config
+        .scheduler
+        .prefill_chunk_tokens
+        .saturating_add(decode_slots);
+    config.max_num_batched_tokens = config.max_num_batched_tokens.max(complete_round);
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/support_serving.rs"]
+mod tests;

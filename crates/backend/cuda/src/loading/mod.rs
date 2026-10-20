@@ -231,6 +231,7 @@ impl LoadedModel {
     pub fn execution_profile(&self) -> infer_ir::ExecutionProfileInspection {
         infer_ir::ExecutionProfileInspection {
             prefill_width: self.weights.prefill_width,
+            pooled_prefill_width: None,
             batch_width: self.weights.batch_width,
             draft_depth: self.mtp_depth,
             automatic_prefill: self.automatic_prefill,

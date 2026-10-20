@@ -33,7 +33,15 @@ impl CudaBackend {
     pub fn prefill_width_for(&self, state: StateId) -> Result<usize> {
         self.states
             .get(&state)
-            .map(|sequence| sequence.program.prefill_width())
+            .map(|sequence| {
+                if sequence.home.is_some()
+                    && let Some(worker) = &self.worker
+                {
+                    worker.program.prefill_width()
+                } else {
+                    sequence.program.prefill_width()
+                }
+            })
             .ok_or_else(|| Error::invalid("unknown CUDA state"))
     }
 
