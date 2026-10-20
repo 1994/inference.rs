@@ -16,7 +16,7 @@ use crate::device::Readbacks;
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use cutile::prelude::*;
 use infer_core::{Error, Result};
-use infer_ir::{StateKind, TensorOp, TensorStorage};
+use infer_ir::{StateKind, TensorNode, TensorOp, TensorStorage};
 use std::result::Result as StdResult;
 use std::slice::from_ref;
 
@@ -242,6 +242,34 @@ impl BatchBuilder<'_> {
         Ok(checkpoints)
     }
 
+    /// Bind one recurrent node to each slot's independent state and commit staging.
+    fn record_slot_recurrent(
+        &self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        (states, metadata): (&[States], &[Tensor<i32>]),
+        (staging, index, value_split): (&mut super::slot_recurrent::Staging, usize, usize),
+    ) -> StdResult<(), DeviceError> {
+        for (slot, states) in states.iter().enumerate() {
+            let lanes = slot_lanes(slot, metadata)?;
+            let staged = staging
+                .get_mut(&(slot, index))
+                .ok_or_else(|| error("slot verify staging"))?;
+            super::slot_recurrent::record_verify(
+                scope,
+                node,
+                arena,
+                states,
+                &lanes,
+                self.weights,
+                value_split,
+                staged,
+            )?;
+        }
+        Ok(())
+    }
+
     fn capture_slot_verify(
         &mut self,
         lane_states: &mut [States],
@@ -271,6 +299,15 @@ impl BatchBuilder<'_> {
                     )?;
                     continue;
                 }
+                if self.record_slot_verify_attention(
+                    scope,
+                    node,
+                    arena,
+                    (lane_states, lane_fp8),
+                    (verify, metadata),
+                )? {
+                    continue;
+                }
                 match dispatch32(node, self.weights) {
                     Dispatch32::Linear => return Err(error("slot verify linear dispatch")),
                     Dispatch32::Batched => Capture {
@@ -290,22 +327,13 @@ impl BatchBuilder<'_> {
                     }
                     .record(node)?,
                     Dispatch32::Row if fused && super::slot_recurrent::covers(node) => {
-                        for (slot, states) in lane_states.iter().enumerate() {
-                            let lanes = slot_lanes(slot, metadata)?;
-                            let staged = staging
-                                .get_mut(&(slot, index))
-                                .ok_or_else(|| error("slot verify staging"))?;
-                            super::slot_recurrent::record_verify(
-                                scope,
-                                node,
-                                arena,
-                                states,
-                                &lanes,
-                                self.weights,
-                                value_split,
-                                staged,
-                            )?;
-                        }
+                        self.record_slot_recurrent(
+                            scope,
+                            node,
+                            arena,
+                            (lane_states, metadata),
+                            (staging, index, value_split),
+                        )?;
                     }
                     Dispatch32::Row => {
                         for (lane, lane_metadata) in metadata.iter().enumerate() {

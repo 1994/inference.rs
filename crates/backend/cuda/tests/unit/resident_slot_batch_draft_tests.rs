@@ -377,3 +377,90 @@ fn paged_kv_scatter_survives_exhaustion_and_block_reuse() -> Result<()> {
     assert_eq!(pool.free_slots(), 3);
     Ok(())
 }
+
+/// Three candidates read one paged cache while preserving each candidate's causal prefix.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn paged_verify_attention_matches_scalar_causality_and_reuse() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let (graph, mut weights) = fixture(&device)?;
+    weights.fusion = None;
+    weights.kv_scales.insert(TensorId::new(4)?, [0.01, 0.02]);
+    let mut pool = SlotPool::new(&device, &graph, &weights, 4, 128, 32, (32, 3), Some(384))?;
+    let mut serial = (0..4)
+        .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, 32, 32))
+        .collect::<Result<Vec<_>>>()?;
+    for (slot, prefix) in [17, 33, 65, 97].into_iter().enumerate() {
+        assert!(pool.take_slot(slot));
+        assert!(pool.assign(slot, prefix + 16, &device)?);
+        for position in 0..prefix {
+            serial[slot].step(
+                u32::try_from((position * 3 + slot * 7) % 32).unwrap(),
+                position,
+                position,
+                None,
+                false,
+            )?;
+        }
+        pool.bind(
+            slot,
+            serial[slot].states(),
+            serial[slot].fp8_states(),
+            prefix,
+            &device,
+        )?;
+    }
+    assert_ne!(&device.read_borrowed(&pool.tables[0])?[..2], &[0, 1]);
+    for plans in [
+        vec![
+            (3, vec![3, 7, 11], 2),
+            (1, vec![9, 13, 17], 0),
+            (0, vec![1, 5], 1),
+        ],
+        vec![
+            (2, vec![19, 23, 27], 1),
+            (3, vec![4], 0),
+            (1, vec![10, 14], 1),
+        ],
+        vec![
+            (0, vec![6, 12, 18], 0),
+            (2, vec![20], 0),
+            (3, vec![8, 16, 24], 2),
+        ],
+    ] {
+        let mut lanes = Vec::new();
+        let mut expected = Vec::new();
+        for (slot, tokens, accepted) in &plans {
+            let start = serial[*slot].position();
+            let mut output = Vec::new();
+            for (offset, &token) in tokens.iter().enumerate() {
+                let position = start + offset;
+                lanes.push((*slot, offset, token, position, position));
+                output.push(serial[*slot].step(token, position, position, None, true)?);
+            }
+            serial[*slot].rewind_attention(start + accepted + 1)?;
+            expected.push(output);
+        }
+        let actual = pool.run_verify(&device, &lanes)?;
+        for ((slot, tokens, accepted), expected) in plans.into_iter().zip(expected) {
+            for (row, expected) in expected.iter().enumerate() {
+                close(&actual[slot * 3 + row], expected);
+            }
+            assert_eq!(tokens.len(), expected.len());
+            pool.commit_verify(&device, slot, accepted)?;
+            assert_eq!(pool.cursors()[slot], serial[slot].position());
+        }
+    }
+    pool.release(1);
+    serial[1].reset()?;
+    serial[1].step(29, 0, 0, None, false)?;
+    assert!(pool.take_slot(1));
+    assert!(pool.assign(1, 4, &device)?);
+    pool.bind(1, serial[1].states(), serial[1].fp8_states(), 1, &device)?;
+    let actual = pool.run_verify(&device, &[(1, 0, 2, 1, 1), (1, 1, 28, 2, 2)])?;
+    close(&actual[3], &serial[1].step(2, 1, 1, None, true)?);
+    close(&actual[4], &serial[1].step(28, 2, 2, None, true)?);
+    pool.commit_verify(&device, 1, 1)?;
+    Ok(())
+}
