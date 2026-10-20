@@ -2,6 +2,13 @@ use super::fused;
 use crate::constants::CONV_KERNEL_TILE;
 use std::error::Error;
 
+#[test]
+fn value_split_follows_the_device_sm_budget() {
+    assert_eq!(super::value_split(32), 1);
+    assert_eq!(super::value_split(80), 2);
+    assert_eq!(super::value_split(170), 4);
+}
+
 // Tile IR is only specialized at launch; compile the snapshot-free kernels on header-only CI.
 #[test]
 fn snapshot_free_recurrent_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
