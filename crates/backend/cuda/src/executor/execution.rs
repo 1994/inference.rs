@@ -7,8 +7,11 @@ use infer_ir::{
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
-/// Token granularity at which a prefill state becomes a reusable prompt prefix.
-const PREFIX_GRANULARITY: usize = 256;
+/// Prompt positions between prefix-cache snapshots, where a prefill state becomes a reusable
+/// prompt prefix. Each snapshot copies the covered KV and
+/// the recurrent state and synchronizes, so snapshotting every 2048-token chunk cost 0.12 s
+/// of a 32K prompt's TTFT; at 4096 a later turn recomputes at most one interval.
+const PREFIX_GRANULARITY: usize = 4096;
 
 /// Snapshot the KV rows a sequence has covered, when they form a reusable prompt prefix.
 ///
