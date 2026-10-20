@@ -12,7 +12,7 @@ const CUDA_PREFILL_CHUNK_TOKENS: usize = 64;
 /// decode and a prompt chunk, and leaves `max_num_batched_tokens` to bound a step. The
 /// calibrated per-token cost mixes decode and prompt steps, so it prices a 2048-token chunk
 /// at tens of seconds; any tighter budget trims or defers prompt work.
-const CUDA_STEP_BUDGET_US: u64 = 3_600_000_000;
+const CUDA_STEP_BUDGET_US: u64 = 60_000_000;
 
 pub fn derive_config(
     config: &mut RuntimeConfig,
