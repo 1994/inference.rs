@@ -33,13 +33,17 @@ fn snapshot_free_recurrent_kernels_compile_without_a_device()
     ]);
     let mut commit = lanes(&rows);
     commit.push(("state", &[16384, 128, 1][..]));
-    let generics = || vec!["16".into(), "48".into(), "128".into(), "32".into()];
-    for (entry, strides) in [("delta_verify3", &verify), ("delta_commit3", &commit)] {
-        KernelCompiler::new(fused::__module_ast_self, "fused", entry)
-            .target("sm_120")
-            .generics(generics())
-            .strides(strides)
-            .compile()?;
+    for generics in [
+        vec!["16".into(), "48".into(), "128".into(), "32".into()],
+        vec!["2".into(), "4".into(), "32".into(), "32".into()],
+    ] {
+        for (entry, strides) in [("delta_verify3", &verify), ("delta_commit3", &commit)] {
+            KernelCompiler::new(fused::__module_ast_self, "fused", entry)
+                .target("sm_120")
+                .generics(generics.clone())
+                .strides(strides)
+                .compile()?;
+        }
     }
     let mut conv_verify = lanes(&[
         "out0",

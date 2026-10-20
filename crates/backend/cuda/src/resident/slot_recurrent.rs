@@ -142,7 +142,9 @@ pub(crate) mod fused {
             square.reshape(shape![1]) + 1e-6f32.broadcast(shape![1]),
             ftz::Disabled,
         );
-        value * inverse.broadcast(shape![D])
+        // Resolve arithmetic before cuTile applies the helper's generic return type.
+        let normalized = value * inverse.broadcast(shape![D]);
+        normalized.reshape(shape![D])
     }
 
     fn sigmoid(value: Tile<f32, { [1] }>) -> Tile<f32, { [1] }> {
