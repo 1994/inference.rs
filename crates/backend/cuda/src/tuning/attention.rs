@@ -1,5 +1,6 @@
 //! Device-scoped query sharing search; complete attention graphs retain the FP8 KV contract.
 mod capture;
+pub(crate) mod decode;
 pub mod exact;
 pub mod mma;
 pub mod mma_f32;

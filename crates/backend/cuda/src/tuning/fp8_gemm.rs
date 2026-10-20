@@ -1,5 +1,6 @@
 //! Hardware-scoped FP8 channel GEMM tuning on immutable loaded weights.
 //! Every candidate uses the original quantizer and passes full-output finite/bitwise gates.
+
 #[cfg(test)]
 use super::TilingTable;
 use super::resident_gemm::{PairedTimes, ResidentTuningSession};
@@ -7,9 +8,10 @@ use super::{MAX_REPS, MIN_CONFIRM_SPEEDUP, MIN_REPS, REP_MS, WARMUP_MS};
 use crate::constants::AUX_KERNEL_TILE;
 use crate::constants::PROMPT_GEMM_TILE_ROWS;
 use crate::constants::QUANT_GEMM_TILE;
+use crate::constants::WIDE_PREFILL_LANES;
 use crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS;
-use crate::constants::prompt_gemm_tile_rows;
 pub use crate::device::vendor_fp8::{AlgorithmConfig, LibraryIdentity};
+use crate::tuning::resident_gemm::prompt_tile_rows;
 use crate::{
     device::{CudaDevice, device_error, vendor_fp8},
     mlp::ProjectionWeight,
@@ -68,7 +70,7 @@ pub struct NativeConfig {
 impl NativeConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
         Self {
-            tile_m: prompt_gemm_tile_rows(rows),
+            tile_m: prompt_tile_rows(rows),
             tile_n: QUANT_GEMM_TILE[1],
         }
     }
@@ -1105,6 +1107,30 @@ pub(crate) const fn vendor_autotune_enabled() -> bool {
 #[cfg(test)]
 pub(crate) fn vendor_autotune_enabled() -> bool {
     var("INFER_CUDA_FP8_LT_AUTOTUNE").is_ok_and(|value| value == "1" || value == "true")
+}
+
+/// Default prompt projection algorithm queried from the installed library for this device.
+/// The vendor heuristic warms zero-workspace candidates before graph capture.
+pub(crate) fn prefill_choice(
+    device: &CudaDevice,
+    support: &mut vendor_fp8::Support,
+    input: &Tensor<f8e4m3fn>,
+    weight: &Arc<Tensor<f8e4m3fn>>,
+    shape: [usize; GEMM_RANK],
+) -> Result<Option<Choice>> {
+    let [rows, outputs, _] = shape;
+    if rows < WIDE_PREFILL_LANES {
+        return Ok(None);
+    }
+    let out = api::zeros::<f32>(&[rows, outputs])
+        .sync_on(&device.stream)
+        .map_err(device_error)?;
+    let configs = support
+        .prepare_candidates(input, weight, &out)
+        .map_err(device_error)?;
+    let choice = configs.first().copied().map(Choice::Lt);
+    tracing::info!(target: "infer::tuning", ?shape, ?choice, "FP8 prefill cuBLASLt default");
+    Ok(choice)
 }
 
 /// Resolve every loaded channel weight before its graph capture; failures affect only this weight.

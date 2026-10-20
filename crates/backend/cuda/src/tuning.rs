@@ -3,6 +3,8 @@ pub mod attention;
 pub mod fp8_gemm;
 pub mod gated_norm;
 pub mod greedy;
+pub(crate) mod memory;
+pub(crate) mod prefill;
 pub mod recurrent;
 pub mod resident_gemm;
 

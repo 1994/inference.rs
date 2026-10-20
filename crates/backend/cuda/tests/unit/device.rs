@@ -22,6 +22,9 @@ fn profile_derives_bandwidth_headroom_and_identity() {
     );
     // A 32 GiB device keeps exactly 1 GiB of driver headroom.
     assert_eq!(device.device_headroom_bytes(), 1024 * MIB);
+    assert_eq!(device.arena_budget_bytes(), 1024 * MIB);
+    assert_eq!(profile(4 * 1024 * MIB).arena_budget_bytes(), 128 * MIB);
+    assert_eq!(profile(80 * 1024 * MIB).arena_budget_bytes(), 1024 * MIB);
     // Small devices keep the floor, huge ones stay bounded.
     assert_eq!(device_headroom(4 * 1024 * MIB), MIN_DEVICE_HEADROOM);
     assert_eq!(device_headroom(1024 * 1024 * MIB), MAX_DEVICE_HEADROOM);

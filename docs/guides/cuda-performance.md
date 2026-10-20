@@ -130,20 +130,21 @@ graph replay，不含模型加载、分配或首次 JIT。单候选的 capture�
 每次模型加载的 target、draft 和 program 共享 30 秒驻留调优软预算，首次驻留身份解析、搜索或
 数值验收才启动，后续新候选和新权重验收继续检查剩余预算。单次已经开始的 JIT/测量不可中断；
 超时或未完成证据时回退，不把未测 baseline 当成完整调优证据缓存。`--no-autotune` 不做新的
-性能搜索，但可读取有效缓存并做当前权重数值验收。诊断用 `INFER_CUDA_QUANT_TILE` 的覆盖结果
-不写入调优证据。Lt 独立诊断仅存在于 CUDA 测试程序，不提供生产算法选择入口。
+性能搜索，但可读取有效缓存并做当前权重数值验收。arena 预算和解码分片由 `tuning/`
+按设备资源推导，量化 tile 由 GEMM chooser 选择，不提供环境变量覆盖器。宽 prompt 的 FP8
+投影默认使用设备库查询到的 cuBLASLt 算法；Lt 独立诊断仍只存在于 CUDA 测试程序。
 
 ### 行相关 prompt GEMM tile
 
 prompt GEMM 的保守基线按输出行数分档：≤16 行用 16×64，17–127 行用 64×64，≥128 行用
-128×64。128 行 tile 让 256 行 chunk 变成两个 CTA 而不是四个，减少同一 weight tile 的重复
+128×64；≥512 行的 W4A4 图默认使用 128×128 和 prefetch 主循环。128 行 tile 让 256 行 chunk 变成两个 CTA 而不是四个，减少同一 weight tile 的重复
 读取；不足 128 行的尾块仍用 64 行，避免把半个 CTA 算在空行上。decode 与 MTP verification
 仍走 16 行，不继承 prompt tile。
 
 在 RTX 5090、32K C1、BF16 target、MTP2、表 B 的 A B B A 诊断中，把 prompt tile 全局改为
-128 行（`INFER_CUDA_QUANT_TILE=128,64`）使 TTFT 配对均值 −0.54 s（12 对，中位 −0.47 s），
+128 行（当时使用的手工 tile 诊断覆盖器现已移除）使 TTFT 配对均值 −0.54 s（12 对，中位 −0.47 s），
 反序确认 −0.50 s（18 对）；同一覆盖也把 decode 降到 128 行 tile，decode 中位从 57.1 降到
-46.9 tok/s，因此生产实现只对 ≥128 行的图取宽 tile。该覆盖是诊断开关，结果不写入调优证据；
+46.9 tok/s，因此生产实现只对 ≥128 行的图取宽 tile。历史覆盖实验的结果不写入调优证据；
 128 行仍是自动搜索的候选，搜索可在具体 shape 上改回 64 行。
 
 这是性能诊断，不是质量、release 或 vLLM 追平结论；固定 64-token greedy 流在所有臂一致。

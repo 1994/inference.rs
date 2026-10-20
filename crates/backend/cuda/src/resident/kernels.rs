@@ -218,6 +218,52 @@ pub(crate) mod aux {
         }
     }
 
+    /// [`fusion_norm`] for every lane of a prompt chunk: output row `2 * lane` normalizes the
+    /// lane's embedding and row `2 * lane + 1` its external hidden, so the output viewed as
+    /// `[lanes, 2D]` is the fused projection input.
+    #[expect(
+        clippy::useless_let_if_seq,
+        reason = "cuTile DSL requires statement control flow"
+    )]
+    #[cutile::entry()]
+    fn fusion_norm_rows<const D: i32, const B: i32>(
+        out: &mut Tensor<f32, { [1, B] }>,
+        embedding: &Tensor<f32, { [-1, D] }>,
+        hidden: &Tensor<f32, { [-1, D] }>,
+        norms: &Tensor<f32, { [2, D] }>,
+        epsilon: f32,
+        offset: f32,
+    ) {
+        let pid = get_tile_block_id();
+        let lane = pid.0 / 2i32;
+        let which = pid.0 % 2i32;
+        let mut input = embedding
+            .partition(shape![1, B])
+            .load([lane, 0i32])
+            .reshape(shape![B]);
+        if which == 1i32 {
+            input = hidden
+                .partition(shape![1, B])
+                .load([lane, 0i32])
+                .reshape(shape![B]);
+        }
+        let square: Tile<f32, { [] }> = reduce_sum(input * input, 0i32);
+        let dimension: f32 = convert_scalar(D);
+        let inverse = rsqrt(
+            square.reshape(shape![1]) / dimension.broadcast(shape![1])
+                + epsilon.broadcast(shape![1]),
+            ftz::Disabled,
+        );
+        let weight = norms
+            .partition(shape![1, B])
+            .load([which, 0i32])
+            .reshape(shape![B]);
+        out.store(
+            (input * inverse.broadcast(shape![B]) * (weight + offset.broadcast(shape![B])))
+                .reshape(shape![1, B]),
+        );
+    }
+
     #[expect(
         clippy::useless_let_if_seq,
         reason = "cuTile DSL requires statement control flow"

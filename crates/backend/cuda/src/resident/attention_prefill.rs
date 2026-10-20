@@ -61,6 +61,10 @@ pub(crate) mod kernels {
     }
 
     /// Append all prompt rows before the causal query kernels read the shared cache.
+    #[expect(
+        clippy::useless_let_if_seq,
+        reason = "cuTile DSL uses statement control flow"
+    )]
     #[cutile::entry()]
     fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32, const BT: i32>(
         keys: &mut Tensor<E, { [1, CAP, D] }>,
@@ -80,7 +84,41 @@ pub(crate) mod kernels {
         let kp = k.partition(shape![1, 1, D]);
         let vp = v.partition(shape![1, 1, D]);
         let blocks = table.partition(shape![1]);
-        for lane in 0i32..count {
+        // A chunk whose first position starts a KV block moves whole blocks: one BT-row tile per
+        // iteration instead of BT dependent row copies. Rows past the last whole block, and any
+        // chunk that does not start on a block boundary, take the per-row loop below.
+        let start = base + offset;
+        let mut whole = 0i32;
+        if start >= 0i32 && start % BT == 0i32 {
+            whole = count / BT;
+        }
+        let kb = k.partition(shape![BT, 1, D]);
+        let vb = v.partition(shape![BT, 1, D]);
+        for group in 0i32..whole {
+            let physical: i32 = tile_to_scalar(blocks.load([start / BT + group]).reshape(shape![]));
+            let mut key = kb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
+            let mut value = vb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
+            if QUANT == 1 {
+                let low = (-448.0f32).broadcast(shape![1, BT, D]);
+                let high = 448.0f32.broadcast(shape![1, BT, D]);
+                key = min_tile(
+                    max_tile(key / k_scale.broadcast(shape![1, BT, D]), low),
+                    high,
+                );
+                value = min_tile(
+                    max_tile(value / v_scale.broadcast(shape![1, BT, D]), low),
+                    high,
+                );
+            }
+            let key: Tile<E, { [1, BT, D] }> = convert_tile(key);
+            let value: Tile<E, { [1, BT, D] }> = convert_tile(value);
+            keys.partition_mut(shape![1, BT, D])
+                .store(key, [0i32, physical, 0i32]);
+            values
+                .partition_mut(shape![1, BT, D])
+                .store(value, [0i32, physical, 0i32]);
+        }
+        for lane in whole * BT..count {
             let position = base + lane + offset;
             if position >= 0 {
                 // Logical block to physical block, then the row inside it. Step 1's table is the

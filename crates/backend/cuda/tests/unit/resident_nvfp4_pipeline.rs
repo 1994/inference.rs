@@ -1,8 +1,8 @@
 //! Paired graph replay measurements against the pre-optimization W4A4 main loop.
 use super::kernels;
 use crate::constants::QUANT_GEMM_TILE;
-use crate::constants::quant_gemm_tile;
 use crate::device::CudaDevice;
+use crate::tuning::resident_gemm::native_tile;
 use cuda_core::{f4e2m1fnx2, f8e4m3fn};
 use cutile::bench::BenchOptions;
 use cutile::bench::do_bench_paired;
@@ -145,7 +145,7 @@ fn compare_case(
     let mut inputs = Inputs::new(device, shape)?;
     let mut original_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
     let mut optimized_output = api::zeros::<f32>(&[rows, outputs]).sync_on(&device.stream)?;
-    let original_tile = quant_gemm_tile(rows);
+    let original_tile = native_tile(rows);
     // Sweep the supported wider-column candidate; production choice requires measured proof.
     let optimized_tile = [original_tile[0], original_tile[1] * 2];
     let original = CudaGraph::scope(&device.stream, |scope| {

@@ -45,13 +45,19 @@ impl ActivationArena {
         Self::plan(device, graph, lanes, byte_budget)
     }
 
-    /// Slot layout after last-consumer reuse, with the tensor-to-slot mapping.
-    fn layout(graph: &DataflowGraph) -> Result<ArenaLayout> {
+    /// Slot layout after last-consumer reuse, with the tensor-to-slot mapping. A `single`
+    /// tensor gets a private slot that is never shared.
+    fn layout(graph: &DataflowGraph, single: Option<TensorId>) -> Result<ArenaLayout> {
         let mut planned = graph.clone();
         planned.plan_lifetimes()?;
         let mut slots: Vec<(usize, usize)> = Vec::new();
         let mut indices = BTreeMap::new();
         for lifetime in &planned.lifetimes {
+            if Some(lifetime.tensor) == single {
+                slots.push((usize::MAX, lifetime.elements));
+                indices.insert(lifetime.tensor, slots.len() - 1);
+                continue;
+            }
             let slot = slots
                 .iter()
                 .position(|(last, size)| *last < lifetime.first_node && *size == lifetime.elements)
@@ -65,17 +71,99 @@ impl ActivationArena {
         Ok((slots, indices))
     }
 
+    /// Elements of every slot at `lanes` rows; the `single` tensor's slot holds one row.
+    fn sizes(
+        graph: &DataflowGraph,
+        lanes: usize,
+        single: Option<TensorId>,
+    ) -> Result<(Vec<usize>, BTreeMap<TensorId, usize>)> {
+        let (slots, indices) = Self::layout(graph, single)?;
+        let single_slot = single.and_then(|id| indices.get(&id).copied());
+        let sizes = slots
+            .iter()
+            .enumerate()
+            .map(|(index, (_, size))| {
+                if Some(index) == single_slot {
+                    Some(*size)
+                } else {
+                    size.checked_mul(lanes)
+                }
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| Error::invalid("activation size overflow"))?;
+        Ok((sizes, indices))
+    }
+
     /// Device bytes this graph's activations occupy at `lanes` rows, without allocating.
     /// # Errors
     /// Rejects invalid graphs or overflowing sizes.
     pub fn required_bytes(graph: &DataflowGraph, lanes: usize) -> Result<usize> {
-        let (slots, _) = Self::layout(graph)?;
-        slots
+        Self::bytes_for(graph, lanes, None)
+    }
+
+    /// [`Self::required_bytes`] for a prompt arena that keeps one row of logits.
+    /// # Errors
+    /// Rejects invalid graphs or overflowing sizes.
+    pub fn required_prompt_bytes(graph: &DataflowGraph, lanes: usize) -> Result<usize> {
+        Self::bytes_for(graph, lanes, graph.logits)
+    }
+
+    fn bytes_for(graph: &DataflowGraph, lanes: usize, single: Option<TensorId>) -> Result<usize> {
+        Self::sizes(graph, lanes, single)?
+            .0
             .iter()
-            .try_fold(0usize, |sum, (_, size)| sum.checked_add(*size))
-            .and_then(|sum| sum.checked_mul(lanes))
+            .try_fold(0usize, |sum, size| sum.checked_add(*size))
             .and_then(|elements| elements.checked_mul(F32_BYTES))
             .ok_or_else(|| Error::invalid("activation size overflow"))
+    }
+
+    /// One lane of this batched arena as a single-row arena whose slots alias that lane's rows,
+    /// so per-lane captures and whole-slot captures of the batched arena share storage.
+    ///
+    /// # Safety
+    /// The returned arena does not own its storage: `self` must outlive every use of it and of
+    /// every graph captured against it, and a lane's rows must not be used as concurrent mutable
+    /// outputs together with the whole slot.
+    /// # Errors
+    /// Rejects a lane outside the arena or a slot that is currently taken.
+    #[expect(
+        unsafe_code,
+        reason = "Audited lane alias: the batched owner outlives the views by the caller's contract"
+    )]
+    pub(super) unsafe fn lane_view(&self, lane: usize) -> Result<Self> {
+        if lane >= self.lanes {
+            return Err(Error::invalid("activation lane out of bounds"));
+        }
+        let mut buffers = Vec::with_capacity(self.buffers.len());
+        for buffer in &self.buffers {
+            let slot = buffer
+                .as_ref()
+                .ok_or_else(|| Error::invariant("batched slot is currently an output"))?;
+            // SAFETY: forwarded from this function's contract; the row lies inside the slot.
+            buffers.push(Some(unsafe { row_view(slot, self.lanes, lane)? }));
+        }
+        Ok(Self {
+            indices: self.indices.clone(),
+            buffers,
+            lanes: 1,
+            elements: self.elements / self.lanes,
+        })
+    }
+
+    /// Batched prompt arena whose logits slot holds only the final row: prompt graphs project
+    /// just the last active lane onto the vocabulary.
+    /// # Errors
+    /// Rejects zero lanes, invalid graphs, overflowing budgets and failed device allocation.
+    pub fn new_prompt(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        lanes: usize,
+        byte_budget: usize,
+    ) -> Result<Self> {
+        if lanes == 0 {
+            return Err(Error::invalid("batched activation lanes"));
+        }
+        Self::plan_with(device, graph, lanes, byte_budget, graph.logits)
     }
 
     fn plan(
@@ -84,11 +172,20 @@ impl ActivationArena {
         lanes: usize,
         byte_budget: usize,
     ) -> Result<Self> {
-        let (slots, indices) = Self::layout(graph)?;
-        let elements = slots
+        Self::plan_with(device, graph, lanes, byte_budget, None)
+    }
+
+    fn plan_with(
+        device: &CudaDevice,
+        graph: &DataflowGraph,
+        lanes: usize,
+        byte_budget: usize,
+        single: Option<TensorId>,
+    ) -> Result<Self> {
+        let (sizes, indices) = Self::sizes(graph, lanes, single)?;
+        let elements = sizes
             .iter()
-            .try_fold(0usize, |sum, (_, size)| sum.checked_add(*size))
-            .and_then(|sum| sum.checked_mul(lanes))
+            .try_fold(0usize, |sum, size| sum.checked_add(*size))
             .ok_or_else(|| Error::invalid("activation size overflow"))?;
         if elements
             .checked_mul(F32_BYTES)
@@ -96,10 +193,10 @@ impl ActivationArena {
         {
             return Err(Error::invalid("device activation budget exceeded"));
         }
-        let mut buffers = Vec::with_capacity(slots.len());
-        for (_, size) in slots {
+        let mut buffers = Vec::with_capacity(sizes.len());
+        for size in sizes {
             buffers.push(Some(
-                api::zeros::<f32>(&[lanes * size])
+                api::zeros::<f32>(&[size])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ));

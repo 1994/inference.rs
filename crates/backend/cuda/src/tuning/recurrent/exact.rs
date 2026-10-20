@@ -36,7 +36,7 @@ const KEY_HEADS: usize = 16;
 const VALUE_HEADS: usize = 48;
 const DIM: usize = 128;
 const GEOMETRY_RANK: usize = 3;
-const SUPPORTED_LANES: [usize; 2] = [64, 256];
+const SUPPORTED_LANES: [usize; 5] = [64, 256, 512, 1024, 2048];
 const SHA256_HEX_LEN: usize = 64;
 const SHORT_COUNT: i32 = 51;
 const OFFSET_COUNT: i32 = 52;
@@ -121,8 +121,8 @@ pub(crate) fn select(
     match resolve(device, shape, autotune, session) {
         Ok(value) => value,
         Err(error) => {
-            tracing::warn!(target:"infer::tuning",?shape,%error,"exact GDN tuning failed: cuTile fallback");
-            false
+            tracing::warn!(target:"infer::tuning",?shape,%error,"exact GDN tuning failed: Rust SIMT default");
+            true
         }
     }
 }
@@ -183,11 +183,13 @@ fn resolve(
             return Ok(entry.rust_simt);
         }
     }
+    // The Rust SIMT kernel won every measured width; an unmeasured width takes it rather than
+    // the cuTile recurrence, whose per-chunk tile grows with the prompt width.
     if !autotune || !session.permits_recurrent_search() {
-        return Ok(false);
+        return Ok(true);
     }
     let Some(entry) = tune(device, key.clone(), session)? else {
-        return Ok(false);
+        return Ok(true);
     };
     let cached = key.driver_build.is_some()
         && update_table(path.as_deref(), |table| {

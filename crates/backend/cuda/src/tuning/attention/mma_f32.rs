@@ -184,11 +184,20 @@ fn resolve(
         tracing::info!(target:"infer::tuning",?shape,?choice,profile=PROFILE,source="table-cache","F32 KV MMA selected");
         return Ok(choice);
     }
+    // An unmeasured shape takes the architecture's first FA4 variant: the scalar path is several
+    // times slower, and a source-fingerprint change must not silently fall back to it.
+    let untuned = || {
+        let choice = Variant::candidates(architecture)
+            .first()
+            .map_or(Choice::Simt, |&variant| Choice::Mma { variant });
+        tracing::info!(target:"infer::tuning",?shape,?choice,profile=PROFILE,source="default","F32 KV MMA selected");
+        choice
+    };
     if !autotune || !session.permits_attention_search() {
-        return Ok(Choice::Simt);
+        return Ok(untuned());
     }
     let Some(e) = tune(device, key.clone(), session)? else {
-        return Ok(Choice::Simt);
+        return Ok(untuned());
     };
     let cached = key.driver_build.is_some()
         && update_table(path.as_deref(), |table| {
