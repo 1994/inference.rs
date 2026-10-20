@@ -135,6 +135,8 @@ pub(crate) mod fused {
 
     /// Normalize a query or key with the reference delta kernel's reduction order.
     fn normalize<const D: i32>(value: Tile<f32, { [D] }>) -> Tile<f32, { [D] }> {
+        // Materialize the specialized shape at the helper boundary for cuTile's type checker.
+        let value = value.reshape(shape![D]);
         let square: Tile<f32, { [] }> = reduce_sum(value * value, 0i32);
         let inverse = rsqrt(
             square.reshape(shape![1]) + 1e-6f32.broadcast(shape![1]),
@@ -169,7 +171,9 @@ pub(crate) mod fused {
         decay: Tile<f32, { [1] }>,
         active: Tile<bool, { [1] }>,
     ) -> Tile<f32, { [D, SW] }> {
-        let key = normalize(key);
+        let old = old.reshape(shape![D, SW]);
+        let key = normalize(key.reshape(shape![D]));
+        let value = value.reshape(shape![SW]);
         let decayed = old * decay.reshape(shape![1, 1]).broadcast(shape![D, SW]);
         let kb = key.reshape(shape![D, 1]).broadcast(shape![D, SW]);
         let predicted: Tile<f32, { [SW] }> = reduce_sum(decayed * kb, 0i32);
@@ -188,6 +192,8 @@ pub(crate) mod fused {
         query: Tile<f32, { [D] }>,
         active: Tile<bool, { [1] }>,
     ) -> Tile<f32, { [1, 1, SW] }> {
+        let state = state.reshape(shape![D, SW]);
+        let query = query.reshape(shape![D]);
         let square: Tile<f32, { [] }> = reduce_sum(query * query, 0i32);
         let inverse = rsqrt(
             square.reshape(shape![1]) + 1e-6f32.broadcast(shape![1]),
