@@ -265,6 +265,7 @@ fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
                 (16, verify),
                 None,
             )?;
+            assert_eq!(pool.test_batched_commit(), verify == 3);
             let mut references = (0..4)
                 .map(|_| DeviceProgram::new(&device, &graph, &weights, 128, hidden, 16))
                 .collect::<Result<Vec<_>>>()?;
@@ -299,6 +300,7 @@ fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
                     expected.push(references[*slot].step_batch(tokens, position)?);
                 }
                 let actual = pool.run_verify(&device, &lanes)?;
+                let mut commits = Vec::new();
                 for ((slot, tokens, accepted), reference) in plans.into_iter().zip(expected) {
                     for (row, expected) in reference.iter().enumerate() {
                         assert_pooled_close(
@@ -308,8 +310,11 @@ fn pooled_recurrent_checkpoints_preserve_exact_prefixes() -> Result<()> {
                         );
                     }
                     assert_eq!(reference.len(), tokens.len());
-                    pool.commit_verify(&device, slot, accepted)?;
+                    commits.push((slot, accepted));
                     references[slot].commit_batch(accepted + 1)?;
+                }
+                pool.commit_verify_many(&device, &commits)?;
+                for &(slot, _) in &commits {
                     assert_eq!(pool.cursors()[slot], references[slot].position());
                 }
             }

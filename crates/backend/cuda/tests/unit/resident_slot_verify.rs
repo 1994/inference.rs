@@ -141,6 +141,7 @@ fn check_pool_width(width: usize, verify: usize, capacity: usize) -> Result<()> 
         (32, verify),
         None,
     )?;
+    assert_eq!(pool.test_batched_commit(), verify == 3);
     let mut serial = (0..width)
         .map(|_| DeviceProgram::new(&device, &graph, &weights, 32, 32, 32))
         .collect::<Result<Vec<_>>>()?;
@@ -265,4 +266,19 @@ fn wide_prefill_preserves_tail_and_scalar_continuation() -> Result<()> {
         &[reference.step(7, position, position, None, true)?],
     );
     Ok(())
+}
+
+#[test]
+fn commit_batch_rejects_duplicate_and_non_pending_slots() {
+    let pending = [3, 0, 2];
+    assert!(validate_commits(&pending, &[(0, 2), (2, 1)]).is_ok());
+    assert!(validate_commits(&pending, &[]).is_ok());
+    for batch in [
+        vec![(0, 0), (0, 1)],
+        vec![(1, 0)],
+        vec![(3, 0)],
+        vec![(0, 3)],
+    ] {
+        assert!(validate_commits(&pending, &batch).is_err());
+    }
 }

@@ -484,3 +484,39 @@ fn batched_recurrent_kernels_compile_without_a_device() -> Result<(), Box<dyn Er
 
 #[path = "resident_slot_recurrent_batch.rs"]
 mod batched;
+
+#[test]
+fn batched_commit_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
+    use cutile::cutile_compiler::compile_api::KernelCompiler;
+    for (kh, vh, dim, block) in [(2, 4, 32, 32), (16, 48, 128, 32)] {
+        let state_strides = [vh * dim * dim, dim, 1];
+        let mut strides = vec![("state", state_strides.as_slice())];
+        for name in ["qkv", "beta", "alpha", "parameters", "metadata", "counts"] {
+            strides.push((name, &[1]));
+        }
+        KernelCompiler::new(fused::__module_ast_self, "fused", "delta_commit_batch")
+            .target("sm_120")
+            .generics(
+                [kh, vh, dim, block, 4]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            )
+            .strides(&strides)
+            .compile()?;
+    }
+    for channels in [32, 10240] {
+        let row_strides = [channels, 1];
+        let mut strides = vec![];
+        for name in ["h0", "h1", "h2", "input"] {
+            strides.push((name, row_strides.as_slice()));
+        }
+        strides.extend([("metadata", &[1][..]), ("counts", &[1][..])]);
+        KernelCompiler::new(fused::__module_ast_self, "fused", "conv_commit_batch")
+            .target("sm_120")
+            .generics(vec!["4".into()])
+            .strides(&strides)
+            .compile()?;
+    }
+    Ok(())
+}

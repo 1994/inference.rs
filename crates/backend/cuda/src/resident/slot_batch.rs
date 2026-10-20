@@ -209,7 +209,7 @@ pub struct SlotPool {
 impl SlotPool {
     pub(crate) fn parameter_bytes(graph: &DataflowGraph, verify: usize) -> Result<u64> {
         if super::slot_verify::fused_recurrent(graph, verify) {
-            super::slot_recurrent::parameter_bytes(&graph.nodes)
+            super::slot_states::parameter_bytes(&graph.nodes)
         } else {
             Ok(0)
         }
@@ -474,6 +474,13 @@ impl SlotPool {
     )]
     pub(crate) const fn quant_reuse_stats(&self) -> (usize, usize) {
         self._nvfp4.quant_reuse_totals()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_batched_commit(&self) -> bool {
+        self.verify
+            .as_ref()
+            .is_some_and(SlotVerifyGraph::has_batched_commit)
     }
 
     #[cfg(test)]
@@ -848,6 +855,23 @@ impl SlotPool {
             .as_mut()
             .ok_or_else(|| Error::invalid("slot pool has no verify graph"))?
             .commit(device, slot, accepted)
+    }
+
+    /// Commit independent accepted prefixes in one pooled update.
+    /// # Errors
+    /// Rejects unknown or duplicate slots, invalid counts and CUDA restore failures.
+    pub(crate) fn commit_verify_many(
+        &mut self,
+        device: &CudaDevice,
+        commits: &[(usize, usize)],
+    ) -> Result<()> {
+        if let [(slot, accepted)] = commits {
+            return self.commit_verify(device, *slot, *accepted);
+        }
+        self.verify
+            .as_mut()
+            .ok_or_else(|| Error::invalid("slot pool has no verify graph"))?
+            .commit_many(device, commits)
     }
 
     /// Copy the covered token-row prefix of one KV state family into the slot.

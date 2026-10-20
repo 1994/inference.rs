@@ -97,7 +97,7 @@ impl Fixture {
         Ok(())
     }
 
-    fn compare(&mut self, device: &CudaDevice, slots: usize) -> TestResult {
+    fn prepare_parameters(&mut self, device: &CudaDevice) -> TestResult {
         fused::pack_parameters(
             (&mut self.parameters).partition([2, 1]),
             &self.rate,
@@ -108,6 +108,11 @@ impl Fixture {
         let mut expected_parameters = values(VH, 3);
         expected_parameters.extend(values(VH, 5));
         assert_eq!(device.read_borrowed(&self.parameters)?, expected_parameters);
+        Ok(())
+    }
+
+    fn compare(&mut self, device: &CudaDevice, slots: usize) -> TestResult {
+        self.prepare_parameters(device)?;
         let original = CudaGraph::scope(&device.stream, |scope| self.record_original(scope))?;
         let candidate = CudaGraph::scope(&device.stream, |scope| {
             scope.record(
@@ -149,6 +154,101 @@ impl Fixture {
         );
         Ok(())
     }
+
+    fn record_original_commit(
+        &self,
+        scope: &Scope,
+        states: &mut [Tensor<f32>],
+        counts: &[i32],
+    ) -> Result<(), DeviceError> {
+        for (slot, state) in states.iter_mut().enumerate() {
+            let qkv = lane_rows(&self.qkv, slot, QKV)?;
+            let beta = lane_rows(&self.beta, slot, VH)?;
+            let alpha = lane_rows(&self.alpha, slot, VH)?;
+            let metadata = lane_rows(&self.metadata, slot, 4)?;
+            scope.record(
+                fused::delta_commit3(
+                    state.partition([1, D, SW]),
+                    &qkv[0],
+                    &qkv[1],
+                    &qkv[2],
+                    &beta[0],
+                    &beta[1],
+                    &beta[2],
+                    &alpha[0],
+                    &alpha[1],
+                    &alpha[2],
+                    &self.rate,
+                    &self.bias,
+                    &metadata[0],
+                    &metadata[1],
+                    &metadata[2],
+                    counts[slot],
+                )
+                .generics([KH, VH, D, SW].iter().map(ToString::to_string).collect()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn compare_commits(&mut self, device: &CudaDevice, slots: usize) -> TestResult {
+        self.prepare_parameters(device)?;
+        let initial = device.read_borrowed(&self.state)?;
+        let size = VH * D * D;
+        let mut original = (0..slots)
+            .map(|slot| {
+                upload(
+                    device,
+                    initial[slot * size..(slot + 1) * size].to_vec(),
+                    &[VH, D, D],
+                )
+            })
+            .collect::<infer_core::Result<Vec<_>>>()?;
+        let mut candidate = upload(device, initial, &[slots, VH * D, D])?;
+        let mut counts = api::zeros::<i32>(&[slots]).sync_on(&device.stream)?;
+        for shift in 0..4 {
+            let accepted = (0..slots)
+                .map(|slot| i32::try_from((slot + shift) % 4).unwrap())
+                .collect::<Vec<_>>();
+            device.copy_host_slice(&mut counts, &accepted)?;
+            let original_graph = CudaGraph::scope(&device.stream, |scope| {
+                self.record_original_commit(scope, &mut original, &accepted)
+            })?;
+            let candidate_graph = CudaGraph::scope(&device.stream, |scope| {
+                scope.record(
+                    fused::delta_commit_batch(
+                        (&mut candidate).partition([1, D, SW]),
+                        &self.qkv,
+                        &self.beta,
+                        &self.alpha,
+                        &self.parameters.view(&[2 * VH])?,
+                        &self.metadata,
+                        &counts,
+                    )
+                    .generics([KH, VH, D, SW, 4].iter().map(ToString::to_string).collect()),
+                )?;
+                Ok(())
+            })?;
+            original_graph.launch().sync_on(&device.stream)?;
+            candidate_graph.launch().sync_on(&device.stream)?;
+            let actual = device.read_borrowed(&candidate)?;
+            for (slot, state) in original.iter().enumerate() {
+                let expected = device.read_borrowed(state)?;
+                for (index, (&a, &b)) in actual[slot * size..(slot + 1) * size]
+                    .iter()
+                    .zip(&expected)
+                    .enumerate()
+                {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "slots={slots} shift={shift} slot={slot} element={index}: {a} != {b}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn lane_rows<T: DType>(
@@ -172,6 +272,17 @@ fn batch_verify_matches_per_slot_bits_at_model_geometry() -> TestResult {
     let device = CudaDevice::new(0)?;
     for slots in [2, 5, 16] {
         Fixture::new(&device, slots)?.compare(&device, slots)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run inside safe-run"]
+fn batch_commit_matches_per_slot_bits_at_model_geometry() -> TestResult {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    for slots in [2, 5, 16] {
+        Fixture::new(&device, slots)?.compare_commits(&device, slots)?;
     }
     Ok(())
 }

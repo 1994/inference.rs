@@ -870,6 +870,7 @@ fn slot_speculate(
         pool.run_verify_readout(device, &lanes, plain_greedy)
     })?;
     let rows = &mut readout.rows;
+    let mut commits = Vec::with_capacity(participants.len());
     for (&(index, slot), chain) in participants.iter().zip(candidates) {
         let state = states
             .get_mut(&tasks[index].state)
@@ -884,7 +885,7 @@ fn slot_speculate(
                 .map(|tokens| &tokens[slot * width..][..chain.len()]),
             defer_draft,
         )?;
-        pool.commit_verify(device, slot, output.tokens.len())?;
+        commits.push((slot, output.tokens.len()));
         if let Some(lease) = &mut state.slot {
             lease.position = state.history.len();
         }
@@ -893,6 +894,7 @@ fn slot_speculate(
             output,
         });
     }
+    pool.commit_verify_many(device, &commits)?;
     if defer_draft {
         super::drafting::catch_up(
             draft.ok_or_else(|| Error::invariant("batched draft pool"))?,
