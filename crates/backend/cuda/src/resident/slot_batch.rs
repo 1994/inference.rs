@@ -242,7 +242,7 @@ impl SlotPool {
         }
         let plan = copy_plan(graph, weights)?;
         let headroom = device.profile()?.device_headroom_bytes();
-        let budget = device.memory_info()?.0.saturating_sub(headroom);
+        let budget = device.allocatable_memory_bytes()?.saturating_sub(headroom);
         let paging = Self::paging(device, graph, weights, (width, capacity), kv_tokens)?;
         let (mut states, mut fp8, tables) = Self::allocate_slots(
             device,

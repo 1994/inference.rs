@@ -21,8 +21,7 @@ impl CudaBackend {
         Ok(self
             .loaded
             .device()
-            .memory_info()?
-            .0
+            .allocatable_memory_bytes()?
             .saturating_sub(self.loaded.profile().device_headroom_bytes()))
     }
     /// Prefill width the state's captured program will use.
