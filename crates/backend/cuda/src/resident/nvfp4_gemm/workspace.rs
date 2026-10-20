@@ -3,6 +3,7 @@ use super::{
     kernels,
     quant_reuse::{CaptureQuantReuse, QuantKey, QuantKind, QuantPairRole},
 };
+use crate::tuning::resident_gemm::QUANTIZATION_ROWS;
 use crate::{
     device::{CudaDevice, device_error, vendor_fp8},
     mlp::ProjectionWeight,
@@ -17,15 +18,13 @@ use std::collections::BTreeMap;
 type Quantized = (Tensor<f4e2m1fnx2>, Tensor<f8e4m3fn>);
 /// Keyed by `(rows, columns, activation-scale columns)`.
 type Fp8Key = (usize, usize, usize);
+type StrategyKey = (crate::tuning::resident_gemm::WeightKey, usize, usize, usize);
 /// Quantized activation and its per-token scales.
 type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
     quant_reuse: CaptureQuantReuse,
-    strategies: BTreeMap<
-        (crate::tuning::resident_gemm::WeightKey, usize, usize, usize),
-        crate::tuning::resident_gemm::GemmConfig,
-    >,
+    strategies: BTreeMap<StrategyKey, crate::tuning::resident_gemm::GemmConfig>,
     buffers: BTreeMap<(usize, usize), Quantized>,
     fp8_strategies: BTreeMap<
         (crate::tuning::fp8_gemm::WeightKey, usize, usize, usize),
@@ -153,10 +152,7 @@ impl Workspace {
             buffers: BTreeMap::new(),
             fp8: BTreeMap::new(),
             fp8_strategies: BTreeMap::new(),
-            vendor_fp8: vendor_fp8::Support::new_with(
-                device,
-                crate::tuning::fp8_gemm::vendor_autotune_enabled() || vendor_diagnostic_enabled(),
-            ),
+            vendor_fp8: vendor_fp8::Support::new_with(device, true),
             vendor_diagnostic: vendor_diagnostic_enabled(),
         };
         workspace.extend(device, graph, weights, widths)?;
@@ -319,7 +315,23 @@ impl Workspace {
                 if self.fp8_strategies.contains_key(&key) {
                     continue;
                 }
-                let choice = if self.vendor_diagnostic {
+                let lt_prefill = self
+                    .fp8
+                    .get(&(rows, columns, 1))
+                    .map(|(q, ..)| {
+                        crate::tuning::fp8_gemm::prefill_choice(
+                            device,
+                            &mut self.vendor_fp8,
+                            q,
+                            codes,
+                            [rows, outputs, columns],
+                        )
+                    })
+                    .transpose()?
+                    .flatten();
+                let choice = if let Some(choice) = lt_prefill {
+                    choice
+                } else if self.vendor_diagnostic {
                     let q = &self
                         .fp8
                         .get(&(rows, columns, 1))
@@ -382,7 +394,23 @@ impl Workspace {
         );
         let (reuse, ticket) = self.quant_reuse.prepare(key);
         let mut record = || {
-            if !reuse {
+            if !reuse && rows.is_multiple_of(QUANTIZATION_ROWS) {
+                scope.record(
+                    kernels::quantize_rows(
+                        (&mut *q).partition([
+                            QUANTIZATION_ROWS,
+                            crate::constants::NVFP4_QUANT_CODES_TILE[1],
+                        ]),
+                        (&mut *qs).partition([
+                            QUANTIZATION_ROWS,
+                            crate::constants::NVFP4_QUANT_SCALES_TILE[1],
+                        ]),
+                        input,
+                        scale,
+                    )
+                    .generics(vec![columns.to_string()]),
+                )?;
+            } else if !reuse {
                 scope.record(
                     kernels::quantize(
                         (&mut *q).partition(crate::constants::NVFP4_QUANT_CODES_TILE),
@@ -393,10 +421,91 @@ impl Workspace {
                     .generics(vec![columns.to_string()]),
                 )?;
             }
+            Self::record_quantized_gemm(
+                &self.strategies,
+                scope,
+                weight,
+                scale,
+                (&*q, &*qs),
+                output,
+                (rows, columns),
+            )
+        };
+        let result = record();
+        self.quant_reuse.finish(ticket, result.is_ok());
+        result
+    }
+
+    /// Down projection of a gated MLP: quantize `silu(gate) * up` straight into the activation
+    /// codes, then run the same row-tiled W4A4 GEMM as [`Self::record_input`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The fused quantizer names both MLP halves next to the projection contract"
+    )]
+    pub(crate) fn record_swiglu_input(
+        &mut self,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        scale: f32,
+        gate: &TensorView<'_, f32>,
+        up: &TensorView<'_, f32>,
+        output: &mut Tensor<f32>,
+        columns: usize,
+    ) -> std::result::Result<(), DeviceError> {
+        let ProjectionWeight::Fp4(..) = weight else {
+            return Err(super::super::capture::error("FP4 workspace weight"));
+        };
+        let rows = output.size()
+            / usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+        // The fused codes overwrite the shared quantization buffers; no reuse permit may span it.
+        self.quant_reuse.clear();
+        let (q, qs) = self
+            .buffers
+            .get_mut(&(rows, columns))
+            .ok_or_else(|| super::super::capture::error("FP4 quantization workspace missing"))?;
+        if !rows.is_multiple_of(QUANTIZATION_ROWS) {
+            return Err(super::super::capture::error("fused SwiGLU row tile"));
+        }
+        scope.record(
+            kernels::swiglu_quantize(
+                (&mut *q).partition([
+                    QUANTIZATION_ROWS,
+                    crate::constants::NVFP4_QUANT_CODES_TILE[1],
+                ]),
+                (&mut *qs).partition([
+                    QUANTIZATION_ROWS,
+                    crate::constants::NVFP4_QUANT_SCALES_TILE[1],
+                ]),
+                gate,
+                up,
+                scale,
+            )
+            .generics(vec![columns.to_string()]),
+        )?;
+        Self::record_quantized_gemm(
+            &self.strategies,
+            scope,
+            weight,
+            scale,
+            (&*q, &*qs),
+            output,
+            (rows, columns),
+        )
+    }
+
+    fn record_quantized_gemm(
+        strategies: &BTreeMap<StrategyKey, crate::tuning::resident_gemm::GemmConfig>,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        scale: f32,
+        (q, qs): (&Tensor<f4e2m1fnx2>, &Tensor<f8e4m3fn>),
+        output: &mut Tensor<f32>,
+        (rows, columns): (usize, usize),
+    ) -> std::result::Result<(), DeviceError> {
+        {
             let outputs =
                 usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
-            let mut config = self
-                .strategies
+            let config = strategies
                 .get(&(
                     crate::tuning::resident_gemm::WeightKey::new(weight, scale)
                         .map_err(super::super::capture::error)?,
@@ -406,25 +515,9 @@ impl Workspace {
                 ))
                 .copied()
                 .unwrap_or_else(|| crate::tuning::resident_gemm::GemmConfig::baseline(rows));
-            // An explicit experimental override never enters the measured table or memo.
-            if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
-                let tile = crate::constants::quant_gemm_tile(rows);
-                config.tile_m = tile[0];
-                config.tile_n = tile[1];
-                config.main_loop = if rows > crate::constants::QUANT_GEMM_TILE[0]
-                    && tile[1] > crate::constants::QUANT_GEMM_TILE[1]
-                {
-                    crate::tuning::resident_gemm::MainLoop::Prefetch8
-                } else {
-                    crate::tuning::resident_gemm::MainLoop::Plain
-                };
-            }
-            config.record(scope, weight, scale, &*q, &*qs, output, columns)?;
+            config.record(scope, weight, scale, q, qs, output, columns)?;
             Ok(())
-        };
-        let result = record();
-        self.quant_reuse.finish(ticket, result.is_ok());
-        result
+        }
     }
     pub(super) fn record_fp8_input(
         &mut self,
@@ -463,7 +556,7 @@ impl Workspace {
         });
         let (reuse, ticket) = self.quant_reuse.prepare(key);
         let mut record = || {
-            let tile = crate::constants::quant_gemm_tile(rows);
+            let tile = crate::tuning::resident_gemm::native_tile(rows);
             let generics = [columns, tile[0], tile[1]]
                 .map(|value| value.to_string())
                 .to_vec();

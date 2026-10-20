@@ -11,10 +11,18 @@ fn capability_limits_scratch_to_validated_layout() -> Result<()> {
         Some(SCRATCH_BYTES),
         u64::try_from((ROWS * COLUMNS + ROWS * HIDDEN) * size_of::<f32>()).ok()
     );
-    for width in [1, 3, 4, 32, 64, 256] {
+    for width in [1, 3, 4, 32, 64, 127, 129, 255, 257, 511] {
         assert_eq!(
             layout_bytes("sm_120", width, Some(&WEIGHT_SHAPE), tiling),
             0
+        );
+    }
+    for width in [256, 512, 1024, 2048] {
+        // Wide fusion owns F32 projection inputs and embeddings, plus the vendor BF16 copy.
+        let expected = (width * (10240 + 5120) * 4 + width * 10240 * 2) as u64;
+        assert_eq!(
+            layout_bytes("sm_120", width, Some(&WEIGHT_SHAPE), tiling),
+            expected
         );
     }
     for architecture in ["sm_100", "sm_121", ""] {

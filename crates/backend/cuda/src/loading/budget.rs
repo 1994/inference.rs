@@ -191,11 +191,31 @@ fn program_price(
     }
     // Activations live in a reuse arena sized by the peak live set, not by the sum of every
     // tensor in the graph; charge what the arena will actually allocate.
+    // Prompt arenas keep one logits row (prompt_logits); decode and verification arenas keep one
+    // per lane.
+    let prompt_arenas = geometry
+        .prompts
+        .into_iter()
+        .filter(|width| *width > 0)
+        .try_fold(0usize, |sum, width| {
+            crate::resident::prompt_logits::required_bytes(graph, weights, width).and_then(
+                |bytes| {
+                    sum.checked_add(bytes)
+                        .ok_or_else(|| Error::invalid("activation budget"))
+                },
+            )
+        })?;
+    let other_arenas = crate::resident::arena::ActivationArena::required_bytes(
+        graph,
+        lanes - geometry.prompt_lanes(),
+    )?;
     bytes = add(
         bytes,
-        u64::try_from(crate::resident::arena::ActivationArena::required_bytes(
-            graph, lanes,
-        )?)
+        u64::try_from(
+            prompt_arenas
+                .checked_add(other_arenas)
+                .ok_or_else(|| Error::invalid("activation budget"))?,
+        )
         .map_err(|_| Error::invalid("activation budget"))?,
     )?;
     for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
@@ -235,19 +255,7 @@ fn program_price(
         bytes = add(bytes, amount)?;
     }
     bytes = add(bytes, projection_workspace(graph, weights, geometry)?)?;
-    // External hidden buffers keep the configured lane allocation even when capture omits
-    // the wide prompt arena.
-    // Fused draft programs additionally retain embedding and two normalized rows per lane.
-    let external_lanes = 1 + weights.prefill_width.max(weights.batch_width).max(1) as u64;
-    let fusion_rows = if weights.fusion.is_some() {
-        crate::constants::MTP_FUSION_ROWS
-    } else {
-        1
-    };
-    bytes = add(
-        bytes,
-        mul(mul(hidden as u64, external_lanes * fusion_rows)?, F32)?,
-    )?;
+    bytes = add(bytes, external_bytes(weights, hidden, profile)?)?;
     // Pinned readback is allocated on demand and capped per batch (device/readback.rs), so
     // charge what a step actually stages: one decode lane, the verification batch when it is
     // private, and the last prompt lane (prompt modes read only the last logits row).
@@ -265,27 +273,45 @@ fn program_price(
 }
 /// Split-KV scratch is shared by sequential attention nodes with the same geometry.
 /// Charge the supported upper bound (16 partitions), independent of device tuning.
+/// External hidden rows for every lane; fused draft programs also retain embedding and two
+/// normalized rows per lane, except where batched prompt fusion covers the prompt graph and only
+/// decode and verification lanes keep their own.
+fn external_bytes(weights: &ProgramWeights, hidden: usize, profile: &DeviceProfile) -> Result<u64> {
+    let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
+    let external_lanes = 1 + width;
+    let fused_lanes = if weights.fusion.is_none() {
+        0
+    } else if crate::resident::fusion_batch::batched(weights, weights.prefill_width, profile) {
+        1 + weights.batch_width.max(1) as u64
+    } else {
+        external_lanes
+    };
+    let rows = external_lanes + fused_lanes * (crate::constants::MTP_FUSION_ROWS - 1);
+    mul(mul(hidden as u64, rows)?, F32)
+}
+
+/// Partial rows per KV head of the grouped decode kernel: 64 splits of the single-lane kernel's
+/// 16 query rows plus the three-lane kernel's 32 stacked rows.
+const GROUPED_DECODE_ROWS: usize = 3
+    * crate::tuning::attention::decode::MAX_GROUPED_PARTS
+    * crate::tuning::attention::decode::GROUPED_ROWS;
 fn attention_scratch(graph: &DataflowGraph) -> Result<u64> {
     let mut bytes = 0;
     let mut shapes = std::collections::BTreeSet::new();
     for node in &graph.nodes {
         if let TensorOp::Attention {
             query_heads,
+            kv_heads,
             head_dim,
             ..
         } = node.op
             && shapes.insert((query_heads, head_dim))
         {
-            bytes = add(
-                bytes,
-                mul(
-                    mul(
-                        query_heads as u64,
-                        crate::constants::ATTENTION_SPLIT_MAX_PARTS as u64,
-                    )?,
-                    mul(head_dim as u64 + 2, F32)?,
-                )?,
-            )?;
+            // Either one partial row per query head and split, or the grouped decode layout of
+            // 32 rows per KV head and split (resident/attention_decode/workspace.rs).
+            let rows = (query_heads * crate::constants::ATTENTION_SPLIT_MAX_PARTS)
+                .max(kv_heads * GROUPED_DECODE_ROWS);
+            bytes = add(bytes, mul(rows as u64, mul(head_dim as u64 + 2, F32)?)?)?;
         }
     }
     Ok(bytes)

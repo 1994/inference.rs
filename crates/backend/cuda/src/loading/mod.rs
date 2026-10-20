@@ -244,7 +244,7 @@ impl LoadedModel {
             options.prefill_width = crate::constants::PREFILL_LANES;
         }
         let mtp_depth = options.mtp_depth;
-        let (mut weights, draft, tuning) =
+        let (mut weights, mut draft, tuning) =
             bindings::load(&device, &profile, &mut package, &options)?;
         if automatic_prefill
             && !weights.projections.iter().any(|(id, weight)| {
@@ -281,10 +281,25 @@ impl LoadedModel {
                 profile.arena_budget_bytes(),
                 &mut weights,
             )?;
+            // The draft primes once per prompt chunk; matching the target width turns a 2048-lane
+            // target chunk into one draft replay instead of sixteen 128-lane ones, whose attention
+            // grid fills a fraction of the device.
+            if let Some(draft) = draft.as_mut()
+                && weights.prefill_width > draft.weights.prefill_width
+                && crate::resident::prompt_logits::required_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    weights.prefill_width,
+                )? as u64
+                    <= profile.arena_budget_bytes()
+            {
+                draft.weights.prefill_width = weights.prefill_width;
+            }
             tracing::info!(
                 target: "infer::load",
                 prefill_width = weights.prefill_width,
                 narrow_prefill_width = weights.narrow_prefill_width,
+                draft_prefill_width = draft.as_ref().map_or(0, |d| d.weights.prefill_width),
                 "prompt graph width selected"
             );
             geometry_phase.finish();
@@ -514,7 +529,7 @@ fn select_prompt_width(
     .into_iter()
     .filter(|&width| width <= recurrent_limit)
     {
-        let needed = crate::resident::arena::ActivationArena::required_bytes(graph, width)?;
+        let needed = crate::resident::prompt_logits::required_bytes(graph, weights, width)?;
         if needed as u64 <= arena_budget {
             selected = width;
             break;
@@ -523,6 +538,9 @@ fn select_prompt_width(
     if selected != 0 && selected < crate::constants::MAX_PREFILL_LANES {
         let rungs: &[usize] = if quantized_recurrent {
             &[
+                crate::constants::WIDEST_PREFILL_LANES,
+                crate::constants::WIDER_PREFILL_LANES,
+                crate::constants::EXTRA_WIDE_PREFILL_LANES,
                 crate::constants::WIDE_PREFILL_LANES,
                 crate::constants::MAX_PREFILL_LANES,
             ]
@@ -530,7 +548,14 @@ fn select_prompt_width(
             &[crate::constants::MAX_PREFILL_LANES]
         };
         for &wide in rungs {
-            let needed = crate::resident::arena::ActivationArena::required_bytes(graph, wide)?;
+            let needed = crate::resident::prompt_logits::required_bytes(graph, weights, wide)?;
+            tracing::info!(
+                target: "infer::load",
+                width = wide,
+                arena_bytes = needed,
+                arena_budget,
+                "prompt width rung"
+            );
             if needed as u64 <= arena_budget {
                 weights.narrow_prefill_width = selected;
                 selected = wide;

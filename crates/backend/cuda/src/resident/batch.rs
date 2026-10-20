@@ -70,6 +70,8 @@ pub(super) struct BatchGraph {
     /// Split-K partial windows the captured fp4 prompt GEMMs accumulate into;
     /// declared after the graphs so their executables drop first.
     _partials: BTreeMap<usize, Tensor<f32>>,
+    /// Final prompt row the one-row logits projection reads; captured by the prompt graphs.
+    prompt_row: Option<Tensor<f32>>,
     _recurrent: super::recurrent_prefill::Workspace,
     _fusion: Option<super::fusion_batch::Workspace>,
     metadata: Vec<Tensor<i32>>,
@@ -112,6 +114,8 @@ pub(super) struct BatchBuilder<'a> {
     pub fp8_states: &'a mut Fp8Caches,
     pub external: &'a Tensor<f32>,
     pub lane_external: &'a mut Vec<Tensor<f32>>,
+    /// Contiguous storage behind `lane_external`, one external hidden row per prompt lane.
+    pub lane_external_owner: Option<&'a Tensor<f32>>,
     pub lane_fusion: &'a mut Vec<Option<super::program::FusionWorkspace>>,
     /// One block table per lane, indexed exactly like `lane_external`; batched and prefill
     /// captures use entry 0 because their operators do not resolve KV positions.
@@ -383,6 +387,9 @@ impl BatchBuilder<'_> {
                 crate::constants::MID_PREFILL_LANES,
                 crate::constants::MAX_PREFILL_LANES,
                 crate::constants::WIDE_PREFILL_LANES,
+                crate::constants::EXTRA_WIDE_PREFILL_LANES,
+                crate::constants::WIDER_PREFILL_LANES,
+                crate::constants::WIDEST_PREFILL_LANES,
             ]
             .contains(&width)
         {
@@ -391,11 +398,19 @@ impl BatchBuilder<'_> {
         if width >= crate::constants::PREFILL_LANES {
             return self.build32();
         }
-        let mut lanes = self.allocate_lanes(width)?;
+        // Verification records stateless nodes once over a batched arena whose rows the lanes
+        // alias; per-lane stateful nodes and the prompt captures keep their lane views.
+        let mut shared = Some(ActivationArena::new_batched(
+            self.device,
+            self.graph,
+            width,
+            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
+        )?);
+        let mut lanes = self.allocate_lanes(width, shared.as_ref())?;
         let mut projections = super::batch_projection::allocate(self.device, self.graph, width)?;
-        let graph = Some(self.capture(&mut lanes, &mut projections, None)?);
-        let prefill = self.capture(&mut lanes, &mut projections, Some(false))?;
-        let prefill_last = self.capture(&mut lanes, &mut projections, Some(true))?;
+        let graph = Some(self.capture(&mut lanes, &mut projections, None, shared.as_mut())?);
+        let prefill = self.capture(&mut lanes, &mut projections, Some(false), None)?;
+        let prefill_last = self.capture(&mut lanes, &mut projections, Some(true), None)?;
         let mut restore = Vec::new();
         let mut metadata = Vec::new();
         let mut hidden = Vec::new();
@@ -440,6 +455,7 @@ impl BatchBuilder<'_> {
             state_prefill: None,
             restore,
             _partials: BTreeMap::new(),
+            prompt_row: None,
             _recurrent: super::recurrent_prefill::Workspace::default(),
             _fusion: None,
             prefill_info: None,
@@ -452,11 +468,27 @@ impl BatchBuilder<'_> {
             width,
             capacity: self.capacity,
             profile: None,
-            _arena: None,
+            _arena: shared,
         })
     }
 
     /// Prefill width 32: one batched arena, one metadata tensor per lane.
+    /// The prompt arena, with the one-row logits buffer its final chunk projects when the
+    /// vocabulary projection supports it.
+    fn prompt_arena(&self) -> Result<(ActivationArena, Option<Tensor<f32>>)> {
+        let budget =
+            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?;
+        if !super::prompt_logits::supported(self.graph, self.weights) {
+            let arena = ActivationArena::new_batched(self.device, self.graph, self.width, budget)?;
+            return Ok((arena, None));
+        }
+        let arena = ActivationArena::new_prompt(self.device, self.graph, self.width, budget)?;
+        let row = api::zeros::<f32>(&[1, self.external.size()])
+            .sync_on(&self.device.stream)
+            .map_err(device_error)?;
+        Ok((arena, Some(row)))
+    }
+
     fn build32(&mut self) -> Result<BatchGraph> {
         #[cfg(test)]
         self.attention.taps.prepare(
@@ -468,12 +500,7 @@ impl BatchBuilder<'_> {
         )?;
         self.attention
             .prepare_prefill(self.device, self.graph, self.weights, self.width);
-        let mut arena = ActivationArena::new_batched(
-            self.device,
-            self.graph,
-            self.width,
-            usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
-        )?;
+        let (mut arena, mut prompt_row) = self.prompt_arena()?;
         let (metadata_owner, metadata) = batched_metadata(self.device, self.width)?;
         let mut partials = self.allocate_prompt_partials()?;
         let prefill_info = api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
@@ -500,6 +527,7 @@ impl BatchBuilder<'_> {
             PromptReadout::Hidden,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
+            prompt_row.as_mut(),
         )?;
         let prefill_last = self.capture32(
             &mut arena,
@@ -512,6 +540,7 @@ impl BatchBuilder<'_> {
             PromptReadout::Logits,
             profile.as_mut(),
             (&mut partials, &mut recurrent, &mut fusion),
+            prompt_row.as_mut(),
         )?;
         #[cfg(test)]
         let state_prefill = if super::prefill_demand::enabled() {
@@ -526,6 +555,7 @@ impl BatchBuilder<'_> {
                 PromptReadout::StateOnly,
                 None,
                 (&mut partials, &mut recurrent, &mut fusion),
+                prompt_row.as_mut(),
             )?)
         } else {
             None
@@ -543,6 +573,7 @@ impl BatchBuilder<'_> {
             state_prefill,
             restore: Vec::new(),
             _partials: partials,
+            prompt_row,
             _recurrent: recurrent,
             _fusion: fusion,
             prefill_info: Some(prefill_info),
@@ -604,18 +635,169 @@ impl BatchBuilder<'_> {
         Ok(partials)
     }
 
+    /// Record a verification node once over the batched arena the lanes alias: projections read
+    /// and write every lane's row in place, and stateless nodes cover all rows in one launch.
+    /// False leaves the node to the per-lane path.
+    fn record_shared(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        metadata: &Tensor<i32>,
+    ) -> std::result::Result<bool, DeviceError> {
+        match dispatch32(node, self.weights) {
+            Dispatch32::Linear if !self.weights.constants.contains_key(&node.inputs[0]) => {
+                super::batch_projection::record_slots(
+                    scope,
+                    node,
+                    arena,
+                    self.weights,
+                    self.nvfp4,
+                )?;
+            }
+            Dispatch32::Batched => {
+                let mut no_fusion = None;
+                Capture {
+                    scope,
+                    arena,
+                    weights: self.weights,
+                    nvfp4: self.nvfp4,
+                    attention: self.attention,
+                    states: self.states,
+                    fp8_states: self.fp8_states,
+                    metadata,
+                    table: &self.tables[0],
+                    external: self.external,
+                    capacity: self.capacity,
+                    fusion: &mut no_fusion,
+                    mode: CaptureMode::Batched,
+                }
+                .record(node)?;
+            }
+            Dispatch32::Linear | Dispatch32::Row => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// Verification lanes append their rows, then attend in one grouped launch that reads each
+    /// KV block once for all three lanes. False when this node keeps the per-lane path.
+    fn record_verify_attention(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        lanes: &mut [Lane],
+        prefill: Option<bool>,
+    ) -> std::result::Result<bool, DeviceError> {
+        let width = lanes.len();
+        let TensorOp::Attention {
+            query_heads,
+            kv_heads,
+            head_dim,
+            window,
+        } = node.op
+        else {
+            return Ok(false);
+        };
+        let Some(&id) = node.states.first() else {
+            return Ok(false);
+        };
+        let eligible = prefill.is_none()
+            && width == super::attention_decode::VERIFY_LANES
+            && window.is_none_or(|w| w >= crate::constants::ATTENTION_SPLIT_THRESHOLD)
+            && self.attention.supports_verify(query_heads, head_dim)
+            && !self.weights.constants.contains_key(&node.inputs[0])
+            && self.fp8_states.contains_key(&id)
+            && lanes.iter().all(|lane| !lane.checkpoints.contains_key(&id));
+        if !eligible {
+            return Ok(false);
+        }
+        for (index, lane) in lanes.iter_mut().enumerate() {
+            Capture {
+                scope,
+                arena: &mut lane.arena,
+                weights: self.weights,
+                nvfp4: self.nvfp4,
+                attention: self.attention,
+                states: self.states,
+                fp8_states: self.fp8_states,
+                metadata: &lane.metadata,
+                table: &self.tables[0],
+                external: &self.lane_external[index],
+                capacity: self.capacity,
+                fusion: &mut self.lane_fusion[index],
+                mode: CaptureMode::Flat,
+            }
+            .record_attention_append(node)?;
+        }
+        let (keys, values) = self
+            .fp8_states
+            .remove(&id)
+            .ok_or_else(|| error("verification FP8 state"))?;
+        let mut outputs = Vec::with_capacity(width);
+        for lane in lanes.iter_mut() {
+            let slot = lane.arena.slot(node.outputs[0]).map_err(error)?;
+            let output = lane.arena.buffers[slot]
+                .take()
+                .ok_or_else(|| error("verification attention output"))?;
+            let shape = output
+                .shape()
+                .iter()
+                .map(|&dim| usize::try_from(dim).map_err(error))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            outputs.push((slot, shape, output.reshape(&[query_heads, head_dim])?));
+        }
+        let recorded = {
+            let queries = lanes
+                .iter()
+                .map(|lane| {
+                    lane.arena
+                        .get(node.inputs[0])
+                        .map_err(error)?
+                        .view(&[query_heads, head_dim])
+                        .map_err(error)
+                })
+                .collect::<std::result::Result<Vec<_>, DeviceError>>()?;
+            let [first, second, third] = outputs.as_mut_slice() else {
+                return Err(error("verification lanes"));
+            };
+            self.attention.record_verify(
+                scope,
+                [&mut first.2, &mut second.2, &mut third.2],
+                [&queries[0], &queries[1], &queries[2]],
+                [&lanes[0].metadata, &lanes[1].metadata, &lanes[2].metadata],
+                (&keys, &values, &self.tables[0]),
+                (query_heads, kv_heads, head_dim),
+                i32::try_from(window.unwrap_or(0)).map_err(error)?,
+                self.weights.kv_scales[&id],
+            )
+        };
+        self.fp8_states.insert(id, (keys, values));
+        for ((slot, shape, output), lane) in outputs.into_iter().zip(lanes.iter_mut()) {
+            lane.arena.buffers[slot] = Some(output.reshape(&shape)?);
+        }
+        recorded?;
+        Ok(true)
+    }
+
     fn capture(
         &mut self,
         lanes: &mut [Lane],
         projections: &mut super::batch_projection::Workspace,
         prefill: Option<bool>,
+        mut shared: Option<&mut ActivationArena>,
     ) -> Result<CudaGraph<()>> {
         let width = lanes.len();
+        let device = self.device;
         self.nvfp4.end_quant_capture();
-        let result = CudaGraph::scope(&self.device.stream, |scope| {
+        let result = CudaGraph::scope(&device.stream, |scope| {
             for node in &self.graph.nodes {
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
                 if logits && prefill == Some(false) {
+                    continue;
+                }
+                if let Some(arena) = shared.as_deref_mut()
+                    && self.record_shared(scope, node, arena, &lanes[0].metadata)?
+                {
                     continue;
                 }
                 if width > 1 && node.op == TensorOp::Linear && !(logits && prefill.is_some()) {
@@ -627,6 +809,9 @@ impl BatchBuilder<'_> {
                         projections,
                         self.nvfp4,
                     )?;
+                    continue;
+                }
+                if self.record_verify_attention(scope, node, lanes, prefill)? {
                     continue;
                 }
                 for (index, lane) in lanes.iter_mut().enumerate() {
@@ -689,6 +874,7 @@ impl BatchBuilder<'_> {
             &mut super::recurrent_prefill::Workspace,
             &mut Option<super::fusion_batch::Workspace>,
         ),
+        mut prompt_row: Option<&mut Tensor<f32>>,
     ) -> Result<CudaGraph<()>> {
         let (metadata, metadata_batch, prefill_info, prefill_rotary) = metadata;
         let (partials, recurrent, fusion) = workspaces;
@@ -698,12 +884,17 @@ impl BatchBuilder<'_> {
             .then(|| super::prefill_demand::StateDemand::new(self.graph));
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
         let pairs = gdn_ba_pairs(self.graph, self.weights);
+        let swiglu = super::prefill_projection::swiglu_plan(self.graph, self.weights);
+        let absorbed: std::collections::BTreeSet<usize> = swiglu
+            .values()
+            .flat_map(|&(silu, multiply, ..)| [silu, multiply])
+            .collect();
         self.nvfp4.begin_quant_capture();
         let result = CudaGraph::scope(&self.device.stream, |scope| {
             let mut boundaries = profile.map(|profile| profile.graph(last));
             let mut fused_second = None;
             for (index, node) in self.graph.nodes.iter().enumerate() {
-                if fused_second == Some(index) {
+                if fused_second == Some(index) || absorbed.contains(&index) {
                     continue;
                 }
                 let logits = node.outputs.iter().any(|id| Some(*id) == self.graph.logits);
@@ -745,6 +936,30 @@ impl BatchBuilder<'_> {
                         fused_second = Some(second);
                         continue;
                     }
+                }
+                if logits && let Some(row) = prompt_row.as_deref_mut() {
+                    super::prompt_logits::record(
+                        scope,
+                        node,
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                        (row, prefill_info),
+                    )?;
+                    continue;
+                }
+                if let Some(&(.., gate, up)) = swiglu.get(&index) {
+                    if !super::prefill_projection::record_swiglu(
+                        scope,
+                        node,
+                        (gate, up),
+                        arena,
+                        self.weights,
+                        self.nvfp4,
+                    )? {
+                        return Err(error("fused SwiGLU projection"));
+                    }
+                    continue;
                 }
                 self.record_prompt_node(
                     scope,
@@ -944,7 +1159,12 @@ impl BatchBuilder<'_> {
         skip
     }
 
-    fn allocate_lanes(&self, width: usize) -> Result<Vec<Lane>> {
+    #[expect(
+        unsafe_code,
+        reason = "Audited lane aliasing: the batched arena is stored in the BatchGraph that owns \
+                  every graph captured against its lane views"
+    )]
+    fn allocate_lanes(&self, width: usize, shared: Option<&ActivationArena>) -> Result<Vec<Lane>> {
         let mut lanes = Vec::new();
         let mut bytes = 0usize;
         for _ in 0..width {
@@ -984,13 +1204,20 @@ impl BatchBuilder<'_> {
                 }
                 checkpoints.insert(spec.id, copies);
             }
-            lanes.push(Lane {
-                arena: ActivationArena::new(
+            let arena = if let Some(shared) = shared {
+                // SAFETY: `build` keeps `shared` alive in the BatchGraph beside these lanes'
+                // graphs; per-lane and whole-slot nodes are recorded in sequence on one stream.
+                unsafe { shared.lane_view(lanes.len())? }
+            } else {
+                ActivationArena::new(
                     self.device,
                     self.graph,
                     usize::try_from(self.device.profile()?.arena_budget_bytes())
                         .map_err(device_error)?,
-                )?,
+                )?
+            };
+            lanes.push(Lane {
+                arena,
                 metadata: api::zeros::<i32>(&[crate::constants::METADATA_FIELDS])
                     .sync_on(&self.device.stream)
                     .map_err(device_error)?,
@@ -1030,6 +1257,20 @@ pub(super) fn dispatch32(node: &TensorNode, weights: &ProgramWeights) -> Dispatc
     }
 }
 
+/// Enqueue a prompt replay with nothing to read back: the host stages the next chunk while this
+/// one runs instead of idling the GPU for a sync per chunk.
+#[expect(
+    unsafe_code,
+    reason = "Audited detached replay of a readback-free prompt chunk on the single engine stream"
+)]
+fn launch_detached(device: &CudaDevice, graph: &CudaGraph<()>) -> Result<()> {
+    // SAFETY: single engine stream; this replay follows its staged metadata and uploads
+    // (pageable copies and graph updates, both stream-ordered and host-safe on return) and
+    // precedes every later replay. The graph owns every buffer it touches, and the next
+    // readback, device read or drain on this device waits for it.
+    unsafe { graph.launch().async_on(&device.stream) }.map_err(device_error)
+}
+
 pub(super) fn take_result(
     arena: &mut ActivationArena,
     id: Option<TensorId>,
@@ -1043,6 +1284,11 @@ pub(super) fn take_result(
 }
 
 impl BatchGraph {
+    /// Device hidden rows of this graph's prompt lanes, valid after a replay.
+    pub(crate) fn hidden_rows(&self) -> Arc<Tensor<f32>> {
+        Arc::clone(&self.hidden[0])
+    }
+
     pub fn run(
         &mut self,
         device: &CudaDevice,
@@ -1347,7 +1593,9 @@ impl BatchGraph {
             ],
         )?;
         let hidden_dim = self.hidden[0].size() / self.width;
-        let vocabulary = self.logits[0].size() / self.width;
+        // A one-row logits slot already holds the final lane.
+        let single_logits = self.prompt_row.is_some();
+        let vocabulary = self.logits[0].size() / if single_logits { 1 } else { self.width };
         let sources = [
             read_hidden.then(|| ReadbackSource {
                 tensor: Arc::clone(&self.hidden[0]),
@@ -1356,10 +1604,20 @@ impl BatchGraph {
             }),
             (prefill == Some(true)).then(|| ReadbackSource {
                 tensor: Arc::clone(&self.logits[0]),
-                skip: (tokens.len() - 1) * vocabulary,
+                skip: if single_logits {
+                    0
+                } else {
+                    (tokens.len() - 1) * vocabulary
+                },
                 len: vocabulary,
             }),
         ];
+        if sources.iter().all(Option::is_none) && self.profile.is_none() {
+            launch_detached(device, graph)?;
+            return Ok((0..tokens.len())
+                .map(|_| (Vec::new(), Vec::new()))
+                .collect());
+        }
         let rows = self.readbacks.run(device, graph, &sources);
         if rows.is_ok()
             && let Some(profile) = &self.profile

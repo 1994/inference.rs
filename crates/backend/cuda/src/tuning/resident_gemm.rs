@@ -26,6 +26,29 @@ const GEMM_RANK: usize = 3;
 /// Linear interpolation weight of both central samples for an even-sized median.
 const MEDIAN_INTERPOLATION: f32 = 0.5;
 
+/// Rows processed by one prompt activation quantization block.
+pub(crate) const QUANTIZATION_ROWS: usize = 16;
+
+/// Default row tile before a hardware-scoped measurement selects another configuration.
+pub(crate) const fn prompt_tile_rows(rows: usize) -> usize {
+    if rows >= crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS {
+        crate::constants::WIDE_PROMPT_GEMM_TILE_ROWS
+    } else if rows > crate::constants::QUANT_GEMM_TILE[0] {
+        crate::constants::PROMPT_GEMM_TILE_ROWS
+    } else {
+        crate::constants::QUANT_GEMM_TILE[0]
+    }
+}
+
+/// Native FP8/block projection baseline; W4A4 configurations use [`GemmConfig::baseline`].
+pub(crate) const fn native_tile(rows: usize) -> [usize; 2] {
+    [prompt_tile_rows(rows), crate::constants::QUANT_GEMM_TILE[1]]
+}
+
+/// Prompt rows from which the baseline takes [`WIDE_PROMPT_COLUMNS`].
+const WIDE_PROMPT_ROWS: usize = 512;
+/// Output-column tile of the wide prompt baseline.
+const WIDE_PROMPT_COLUMNS: usize = 128;
 /// Supported row-tile variants of the existing native scaled MMA kernels.
 const TILE_M_SEARCH: [usize; 3] = [
     crate::constants::QUANT_GEMM_TILE[0],
@@ -174,8 +197,17 @@ pub struct GemmConfig {
 
 impl GemmConfig {
     pub(crate) const fn baseline(rows: usize) -> Self {
+        // Wide prompt graphs take a 128-column tile with the prefetching main loop: at 2048 rows
+        // it cut a 32K prefill by 0.14 s, while decode and short prompts keep the narrow tile.
+        if rows >= WIDE_PROMPT_ROWS {
+            return Self {
+                tile_m: prompt_tile_rows(rows),
+                tile_n: WIDE_PROMPT_COLUMNS,
+                main_loop: MainLoop::Prefetch8,
+            };
+        }
         Self {
-            tile_m: crate::constants::prompt_gemm_tile_rows(rows),
+            tile_m: prompt_tile_rows(rows),
             tile_n: crate::constants::QUANT_GEMM_TILE[1],
             main_loop: MainLoop::Plain,
         }
@@ -651,10 +683,6 @@ pub(crate) fn select(
     session: &ResidentTuningSession,
 ) -> GemmConfig {
     let baseline = GemmConfig::baseline(shape[0]);
-    if std::env::var_os("INFER_CUDA_QUANT_TILE").is_some() {
-        tracing::info!(target: "infer::tuning", ?shape, "manual quant tile override: excluded from tuning evidence");
-        return baseline;
-    }
     match resolve(device, weight, scale, shape, autotune, session) {
         Ok(config) => config,
         Err(error) => {

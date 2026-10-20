@@ -161,10 +161,8 @@ impl SlotPool {
             ));
         }
         let plan = copy_plan(graph, weights)?;
-        let budget = device
-            .memory_info()?
-            .0
-            .saturating_sub(device.profile()?.device_headroom_bytes());
+        let headroom = device.profile()?.device_headroom_bytes();
+        let budget = device.memory_info()?.0.saturating_sub(headroom);
         let mut states = Vec::with_capacity(width);
         let mut fp8 = Vec::with_capacity(width);
         let mut tables = Vec::with_capacity(width);
@@ -213,6 +211,7 @@ impl SlotPool {
                 fp8_states: &mut placeholder_fp8,
                 external: &external,
                 lane_external: &mut lane_external,
+                lane_external_owner: None,
                 lane_fusion: &mut lane_fusion,
                 tables: &tables,
                 capacity,

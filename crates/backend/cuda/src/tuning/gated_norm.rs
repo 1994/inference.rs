@@ -21,6 +21,9 @@ const SUPPORTED_DIMENSION: usize = 128;
 /// Zero denotes the original compiler policy, rather than an occupancy hint.
 const BASELINE: i32 = 0;
 const CANDIDATES: [i32; 3] = [2, 4, 6];
+/// Hint for a prompt shape without a measured entry: occupancy 4 won every measured prompt shape
+/// (2.0-2.8x over the compiler policy) with identical bits.
+const UNMEASURED: i32 = 4;
 const SCHEMA: &str = "native-gated-norm-occupancy:same-address:finite-all-bits:cold-warm-AB-BA-v1";
 type ProcessKey = (usize, Shape);
 #[derive(Clone, Copy)]
@@ -152,7 +155,7 @@ fn resolve(
     } else {
         None
     };
-    let selected = entry.as_ref().map_or(BASELINE, |e| e.selected);
+    let selected = entry.as_ref().map_or(UNMEASURED, |e| e.selected);
     if let Some(entry) = &entry {
         let from_table = table.as_ref().is_some_and(|t| {
             t.resident_gated_norm

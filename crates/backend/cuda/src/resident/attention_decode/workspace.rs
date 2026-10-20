@@ -1,6 +1,9 @@
 //! Capture-time split-KV planning and reusable scratch, independent of model identity.
 use super::kernels;
 use crate::device::{CudaDevice, device_error};
+use crate::tuning::attention::decode::{
+    GROUPED_OCCUPANCY, GROUPED_ROWS as GQA_ROWS, grouped_parts, partitions,
+};
 use cutile::prelude::*;
 use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
@@ -10,8 +13,27 @@ use std::collections::BTreeMap;
 #[path = "../../../tests/unit/resident_attention_prefill_taps.rs"]
 pub mod taps;
 
+/// Lanes of one MTP verification step that share a three-lane grouped launch.
+pub const VERIFY_LANES: usize = 3;
+/// Rows each verification lane owns in the stacked query tile of the three-lane kernel.
+const STACKED_LANE_ROWS: usize = 8;
+/// Query rows of the stacked three-lane tile: three lanes plus one padding lane.
+const STACKED_ROWS: usize = 32;
+
 struct Buffers {
+    /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
+    grouped: Option<usize>,
     parts: usize,
+    numerator: Tensor<f32>,
+    maxima: Tensor<f32>,
+    sums: Tensor<f32>,
+    /// Stacked partials of the three-lane verification kernel, when a KV group fits one lane's
+    /// rows of the stacked query tile.
+    verify: Option<Partials>,
+}
+
+/// One lane's grouped split partials.
+struct Partials {
     numerator: Tensor<f32>,
     maxima: Tensor<f32>,
     sums: Tensor<f32>,
@@ -31,18 +53,6 @@ pub struct Workspace {
     prefill: BTreeMap<(TensorId, usize), crate::tuning::attention::Choice>,
 }
 
-/// A hardware/window-scoped partition count gives private and pooled sequences the same
-/// F32 reduction tree. Reserved KV capacity only changes storage, never arithmetic.
-fn partitions(heads: usize, window: Option<usize>, multiprocessors: usize) -> usize {
-    if window.is_some_and(|tokens| tokens < crate::constants::ATTENTION_SPLIT_THRESHOLD) {
-        return 1;
-    }
-    let limit = multiprocessors
-        .div_ceil(heads)
-        .clamp(1, crate::constants::ATTENTION_SPLIT_MAX_PARTS);
-    1 << limit.ilog2()
-}
-
 impl Workspace {
     pub(crate) fn new(
         device: &CudaDevice,
@@ -55,9 +65,9 @@ impl Workspace {
         for node in &graph.nodes {
             let TensorOp::Attention {
                 query_heads,
+                kv_heads,
                 head_dim,
                 window,
-                ..
             } = node.op
             else {
                 continue;
@@ -71,21 +81,41 @@ impl Workspace {
             if parts == 1 || buffers.contains_key(&(query_heads, head_dim)) {
                 continue;
             }
-            buffers.insert(
-                (query_heads, head_dim),
+            let zeros = |shape: &[usize]| {
+                api::zeros::<f32>(shape)
+                    .sync_on(&device.stream)
+                    .map_err(device_error)
+            };
+            let entry = if let Some(grouped) = grouped_parts(query_heads, kv_heads, sms) {
+                let blocks = kv_heads * grouped;
+                let verify = if query_heads / kv_heads <= STACKED_LANE_ROWS {
+                    Some(Partials {
+                        numerator: zeros(&[blocks, STACKED_ROWS, head_dim])?,
+                        maxima: zeros(&[blocks, STACKED_ROWS])?,
+                        sums: zeros(&[blocks, STACKED_ROWS])?,
+                    })
+                } else {
+                    None
+                };
                 Buffers {
+                    grouped: Some(kv_heads),
+                    parts: grouped,
+                    numerator: zeros(&[blocks, GQA_ROWS, head_dim])?,
+                    maxima: zeros(&[blocks, GQA_ROWS])?,
+                    sums: zeros(&[blocks, GQA_ROWS])?,
+                    verify,
+                }
+            } else {
+                Buffers {
+                    grouped: None,
+                    verify: None,
                     parts,
-                    numerator: api::zeros::<f32>(&[query_heads * parts, head_dim])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                    maxima: api::zeros::<f32>(&[query_heads * parts, 1])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                    sums: api::zeros::<f32>(&[query_heads * parts, 1])
-                        .sync_on(&device.stream)
-                        .map_err(device_error)?,
-                },
-            );
+                    numerator: zeros(&[query_heads * parts, head_dim])?,
+                    maxima: zeros(&[query_heads * parts, 1])?,
+                    sums: zeros(&[query_heads * parts, 1])?,
+                }
+            };
+            buffers.insert((query_heads, head_dim), entry);
         }
         Ok(Self {
             #[cfg(test)]
@@ -512,6 +542,90 @@ impl Workspace {
         self.buffers.contains_key(&(heads, dim))
     }
 
+    /// Whether three verification lanes of this geometry share one grouped launch.
+    pub(crate) fn supports_verify(&self, heads: usize, dim: usize) -> bool {
+        self.buffers
+            .get(&(heads, dim))
+            .is_some_and(|work| work.grouped.is_some() && work.verify.is_some())
+    }
+
+    /// Decode attention of the three lanes of one verification step: one grouped launch reads
+    /// each KV block once, then each lane merges its own splits.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Attention binding includes three lanes, shared KV, metadata and scale tensors"
+    )]
+    pub(crate) fn record_verify<E: DType>(
+        &mut self,
+        scope: &Scope,
+        outputs: [&mut Tensor<f32>; VERIFY_LANES],
+        queries: [&TensorView<'_, f32>; VERIFY_LANES],
+        metadata: [&Tensor<i32>; VERIFY_LANES],
+        (keys, values, table): (&Tensor<E>, &Tensor<E>, &Tensor<i32>),
+        (heads, kv_heads, dim): (usize, usize, usize),
+        window: i32,
+        scales: [f32; 2],
+    ) -> std::result::Result<(), DeviceError> {
+        let work = self
+            .buffers
+            .get_mut(&(heads, dim))
+            .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
+        let (Some(groups), Some(stacked)) = (work.grouped, work.verify.as_mut()) else {
+            return Err(super::super::capture::error(
+                "grouped verification workspace",
+            ));
+        };
+        let parts = work.parts;
+        scope.record(
+            kernels::partial_gqa3(
+                (&mut stacked.numerator).partition([1, STACKED_ROWS, dim]),
+                (&mut stacked.maxima).partition([1, STACKED_ROWS]),
+                (&mut stacked.sums).partition([1, STACKED_ROWS]),
+                &queries[0].view(&[groups, heads / kv_heads, dim])?,
+                &queries[1].view(&[groups, heads / kv_heads, dim])?,
+                &queries[2].view(&[groups, heads / kv_heads, dim])?,
+                metadata[0],
+                metadata[1],
+                metadata[2],
+                keys,
+                values,
+                table,
+                window,
+                scales[0],
+                scales[1],
+            )
+            .generics(vec![
+                E::DTYPE.as_str().into(),
+                dim.to_string(),
+                parts.to_string(),
+                crate::constants::KV_BLOCK_TOKENS.to_string(),
+            ])
+            .compile_options(grouped_options()),
+        )?;
+        for (lane, output) in outputs.into_iter().enumerate() {
+            let offset = i32::try_from(lane * STACKED_LANE_ROWS)
+                .map_err(|_| super::super::capture::error("stacked verification row"))?;
+            scope.record(
+                kernels::merge_gqa(
+                    output.partition([1, dim]),
+                    &stacked
+                        .numerator
+                        .view(&[groups, parts, STACKED_ROWS, dim])?,
+                    &stacked.maxima.view(&[groups, parts, STACKED_ROWS])?,
+                    &stacked.sums.view(&[groups, parts, STACKED_ROWS])?,
+                    offset,
+                )
+                .generics(vec![
+                    dim.to_string(),
+                    parts.to_string(),
+                    (heads / kv_heads).to_string(),
+                    STACKED_ROWS.to_string(),
+                ]),
+            )?;
+        }
+        Ok(())
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "Attention binding includes separate KV, metadata and scale tensors"
@@ -536,6 +650,46 @@ impl Workspace {
             .get_mut(&(heads, dim))
             .ok_or_else(|| super::super::capture::error("split KV workspace"))?;
         let parts = work.parts;
+        if let Some(groups) = work.grouped {
+            scope.record(
+                kernels::partial_gqa(
+                    (&mut work.numerator).partition([1, GQA_ROWS, dim]),
+                    (&mut work.maxima).partition([1, GQA_ROWS]),
+                    (&mut work.sums).partition([1, GQA_ROWS]),
+                    &q.view(&[groups, heads / kv_heads, dim])?,
+                    metadata,
+                    keys,
+                    values,
+                    table,
+                    window,
+                    scales[0],
+                    scales[1],
+                )
+                .generics(vec![
+                    E::DTYPE.as_str().into(),
+                    dim.to_string(),
+                    parts.to_string(),
+                    crate::constants::KV_BLOCK_TOKENS.to_string(),
+                ])
+                .compile_options(grouped_options()),
+            )?;
+            scope.record(
+                kernels::merge_gqa(
+                    output.partition([1, dim]),
+                    &work.numerator.view(&[groups, parts, GQA_ROWS, dim])?,
+                    &work.maxima.view(&[groups, parts, GQA_ROWS])?,
+                    &work.sums.view(&[groups, parts, GQA_ROWS])?,
+                    0,
+                )
+                .generics(vec![
+                    dim.to_string(),
+                    parts.to_string(),
+                    (heads / kv_heads).to_string(),
+                    GQA_ROWS.to_string(),
+                ]),
+            )?;
+            return Ok(());
+        }
         scope.record(
             kernels::partial(
                 (&mut work.numerator).partition([1, dim]),
@@ -571,6 +725,8 @@ impl Workspace {
     }
 }
 
-#[cfg(test)]
-#[path = "../../../tests/unit/resident_attention_decode_workspace.rs"]
-mod tests;
+/// Two CTAs per SM: the measured optimum of both grouped kernels on RTX 5090 at 32K tokens
+/// (the stacked three-lane kernel 150 → 59 µs, the one-lane kernel 53 → 46 µs per layer).
+fn grouped_options() -> cutile::tile_kernel::CompileOptions {
+    cutile::tile_kernel::CompileOptions::default().occupancy(GROUPED_OCCUPANCY)
+}

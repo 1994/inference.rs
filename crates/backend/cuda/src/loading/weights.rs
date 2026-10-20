@@ -12,6 +12,16 @@ const STAGING: u64 = 2 * 1024 * 1024 * 1024;
 /// Decoded BF16 byte budget for one NVFP4 projection falling back to host decoding.
 const NVFP4_DECODE_BUDGET: usize = crate::constants::GIB;
 
+// E4M3 finite encoding: four biased exponent bits and three fraction bits.
+const E4M3_NAN_CODE: u8 = 127;
+const E4M3_MAX_CODE: u8 = E4M3_NAN_CODE - 1;
+const E4M3_MANTISSA_BITS: u8 = 3;
+const E4M3_MANTISSA_MASK: u8 = 7;
+const E4M3_MANTISSA_SCALE: f32 = 8.0;
+const E4M3_EXPONENT_BIAS: i32 = 7;
+const E4M3_MAX: f32 = 448.0;
+const E4M3_SIGN: u8 = 0x80;
+
 #[derive(Clone)]
 pub enum Projection {
     Dense(Arc<Tensor<bf16>>),
@@ -44,7 +54,80 @@ pub fn floats(package: &mut QuantizedPackage, source: &WeightSource) -> Result<V
         .collect())
 }
 
+/// Finite non-negative E4M3 values in code order (codes 0..=126; 127 is NaN).
+fn e4m3_magnitudes() -> Vec<f32> {
+    (0u8..E4M3_NAN_CODE)
+        .map(|code| {
+            let exponent = i32::from(code >> E4M3_MANTISSA_BITS);
+            let mantissa = f32::from(code & E4M3_MANTISSA_MASK);
+            if exponent == 0 {
+                mantissa / E4M3_MANTISSA_SCALE * 2f32.powi(1 - E4M3_EXPONENT_BIAS)
+            } else {
+                (1.0 + mantissa / E4M3_MANTISSA_SCALE) * 2f32.powi(exponent - E4M3_EXPONENT_BIAS)
+            }
+        })
+        .collect()
+}
+
+/// Round to the nearest E4M3 code (ties to the even code), saturating at +-448.
+fn e4m3_code(value: f32, magnitudes: &[f32]) -> u8 {
+    let magnitude = value.abs().min(E4M3_MAX);
+    let upper = magnitudes.partition_point(|&m| m < magnitude);
+    let code = if upper == 0 {
+        0
+    } else if upper >= magnitudes.len() {
+        magnitudes.len() - 1
+    } else {
+        let below = magnitude - magnitudes[upper - 1];
+        let above = magnitudes[upper] - magnitude;
+        match below.total_cmp(&above) {
+            std::cmp::Ordering::Less => upper - 1,
+            std::cmp::Ordering::Equal if (upper - 1) % 2 == 0 => upper - 1,
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal => upper,
+        }
+    };
+    let sign = if value.is_sign_negative() && code != 0 {
+        E4M3_SIGN
+    } else {
+        0
+    };
+    u8::try_from(code).unwrap_or(E4M3_MAX_CODE) | sign
+}
+
 impl Projection {
+    /// Per-output-channel FP8 encoding of a dense `[rows, columns]` weight: each row is scaled by
+    /// its largest magnitude over 448, matching the checkpoint's own FP8-channel projections.
+    /// # Errors
+    /// Rejects malformed shapes or failed CUDA allocations.
+    pub fn quantize_fp8(device: &CudaDevice, values: &[f32], shape: &[usize]) -> Result<Self> {
+        let [rows, columns] = shape else {
+            return Err(Error::invalid("FP8 projection rank"));
+        };
+        if rows * columns != values.len() || *columns == 0 {
+            return Err(Error::invalid("FP8 projection shape"));
+        }
+        let magnitudes = e4m3_magnitudes();
+        let mut codes = Vec::with_capacity(values.len());
+        let mut scales = Vec::with_capacity(*rows);
+        for row in values.chunks(*columns) {
+            let largest = row.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
+            let scale = if largest > 0.0 {
+                largest / E4M3_MAX
+            } else {
+                1.0
+            };
+            scales.push(scale);
+            codes.extend(
+                row.iter()
+                    .map(|v| f8e4m3fn(e4m3_code(v / scale, &magnitudes))),
+            );
+        }
+        Ok(Self::Fp8(
+            device.upload(codes, shape)?,
+            device.upload(scales, &[*rows])?,
+        ))
+    }
+
     #[must_use]
     pub fn resident(&self) -> crate::mlp::ProjectionWeight {
         use crate::mlp::ProjectionWeight;

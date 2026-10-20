@@ -27,6 +27,7 @@ mod prefill_gemm;
 mod prefill_projection;
 mod profile;
 mod program;
+pub(crate) mod prompt_logits;
 mod recurrent;
 mod recurrent_checkpoint;
 pub(crate) mod recurrent_prefill;
