@@ -340,11 +340,7 @@ fn driver_build() -> Option<String> {
         .map(str::to_owned)
 }
 type Identities = Mutex<BTreeMap<(String, [usize; GEMM_RANK]), String>>;
-fn fingerprint(
-    device: &CudaDevice,
-    shape: [usize; GEMM_RANK],
-    session: &ResidentTuningSession,
-) -> Result<Option<String>> {
+fn fingerprint(device: &CudaDevice, shape: [usize; GEMM_RANK]) -> Result<String> {
     use cutile::cutile_compiler::cuda_tile_runtime_utils as compiler;
     static IDENTITIES: OnceLock<Identities> = OnceLock::new();
     let environment = format!(
@@ -363,10 +359,7 @@ fn fingerprint(
         .get(&(environment.clone(), shape))
         .cloned();
     if let Some(value) = remembered {
-        return Ok(Some(value));
-    }
-    if !permits(session, shape) {
-        return Ok(None);
+        return Ok(value);
     }
     let [rows, outputs, columns] = shape;
     let input = api::meta::<f32>(&[rows, columns])
@@ -402,9 +395,6 @@ fn fingerprint(
     ];
     for tile_m in ROW_TILES {
         for tile_n in COLUMN_TILES {
-            if !permits(session, shape) {
-                return Ok(None);
-            }
             ids.push(
                 kernels::matmul(
                     (&mut out).partition([tile_m, tile_n]),
@@ -423,9 +413,6 @@ fn fingerprint(
             );
         }
     }
-    if !permits(session, shape) {
-        return Ok(None);
-    }
     ids.push(
         vendor_fp8::kernels::scale((&mut out).partition([1, AUX_KERNEL_TILE]), &xs, &ws)
             .l2_cache_key_on(&device.stream)
@@ -436,7 +423,7 @@ fn fingerprint(
         .lock()
         .map_err(|_| Error::invariant("FP8 identity cache poisoned"))?
         .insert((environment, shape), value.clone());
-    Ok(Some(value))
+    Ok(value)
 }
 type Memo = Mutex<BTreeMap<Key, Choice>>;
 fn memo() -> &'static Memo {
@@ -633,10 +620,12 @@ fn verify(
     weight: &ProjectionWeight,
     shape: [usize; GEMM_RANK],
     choice: Choice,
-    session: &ResidentTuningSession,
+    search: Option<&ResidentTuningSession>,
 ) -> Result<Option<bool>> {
     for fixture in 0..FIXTURES {
-        if !permits(session, shape) {
+        // Cached choices always finish their current-weight proof. New candidates retain the
+        // search allowance, including the numerical checks before their first measurement.
+        if search.is_some_and(|session| !permits(session, shape)) {
             return Ok(None);
         }
         let base = Captured::new(
@@ -724,7 +713,6 @@ fn cached_gate(
     weight: &ProjectionWeight,
     key: &Key,
     choice: Choice,
-    session: &ResidentTuningSession,
 ) -> Result<Choice> {
     let baseline = Choice::baseline(key.m);
     if choice == baseline {
@@ -755,7 +743,7 @@ fn cached_gate(
         }
         return Ok(choice);
     }
-    let accepted = match verify(device, support, weight, shape, choice, session) {
+    let accepted = match verify(device, support, weight, shape, choice, None) {
         Ok(Some(accepted)) => accepted,
         Ok(None) => return Ok(baseline),
         Err(error) => {
@@ -893,7 +881,7 @@ fn search_trial(
     (base, expected): (&Captured, &[f32]),
 ) -> Result<SearchTrial> {
     let shape = [key.m, key.n, key.k];
-    let valid = match verify(device, support, weight, shape, choice, session) {
+    let valid = match verify(device, support, weight, shape, choice, Some(session)) {
         Ok(Some(valid)) => valid,
         Ok(None) => return Ok(SearchTrial::BudgetExhausted),
         Err(error) => {
@@ -1034,9 +1022,7 @@ fn resolve(
     session: &ResidentTuningSession,
 ) -> Result<Choice> {
     let baseline = Choice::baseline(shape[0]);
-    let Some(kernel_fingerprint) = fingerprint(device, shape, session)? else {
-        return Ok(baseline);
-    };
+    let kernel_fingerprint = fingerprint(device, shape)?;
     let key = Key {
         hardware: serde_json::to_string(device.profile()?).map_err(device_error)?,
         driver_api: CudaDevice::driver_version()?,
@@ -1055,7 +1041,7 @@ fn resolve(
         .get(&key)
         .copied();
     if let Some(choice) = remembered {
-        return cached_gate(device, support, weight, &key, choice, session);
+        return cached_gate(device, support, weight, &key, choice);
     }
     let path = super::table_path();
     let table = if key.persistent() {
@@ -1096,7 +1082,7 @@ fn resolve(
         .lock()
         .map_err(|_| Error::invariant("FP8 tuning cache poisoned"))?
         .insert(key.clone(), choice);
-    cached_gate(device, support, weight, &key, choice, session)
+    cached_gate(device, support, weight, &key, choice)
 }
 /// Lt's reduction order lacks a full model qualification. Only internal tests may search it;
 /// production automatically tunes the qualified native geometry candidates.
