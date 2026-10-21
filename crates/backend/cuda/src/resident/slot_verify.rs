@@ -274,7 +274,9 @@ impl BatchBuilder<'_> {
         ),
     ) -> StdResult<(), DeviceError> {
         staging.record_node(scope, node, arena, index)?;
-        if super::slot_states::record_batch(scope, node, arena, batch, value_split)? {
+        if super::slot_convolution::record(scope, node, arena, batch, self.weights)?
+            || super::slot_states::record_batch(scope, node, arena, batch, value_split)?
+        {
             return Ok(());
         }
         for (slot, states) in states.iter().enumerate() {

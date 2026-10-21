@@ -554,10 +554,6 @@ pub fn with_row_reference<T>(run: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/resident_pooled_attention_model.rs"]
-mod model_tests;
-
-#[cfg(test)]
 pub fn builds() -> usize {
     BUILDS.get()
 }

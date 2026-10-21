@@ -1,15 +1,47 @@
-use super::{builds, with_row_reference};
 use crate::{
     device::CudaDevice,
     loading::{LoadOptions, LoadedModel},
-    resident::{DeviceProgram, slot_batch::SlotPool},
+    resident::{DeviceProgram, attention_decode::pooled, slot_batch::SlotPool, slot_convolution},
 };
 use infer_core::{Error, ModelId, Result};
 use std::env::var;
 
+#[derive(Clone, Copy)]
+enum Operation {
+    Attention,
+    Convolution,
+}
+
+impl Operation {
+    fn builds(self) -> usize {
+        match self {
+            Self::Attention => pooled::builds(),
+            Self::Convolution => slot_convolution::builds(),
+        }
+    }
+
+    fn reference(self, loaded: &LoadedModel, width: usize) -> Result<SlotPool> {
+        let build = || loaded.slot_pool(width, 64, Some(width * 64));
+        match self {
+            Self::Attention => pooled::with_row_reference(build),
+            Self::Convolution => slot_convolution::with_row_reference(build),
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires CUDA and INFER_TEST_MODEL; run release inside safe-run"]
 fn pooled_attention_preserves_checkpoint_model_bits() -> Result<()> {
+    compare_model(Operation::Attention)
+}
+
+#[test]
+#[ignore = "requires CUDA and INFER_TEST_MODEL; run release inside safe-run"]
+fn pooled_convolution_preserves_checkpoint_model_bits() -> Result<()> {
+    compare_model(Operation::Convolution)
+}
+
+fn compare_model(operation: Operation) -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let path = var("INFER_TEST_MODEL").map_err(|error| Error::invalid(error.to_string()))?;
     let loaded = LoadedModel::open(
@@ -26,21 +58,25 @@ fn pooled_attention_preserves_checkpoint_model_bits() -> Result<()> {
         },
     )?;
     for width in [2, 5] {
-        compare_pool(&loaded, width)?;
+        compare_pool(&loaded, width, operation)?;
     }
     Ok(())
 }
 
-fn compare_pool(loaded: &LoadedModel, width: usize) -> Result<()> {
-    let before = builds();
+fn compare_pool(loaded: &LoadedModel, width: usize, operation: Operation) -> Result<()> {
+    let before = operation.builds();
     let mut candidate = loaded.slot_pool(width, 64, Some(width * 64))?;
     assert!(
-        builds() > before,
-        "actual target must build pooled attention"
+        operation.builds() > before,
+        "actual target must capture optimized verification"
     );
-    let before = builds();
-    let mut reference = with_row_reference(|| loaded.slot_pool(width, 64, Some(width * 64)))?;
-    assert_eq!(builds(), before, "reference must use original attention");
+    let before = operation.builds();
+    let mut reference = operation.reference(loaded, width)?;
+    assert_eq!(
+        operation.builds(),
+        before,
+        "reference must retain the original operation"
+    );
     compare_states(loaded.device(), &candidate, &reference, width)?;
     let mut worker = loaded.sequence_pooled(64)?;
     drop(worker.prefill_batch(&[101, 102, 103], 0, false)?);
