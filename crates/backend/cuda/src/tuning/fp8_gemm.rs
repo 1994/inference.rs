@@ -35,7 +35,7 @@ use std::result::Result as StdResult;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub(crate) mod probe_inputs;
@@ -743,6 +743,7 @@ fn cached_gate(
         }
         return Ok(choice);
     }
+    let started = Instant::now();
     let accepted = match verify(device, support, weight, shape, choice, None) {
         Ok(Some(accepted)) => accepted,
         Ok(None) => return Ok(baseline),
@@ -752,6 +753,8 @@ fn cached_gate(
         }
     };
     remember(weight, key, choice, accepted)?;
+    tracing::info!(target:"infer::tuning", ?shape, ?choice, accepted,
+        elapsed_ms=started.elapsed().as_millis(), "FP8 cached choice weight proof");
     Ok(if accepted { choice } else { baseline })
 }
 fn finite_baseline_fixtures(

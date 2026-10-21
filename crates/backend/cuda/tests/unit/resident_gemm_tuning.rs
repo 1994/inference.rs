@@ -377,10 +377,7 @@ fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> 
             .lock()
             .map_err(|_| Error::invariant("GPU test tuning memo poisoned"))?
             .insert(key.clone(), choice);
-        let expired = ResidentTuningSession {
-            budget: Duration::ZERO,
-            ..ResidentTuningSession::default()
-        };
+        let expired = ResidentTuningSession::without_search_budget();
         assert!(!expired.permits_search());
         // Resolving a cached choice must still prove this previously unseen weight after
         // another projection has consumed the entire new-search allowance.

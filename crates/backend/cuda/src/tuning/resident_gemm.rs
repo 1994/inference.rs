@@ -113,6 +113,14 @@ impl Default for ResidentTuningSession {
 }
 
 impl ResidentTuningSession {
+    #[cfg(test)]
+    pub(crate) fn without_search_budget() -> Self {
+        Self {
+            budget: Duration::ZERO,
+            ..Self::default()
+        }
+    }
+
     /// A separate finite allowance lets greedy tuning run after GEMM searches finish.
     pub(crate) fn permits_greedy_search(&self) -> bool {
         self.greedy_started.get_or_init(Instant::now).elapsed() < self.budget
@@ -615,6 +623,7 @@ fn verified_config(
     }
     // A prior search cannot evict an otherwise usable cached choice. Every new weight still
     // completes its numerical proof; only searches for new performance evidence are time-bounded.
+    let started = Instant::now();
     let validate = || -> Result<()> {
         let shape = [key.m, key.n, key.k];
         let base = Captured::new(device, weight, scale, shape, baseline)?;
@@ -633,6 +642,8 @@ fn verified_config(
     }
     let accepted = result.is_ok();
     remember_verification(weight, verification_key, accepted)?;
+    tracing::info!(target: "infer::tuning", shape=?[key.m, key.n, key.k], ?selected,
+        accepted, elapsed_ms=started.elapsed().as_millis(), "resident GEMM cached choice weight proof");
     Ok(if accepted { selected } else { baseline })
 }
 

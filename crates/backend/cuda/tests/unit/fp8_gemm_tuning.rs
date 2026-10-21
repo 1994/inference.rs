@@ -284,6 +284,19 @@ fn fp8_native_candidates_and_lt_exact_gate_cover_tails_and_weight_owners() -> Re
         identity.m = m;
         identity.n = n;
         identity.k = k;
+        let expired = ResidentTuningSession::without_search_budget();
+        assert!(
+            verify(
+                &device,
+                &mut support,
+                &weight,
+                shape,
+                choice,
+                Some(&expired)
+            )?
+            .is_none()
+        );
+        assert!(tune(&device, &mut support, &weight, identity.clone(), &expired)?.is_none());
         assert_eq!(
             cached_gate(&device, &mut support, &weight, &identity, choice)?,
             choice
