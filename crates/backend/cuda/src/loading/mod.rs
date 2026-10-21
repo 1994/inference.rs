@@ -103,6 +103,9 @@ impl LoadOptions {
             MID_PREFILL_LANES,
             MAX_PREFILL_LANES,
             WIDE_PREFILL_LANES,
+            EXTRA_WIDE_PREFILL_LANES,
+            WIDER_PREFILL_LANES,
+            WIDEST_PREFILL_LANES,
         ]
         .contains(&self.prefill_width)
             || self.verification_width > MAX_VERIFICATION_WIDTH
@@ -306,6 +309,14 @@ impl LoadedModel {
                 profile.arena_budget_bytes(),
                 &mut weights,
             )?;
+            geometry_phase.finish();
+        }
+        // Newly supported wide explicit buckets need the same tail and draft geometry as
+        // automatic wide prompts. The token cap is still enforced by the scheduler.
+        if automatic_prefill || options.prefill_width > WIDE_PREFILL_LANES {
+            if !automatic_prefill {
+                weights.narrow_prefill_width = MID_PREFILL_LANES;
+            }
             // The draft primes once per prompt chunk; matching the target width turns a 2048-lane
             // target chunk into one draft replay instead of sixteen 128-lane ones, whose attention
             // grid fills a fraction of the device.
@@ -327,7 +338,6 @@ impl LoadedModel {
                 draft_prefill_width = draft.as_ref().map_or(0, |d| d.weights.prefill_width),
                 "prompt graph width selected"
             );
-            geometry_phase.finish();
         }
         let requirements = package.imported.requirements.clone();
         let vision_phase = phase::Phase::start("vision", "binding the vision tower");
@@ -749,3 +759,7 @@ mod oxide_gdn_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_gated_norm_model.rs"]
 mod gated_norm_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_prompt_width_buckets.rs"]
+mod prompt_width_bucket_tests;
