@@ -1,0 +1,154 @@
+{
+  "main": "2a636b55eba0f429d062ed705af8d812db21bf5c",
+  "merged_prs": [
+    35,
+    36,
+    37
+  ],
+  "environment": {
+    "host": "r@192.168.1.45",
+    "repo": "/home/r/code/inference.rs",
+    "gpu": "RTX5090",
+    "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+    "workload": "C16 x4096 input,256 output,MTP2,BF16 attention,FP8 KV,prefix cache,.88util",
+    "binary_sha256": "e13ee90554b8c49a8b5902270c2a46a9c93b327ea8f62110711d3964f54d8f2d",
+    "inputs_sha256": "6a19beea55766865b0b6f718bfaf4fdd7d57f896137e4f72cea247f6173883e8",
+    "tuning_sha256": "6ada4d52af7dd41855d454e4968e7132e30d3f9b4886d619c2bb1e271fd8d4df"
+  },
+  "uninstrumented": {
+    "vllm_budget2048_median_s": 12.0792310135,
+    "native_automatic_budget2063_median_s": 11.7891559795,
+    "native_automatic_regression_median_s": 11.801370004,
+    "native_strict_budget2048_median_s": 12.841720782,
+    "strict_native_wall_increase_percent": 6.312403228714025,
+    "automatic_token_regression": "all output tokens including warmup identical; cross-cap identity not claimed",
+    "native_long_32k_strict_c1_median_s": 6.740017496,
+    "native_long_32k_strict_c4_median_s": 26.896986919
+  },
+  "instrumented": {
+    "protocol": "graph-boundary events and execution JSONL,1warmup+3trials; includes warmup; times are diagnostic",
+    "automatic": {
+      "execution": {
+        "steps": 503,
+        "prefill_requests": 64,
+        "prefill_tasks": 128,
+        "prefill_tokens": 262144,
+        "tasks_per_prefill_request": {
+          "2": 64
+        },
+        "worker_prompt_width": {
+          "1024": 503
+        }
+      },
+      "graphs": [
+        {
+          "node_count": 23,
+          "graph": "prefill",
+          "replays": 256,
+          "tokens": 262144,
+          "device_ms": 756.7634222507477
+        },
+        {
+          "node_count": 1042,
+          "graph": "prefill",
+          "replays": 192,
+          "tokens": 196608,
+          "device_ms": 21931.592582702637
+        },
+        {
+          "node_count": 1043,
+          "graph": "prefill_last",
+          "replays": 64,
+          "tokens": 65536,
+          "device_ms": 7680.99690246582
+        }
+      ],
+      "sources": {
+        "steps": {
+          "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-auto-steps.jsonl",
+          "sha256": "27ec1d210a0abf976af735088b2f6d1f3288d757263a374d4bff3f6965211679"
+        },
+        "events": {
+          "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-auto-events.jsonl",
+          "sha256": "e9c61b5882d15c56a967d46e37b0e7a24be6a926cb8a8223f40019b66ed578d3"
+        }
+      }
+    },
+    "strict2048": {
+      "execution": {
+        "steps": 517,
+        "prefill_requests": 64,
+        "prefill_tasks": 188,
+        "prefill_tokens": 262144,
+        "tasks_per_prefill_request": {
+          "2": 4,
+          "3": 60
+        },
+        "worker_prompt_width": {
+          "1024": 517
+        }
+      },
+      "graphs": [
+        {
+          "node_count": 23,
+          "graph": "prefill",
+          "replays": 316,
+          "tokens": 262144,
+          "device_ms": 920.2893137931824
+        },
+        {
+          "node_count": 1042,
+          "graph": "prefill",
+          "replays": 252,
+          "tokens": 253109,
+          "device_ms": 28958.798179626465
+        },
+        {
+          "node_count": 1043,
+          "graph": "prefill_last",
+          "replays": 64,
+          "tokens": 9035,
+          "device_ms": 4558.99946975708
+        }
+      ],
+      "sources": {
+        "steps": {
+          "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-strict2048-steps.jsonl",
+          "sha256": "687a1808fb5438fec0ace3e2826857a7940646fa0ec522744d740ae9bc1fc4cc"
+        },
+        "events": {
+          "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-strict2048-events.jsonl",
+          "sha256": "eb0afae074bbf0a5143099af269bdb69a6dddc5055950e020f7a60101191dcf1"
+        }
+      }
+    },
+    "extra_prompt_device_ms_per_workload": 1017.1835139393806,
+    "observed": "same262144 prompt tokens; target and draft each256->316 replays;60/64 strict requests use3 grants vs all automatic2"
+  },
+  "next": {
+    "problem": "remaining strict-budget gap is consistent with extra padded graph replays",
+    "candidate": "align partial prompt grants to actual worker replay geometry without exceeding explicit token cap",
+    "must_preserve": [
+      "decode fairness and forward progress at tiny budgets",
+      "C1 private2048 graph utilization",
+      "generic scheduler semantics for other backends",
+      "BF16/FP8 precision and existing math contracts"
+    ],
+    "before_production": [
+      "prove grant/replay behavior on captured profiles and scheduler properties",
+      "do not hardcode1024 into generic scheduling",
+      "compare complete output/quality and dispatch readback",
+      "adjacent same-cap C16 and C1/C4 long wall/TTFT gates <=3percent",
+      "all required Rust/CUDA checks and CI"
+    ],
+    "secondary_candidate": "intermediate tail graph for observed65..226-row tails; quote extra memory and compare device cost before adoption"
+  },
+  "evidence_root": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20",
+  "review": "claude-review-pr37.json; Crit3a248eb7341a; prior profile append checkpoint stage3-checkpoint.json",
+  "preserved_exclusions": [
+    "NVFP4 tile sweep already completed; defaults won",
+    "two concrete up epilogue prototypes spilled; no new sweeps",
+    "first whitelist-only explicit run17.905s is diagnostic, not final",
+    "single-repeat profile command was rejected before GPU startup; only >=3 measured trials used"
+  ]
+}
