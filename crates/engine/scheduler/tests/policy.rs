@@ -496,3 +496,117 @@ fn a_full_prompt_replay_coexists_with_decodes_without_slicing_the_next_prompt() 
         1038
     );
 }
+
+fn replay_geometry_step(
+    tail: usize,
+    geometry: Option<PrefillGeometry>,
+    budget: usize,
+) -> SchedulingDecision {
+    let mut r = resources();
+    r.max_num_seqs = 32;
+    r.max_num_batched_tokens = budget;
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    let mut items: Vec<_> = (1..=15)
+        .map(|id| work(id, ExecutionRole::Decode, 1))
+        .collect();
+    if tail > 0 {
+        items.push(work(16, ExecutionRole::Prefill, tail));
+    }
+    let mut prompt = work(17, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = geometry;
+    items.push(prompt);
+    plan(&items, &r, 0)
+}
+
+#[test]
+fn actual_worker_geometry_avoids_a_wide_tail_without_changing_decode_selection() {
+    let geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    for (tail, expected) in [(0, 2033), (16, 2017), (64, 1024), (225, 1024)] {
+        let result = replay_geometry_step(tail, geometry, 2048);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(
+            step.work
+                .iter()
+                .filter(|w| w.role == ExecutionRole::Decode)
+                .count(),
+            15
+        );
+        let prompt = step.work.iter().find(|w| w.request.get() == 17).unwrap();
+        assert_eq!(prompt.token_count, expected, "preceding tail {tail}");
+        assert!(step.work.iter().map(|w| w.token_count).sum::<usize>() <= 2048);
+    }
+}
+
+#[test]
+fn single_private_replay_and_unknown_geometry_keep_the_existing_partial_grant() {
+    for geometry in [
+        None,
+        Some(PrefillGeometry {
+            width: 2048,
+            narrow_width: 64,
+        }),
+        Some(PrefillGeometry {
+            width: 0,
+            narrow_width: 0,
+        }),
+        Some(PrefillGeometry {
+            width: 1024,
+            narrow_width: 1024,
+        }),
+    ] {
+        let result = replay_geometry_step(225, geometry, 2048);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(
+            step.work
+                .iter()
+                .find(|w| w.request.get() == 17)
+                .unwrap()
+                .token_count,
+            1808
+        );
+    }
+}
+
+#[test]
+fn replay_geometry_cannot_starve_prompt_work_when_only_decodes_occupy_a_round() {
+    let geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    // Only16 tokens remain after the15 ready decodes. A shape hint cannot turn this
+    // explicitly tiny budget into decode-only execution until every decode finishes.
+    let result = replay_geometry_step(0, geometry, 31);
+    let step = result.step.as_ref().unwrap();
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 17)
+            .unwrap()
+            .token_count,
+        16
+    );
+    assert_eq!(step.work.iter().map(|w| w.token_count).sum::<usize>(), 31);
+}
+
+#[test]
+fn replay_geometry_keeps_singleton_progress_at_every_subgraph_budget() {
+    let mut prompt = work(1, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    let mut r = resources();
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    for budget in [1, 2, 8, 31, 64, 511, 1023] {
+        r.max_num_batched_tokens = budget;
+        let result = plan(&[prompt.clone()], &r, 0);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(step.work.len(), 1);
+        assert_eq!(step.work[0].token_count, budget);
+    }
+}

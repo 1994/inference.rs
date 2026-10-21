@@ -31,15 +31,23 @@ impl CudaBackend {
     /// # Errors
     /// Rejects unknown state ids.
     pub fn prefill_width_for(&self, state: StateId) -> Result<usize> {
+        self.prefill_geometry_for(state)
+            .map(|geometry| geometry.width)
+    }
+
+    /// Actual prompt and tail shapes of the state's private or shared worker.
+    /// # Errors
+    /// Rejects unknown state ids.
+    pub fn prefill_geometry_for(&self, state: StateId) -> Result<infer_ir::PrefillGeometry> {
         self.states
             .get(&state)
             .map(|sequence| {
                 if sequence.home.is_some()
                     && let Some(worker) = &self.worker
                 {
-                    worker.program.prefill_width()
+                    worker.program.prefill_geometry()
                 } else {
-                    sequence.program.prefill_width()
+                    sequence.program.prefill_geometry()
                 }
             })
             .ok_or_else(|| Error::invalid("unknown CUDA state"))

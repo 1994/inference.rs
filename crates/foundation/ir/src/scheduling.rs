@@ -58,6 +58,12 @@ impl Default for SchedulerConfig {
         }
     }
 }
+/// Captured prompt shapes used by one resident state. Zero narrow width means no tail graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefillGeometry {
+    pub width: usize,
+    pub narrow_width: usize,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CostQuery {
     pub program: ProgramId,
@@ -77,6 +83,9 @@ pub struct CostQuery {
     pub page_growth: Option<PageGrowth>,
     #[serde(default)]
     pub logical_growth: Option<PageGrowth>,
+    /// Advisory replay geometry; resource and progress limits still take precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_geometry: Option<PrefillGeometry>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageGrowth {
@@ -120,6 +129,7 @@ impl CostQuery {
             encoder_us: unit.encoder_us,
             page_growth: None,
             logical_growth: None,
+            prefill_geometry: None,
         }
     }
 }

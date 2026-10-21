@@ -300,6 +300,9 @@ impl BackendProvider for SelectedBackend {
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         forward!(self, kv_cache)
     }
+    fn state_prefill_geometry(&self, s: StateId) -> Result<Option<infer_ir::PrefillGeometry>> {
+        forward!(self, state_prefill_geometry, s)
+    }
     fn state_page_growth(&self, s: StateId) -> Result<Option<PageGrowth>> {
         forward!(self, state_page_growth, s)
     }
