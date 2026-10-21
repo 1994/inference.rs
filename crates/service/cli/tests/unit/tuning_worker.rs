@@ -2,6 +2,7 @@ use super::*;
 use std::env::{current_exe, temp_dir, var_os};
 use std::error::Error as StdError;
 use std::fs::{read_to_string, remove_dir_all, write};
+use std::os::unix::process::ExitStatusExt;
 use std::process::exit;
 use std::result::Result as StdResult;
 use std::thread::park;
@@ -47,7 +48,7 @@ fn preparation_stops_when_parent_link_closes() -> StdResult<(), Box<dyn StdError
         .stdin(Stdio::piped())
         .spawn()?;
     drop(child.stdin.take());
-    assert!(!child.wait()?.success());
+    assert_eq!(child.wait()?.signal(), Some(9));
     Ok(())
 }
 

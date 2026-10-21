@@ -1,5 +1,7 @@
 //! Server commands.
 use super::{ServeOptions, axum_serve, backend};
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use crate::support::flush_logs;
 use crate::support::{configured_engine, read_json};
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::ErrorCode;
@@ -31,7 +33,7 @@ pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Resul
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     if tuning_worker {
         tracing::info!(target: "infer::tuning", "CUDA tuning preparation complete; releasing preparation resources");
-        crate::support::flush_logs();
+        flush_logs();
         return Ok(());
     }
     let assets = package
