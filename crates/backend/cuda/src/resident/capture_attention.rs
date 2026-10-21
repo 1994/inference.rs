@@ -4,6 +4,8 @@ use super::{
 };
 use crate::constants::ATTENTION_SPLIT_THRESHOLD;
 use crate::constants::KV_BLOCK_TOKENS;
+use crate::constants::WIDE_PREFILL_LANES;
+use cuda_core::f8e4m3fn;
 use cutile::prelude::*;
 use infer_ir::{TensorNode, TensorOp};
 
@@ -46,7 +48,7 @@ impl Capture<'_> {
                     scales[1],
                 )
                 .generics(vec![
-                    cuda_core::f8e4m3fn::DTYPE.as_str().into(),
+                    f8e4m3fn::DTYPE.as_str().into(),
                     head_dim.to_string(),
                     rows.to_string(),
                     "1".into(),
@@ -177,10 +179,21 @@ impl Capture<'_> {
         let rows = keys.size() / (kv_heads * head_dim);
         let mut keys = keys.reshape(&[kv_heads, rows, head_dim])?;
         let mut values = values.reshape(&[kv_heads, rows, head_dim])?;
+        // A CTA owns one physical page, including its unmodified tail. Narrow
+        // graphs retain the whole-head loop rather than launching idle pages.
+        let append_rows = if E::DTYPE == f8e4m3fn::DTYPE
+            && lanes >= WIDE_PREFILL_LANES
+            && rows.is_multiple_of(KV_BLOCK_TOKENS)
+        {
+            KV_BLOCK_TOKENS
+        } else {
+            rows
+        };
+        let lookup = lanes.div_ceil(KV_BLOCK_TOKENS).next_power_of_two();
         self.scope.record(
             kernels::append(
-                (&mut keys).partition([1, rows, head_dim]),
-                (&mut values).partition([1, rows, head_dim]),
+                (&mut keys).partition([1, append_rows, head_dim]),
+                (&mut values).partition([1, append_rows, head_dim]),
                 &self
                     .input(node.inputs[1])?
                     .view(&[lanes, kv_heads, head_dim])?,
@@ -195,9 +208,10 @@ impl Capture<'_> {
             .generics(vec![
                 E::DTYPE.as_str().into(),
                 head_dim.to_string(),
-                rows.to_string(),
+                append_rows.to_string(),
                 i32::from(E::DTYPE != f32::DTYPE).to_string(),
                 KV_BLOCK_TOKENS.to_string(),
+                lookup.to_string(),
             ]),
         )?;
         self.record_prefill_decode(node, output, keys, values, scales)
@@ -287,11 +301,10 @@ impl Capture<'_> {
         let lanes = self.arena.lanes();
         // Query/head axes remain separate so each CTA addresses its own KV head.
         // Selection was measured and independently checked before graph capture.
-        if let Some(query_tile) = self.attention.prefill_query_tile(
-            node.outputs[0],
-            lanes,
-            E::DTYPE == cuda_core::f8e4m3fn::DTYPE,
-        ) {
+        if let Some(query_tile) =
+            self.attention
+                .prefill_query_tile(node.outputs[0], lanes, E::DTYPE == f8e4m3fn::DTYPE)
+        {
             let scale = 1.0f32 / f32::from(u16::try_from(head_dim).map_err(error)?).sqrt();
             let query = self.input(node.inputs[0])?;
             let query = query.view(&[lanes, query_heads * head_dim])?;

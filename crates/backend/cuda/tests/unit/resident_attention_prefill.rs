@@ -122,6 +122,7 @@ fn check_case(device: &CudaDevice, case: (i32, i32, i32, i32)) -> Result<(), Box
         CAPACITY.to_string(),
         "0".into(),
         KV_BLOCK_TOKENS.to_string(),
+        "1".into(),
     ])
     .sync_on(&device.stream)?;
     // A permuted table must move the appended rows with it, which is what proves the kernel
@@ -276,6 +277,7 @@ fn check_permuted_append(
         CAPACITY.to_string(),
         "0".into(),
         KV_BLOCK_TOKENS.to_string(),
+        "1".into(),
     ])
     .sync_on(&device.stream)?;
     let mut expected_moved = data(KV_HEADS * CAPACITY * DIM, 13);
@@ -619,6 +621,7 @@ impl ChunkFixture {
                 MODEL_CAPACITY.to_string(),
                 "1".into(),
                 KV_BLOCK_TOKENS.to_string(),
+                "1".into(),
             ]),
         )?;
         Ok(())
