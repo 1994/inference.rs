@@ -422,7 +422,7 @@ fn pool_storage_bytes(
     (width, capacity, kv_tokens): (usize, usize, usize),
     verify: usize,
     hidden: usize,
-    _profile: &DeviceProfile,
+    profile: &DeviceProfile,
 ) -> Result<u64> {
     let lanes = width * verify;
     let mut bytes = mul(recurrent_state_bytes(graph)?, width as u64)?;
@@ -464,6 +464,7 @@ fn pool_storage_bytes(
         )?,
     )?;
     bytes = add(bytes, attention_scratch(graph)?)?;
+    bytes = add(bytes, required_bytes(weights, lanes, profile))?;
     let external_rows = 1 + lanes as u64
         * if weights.fusion.is_some() {
             MTP_FUSION_ROWS

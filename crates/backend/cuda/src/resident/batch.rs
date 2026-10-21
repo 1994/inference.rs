@@ -189,6 +189,7 @@ pub(super) struct SlotDecodeGraph {
     profile: Option<profile::SlotProfile>,
     // The shared batched arena anchors the graph's activations; declared last so the
     // graph drops first.
+    _fusion: Option<super::fusion_batch::Workspace>,
     _arena: ActivationArena,
 }
 
@@ -269,9 +270,11 @@ impl BatchBuilder<'_> {
         let mut arena = slot_arena(self.device, self.graph, width)?;
         let (metadata_owner, metadata) = batched_metadata(self.device, width)?;
         let mut profile = profile::SlotProfile::from_env(self.device);
+        let mut fusion =
+            super::fusion_batch::Workspace::allocate(self.device, self.weights, width)?;
         let graph = self.capture_slots(
             &mut arena,
-            &metadata,
+            (&metadata, &metadata_owner, &mut fusion),
             (lane_states, lane_fp8),
             &mut profile,
             true,
@@ -279,7 +282,7 @@ impl BatchBuilder<'_> {
         let state_only = if self.weights.fusion.is_some() {
             Some(self.capture_slots(
                 &mut arena,
-                &metadata,
+                (&metadata, &metadata_owner, &mut fusion),
                 (lane_states, lane_fp8),
                 &mut profile,
                 false,
@@ -308,6 +311,7 @@ impl BatchBuilder<'_> {
             width,
             cursors: vec![0; width],
             profile,
+            _fusion: fusion,
             _arena: arena,
         })
     }
@@ -315,11 +319,16 @@ impl BatchBuilder<'_> {
     fn capture_slots(
         &mut self,
         arena: &mut ActivationArena,
-        metadata: &[Tensor<i32>],
+        metadata: (
+            &[Tensor<i32>],
+            &Tensor<i32>,
+            &mut Option<super::fusion_batch::Workspace>,
+        ),
         states: (&mut [States], &mut [Fp8Caches]),
         profile: &mut Option<profile::SlotProfile>,
         read_logits: bool,
     ) -> Result<CudaGraph<()>> {
+        let (metadata, metadata_owner, fusion) = metadata;
         let (lane_states, lane_fp8) = states;
         let width = lane_states.len();
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
@@ -334,6 +343,19 @@ impl BatchBuilder<'_> {
                 }
                 if read_logits && let Some(profile) = profile.as_mut() {
                     profile.graph().boundary(scope, index, node)?;
+                }
+                if let Some(workspace) = fusion.as_mut()
+                    && super::fusion_batch::record(
+                        self,
+                        scope,
+                        node,
+                        arena,
+                        metadata,
+                        metadata_owner,
+                        workspace,
+                    )?
+                {
+                    continue;
                 }
                 if node.op == TensorOp::Linear {
                     super::batch_projection::record_slots(

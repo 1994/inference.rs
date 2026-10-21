@@ -5,6 +5,7 @@ use super::{
     capture::{Capture, CaptureMode, error},
 };
 use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::METADATA_FIELDS;
 use crate::tuning::prefill::fused_draft;
 use crate::{
@@ -25,11 +26,17 @@ const COLUMNS: usize = HIDDEN * 2;
 const WEIGHT_SHAPE: [i32; 2] = [5120, 10240];
 const TILE: [usize; 2] = [4, 16];
 const DEPTH: usize = 256;
+#[cfg(test)]
 const SCRATCH_BYTES: u64 = (5 * 1024 * 1024) + (ROWS as u64 * HIDDEN as u64 * 4);
 
 /// Narrowest prompt width that takes the fully batched path: one gather, one norm launch over
 /// every row, one vendor projection.
 const WIDE_ROWS: usize = 256;
+
+/// Pool captures use the same exact four-row projection as the 128-row prompt path.
+const fn pooled(width: usize) -> bool {
+    width >= 2 && width <= CB_DECODE_SLOTS
+}
 
 const fn wide(width: usize) -> bool {
     width >= WIDE_ROWS && width.is_multiple_of(WIDE_ROWS)
@@ -44,8 +51,8 @@ fn layout_bytes(
     if !fused_draft(architecture) || shape != Some(WEIGHT_SHAPE.as_slice()) {
         return 0;
     }
-    if width == ROWS && tiling.rows() == TILE[1] && tiling.columns() == DEPTH {
-        SCRATCH_BYTES
+    if (width == ROWS || pooled(width)) && tiling.rows() == TILE[1] && tiling.columns() == DEPTH {
+        (width * (COLUMNS + HIDDEN) * size_of::<f32>()) as u64
     } else if wide(width) {
         // F32 projection input and gathered embeddings, plus the BF16 copy the vendor GEMM reads.
         (width * (COLUMNS + HIDDEN) * size_of::<f32>() + width * COLUMNS * size_of::<bf16>()) as u64
@@ -94,15 +101,14 @@ impl Workspace {
         if required_bytes(weights, width, device.profile()?) == 0 {
             return Ok(None);
         }
-        let rows = if wide(width) { width } else { ROWS };
         Ok(Some(Self {
             input: Some(
-                api::zeros::<f32>(&[rows, COLUMNS])
+                api::zeros::<f32>(&[width, COLUMNS])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
             gathered: Some(
-                api::zeros::<f32>(&[rows, HIDDEN])
+                api::zeros::<f32>(&[width, HIDDEN])
                     .sync_on(&device.stream)
                     .map_err(device_error)?,
             ),
@@ -125,7 +131,8 @@ impl Workspace {
             .input
             .take()
             .ok_or_else(|| error("fusion batch input"))?;
-        let (mut row, owner) = super::arena::row_tensor(matrix, ROWS, lane).map_err(error)?;
+        let rows = usize::try_from(matrix.shape()[0]).map_err(error)?;
+        let (mut row, owner) = super::arena::row_tensor(matrix, rows, lane).map_err(error)?;
         scope.record(api::memcpy(&mut row, normalized))?;
         self.input =
             Some(Arc::try_unwrap(owner).map_err(|_| error("fusion batch input still aliased"))?);
@@ -147,17 +154,19 @@ pub(super) fn record(
     if DISABLED.get() {
         return Ok(false);
     }
+    let rows = arena.lanes();
     if node.op == TensorOp::Embedding && node.outputs.len() == 1 && wide(arena.lanes()) {
         return record_wide(builder, scope, node, arena, metadata_batch, workspace);
     }
-    if node.op != TensorOp::Embedding || node.outputs.len() != 1 || arena.lanes() != ROWS {
+    if node.op != TensorOp::Embedding || node.outputs.len() != 1 || !(rows == ROWS || pooled(rows))
+    {
         return Ok(false);
     }
     let slot = arena.slot(node.outputs[0]).map_err(error)?;
-    if arena.get(node.outputs[0]).map_err(error)?.size() != ROWS * HIDDEN {
+    if arena.get(node.outputs[0]).map_err(error)?.size() != rows * HIDDEN {
         return Ok(false);
     }
-    if metadata.len() < ROWS || builder.lane_fusion.len() < ROWS {
+    if metadata.len() < rows || builder.lane_fusion.len() < rows {
         return Err(error("fusion batch lanes"));
     }
     let output = arena.buffers[slot]
@@ -168,7 +177,7 @@ pub(super) fn record(
         .iter()
         .map(|&dim| usize::try_from(dim).map_err(error))
         .collect::<StdResult<Vec<_>, _>>()?;
-    let mut output = output.reshape(&[ROWS, HIDDEN])?;
+    let mut output = output.reshape(&[rows, HIDDEN])?;
     let Some(super::program::FusionWeights {
         projection: ProjectionWeight::Dense(weight),
         ..
@@ -193,10 +202,10 @@ pub(super) fn record(
         )
         .generics(vec![HIDDEN.to_string(), METADATA_FIELDS.to_string()]),
     )?;
-    for (lane, meta) in metadata.iter().enumerate().take(ROWS) {
+    for (lane, meta) in metadata.iter().enumerate().take(rows) {
         // The owned row tensor keeps the gather allocation anchored until it is put back;
         // `row_tensor` bounds the lane inside the slot and the return re-anchors ownership.
-        let (embedding, owner) = super::arena::row_tensor(gathered, ROWS, lane).map_err(error)?;
+        let (embedding, owner) = super::arena::row_tensor(gathered, rows, lane).map_err(error)?;
         let normalized = Capture {
             scope,
             arena: &mut *arena,
@@ -361,3 +370,7 @@ mod tests;
 pub(super) const fn captured_nodes(width: usize) -> usize {
     2 + 2 * width
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_pooled_fusion.rs"]
+mod pooled_tests;
