@@ -31,3 +31,36 @@ fn unimplemented_prompt_widths_stay_rejected() {
         assert!(options.validate().is_err(), "width {prefill_width}");
     }
 }
+
+#[test]
+#[ignore = "requires CUDA, Qwen checkpoint and safe-run"]
+fn explicit_wide_prompt_retains_narrow_tail_and_matching_mtp_draft() -> Result<()> {
+    use super::LoadedModel;
+    use crate::{AttentionProfile, device::CudaDevice};
+    use infer_core::{Error, ModelId};
+    use std::env::var;
+    CudaDevice::enable_kernel_cache()?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        model,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 2048,
+            mtp_depth: 2,
+            autotune: false,
+            attention_profile: AttentionProfile::Bf16,
+            vision: false,
+            ..LoadOptions::default()
+        },
+    )?;
+    assert!(!loaded.automatic_prefill);
+    assert_eq!(loaded.weights.prefill_width, 2048);
+    assert_eq!(loaded.weights.narrow_prefill_width, 64);
+    let draft = loaded
+        .draft
+        .as_ref()
+        .ok_or_else(|| Error::invariant("missing MTP draft"))?;
+    assert_eq!(draft.weights.prefill_width, 2048);
+    Ok(())
+}
