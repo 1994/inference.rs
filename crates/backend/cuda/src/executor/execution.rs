@@ -214,11 +214,9 @@ impl CudaBackend {
             .next_power_of_two();
         // Reserve the configured capture bucket, not the transient number of arrivals seen on
         // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
-        let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
-        let Some(pool) = self.create_slot_pool(capacity, maximum, None) else {
+        self.warm_slot_pool_at(capacity);
+        let Some(pool) = self.slots.as_ref() else {
             self.slots_disabled = true;
-            // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and
-            // the fallback is otherwise silent: a caller only sees steps that never batched.
             tracing::warn!(
                 target: "infer::executor",
                 capacity,
@@ -227,6 +225,7 @@ impl CudaBackend {
             );
             return;
         };
+        let capacity = pool.capacity();
         for state in self.states.values_mut() {
             if state.capacity <= capacity
                 && state.speculation.is_some()
@@ -241,12 +240,7 @@ impl CudaBackend {
                 target: "infer::executor",
                 "CUDA slot pool disabled; reclaiming cached prefixes failed"
             );
-            return;
         }
-        self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
-        self.slots = Some(pool);
-        self.build_homes(self.loaded.pooled_prompt_width());
-        self.reclaimed_slot_capacity = None;
     }
 
     /// Capture the decode slot pool at load time so the first concurrent requests batch
@@ -265,9 +259,12 @@ impl CudaBackend {
         }
         let maximum = self.maximum_states.min(CB_DECODE_SLOTS);
         let envelope = match self.loaded.shared_scratch_bytes().and_then(|scratch| {
-            Ok(self
-                .physical_available()?
-                .min(self.budget.saturating_add(scratch)))
+            Ok(pooled_envelope(
+                self.physical_available()?,
+                self.budget,
+                self.active_budget()?,
+                scratch,
+            ))
         }) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -302,7 +299,7 @@ impl CudaBackend {
             }
         };
         super::profiling::memory("before_pool", planned_width, self.loaded.device());
-        let Some(pool) = self.create_slot_pool(capacity, planned_width, Some(kv_tokens)) else {
+        let Some(pool) = self.create_slot_pool(capacity, planned_width, kv_tokens) else {
             return;
         };
         let width = pool.width();
@@ -337,7 +334,10 @@ impl CudaBackend {
             target: "infer::executor",
             width,
             capacity,
-            "CUDA slot pool captured at load"
+            quoted_bytes,
+            allocated_bytes,
+            envelope_bytes = envelope,
+            "CUDA slot pool captured within serving envelope"
         );
     }
 
@@ -433,15 +433,11 @@ impl CudaBackend {
         &mut self,
         capacity: usize,
         maximum: usize,
-        kv_tokens: Option<usize>,
+        kv_tokens: usize,
     ) -> Option<SlotPool> {
         for width in (2..=maximum).rev() {
             loop {
-                match self.loaded.slot_pool(
-                    width,
-                    capacity,
-                    Some(kv_tokens.unwrap_or_else(|| paged_tokens(width, capacity))),
-                ) {
+                match self.loaded.slot_pool(width, capacity, Some(kv_tokens)) {
                     Ok(pool) => return Some(pool),
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);
@@ -1351,3 +1347,15 @@ fn propose(
     }
     Ok(proposals)
 }
+
+// Private programs keep their reservation and shared prompt scratch while a lazy
+// pool is constructed. Only an empty backend can spend the scratch reservation
+// on the pool's worker; physically reclaimable allocator storage is capped above.
+fn pooled_envelope(physical: u64, budget: u64, active: u64, scratch: u64) -> u64 {
+    let credit = if active == 0 { scratch } else { 0 };
+    physical.min(budget.saturating_sub(active).saturating_add(credit))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/executor_execution.rs"]
+mod tests;
