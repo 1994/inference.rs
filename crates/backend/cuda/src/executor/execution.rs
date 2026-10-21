@@ -214,14 +214,27 @@ impl CudaBackend {
             .next_power_of_two();
         // Reserve the configured capture bucket, not the transient number of arrivals seen on
         // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
+        let active = match self.active_budget() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.pool_failure_reason = Some(error.to_string());
+                return;
+            }
+        };
+        if self.deferred_pool_plan == Some((capacity, active)) {
+            return;
+        }
         self.warm_slot_pool_at(capacity);
         let Some(pool) = self.slots.as_ref() else {
-            self.slots_disabled = true;
+            // A live private request can temporarily consume the worker's budget.
+            // Retry after reservation accounting changes, rather than on every decode
+            // or disabling batching for the rest of a continuously busy server.
+            self.deferred_pool_plan = Some((capacity, active));
             tracing::warn!(
                 target: "infer::executor",
                 capacity,
                 last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
-                "CUDA slot pool disabled; decoding one sequence at a time"
+                "CUDA slot pool deferred; retaining private execution"
             );
             return;
         };
@@ -236,6 +249,7 @@ impl CudaBackend {
         }
         if self.loaded.device().reclaim_barrier().is_err() {
             self.slots_disabled = true;
+            self.clear_unbound_pool();
             tracing::warn!(
                 target: "infer::executor",
                 "CUDA slot pool disabled; reclaiming cached prefixes failed"
@@ -322,14 +336,12 @@ impl CudaBackend {
             tracing::warn!(target: "infer::executor", allocated_bytes, envelope,
                 "incomplete or oversized pooled CUDA serving plan; retaining private execution");
             self.slots_disabled = true;
-            self.worker = None;
-            self.homes.clear();
-            drop(self.draft_slots.take());
-            drop(self.slots.take());
-            let _ = self.loaded.reclaim_idle_prompt_scratch();
+            self.clear_unbound_pool();
             return;
         }
         self.reclaimed_slot_capacity = None;
+        self.deferred_pool_plan = None;
+        self.slots_disabled = false;
         tracing::info!(
             target: "infer::executor",
             width,
@@ -339,6 +351,15 @@ impl CudaBackend {
             envelope_bytes = envelope,
             "CUDA slot pool captured within serving envelope"
         );
+    }
+
+    /// Only construction calls this: no live sequence has leased these new homes.
+    fn clear_unbound_pool(&mut self) {
+        self.worker = None;
+        self.homes.clear();
+        drop(self.draft_slots.take());
+        drop(self.slots.take());
+        let _ = self.loaded.reclaim_idle_prompt_scratch();
     }
 
     /// Quote all resources before capturing; retain the largest prompt rung at a width.
