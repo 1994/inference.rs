@@ -329,7 +329,7 @@ impl BatchBuilder<'_> {
                     node,
                     arena,
                     (lane_states, lane_fp8),
-                    (verify, metadata),
+                    (verify, metadata, batch.metadata),
                 )? {
                     continue;
                 }

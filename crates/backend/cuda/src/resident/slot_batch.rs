@@ -13,7 +13,7 @@ use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::F32_BYTES;
 use crate::constants::KV_BLOCK_TOKENS;
 use crate::constants::MAX_VERIFICATION_WIDTH;
-use crate::device::{CudaDevice, device_error};
+use crate::device::{CudaDevice, DeviceProfile, device_error};
 use cuda_core::{CudaContext, PinnedHostBuffer, f8e4m3fn};
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
@@ -215,6 +215,15 @@ impl SlotPool {
         }
     }
 
+    pub(crate) fn attention_bytes(
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        geometry: (usize, usize, usize),
+        profile: &DeviceProfile,
+    ) -> Result<u64> {
+        super::attention_decode::Workspace::pooled_bytes(graph, weights, geometry, profile)
+    }
+
     /// Device staging or rollback storage used by the same recurrent policy as capture.
     pub(crate) fn rollback_bytes(
         graph: &DataflowGraph,
@@ -323,6 +332,13 @@ impl SlotPool {
             })
             .collect::<Result<_>>()?;
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        attention.prepare_pooled(
+            device,
+            graph,
+            weights,
+            (width, verify, capacity),
+            paging.is_some(),
+        )?;
         let mut nvfp4 = super::nvfp4_gemm::Workspace::new(device, graph, weights, &[1, lanes])?;
         let mut placeholder_states = States::new();
         let mut placeholder_fp8 = Fp8Caches::new();

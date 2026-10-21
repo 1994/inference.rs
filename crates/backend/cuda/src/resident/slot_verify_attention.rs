@@ -2,7 +2,10 @@
 use super::{
     ActivationArena,
     arena::row_tensor,
-    attention_decode::VERIFY_LANES,
+    attention_decode::{
+        VERIFY_LANES,
+        pooled::{Append, Attend},
+    },
     batch::{BatchBuilder, States},
     capture::{Capture, CaptureMode, error},
     fp8_cache::Fp8Caches,
@@ -21,7 +24,7 @@ impl BatchBuilder<'_> {
         node: &TensorNode,
         arena: &mut ActivationArena,
         (states, caches): (&mut [States], &mut [Fp8Caches]),
-        (verify, metadata): (usize, &[Tensor<i32>]),
+        (verify, metadata, metadata_owner): (usize, &[Tensor<i32>], &Tensor<i32>),
     ) -> StdResult<bool, DeviceError> {
         let TensorOp::Attention {
             query_heads,
@@ -44,11 +47,43 @@ impl BatchBuilder<'_> {
         {
             return Ok(false);
         }
-        self.append_slot_candidates(scope, node, arena, (states, caches), metadata)?;
+        let prefix = self.append_pooled(scope, node, arena, caches, metadata_owner, state)?;
+        self.append_slot_candidates(
+            scope,
+            node,
+            arena,
+            (states, caches),
+            metadata,
+            prefix * VERIFY_LANES,
+        )?;
         let slot = arena.slot(node.outputs[0]).map_err(error)?;
         let output = arena.buffers[slot]
             .take()
             .ok_or_else(|| error("slot attention output"))?;
+        let restore = output
+            .shape()
+            .iter()
+            .map(|&dim| usize::try_from(dim).map_err(error))
+            .collect::<StdResult<Vec<_>, _>>()?;
+        let mut output = output.reshape(&[metadata.len() * query_heads, head_dim])?;
+        if prefix > 0 {
+            let (keys, values) = &caches[0][&state];
+            self.attention.record_pooled_attention(
+                scope,
+                Attend {
+                    node: node.id,
+                    output: &mut output,
+                    queries: arena.get(node.inputs[0]).map_err(error)?,
+                    keys,
+                    values,
+                },
+            )?;
+        }
+        let output = output.reshape(&restore)?;
+        if prefix == caches.len() {
+            arena.buffers[slot] = Some(output);
+            return Ok(true);
+        }
         let (mut rows, output) =
             attention_output_rows(output, metadata.len(), query_heads, head_dim)?;
         for (index, [first, second, third]) in rows
@@ -56,6 +91,7 @@ impl BatchBuilder<'_> {
             .0
             .iter_mut()
             .enumerate()
+            .skip(prefix)
         {
             let base = index * VERIFY_LANES;
             let queries = [
@@ -83,6 +119,71 @@ impl BatchBuilder<'_> {
         Ok(true)
     }
 
+    fn append_pooled(
+        &mut self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &ActivationArena,
+        caches: &mut [Fp8Caches],
+        metadata_owner: &Tensor<i32>,
+        state: infer_core::TensorId,
+    ) -> StdResult<usize, DeviceError> {
+        let shared = caches.first().is_some_and(|first| {
+            let (keys, values) = &first[&state];
+            caches.iter().all(|cache| {
+                let (k, v) = &cache[&state];
+                k.shape() == keys.shape()
+                    && v.shape() == values.shape()
+                    && k.device_pointer().cu_deviceptr() == keys.device_pointer().cu_deviceptr()
+                    && v.device_pointer().cu_deviceptr() == values.device_pointer().cu_deviceptr()
+            })
+        });
+        let prefix = if shared {
+            self.attention.pooled_prefix(node.id, caches.len())
+        } else {
+            0
+        };
+        if prefix > 0 {
+            let TensorOp::Attention {
+                kv_heads, head_dim, ..
+            } = node.op
+            else {
+                return Err(error("pooled append operation"));
+            };
+            // The original append capture leaves every slot's cache head-major. Homes and
+            // prompt workers discover their copy geometry from these tensor shapes.
+            for cache in caches.iter_mut() {
+                let (keys, values) = cache.remove(&state).ok_or_else(|| error("pooled cache"))?;
+                let rows = keys.size() / (kv_heads * head_dim);
+                cache.insert(
+                    state,
+                    (
+                        keys.reshape(&[kv_heads, rows, head_dim])?,
+                        values.reshape(&[kv_heads, rows, head_dim])?,
+                    ),
+                );
+            }
+            let (keys, values) = caches[0]
+                .get_mut(&state)
+                .ok_or_else(|| error("pooled cache"))?;
+            self.attention.record_pooled_append(
+                scope,
+                Append {
+                    node: node.id,
+                    keys,
+                    values,
+                    inputs: [
+                        arena.get(node.inputs[1]).map_err(error)?,
+                        arena.get(node.inputs[2]).map_err(error)?,
+                    ],
+                    metadata: metadata_owner,
+                    tables: self.tables,
+                },
+            )?;
+        }
+        Ok(prefix)
+    }
+
     fn append_slot_candidates(
         &mut self,
         scope: &Scope,
@@ -90,8 +191,9 @@ impl BatchBuilder<'_> {
         arena: &mut ActivationArena,
         (states, caches): (&mut [States], &mut [Fp8Caches]),
         metadata: &[Tensor<i32>],
+        first_lane: usize,
     ) -> StdResult<(), DeviceError> {
-        for (lane, metadata) in metadata.iter().enumerate() {
+        for (lane, metadata) in metadata.iter().enumerate().skip(first_lane) {
             let slot = lane / VERIFY_LANES;
             Capture {
                 scope,
@@ -116,7 +218,7 @@ impl BatchBuilder<'_> {
 
 /// Preserve the arena owner's exclusive storage while capture binds borrowed row outputs.
 /// Owned shared aliases would prevent a later node from reusing this arena buffer mutably.
-fn attention_output_rows(
+pub(super) fn attention_output_rows(
     mut output: Tensor<f32>,
     lanes: usize,
     heads: usize,
