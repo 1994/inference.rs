@@ -53,9 +53,10 @@ pub struct Cli {
     /// Disable new tuning measurements; reuse validated cached choices or conservative defaults.
     #[arg(long, global = true)]
     pub(super) no_autotune: bool,
-    /// Draft tokens proposed per step by the MTP head; 0 disables speculation.
-    #[arg(long, global = true, default_value_t = 0)]
-    pub(super) num_speculative_tokens: usize,
+    /// Draft tokens proposed per step; defaults to 2 on CUDA with a supported, complete MTP
+    /// head, otherwise 0. An explicit 0 disables speculation.
+    #[arg(long, global = true)]
+    pub(super) num_speculative_tokens: Option<usize>,
     /// Target attention numerical profile. `bf16` is an experimental FA4 target FP8-KV prefill
     /// profile. `fp16` is the validated-SM120 plain-FP16 variant of the same target-only
     /// prefill profile. The fixed task-quality gate has not passed for either. Default is

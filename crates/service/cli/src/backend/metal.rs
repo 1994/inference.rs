@@ -22,7 +22,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
     } else {
         memory_bytes.min(share)
     };
-    if selection.num_speculative_tokens != 0 {
+    if selection.num_speculative_tokens.unwrap_or(0) != 0 {
         return Err(Error::unsupported(
             "MTP draft depth requires the CUDA resident backend",
         ));

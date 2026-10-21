@@ -6,6 +6,7 @@ fn model_path_serves_with_automatic_defaults() {
     let cli = Cli::try_parse_from(["infer", "/models/example"]).unwrap();
     assert_eq!(cli.backend, backend::BackendChoice::Auto);
     assert!(!cli.no_autotune);
+    assert_eq!(cli.num_speculative_tokens, None);
     assert!(Cli::try_parse_from(["infer", "/models/example", "--chunked-recurrent"]).is_err());
     assert!(cli.block_size.is_none());
     assert!(cli.max_num_batched_tokens.is_none());
@@ -18,6 +19,21 @@ fn model_path_serves_with_automatic_defaults() {
     );
     assert!(options.config.is_none());
     assert_eq!(options.listen.to_string(), "127.0.0.1:8080");
+}
+
+#[test]
+fn speculation_distinguishes_automatic_selection_from_explicit_zero() {
+    for depth in [0, 1, 2, 8] {
+        let value = depth.to_string();
+        let cli = Cli::try_parse_from([
+            "infer",
+            "/models/example",
+            "--num-speculative-tokens",
+            &value,
+        ])
+        .unwrap();
+        assert_eq!(cli.num_speculative_tokens, Some(depth));
+    }
 }
 
 #[test]

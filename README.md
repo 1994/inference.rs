@@ -87,11 +87,11 @@ Once `infer` is on your `PATH`, the default entry point is simply:
 infer /path/to/model
 ```
 
-This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace and input limits are derived from the loaded model, and an exposed KV pool sets the logical page budget. CUDA derives its memory budget from device capacity and available memory; Metal uses the device's recommended working set. CUDA projection autotuning is enabled by default and reuses matching cached measurements.
+This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace and input limits are derived from the loaded model, and an exposed KV pool sets the logical page budget. CUDA derives its memory budget from device capacity and available memory; Metal uses the device's recommended working set. CUDA projection autotuning is enabled by default and reuses matching cached measurements. CUDA also selects two MTP draft tokens when the provider supports a dense, single-layer head and the checkpoint contains all required bindings; other packages and Metal use no draft tokens. `--num-speculative-tokens 0` disables speculation explicitly.
 
 Optional flags override these choices, for example `infer /path/to/model --listen 127.0.0.1:9000`. An explicit `--config` preserves the supplied runtime budgets; the original `infer serve --package ...` syntax remains supported. CPU execution requires explicit selection.
 
-Automatic sizing and measured tile selection do not guarantee optimal end-to-end performance for every device, model, or workload. Performance changes must still pass the benchmark gates; MTP remains opt-in until its benefit is established for the workload.
+Automatic sizing, MTP and measured tile selection do not guarantee optimal end-to-end performance for every device, model, or workload. Performance changes must still pass the benchmark gates. Target attention remains canonical by default; the separate BF16 and FP16 numerical profiles still require explicit selection.
 
 ### Logs
 

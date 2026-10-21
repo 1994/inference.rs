@@ -17,10 +17,8 @@ profiling、冻结缓存和测试的 A/B 控制是开发诊断工具，不能用
 
 ### 实验数值 profile：目标 attention BF16（未获准入）
 
-FA4 架构接入（`88dd26e`，包含 vector attention 与 linear exact bundle）已由 `e86e05b`
-合入当前 `main`；本分支以该 HEAD 为基线移植本地 `codex/target-attention-profile` 提交，
-新增 `--cuda-attention-profile canonical|bf16`。该 profile 提交本身仍只存在于本地分支，
-没有 push、PR 或 merge，不能据此声称已部署到 `main`。
+当前 `main` 已提供 `--cuda-attention-profile canonical|bf16|fp16`；接口可用不代表实验
+profile 已获默认准入。固定任务质量门的结论仍是未通过，默认保持 canonical。
 
 - 默认 `canonical`：保持既有精确 attention 路径；目标图的执行与结果不变。
 - 显式 `bf16`：只允许目标图的 **FP8-KV prefill** 使用已有 FA4 BF16 QKV / F32 累加 /

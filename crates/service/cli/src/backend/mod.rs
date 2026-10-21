@@ -4,6 +4,8 @@ mod cuda;
 mod metal;
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod selected;
+#[cfg(any(test, all(target_os = "linux", feature = "cuda")))]
+mod speculation;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use infer_backend_cuda::device::CudaDevice;
 #[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
@@ -96,7 +98,8 @@ pub struct Selection {
     /// Name clients address this deployment by (`--served-model-name`).
     pub served_model_name: Option<String>,
     pub upload_staging_mib: Option<usize>,
-    pub num_speculative_tokens: usize,
+    /// Omission selects a supported CUDA draft head automatically; explicit zero disables it.
+    pub num_speculative_tokens: Option<usize>,
     /// Target attention numerical profile, experimental for `bf16`.
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     pub attention_profile: CudaAttentionProfile,

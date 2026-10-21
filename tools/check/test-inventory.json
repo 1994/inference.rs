@@ -16,7 +16,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 21
+      "tests": 24
     },
     "compiler": {
       "benches": 0,
@@ -1060,6 +1060,11 @@
     },
     {
       "crate": "cli",
+      "file": "src/backend/speculation.rs",
+      "mount": "../../tests/unit/backend_speculation.rs"
+    },
+    {
+      "crate": "cli",
       "file": "src/commands/tuning_worker.rs",
       "mount": "../../tests/unit/tuning_worker.rs"
     },
@@ -1130,11 +1135,11 @@
     }
   ],
   "totals": {
-    "all": 764,
+    "all": 767,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 764
+    "tests": 767
   }
 }
