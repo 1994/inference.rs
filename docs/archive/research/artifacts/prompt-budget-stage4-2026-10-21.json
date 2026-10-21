@@ -150,5 +150,286 @@
     "two concrete up epilogue prototypes spilled; no new sweeps",
     "first whitelist-only explicit run17.905s is diagnostic, not final",
     "single-repeat profile command was rejected before GPU startup; only >=3 measured trials used"
-  ]
+  ],
+  "checkpoint_note": "Original sections record the pre-PR38 baseline and hypothesis. qualification_v2 records the implementation checkpoint; its quality evaluation is still pending at this timestamp.",
+  "qualification_v2": {
+    "recorded_utc": "2026-10-21T08:20:41.302248+00:00",
+    "production_source": "44d10746988e68289ef09b1507e7b7be418e5ee3",
+    "tested_head_before_this_document": "d577d9b34df27da8e1eb32ba383b8f1d31ed1810",
+    "candidate_sha256": "82852d0d4d7f6647659df480c7ba05b2912631eb002c0cb9278c7bf3f880dc8f",
+    "strict_c16_protocol": "Control/candidate/candidate/control; two independent restarts per condition, each one excluded warmup plus three measured trials; no concurrent host builds.",
+    "latency_groups": {
+      "strict2048_c16": {
+        "control": {
+          "trials": 6,
+          "requests": 96,
+          "wall_median": 12.8567159665,
+          "wall_mean": 12.847709391,
+          "wall_p95": 12.904123988,
+          "ttft_median": 5.280099076509941,
+          "ttft_mean": 5.325168249622645,
+          "ttft_p95": 9.622066201991402,
+          "gpu_peak_mib": 30203.0,
+          "sm_clock_mean_mhz": 2622.014403666021
+        },
+        "candidate": {
+          "trials": 6,
+          "requests": 96,
+          "wall_median": 12.278961559999999,
+          "wall_mean": 12.289828082666666,
+          "wall_p95": 12.336126924,
+          "ttft_median": 5.167251884500729,
+          "ttft_mean": 5.096787362372804,
+          "ttft_p95": 9.12547643497237,
+          "gpu_peak_mib": 30203.0,
+          "sm_clock_mean_mhz": 2637.276444619285
+        },
+        "ratios": {
+          "wall_median": 0.9550620541042191,
+          "wall_mean": 0.9565773717823866,
+          "wall_p95": 0.955983291502143,
+          "ttft_median": 0.9786278267937725,
+          "ttft_mean": 0.957112925536949,
+          "ttft_p95": 0.9483905268791171
+        },
+        "latency_within_3_percent": true,
+        "all_token_streams_including_warmup_equal": false
+      },
+      "auto2063_c16": {
+        "control": {
+          "trials": 3,
+          "requests": 48,
+          "wall_median": 11.807126043,
+          "wall_mean": 11.842194411666666,
+          "wall_p95": 11.922286675,
+          "ttft_median": 4.57568216350046,
+          "ttft_mean": 4.584933985852331,
+          "ttft_p95": 8.649007277999772,
+          "gpu_peak_mib": 30203.0,
+          "sm_clock_mean_mhz": 2625.991279519196
+        },
+        "candidate": {
+          "trials": 3,
+          "requests": 48,
+          "wall_median": 11.774141722,
+          "wall_mean": 11.777261270666667,
+          "wall_p95": 11.840342319,
+          "ttft_median": 4.64906245500606,
+          "ttft_mean": 4.646946871396722,
+          "ttft_p95": 8.577568606997374,
+          "gpu_peak_mib": 30203.0,
+          "sm_clock_mean_mhz": 2625.9965473948523
+        },
+        "ratios": {
+          "wall_median": 0.9972064056164154,
+          "wall_mean": 0.994516798260293,
+          "wall_p95": 0.9931267920128249,
+          "ttft_median": 1.0160370167515007,
+          "ttft_mean": 1.0135253606127685,
+          "ttft_p95": 0.9917402461685847
+        },
+        "latency_within_3_percent": true,
+        "all_token_streams_including_warmup_equal": true
+      },
+      "strict2048_32k_c1": {
+        "control": {
+          "trials": 3,
+          "requests": 3,
+          "wall_median": 6.740461141,
+          "wall_mean": 6.710747745,
+          "wall_p95": 6.786580288,
+          "ttft_median": 4.751794775016606,
+          "ttft_mean": 4.753294635331258,
+          "ttft_p95": 4.76591164097772,
+          "gpu_peak_mib": 29765.0,
+          "sm_clock_mean_mhz": 2697.485666586852
+        },
+        "candidate": {
+          "trials": 3,
+          "requests": 3,
+          "wall_median": 6.739804223,
+          "wall_mean": 6.705238602333334,
+          "wall_p95": 6.773717116,
+          "ttft_median": 4.753146934002871,
+          "ttft_mean": 4.750759441667469,
+          "ttft_p95": 4.757525203982368,
+          "gpu_peak_mib": 29765.0,
+          "sm_clock_mean_mhz": 2689.781972490489
+        },
+        "ratios": {
+          "wall_median": 0.9999025410893619,
+          "wall_mean": 0.9991790568091654,
+          "wall_p95": 0.9981046165441019,
+          "ttft_median": 1.000284557530425,
+          "ttft_mean": 0.9994666449571745,
+          "ttft_p95": 0.9982403288967331
+        },
+        "latency_within_3_percent": true,
+        "all_token_streams_including_warmup_equal": true
+      },
+      "strict2048_32k_c4": {
+        "control": {
+          "trials": 3,
+          "requests": 12,
+          "wall_median": 26.92420926,
+          "wall_mean": 26.815956561,
+          "wall_p95": 26.933617577,
+          "ttft_median": 13.924953203997575,
+          "ttft_mean": 14.166269206997336,
+          "ttft_p95": 23.38380824800697,
+          "gpu_peak_mib": 32143.0,
+          "sm_clock_mean_mhz": 2657.4628716911375
+        },
+        "candidate": {
+          "trials": 3,
+          "requests": 12,
+          "wall_median": 26.981654181,
+          "wall_mean": 26.971434989,
+          "wall_p95": 27.0434217,
+          "ttft_median": 14.020360825990792,
+          "ttft_mean": 14.335631829992053,
+          "ttft_p95": 23.409634037991054,
+          "gpu_peak_mib": 32143.0,
+          "sm_clock_mean_mhz": 2655.274633989628
+        },
+        "ratios": {
+          "wall_median": 1.0021335787597425,
+          "wall_mean": 1.0057979817966338,
+          "wall_p95": 1.004076842729577,
+          "ttft_median": 1.0068515578182216,
+          "ttft_mean": 1.011955344100835,
+          "ttft_p95": 1.0011044304550472
+        },
+        "latency_within_3_percent": true,
+        "all_token_streams_including_warmup_equal": false
+      }
+    },
+    "fresh_strict2048_reference": {
+      "native": {
+        "walls": [
+          12.271221894,
+          12.289686303,
+          12.279456661,
+          12.229535349,
+          12.240655405,
+          12.273206144
+        ],
+        "wall_median": 12.272214019,
+        "wall_mean": 12.263960292666667,
+        "request_ttft_median": 5.194387472001836,
+        "gpu_peak_mib": 30203.0,
+        "clock_mean_mhz": 2638.156959438447,
+        "inputs_sha256": "6a19beea55766865b0b6f718bfaf4fdd7d57f896137e4f72cea247f6173883e8"
+      },
+      "vllm": {
+        "walls": [
+          12.308433512,
+          12.065835036,
+          12.021168171,
+          12.037312497,
+          11.846459086,
+          12.025510415
+        ],
+        "wall_median": 12.031411456,
+        "wall_mean": 12.050786452833332,
+        "request_ttft_median": 5.380056074005552,
+        "gpu_peak_mib": 31189.0,
+        "clock_mean_mhz": 2736.7434321844094,
+        "inputs_sha256": "6a19beea55766865b0b6f718bfaf4fdd7d57f896137e4f72cea247f6173883e8"
+      }
+    },
+    "native_over_fresh_vllm_percent": 2.00144898942769,
+    "configuration_note": "Automatic2063 and strict2048 are separate configurations. The former must not be presented as a strict same-budget win.",
+    "strict_accounting": {
+      "requests": 64,
+      "prefill_tokens": 262144,
+      "contiguous_positions": true,
+      "all_prefill_consumed_once": true,
+      "max_round_tokens": 2048,
+      "hard_budget": 2048,
+      "prompt_tokens": 4096,
+      "chunk_tokens": 2048,
+      "half_chunk_bound": true,
+      "partial_tasks": 117,
+      "profile": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-steps.jsonl",
+      "sha256": "e7f4cc71bf7a916610d94dafae9d6e219e5ad5445951bce59f1b95e73af10e01"
+    },
+    "automatic_accounting": {
+      "requests": 64,
+      "prefill_tokens": 262144,
+      "contiguous_positions": true,
+      "all_prefill_consumed_once": true,
+      "max_round_tokens": 2063,
+      "hard_budget": 2063,
+      "prompt_tokens": 4096,
+      "chunk_tokens": 2048,
+      "half_chunk_bound": true,
+      "partial_tasks": 0,
+      "profile": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-auto-audit-steps.jsonl",
+      "sha256": "2cfe5071af7b96fb1da0ab5580524389e00ea97cf466e30e48b929380457d0fb"
+    },
+    "private_c1_accounting": {
+      "requests": 4,
+      "prefill_tokens": 129536,
+      "contiguous_positions": true,
+      "all_prefill_consumed_once": true,
+      "max_round_tokens": 2048,
+      "hard_budget": 2048,
+      "prompt_tokens": 32384,
+      "chunk_tokens": 2048,
+      "half_chunk_bound": true,
+      "partial_tasks": 0,
+      "profile": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-c1-audit-steps.jsonl",
+      "sha256": "476a25472583397bba8b052f64cf1c1899b148a1612dd20179792697e1d6187c"
+    },
+    "dispatch": "All10 native qualification runs retain the frozen tuning hash; seven FP8 GEMM table-cache hits each; matching MMA selections for each pair; zero attention/pool warnings. See packing-v2-dispatch-audit.json.",
+    "validation": {
+      "full_check_rust_passed": 450,
+      "threaded_runner_tests_passed": 20,
+      "policy_tests_passed": 24,
+      "random_multi_round_policy_cases": 512,
+      "strict_cuda_cli_clippy": "passed",
+      "ci_at_tested_head": "all12 checks passed",
+      "task_quality": "pending: paired frozen1024-case GSM8K, C16/MTP2, strict2048, greedy512-token cap; no accuracy conclusion at this checkpoint"
+    },
+    "raw_report_provenance": "Harness source revision describes checkout at run time; frozen binary provenance above identifies measured source. Original reports are retained unchanged.",
+    "evidence": {
+      "packing-v2-regression-summary.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-regression-summary.json",
+        "sha256": "ca77b8344117bee6dcba3b5b0af9f82e80aedc672db40de7524daf19c5f63373"
+      },
+      "packing-v2-dispatch-audit.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-dispatch-audit.json",
+        "sha256": "6ba563bae30de74fd1adbe47e15c2ce4501c02df6edecaf7cd7fb516a639e151"
+      },
+      "packing-v2-fresh-vllm-summary.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-fresh-vllm-summary.json",
+        "sha256": "0eda2719aeb6c01a11e0177f8e304e138ad3cab4be942fade99aa36aa186096a"
+      },
+      "packing-v2-accounting.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-accounting.json",
+        "sha256": "28dfbe5512564d754df654f1966019557117c0b13e207bb949549b3385d7d0cc"
+      },
+      "packing-auto-audit-accounting.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-auto-audit-accounting.json",
+        "sha256": "10b905e77f70b7835d9e5dcc826d8a5a2b0a9d47a132e366e0326c01def355a4"
+      },
+      "packing-c1-audit-accounting.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-c1-audit-accounting.json",
+        "sha256": "5ac4f91ca31bbd9aaa6a075b8854fc47c015258654a941de32bce1fd72362c1f"
+      },
+      "packing-v2-profile-summary.json": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-v2-profile-summary.json",
+        "sha256": "572e0473fc88a084599f6270ae67d64430a779f425f3f6476df5d46d05837182"
+      },
+      "quality-packing.py": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/quality-packing.py",
+        "sha256": "101d6e469e5b1a748825f7c4784fd1846b698fb89586a4ac8bbc81f466a1e232"
+      },
+      "quality-packing-v2.sh": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/quality-packing-v2.sh",
+        "sha256": "20384deafef90096a6ab73f8b5dcc930ed73d0c0a0423fba3eaba22b825185bf"
+      }
+    }
+  }
 }
