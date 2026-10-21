@@ -101,7 +101,7 @@ pub struct Selection {
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     pub attention_profile: CudaAttentionProfile,
     pub gpu_memory_utilization: f64,
-    /// Measure the best GEMV tile per projection at load time; false keeps the built-in tile.
+    /// Measure uncovered geometries; both modes reuse validated cached choices.
     pub autotune: bool,
     /// Serve text only (`--limit-mm-per-prompt` with every limit zero): skip the vision tower.
     pub text_only: bool,

@@ -13,6 +13,8 @@ use tokio::runtime::Runtime;
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Result<()> {
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    let (backend_choice, tuning_worker) = super::tuning_worker::prepare(backend_choice)?;
     let ServeOptions {
         listen,
         config: config_path,
@@ -26,6 +28,12 @@ pub fn serve(options: ServeOptions, backend_choice: backend::Selection) -> Resul
         host_memory_mib,
         backend_choice,
     )?;
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    if tuning_worker {
+        tracing::info!(target: "infer::tuning", "CUDA tuning preparation complete; releasing preparation resources");
+        crate::support::flush_logs();
+        return Ok(());
+    }
     let assets = package
         .as_deref()
         .filter(|p| p.join("tokenizer.json").exists())
