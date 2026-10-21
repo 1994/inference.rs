@@ -336,7 +336,9 @@ impl<'a> BatchBuilder<'a> {
         let atomic =
             item.role == ExecutionRole::Prefill && chunk <= self.resources.max_num_batched_tokens;
         let quantum = match item.role {
-            ExecutionRole::Prefill if atomic && chunk > budget && budget * 2 >= chunk => budget,
+            ExecutionRole::Prefill if atomic && chunk > budget && budget * 2 >= chunk => {
+                self.partial_prompt_grant(index, chunk, budget)
+            }
             ExecutionRole::Prefill if atomic && chunk > budget => return None,
             ExecutionRole::Prefill if atomic => chunk,
             _ => chunk
@@ -356,6 +358,40 @@ impl<'a> BatchBuilder<'a> {
             .saturating_add(rank.finish);
         Some((quantum, rank))
     }
+    // Only trade a partial grant for alignment when it removes a full wide replay.
+    // Saving just a narrow tail is not worth an additional mixed decode round. Use the
+    // state's actual worker rather than the service's larger private prompt chunk.
+    fn partial_prompt_grant(&self, index: usize, chunk: usize, budget: usize) -> usize {
+        let item = &self.ready[index];
+        let Some(geometry) = item.cost_query.prefill_geometry.filter(|geometry| {
+            geometry.width > 0
+                && geometry.width < self.resources.scheduler.prefill_chunk_tokens
+                && geometry.narrow_width < geometry.width
+        }) else {
+            return budget;
+        };
+        let aligned = budget / geometry.width * geometry.width;
+        // Decodes alone must never starve a prompt, and a nonzero grant keeps the
+        // existing half-chunk progress bound. A prior prompt may fill the round instead.
+        if (aligned == 0
+            && !self
+                .scratch
+                .queries
+                .iter()
+                .any(|q| q.role == ExecutionRole::Prefill))
+            || (aligned > 0 && aligned < chunk.div_ceil(2))
+        {
+            return budget;
+        }
+        let remaining = item.remaining_tokens - self.scratch.progress[index].tokens;
+        let wide_replays = |tokens: usize| {
+            tokens / geometry.width + usize::from(tokens % geometry.width > geometry.narrow_width)
+        };
+        let greedy = wide_replays(budget) + wide_replays(remaining - budget);
+        let whole = wide_replays(aligned) + wide_replays(remaining - aligned);
+        if whole < greedy { aligned } else { budget }
+    }
+
     fn probe(&mut self, index: usize, quantum: usize, rank: Priority) -> Result<Option<Quantum>> {
         // The descending search tries the whole prompt chunk first, so a round budget that funds
         // the chunk keeps it atomic. Its floor stays 1 so the singleton-overrun escape still

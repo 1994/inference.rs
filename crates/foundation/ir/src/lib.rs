@@ -36,8 +36,8 @@ pub use precision::{DType, PrecisionPlan, ScaleGranularity, ScaleSpec, TensorLay
 pub use request::{CanonicalRequest, Qos, RequestInput, Sampling};
 pub use scheduling::{
     AdmissionConfig, AdmissionDecision, AdmissionInput, AdmissionReason, CostModelConfig,
-    CostModelInspection, CostObservation, CostQuery, ExecutionTiming, PageGrowth, SchedulerConfig,
-    SelectionEvidence, SelectionReason, TenantQuota, TimingSource,
+    CostModelInspection, CostObservation, CostQuery, ExecutionTiming, PageGrowth, PrefillGeometry,
+    SchedulerConfig, SelectionEvidence, SelectionReason, TenantQuota, TimingSource,
 };
 pub use tokens::{ExecutionInput, OutputReadout, TokenBuffer, TokenSpan};
 pub use workload::{

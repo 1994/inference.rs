@@ -2,6 +2,7 @@ use infer_core::*;
 use infer_ir::*;
 use infer_scheduler::*;
 use infer_spi::{CostModelProvider, SchedulingPolicy};
+use std::collections::BTreeSet;
 
 #[expect(
     clippy::unwrap_used,
@@ -495,4 +496,252 @@ fn a_full_prompt_replay_coexists_with_decodes_without_slicing_the_next_prompt() 
         step.work.iter().map(|item| item.token_count).sum::<usize>(),
         1038
     );
+}
+
+fn replay_geometry_step(
+    tail: usize,
+    geometry: Option<PrefillGeometry>,
+    budget: usize,
+) -> SchedulingDecision {
+    let mut r = resources();
+    r.max_num_seqs = 32;
+    r.max_num_batched_tokens = budget;
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    let mut items: Vec<_> = (1..=15)
+        .map(|id| work(id, ExecutionRole::Decode, 1))
+        .collect();
+    if tail > 0 {
+        items.push(work(16, ExecutionRole::Prefill, tail));
+    }
+    let mut prompt = work(17, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = geometry;
+    items.push(prompt);
+    plan(&items, &r, 0)
+}
+
+#[test]
+fn actual_worker_geometry_avoids_a_wide_tail_without_changing_decode_selection() {
+    let geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    for (tail, expected) in [(0, 2033), (16, 2017), (64, 1024), (225, 1024)] {
+        let result = replay_geometry_step(tail, geometry, 2048);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(
+            step.work
+                .iter()
+                .filter(|w| w.role == ExecutionRole::Decode)
+                .count(),
+            15
+        );
+        let prompt = step.work.iter().find(|w| w.request.get() == 17).unwrap();
+        assert_eq!(prompt.token_count, expected, "preceding tail {tail}");
+        assert!(step.work.iter().map(|w| w.token_count).sum::<usize>() <= 2048);
+    }
+}
+
+#[test]
+fn single_private_replay_and_unknown_geometry_keep_the_existing_partial_grant() {
+    for geometry in [
+        None,
+        Some(PrefillGeometry {
+            width: 2048,
+            narrow_width: 64,
+        }),
+        Some(PrefillGeometry {
+            width: 0,
+            narrow_width: 0,
+        }),
+        Some(PrefillGeometry {
+            width: 1024,
+            narrow_width: 1024,
+        }),
+    ] {
+        let result = replay_geometry_step(225, geometry, 2048);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(
+            step.work
+                .iter()
+                .find(|w| w.request.get() == 17)
+                .unwrap()
+                .token_count,
+            1808
+        );
+    }
+}
+
+#[test]
+fn replay_geometry_cannot_starve_prompt_work_when_only_decodes_occupy_a_round() {
+    let geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    // Only16 tokens remain after the15 ready decodes. A shape hint cannot turn this
+    // explicitly tiny budget into decode-only execution until every decode finishes.
+    let result = replay_geometry_step(0, geometry, 31);
+    let step = result.step.as_ref().unwrap();
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 17)
+            .unwrap()
+            .token_count,
+        16
+    );
+    assert_eq!(step.work.iter().map(|w| w.token_count).sum::<usize>(), 31);
+}
+
+#[test]
+fn replay_geometry_keeps_singleton_progress_at_every_subgraph_budget() {
+    let mut prompt = work(1, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    let mut r = resources();
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    for budget in [1, 2, 8, 31, 64, 511, 1023] {
+        r.max_num_batched_tokens = budget;
+        let result = plan(&[prompt.clone()], &r, 0);
+        let step = result.step.as_ref().unwrap();
+        assert_eq!(step.work.len(), 1);
+        assert_eq!(step.work[0].token_count, budget);
+    }
+}
+
+#[test]
+fn an_intervening_prompt_cannot_reextend_an_aligned_grant_into_a_wide_tail() {
+    let mut r = resources();
+    r.max_num_seqs = 32;
+    r.max_num_batched_tokens = 2048;
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    let mut items: Vec<_> = (1..=15)
+        .map(|id| work(id, ExecutionRole::Decode, 1))
+        .collect();
+    items.push(work(16, ExecutionRole::Prefill, 64));
+    let mut prompt = work(17, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    items.push(prompt);
+    items.push(work(18, ExecutionRole::Prefill, 900));
+    let result = plan(&items, &r, 0);
+    let step = result.step.as_ref().unwrap();
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 17)
+            .unwrap()
+            .token_count,
+        1024
+    );
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 18)
+            .unwrap()
+            .token_count,
+        900
+    );
+    assert_eq!(
+        step.work
+            .iter()
+            .filter(|w| w.role == ExecutionRole::Decode)
+            .count(),
+        15
+    );
+    assert_eq!(step.work.iter().map(|w| w.token_count).sum::<usize>(), 2003);
+}
+
+#[test]
+fn resident_geometry_preserves_budget_progress_and_decode_protection_across_rounds() {
+    let mut seed = 73usize;
+    let mut next = |bound: usize| {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        seed % bound
+    };
+    for _ in 0..512 {
+        let decode_count = next(16);
+        let decode_rounds = next(4);
+        let budget = next(4096) + 1;
+        let width = [32, 64, 128, 256, 512, 1024][next(6)];
+        let narrow_width = [0, 1, 8, 16, 32, 64][next(6)].min(width - 1);
+        let mut pending = vec![
+            work(101, ExecutionRole::Prefill, next(8192) + 1),
+            work(102, ExecutionRole::Prefill, next(8192) + 1),
+        ];
+        let original = pending
+            .iter()
+            .map(|w| w.remaining_tokens)
+            .collect::<Vec<_>>();
+        for item in &mut pending {
+            item.cost_query.prefill_geometry = Some(PrefillGeometry {
+                width,
+                narrow_width,
+            });
+        }
+        let mut totals = [0, 0];
+        let mut r = resources();
+        r.max_num_seqs = 32;
+        r.max_num_batched_tokens = budget;
+        r.gpu_budget_us = 1_000_000;
+        r.scheduler.prefill_chunk_tokens = 2048;
+        // Once finite decode work finishes, at least one prompt token must progress per round.
+        for round in 0..=original.iter().sum::<usize>() + decode_rounds {
+            if pending.iter().all(|w| w.remaining_tokens == 0) {
+                break;
+            }
+            let mut ready: Vec<_> = if round < decode_rounds {
+                (1..=decode_count)
+                    .map(|id| work(u64::try_from(id).unwrap(), ExecutionRole::Decode, 1))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            ready.extend(pending.iter().filter(|w| w.remaining_tokens > 0).cloned());
+            let result = plan(&ready, &r, 0);
+            let step = result.step.as_ref().unwrap();
+            assert!(step.work.iter().map(|w| w.token_count).sum::<usize>() <= budget);
+            let decodes = step
+                .work
+                .iter()
+                .filter(|w| w.role == ExecutionRole::Decode)
+                .count();
+            assert_eq!(
+                decodes,
+                if round < decode_rounds {
+                    decode_count.min(budget)
+                } else {
+                    0
+                }
+            );
+            let mut selected_ids = BTreeSet::new();
+            for selected in &step.work {
+                assert!(selected_ids.insert(selected.request));
+                if selected.role != ExecutionRole::Prefill {
+                    continue;
+                }
+                let index = pending
+                    .iter()
+                    .position(|w| w.request == selected.request)
+                    .unwrap();
+                let item = &mut pending[index];
+                let chunk = item.remaining_tokens.min(r.scheduler.prefill_chunk_tokens);
+                assert!(selected.token_count > 0 && selected.token_count <= chunk);
+                if chunk <= budget && selected.token_count < chunk {
+                    assert!(selected.token_count >= chunk.div_ceil(2));
+                }
+                item.remaining_tokens -= selected.token_count;
+                totals[index] += selected.token_count;
+                item.cost_query.context_tokens += selected.token_count;
+            }
+        }
+        assert!(pending.iter().all(|w| w.remaining_tokens == 0));
+        assert_eq!(totals.as_slice(), original.as_slice());
+    }
 }

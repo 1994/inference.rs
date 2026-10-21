@@ -147,6 +147,13 @@ where
     fn kv_cache(&self) -> Option<KvCacheInspection> {
         self.shared.snapshot().ok().and_then(|s| s.kv.clone())
     }
+    fn state_prefill_geometry(&self, state: StateId) -> Result<Option<infer_ir::PrefillGeometry>> {
+        let snapshot = self.shared.snapshot()?;
+        if let Some(error) = &snapshot.error {
+            return Err(error.clone());
+        }
+        Ok(snapshot.prefill.get(&state).copied())
+    }
     fn state_page_growth(&self, state: StateId) -> Result<Option<PageGrowth>> {
         Ok(self.shared.snapshot()?.growth.get(&state).copied())
     }

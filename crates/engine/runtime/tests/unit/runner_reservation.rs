@@ -21,6 +21,7 @@ struct QuoteBackend {
     prepared_on: Arc<Mutex<Option<ThreadId>>>,
     quotes: Arc<AtomicUsize>,
     fail: bool,
+    geometry: Arc<Mutex<Option<infer_ir::PrefillGeometry>>>,
 }
 impl BackendProvider for QuoteBackend {
     type Ticket = <support::ProtocolBackend as BackendProvider>::Ticket;
@@ -73,6 +74,15 @@ impl BackendProvider for QuoteBackend {
     ) -> Result<()> {
         self.inner.reserve_state_for(state, capacity, readout)
     }
+    fn reset_state(&mut self, state: StateId) -> Result<()> {
+        self.inner.reset_state(state)
+    }
+    fn state_prefill_geometry(&self, _: StateId) -> Result<Option<infer_ir::PrefillGeometry>> {
+        self.geometry
+            .lock()
+            .map(|geometry| *geometry)
+            .map_err(|e| Error::invariant(e.to_string()))
+    }
     fn release_state(&mut self, state: StateId) -> Result<()> {
         self.inner.release_state(state)
     }
@@ -95,6 +105,7 @@ fn engine(fail: bool) -> Result<Engine<QuoteBackend>> {
         prepared_on: Arc::default(),
         quotes: Arc::default(),
         fail,
+        geometry: Arc::default(),
     };
     let mut registry = KernelRegistry::default();
     registry.register(&support::DeclaredKernels)?;
@@ -171,5 +182,71 @@ fn failed_preparation_does_not_publish_a_reservation_price() -> Result<()> {
         Some(ErrorCode::Backend)
     );
     assert_eq!(engine.backend().quotes.load(Ordering::Acquire), 0);
+    Ok(())
+}
+
+#[test]
+fn threaded_reservation_publishes_and_retires_actual_prompt_geometry() -> Result<()> {
+    let direct = engine(false)?;
+    let geometry = infer_ir::PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    };
+    let shared_geometry = direct.backend().geometry.clone();
+    *shared_geometry
+        .lock()
+        .map_err(|e| Error::invariant(e.to_string()))? = Some(geometry);
+    let mut engine = direct.into_threaded(4, Duration::from_millis(20))?;
+    assert_eq!(engine.backend().state_prefill_geometry(StateId::ONE)?, None);
+    let before = engine.backend().resource_epoch();
+    let mut reserve = engine
+        .backend_mut()
+        .begin_resource(ResourceCommand::Reserve {
+            state: StateId::ONE,
+            capacity: 16,
+            readout: OutputReadout::Logits,
+        })?;
+    let limit = Instant::now() + Duration::from_secs(3);
+    while reserve.poll()?.is_none() {
+        deadline(limit)?;
+    }
+    // An acknowledged reservation must carry its shapes before the first planning round.
+    assert_eq!(
+        engine.backend().state_prefill_geometry(StateId::ONE)?,
+        Some(geometry)
+    );
+    assert!(engine.backend().resource_epoch() > before);
+    let epoch = engine.backend().resource_epoch();
+    let changed = infer_ir::PrefillGeometry {
+        width: 512,
+        narrow_width: 32,
+    };
+    *shared_geometry
+        .lock()
+        .map_err(|e| Error::invariant(e.to_string()))? = Some(changed);
+    let mut reset = engine
+        .backend_mut()
+        .begin_resource(ResourceCommand::Reset {
+            state: StateId::ONE,
+        })?;
+    while reset.poll()?.is_none() {
+        deadline(limit)?;
+    }
+    assert_eq!(
+        engine.backend().state_prefill_geometry(StateId::ONE)?,
+        Some(changed)
+    );
+    assert!(engine.backend().resource_epoch() > epoch);
+    engine.backend_mut().release_state(StateId::ONE)?;
+    let mut barrier = engine
+        .backend_mut()
+        .begin_resource(ResourceCommand::ReservationBytes {
+            capacity: 16,
+            readout: OutputReadout::Logits,
+        })?;
+    while barrier.poll()?.is_none() {
+        deadline(limit)?;
+    }
+    assert_eq!(engine.backend().state_prefill_geometry(StateId::ONE)?, None);
     Ok(())
 }

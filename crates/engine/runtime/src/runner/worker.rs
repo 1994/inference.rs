@@ -120,9 +120,13 @@ impl<B: BackendProvider> Worker<B> {
             snapshot.state_capacity_bytes = self.backend.state_capacity_bytes()?;
             snapshot.kv = self.backend.kv_cache();
             snapshot.growth.clear();
+            snapshot.prefill.clear();
             for state in self.states.iter() {
                 if let Some(growth) = self.backend.state_page_growth(*state)? {
                     snapshot.growth.insert(*state, growth)?;
+                }
+                if let Some(geometry) = self.backend.state_prefill_geometry(*state)? {
+                    snapshot.prefill.insert(*state, geometry)?;
                 }
             }
             Ok(())
@@ -137,6 +141,7 @@ impl<B: BackendProvider> Worker<B> {
                     let changed = published.free_bytes != pool[index].free_bytes
                         || published.state_capacity_bytes != pool[index].state_capacity_bytes
                         || published.growth != pool[index].growth
+                        || published.prefill != pool[index].prefill
                         || published
                             .kv
                             .as_ref()

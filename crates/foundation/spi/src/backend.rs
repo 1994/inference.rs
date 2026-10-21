@@ -121,6 +121,13 @@ pub trait BackendProvider {
     fn state_page_growth(&self, _state: StateId) -> Result<Option<PageGrowth>> {
         Ok(None)
     }
+    /// Prompt replay geometry for this state's current resident program.
+    /// Opaque or variable-row backends leave the scheduler's existing grant policy unchanged.
+    /// # Errors
+    /// Rejects unknown state ids or inconsistent resident geometry.
+    fn state_prefill_geometry(&self, _state: StateId) -> Result<Option<infer_ir::PrefillGeometry>> {
+        Ok(None)
+    }
     fn reusable_prefix(&self, _tokens: &[u32], _maximum: usize) -> usize {
         0
     }

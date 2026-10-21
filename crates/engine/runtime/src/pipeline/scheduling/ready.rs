@@ -54,6 +54,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 .virtual_finish;
             // Prefix/COW reference counts can change without mutating this request.
             row.cost_query.page_growth = self.backend.state_page_growth(row.state)?;
+            row.cost_query.prefill_geometry = if row.role == ExecutionRole::Prefill {
+                self.backend.state_prefill_geometry(row.state)?
+            } else {
+                None
+            };
             row.cost_query.logical_growth = Some(PageGrowth {
                 block_size: self.config.block_size,
                 allocated_pages: self.state.get(row.state)?.pages.len(),
@@ -125,6 +130,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .ok_or_else(|| Error::invariant("runnable request has no state"))?;
         let mut cost_query = self.base_query(role, 1, context);
         cost_query.page_growth = self.backend.state_page_growth(state)?;
+        cost_query.prefill_geometry = if role == ExecutionRole::Prefill {
+            self.backend.state_prefill_geometry(state)?
+        } else {
+            None
+        };
         cost_query.logical_growth = Some(PageGrowth {
             block_size: self.config.block_size,
             allocated_pages: self.state.get(state)?.pages.len(),

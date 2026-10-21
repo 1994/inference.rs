@@ -1146,6 +1146,15 @@ impl DeviceProgram {
     /// Both captured prompt graphs are fixed width, so the narrow one is preferred whenever the
     /// chunk fits it: running a 51-token chunk through a 128-lane graph spends 60% of every
     /// replay on masked rows.
+    /// Actual captured shapes, including the optional tail graph.
+    #[must_use]
+    pub fn prefill_geometry(&self) -> infer_ir::PrefillGeometry {
+        infer_ir::PrefillGeometry {
+            width: self.prefill_width(),
+            narrow_width: self.prompt_narrow.as_ref().map_or(0, |prompt| prompt.width),
+        }
+    }
+
     fn prefers_narrow_prompt(&self, lanes: usize) -> bool {
         self.prompt_narrow
             .as_ref()

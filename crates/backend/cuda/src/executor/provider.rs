@@ -127,6 +127,9 @@ impl BackendProvider for CudaBackend {
             cow_tail: false,
         }))
     }
+    fn state_prefill_geometry(&self, state: StateId) -> Result<Option<infer_ir::PrefillGeometry>> {
+        self.prefill_geometry_for(state).map(Some)
+    }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.reserve(state, capacity, OutputReadout::Full)
     }
