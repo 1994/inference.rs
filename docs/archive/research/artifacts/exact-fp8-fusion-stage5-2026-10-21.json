@@ -1,0 +1,160 @@
+{
+  "stage": "5; draft investigation and implementation contract, no production fusion wired yet",
+  "parent_main": "2d2e2178093cd8b1bd93f1aead42657807af5a34",
+  "merged_stage": {
+    "pr": 38,
+    "strict_native_ab_median_seconds": 12.27896156,
+    "strict_native_ab_reduction_percent": 4.493794589578092,
+    "fresh_strict_native_seconds": 12.272214019,
+    "fresh_vllm_seconds": 12.031411456,
+    "strict_native_gap_percent": 2.00144898942769,
+    "automatic2063_seconds": 11.774141722,
+    "paired_quality": "964->963/1024; raw result retained; frozen2pp gross-loss noninferiority passed overall and per variant. Same-control fixed80-case A/A scores76/77. See PR38 for scope and limits."
+  },
+  "profile": {
+    "diagnostic_only": true,
+    "protocol": "One excluded warmup then one warmed Nsight CUDA graph-node workload; not wall-time qualification.",
+    "configuration": "RTX5090 / Qwen3.8-27B-NVFP4 / C16x4096 /256 output /MTP2 /strict2048 /BF16 attention /FP8 KV /.88util /prefix cache /frozen tuning",
+    "production_source": "44d10746988e68289ef09b1507e7b7be418e5ee3",
+    "binary_sha256": "82852d0d4d7f6647659df480c7ba05b2912631eb002c0cb9278c7bf3f880dc8f",
+    "all_scale_kernel_seconds": 0.256138089,
+    "sole_adjacent_scale_add_pairs": 72,
+    "columns": 5120,
+    "identified_scale_kernel_seconds": 0.052919074999999996,
+    "identified_graphs": [
+      {
+        "graph_id": 3053,
+        "captured_rows": 1024,
+        "column_tiles": 20,
+        "nodes": 72,
+        "calls": 72,
+        "kernel_seconds": 0.000828731,
+        "columns": 5120,
+        "replays": 1
+      },
+      {
+        "graph_id": 3050,
+        "captured_rows": 1024,
+        "column_tiles": 20,
+        "nodes": 72,
+        "calls": 4536,
+        "kernel_seconds": 0.052090344,
+        "columns": 5120,
+        "replays": 63
+      }
+    ],
+    "interpretation": "About53ms of eligible kernel work, not all256ms of scale work. Fusion adds work to its consumer; kernel sums omit launch gaps, so this is not a measured or guaranteed serving wall-time saving.",
+    "accounting": {
+      "requests": 32,
+      "prefill_tokens": 131072,
+      "contiguous_positions": true,
+      "all_prefill_consumed_once": true,
+      "max_round_tokens": 2048,
+      "hard_budget": 2048,
+      "prompt_tokens": 4096,
+      "chunk_tokens": 2048,
+      "half_chunk_bound": true,
+      "partial_tasks": 59,
+      "profile": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-strict-kernels-v1-execution.jsonl",
+      "sha256": "63524200541f1ddc41f5e3844dffde7c7a879f3c434d98ece4ca6694d7f21758"
+    },
+    "resources": [
+      {
+        "kernel": "norm_entry",
+        "threads": 256,
+        "registers_per_thread": 255,
+        "local_bytes_per_thread": 0,
+        "kernel_seconds": 0.275914292
+      },
+      {
+        "kernel": "maximum_entry",
+        "threads": 256,
+        "registers_per_thread": 255,
+        "local_bytes_per_thread": 0,
+        "kernel_seconds": 0.170919155
+      },
+      {
+        "kernel": "scale_entry",
+        "threads": 128,
+        "registers_per_thread": 16,
+        "local_bytes_per_thread": 0,
+        "kernel_seconds": 0.256138089
+      },
+      {
+        "kernel": "binary_entry",
+        "threads": 128,
+        "registers_per_thread": 20,
+        "local_bytes_per_thread": 0,
+        "kernel_seconds": 0.272207006
+      }
+    ]
+  },
+  "candidate": {
+    "change": "Fold the existing Lt row/channel scaling into the sole following residual Add for eligible FP8 projections.",
+    "exact_arithmetic": "mulf(mulf(raw,row,NearestEven,FTZDisabled),column,NearestEven,FTZDisabled), then Add in original operand order, without FMA contraction.",
+    "scope": "Only actual vendor-FP8 captures with proven sole adjacent Add consumers. Native fallback and unproven layouts retain their current separate path.",
+    "allocation": "Reuse existing tensors and scales; no new GPU buffers, unsafe code or lint exemptions.",
+    "before_wiring": [
+      "Match the actual capture builder and JIT specialization for resource comparison.",
+      "Prove disjoint write spans and both Add alias/operand sides at capture.",
+      "Carry input-scale lifetime through the consumer without breaking quant reuse.",
+      "Bitwise compare raw-to-final fused output to separate kernels on real activations and signed-zero, denormal, NaN and padded-tail cases."
+    ],
+    "before_adoption": [
+      "Profile eligible device work on the wired candidate.",
+      "Run adjacent frozen same-budget A/B, default-auto and32K C1/C4 regression checks.",
+      "Retain complete outputs and paired task-quality scoring with disclosed scope.",
+      "Run required Rust/CUDA checks, final CI and independent review."
+    ]
+  },
+  "excluded_routes": {
+    "lt_outer_vector_scaling": {
+      "reason": "Historical sm120 probes returned NOT_SUPPORTED; current cuBLAS13.4 support table lists outer-vector scaling only for compute capability9.0. No repeated GPU experiment.",
+      "history": "docs/research/cuda-performance-experiments.md section12.14",
+      "primary_source": "https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmulmatrixscale-t"
+    },
+    "residual_add_norm": {
+      "reason": "Standalone baseline72 vs fused157registers at128threads; no spills. Actual serving CUPTI reports norm256threads/255registers, so the standalone experiment does not establish production occupancy or performance. Defer until capture/JIT matches; no adoption."
+    },
+    "nvfp4_up_epilogue": "Existing concrete prototypes spilled23-27KB; no new sweep."
+  },
+  "secondary_unproven_direction": "Plain Norm plus exact row maximum, preserving F32 output and parallel512-column conversion. Eligible node time, padding/NaN behavior, reuse lifetime and actual-capture resources still need proof.",
+  "reproduce": [
+    "python3 tools/bench/profile-fp8-scaling.py EVIDENCE/packing-strict-kernels-v1.sqlite EVIDENCE/fp8-scale-consumer-census.json OUTPUT.json",
+    "EVIDENCE=/home/r/benchmarks/inference.rs/norm-quant-2026-10-20"
+  ],
+  "evidence": {
+    "packing-strict-fp8-scaling-v1.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-strict-fp8-scaling-v1.json",
+      "sha256": "1914142f6ad5d9f7cc55d73d616c5f5e214a64a75ae7ebd9a41dbe449a3fc8bf"
+    },
+    "packing-strict-kernels-v1.result.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/packing-strict-kernels-v1.result.json",
+      "sha256": "31360fa3b6e309359e3c5f0a617be3b85bab865997ea9ace142b9e2efdd89536"
+    },
+    "fp8-scale-consumer-census.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fp8-scale-consumer-census.json",
+      "sha256": "1baf2c7fc127deb75d7c928be9d9753f7c41539ec82829390f0096f14739276d"
+    },
+    "next-stage-decisions-v2.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/next-stage-decisions-v2.json",
+      "sha256": "7bcc08284cf3ad47067f4eaa4f731b0cbd19663bfc8f6319b28897548a2510ee"
+    },
+    "claude-review-ranked-v2.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/claude-review-ranked-v2.json",
+      "sha256": "86f8a8aca84c00ac1b85acdafa7522dcde9f9897e0e3376960984a2d36cb83c8"
+    },
+    "quality-packing-v2-summary.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/quality-packing-v2-summary.json",
+      "sha256": "daeca65206a100d4b346df65fe45a8933a83b41da299fc123f4ab6f9725532d4"
+    },
+    "quality-packing-v2-confidence.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/quality-packing-v2-confidence.json",
+      "sha256": "c4e896f978091f7b187953e2e68f1aaba1d2c24b7564c2dcdd2e1b3083c7256f"
+    },
+    "quality-stability-fixed-summary.json": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/quality-stability-fixed-summary.json",
+      "sha256": "02a1d735cdb64110266d36255889334e6c5b2591dcb4d69fdf1117a49c68d549"
+    }
+  }
+}
