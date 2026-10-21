@@ -361,7 +361,6 @@ fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> 
                 }
             }
         }
-        let session = ResidentTuningSession::default();
         let choice = GemmConfig {
             tile_m: 64,
             tile_n: 128,
@@ -371,11 +370,19 @@ fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> 
             device.profile()?,
             CudaDevice::driver_version()?,
             shape,
-            Some("gpu-test-build".into()),
-            "gpu-test-kernel".into(),
+            driver_build(),
+            kernel_fingerprint(&device, shape)?,
         )?;
+        memo()
+            .lock()
+            .map_err(|_| Error::invariant("GPU test tuning memo poisoned"))?
+            .insert(key.clone(), choice);
+        let expired = ResidentTuningSession::without_search_budget();
+        assert!(!expired.permits_search());
+        // Resolving a cached choice must still prove this previously unseen weight after
+        // another projection has consumed the entire new-search allowance.
         assert_eq!(
-            verified_config(&device, &weight, 1.25, &key, choice, &session)?,
+            resolve(&device, &weight, 1.25, shape, true, &expired)?,
             choice
         );
         let ProjectionWeight::Fp4(codes, scales, _) = &weight else {
@@ -383,16 +390,16 @@ fn resident_gemm_candidates_preserve_quantization_and_output_bits_on_tails() -> 
         };
         let invalid_weight = ProjectionWeight::Fp4(Arc::clone(codes), Arc::clone(scales), 0.0);
         assert_eq!(
-            verified_config(&device, &invalid_weight, 1.25, &key, choice, &session)?,
+            verified_config(&device, &invalid_weight, 1.25, &key, choice)?,
             GemmConfig::baseline(m)
         );
         assert_eq!(
-            verified_config(&device, &weight, 0.0, &key, choice, &session)?,
+            verified_config(&device, &weight, 0.0, &key, choice)?,
             GemmConfig::baseline(m)
         );
         // A failed scalar/weight gate must leave the previously validated projection usable.
         assert_eq!(
-            verified_config(&device, &weight, 1.25, &key, choice, &session)?,
+            verified_config(&device, &weight, 1.25, &key, choice)?,
             choice
         );
     }

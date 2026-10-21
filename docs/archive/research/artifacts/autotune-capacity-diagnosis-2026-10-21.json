@@ -1,0 +1,139 @@
+{
+  "scope": "targeted diagnosis; not a new serving baseline",
+  "root_cause": "Autotune preparation reduces funded physical KV capacity below sixteen 4352-token reservations, creating an extra singleton decode tail.",
+  "required_tokens": 69632,
+  "profiles": {
+    "on": {
+      "trace_sqlite": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-autotune-on-v1.sqlite",
+      "trace_sqlite_sha256": "60121f769d108cb9af3eb8b9fdc27caf0719cb009bb65f279586baace2a2e2a3",
+      "execution_jsonl": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-autotune-on-v1-execution.jsonl",
+      "execution_jsonl_sha256": "6dfd6f586d45bef2a16d337f0f8f2b3ba286fc72de8febb69b863027a21c5827",
+      "measured_steps": 191,
+      "prefill_tasks": 47,
+      "max_pooled_tasks": 15,
+      "singletons_in_last_60_steps": 60,
+      "execution_sum_s": 13.954292,
+      "plan_line": "2026-10-21T09:33:56.622584Z  INFO infer::executor: planned pooled CUDA serving storage planned_width=16 prompt_width=1024 quoted_bytes=7507806464 envelope_bytes=7508740239 capacity=8192 kv_tokens=69344",
+      "kernel_count": 710857,
+      "kernel_sum_s": 13.633702198
+    },
+    "off": {
+      "trace_sqlite": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-autotune-off-v1.sqlite",
+      "trace_sqlite_sha256": "0bca48cef22047dcb7568bb050e7fa6f5def95d3ba20015a16fa62b6c9e22c5b",
+      "execution_jsonl": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/profile-autotune-off-v1-execution.jsonl",
+      "execution_jsonl_sha256": "a2bb24f02d2d5d5488153735ec37625fa79e95ec8b56e3c4ce9b216c6715e421",
+      "measured_steps": 129,
+      "prefill_tasks": 47,
+      "max_pooled_tasks": 16,
+      "singletons_in_last_60_steps": 4,
+      "execution_sum_s": 12.281403,
+      "plan_line": "2026-10-21T09:35:31.252857Z  INFO infer::executor: planned pooled CUDA serving storage planned_width=16 prompt_width=1024 quoted_bytes=7570721024 envelope_bytes=7571654799 capacity=8192 kv_tokens=71264",
+      "kernel_count": 563044,
+      "kernel_sum_s": 12.018671602
+    }
+  },
+  "cache_budget_fix_alone": {
+    "diagnostic_only": true,
+    "registered_new_serving_baseline": false,
+    "contract": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-serving-contract-v1.json",
+    "reports": {
+      "control-a1": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-control-a1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-cache-priority-control-a1.json",
+        "sha256": "9445eaba05dcef3163efa9d297b2655379ff9fb853b5596dd03509837eb5c066",
+        "startup_seconds": 132.43653034599265,
+        "walls": [
+          14.007017533,
+          13.7860013,
+          14.074345638
+        ],
+        "gpu_clock_mean_mhz": 2649.5006304587373,
+        "memory_peak_mib": 30139.0,
+        "all_requests_complete": true,
+        "proofs": 0,
+        "rejected_cached_proofs": 0,
+        "proof_elapsed_ms": 0
+      },
+      "candidate-b1": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-candidate-b1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-cache-priority-candidate-b1.json",
+        "sha256": "9478ba3ad653e155c549b45fbb58c8ce06b9e69ee352e74127eff35c62aa0f9b",
+        "startup_seconds": 135.74215545802144,
+        "walls": [
+          13.936648426,
+          13.711775708,
+          13.854952426
+        ],
+        "gpu_clock_mean_mhz": 2668.523889488853,
+        "memory_peak_mib": 30139.0,
+        "all_requests_complete": true,
+        "proofs": 239,
+        "rejected_cached_proofs": 0,
+        "proof_elapsed_ms": 901
+      },
+      "candidate-b2": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-candidate-b2/Qwen3.8-27B-NVFP4-mtp2-native-stage3-cache-priority-candidate-b2.json",
+        "sha256": "b585c0499ccb0cdc0717d7bd4f99227c9225810478365e353401e538b1174c2a",
+        "startup_seconds": 136.04825454001548,
+        "walls": [
+          13.96931652,
+          13.853317147,
+          14.006415665
+        ],
+        "gpu_clock_mean_mhz": 2663.7356971565605,
+        "memory_peak_mib": 30139.0,
+        "all_requests_complete": true,
+        "proofs": 405,
+        "rejected_cached_proofs": 0,
+        "proof_elapsed_ms": 1223
+      },
+      "control-a2": {
+        "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-control-a2/Qwen3.8-27B-NVFP4-mtp2-native-stage3-cache-priority-control-a2.json",
+        "sha256": "f049792cd1a3684888611e90993feb24ce6e5325deaa36bf91d228ead7a30d70",
+        "startup_seconds": 132.1363428059849,
+        "walls": [
+          13.882825094,
+          14.069260112,
+          14.106992652
+        ],
+        "gpu_clock_mean_mhz": 2671.7468578328826,
+        "memory_peak_mib": 30139.0,
+        "all_requests_complete": true,
+        "proofs": 0,
+        "rejected_cached_proofs": 0,
+        "proof_elapsed_ms": 0
+      }
+    },
+    "binary_provenance": {
+      "binary": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/infer-cache-priority-v3",
+      "sha256": "0b2b4d62c3993af09cdf72630fa979a7f6f671d830195834eba5b43ce7fb4af2",
+      "source_commit": "2f00826",
+      "contract": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/cache-priority-serving-contract-v1.json",
+      "contract_sha256": "0e4ec4d6172af27d9e7bd72f81ad9a865879ff72cdb3ca2d2d0d3d490812fdc2",
+      "cuda_device_tests": [
+        "gpu-nvfp4-cache-priority-v3.log",
+        "gpu-fp8-cache-priority-v3.log"
+      ],
+      "cuda_host_tests": "test-cache-priority-v3.log",
+      "cuda_clippy": "clippy-cache-priority-v3.log"
+    },
+    "prior_no_search_same_table_wall_median_s": 12.223867294,
+    "control_median_s": 14.0381388225,
+    "candidate_median_s": 13.895800426000001,
+    "candidate_vs_control_percent": -1.013940653385359,
+    "restored_no_search_speed_within_3_percent": false,
+    "conclusion": "Cache-budget edge correctness is fixed and tested; the serving regression is not restored. Keep PR draft while profiling the remaining cause."
+  },
+  "allocation_limit": "Same 0.88 setting; not increased.",
+  "retained_allocation_breakdown": "Not individually measured; process-global kernel modules and preparation resources are candidates, not a proven byte-by-byte attribution.",
+  "clean_process_reuses_tuning_output": {
+    "report": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-clean-reuse-v1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-autotune-clean-reuse-v1.json",
+    "sha256": "ab54a30b7d3b48126e7a9240b4f737ca98447f8b43ca1fcf93bdfe8064b93c27",
+    "startup_s": 41.752180748968385,
+    "wall_samples_s": [
+      12.220662021,
+      12.188599569,
+      12.24982361
+    ],
+    "wall_median_s": 12.220662021
+  },
+  "new_two_phase_implementation_status": "source and CPU lifecycle checks pass; device startup/cancellation/serving verification pending"
+}

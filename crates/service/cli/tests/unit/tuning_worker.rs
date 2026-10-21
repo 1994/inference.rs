@@ -1,0 +1,95 @@
+use super::*;
+use std::env::{current_exe, temp_dir, var_os};
+use std::error::Error as StdError;
+use std::fs::{read_to_string, remove_dir_all, write};
+use std::os::unix::process::ExitStatusExt;
+use std::process::exit;
+use std::result::Result as StdResult;
+use std::thread::park;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const PROBE_ENV: &str = "INFER_TUNING_PARENT_PIPE_TEST";
+const PROBE_TEST: &str = "commands::tuning_worker::tests::parent_link_survives_wait";
+const PROBE_LIFETIME: Duration = Duration::from_millis(200);
+
+fn probe_command() -> StdResult<Command, Box<dyn StdError>> {
+    let mut command = Command::new(current_exe()?);
+    command
+        .args(["--exact", PROBE_TEST, "--test-threads=1"])
+        .env(PROBE_ENV, "child")
+        .env(WORKER_ENV, WORKER_VALUE)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(command)
+}
+
+#[test]
+fn parent_link_survives_wait() -> StdResult<(), Box<dyn StdError>> {
+    if var_os(PROBE_ENV).is_some() {
+        assert!(worker_mode(var_os(WORKER_ENV).as_deref())?);
+        monitor_parent()?;
+        if var_os(PROBE_ENV).as_deref() == Some(OsStr::new("wait")) {
+            loop {
+                park();
+            }
+        }
+        if var_os(PROBE_ENV).as_deref() == Some(OsStr::new("fail")) {
+            exit(7);
+        }
+        sleep(PROBE_LIFETIME);
+        return Ok(());
+    }
+    run_worker(&mut probe_command()?)?;
+    Ok(())
+}
+
+#[test]
+fn preparation_stops_when_parent_link_closes() -> StdResult<(), Box<dyn StdError>> {
+    let mut child = probe_command()?
+        .process_group(0)
+        .stdin(Stdio::piped())
+        .spawn()?;
+    drop(child.stdin.take());
+    assert_eq!(child.wait()?.signal(), Some(9));
+    Ok(())
+}
+
+#[test]
+fn preparation_marker_is_closed_and_explicit() -> Result<()> {
+    assert!(!worker_mode(None)?);
+    assert!(worker_mode(Some(OsStr::new(WORKER_VALUE)))?);
+    assert!(worker_mode(Some(OsStr::new("unknown"))).is_err());
+    Ok(())
+}
+
+#[test]
+fn cache_probe_preserves_table_and_detects_unusable_parent() -> StdResult<(), Box<dyn StdError>> {
+    let root = temp_dir().join(format!(
+        "infer-tuning-{}-{}",
+        id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    let table = root.join("nested/tuning.json");
+    assert!(writable_cache(&table));
+    assert!(!table.exists());
+    write(&table, "existing table")?;
+    assert!(writable_cache(&table));
+    assert_eq!(read_to_string(&table)?, "existing table");
+    assert!(!writable_cache(&table.join("blocked.json")));
+    remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn preparation_timeout_and_nonzero_exit_are_bounded_failures() -> StdResult<(), Box<dyn StdError>> {
+    let mut blocked = probe_command()?;
+    blocked.env(PROBE_ENV, "wait");
+    let error = run_worker_for(&mut blocked, Duration::from_millis(30))
+        .err()
+        .ok_or("preparation did not time out")?;
+    assert!(error.to_string().contains("timed out"));
+    let mut failed = probe_command()?;
+    failed.env(PROBE_ENV, "fail");
+    assert!(run_worker(&mut failed).is_err());
+    Ok(())
+}

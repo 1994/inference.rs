@@ -87,7 +87,9 @@ const JIT_OPT_LEVEL: u8 = 3;
 const MODEL_SEARCH_BUDGET: Duration = Duration::from_secs(30);
 
 /// Shared by target/draft weights and every program created from one loaded model.
-/// The allowance starts at its first new resident search or numerical proof, after weight binding.
+///
+/// The allowance starts at the first new resident search, after weight binding.
+/// Cache identities and mandatory real-weight proofs remain available after it expires.
 pub struct ResidentTuningSession {
     started: OnceLock<Instant>,
     greedy_started: OnceLock<Instant>,
@@ -111,6 +113,14 @@ impl Default for ResidentTuningSession {
 }
 
 impl ResidentTuningSession {
+    #[cfg(test)]
+    pub(crate) fn without_search_budget() -> Self {
+        Self {
+            budget: Duration::ZERO,
+            ..Self::default()
+        }
+    }
+
     /// A separate finite allowance lets greedy tuning run after GEMM searches finish.
     pub(crate) fn permits_greedy_search(&self) -> bool {
         self.greedy_started.get_or_init(Instant::now).elapsed() < self.budget
@@ -479,11 +489,7 @@ fn driver_build() -> Option<String> {
 }
 
 /// Frontend-only identities: no cubin compilation or kernel execution is requested here.
-fn kernel_fingerprint(
-    device: &CudaDevice,
-    shape: [usize; GEMM_RANK],
-    session: &ResidentTuningSession,
-) -> Result<Option<String>> {
+fn kernel_fingerprint(device: &CudaDevice, shape: [usize; GEMM_RANK]) -> Result<String> {
     use cutile::cutile_compiler::cuda_tile_runtime_utils as compiler;
     type Fingerprints = Mutex<BTreeMap<(String, [usize; GEMM_RANK]), String>>;
     static FINGERPRINTS: OnceLock<Fingerprints> = OnceLock::new();
@@ -504,12 +510,7 @@ fn kernel_fingerprint(
         .get(&(environment.clone(), shape))
         .cloned();
     if let Some(value) = cached {
-        return Ok(Some(value));
-    }
-    if !session.permits_search() {
-        tracing::info!(target: "infer::tuning", ?shape,
-            "resident GEMM model search budget exhausted before kernel identity: baseline");
-        return Ok(None);
+        return Ok(value);
     }
     let [m, n, k] = shape;
     let input = api::meta::<f32>(&[m, k])
@@ -544,11 +545,6 @@ fn kernel_fingerprint(
     for tile_m in TILE_M_SEARCH {
         for tile_n in TILE_N_SEARCH {
             for main_loop in LOOP_SEARCH {
-                if !session.permits_search() {
-                    tracing::info!(target: "infer::tuning", ?shape,
-                        "resident GEMM model search budget exhausted during kernel identity: baseline");
-                    return Ok(None);
-                }
                 let tile = [tile_m, tile_n];
                 let generics = vec![k.to_string(), tile_m.to_string(), tile_n.to_string()];
                 let identity = match main_loop {
@@ -582,7 +578,7 @@ fn kernel_fingerprint(
     memo.lock()
         .map_err(|_| Error::invariant("kernel identity cache poisoned"))?
         .insert((environment, shape), fingerprint.clone());
-    Ok(Some(fingerprint))
+    Ok(fingerprint)
 }
 
 /// A performance cache never substitutes for this real weight and scale's numerical gate.
@@ -592,7 +588,6 @@ fn verified_config(
     scale: f32,
     key: &ResidentGemmKey,
     selected: GemmConfig,
-    session: &ResidentTuningSession,
 ) -> Result<GemmConfig> {
     let baseline = GemmConfig::baseline(key.m);
     if selected == baseline {
@@ -626,10 +621,9 @@ fn verified_config(
             baseline
         });
     }
-    if session.exhausted(key) {
-        // This weight has no proof yet; never memoize its unverified fallback as geometry evidence.
-        return Ok(baseline);
-    }
+    // A prior search cannot evict an otherwise usable cached choice. Every new weight still
+    // completes its numerical proof; only searches for new performance evidence are time-bounded.
+    let started = Instant::now();
     let validate = || -> Result<()> {
         let shape = [key.m, key.n, key.k];
         let base = Captured::new(device, weight, scale, shape, baseline)?;
@@ -648,6 +642,8 @@ fn verified_config(
     }
     let accepted = result.is_ok();
     remember_verification(weight, verification_key, accepted)?;
+    tracing::info!(target: "infer::tuning", shape=?[key.m, key.n, key.k], ?selected,
+        accepted, elapsed_ms=started.elapsed().as_millis(), "resident GEMM cached choice weight proof");
     Ok(if accepted { selected } else { baseline })
 }
 
@@ -710,10 +706,7 @@ fn resolve(
     session: &ResidentTuningSession,
 ) -> Result<GemmConfig> {
     let baseline = GemmConfig::baseline(shape[0]);
-    let Some(fingerprint) = kernel_fingerprint(device, shape, session)? else {
-        // Incomplete identity is never a performance-cache key or a persisted decision.
-        return Ok(baseline);
-    };
+    let fingerprint = kernel_fingerprint(device, shape)?;
     let key = ResidentGemmKey::new(
         device.profile()?,
         CudaDevice::driver_version()?,
@@ -728,7 +721,7 @@ fn resolve(
         .copied();
     if let Some(config) = cached {
         tracing::info!(target: "infer::tuning", ?key, ?config, source="process-cache", "resident GEMM selected");
-        return verified_config(device, weight, scale, &key, config, session);
+        return verified_config(device, weight, scale, &key, config);
     }
     let path = super::table_path();
     let table = if key.driver_build.is_some() {
@@ -754,7 +747,7 @@ fn resolve(
         .map_err(|_| Error::invariant("resident tuning cache poisoned"))?
         .insert(key.clone(), config);
     tracing::info!(target: "infer::tuning", ?key, ?config, source, "resident GEMM selected");
-    verified_config(device, weight, scale, &key, config, session)
+    verified_config(device, weight, scale, &key, config)
 }
 
 fn selected_config(
