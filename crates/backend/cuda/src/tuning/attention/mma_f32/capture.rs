@@ -119,6 +119,10 @@ fn append_generics(s: Shape, capacity: usize) -> Vec<String> {
         capacity.to_string(),
         "0".into(),
         KV_BLOCK_TOKENS.to_string(),
+        s.lanes
+            .div_ceil(KV_BLOCK_TOKENS)
+            .next_power_of_two()
+            .to_string(),
     ]
 }
 fn compute_generics(s: Shape) -> Vec<String> {
@@ -315,3 +319,7 @@ pub(super) fn fingerprint(device: &CudaDevice, s: Shape) -> Result<String> {
     .map_err(device_error)?;
     Ok(format!("{:x}", Sha256::digest(payload)))
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/tuning_attention_f32_append_headers.rs"]
+mod append_header_tests;
