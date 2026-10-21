@@ -106,6 +106,10 @@ impl Operands {
             capacity.to_string(),
             "1".into(),
             KV_BLOCK_TOKENS.to_string(),
+            s.lanes
+                .div_ceil(KV_BLOCK_TOKENS)
+                .next_power_of_two()
+                .to_string(),
         ]
     }
     fn compute_generics(s: Shape, choice: Choice) -> Vec<String> {
@@ -572,3 +576,7 @@ pub(super) fn native_fingerprint(device: &CudaDevice, shape: Shape) -> Result<St
         .insert(memo_key, identity.clone());
     Ok(identity)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/tuning_attention_append_headers.rs"]
+mod append_header_tests;

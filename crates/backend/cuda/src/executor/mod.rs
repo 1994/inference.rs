@@ -48,6 +48,7 @@ pub struct CudaBackend {
     /// pricing the next compatible request, so short batches keep pooled admission.
     reclaimed_slot_capacity: Option<usize>,
     slots_disabled: bool,
+    deferred_pool_plan: Option<(usize, u64)>,
     /// Reason the last pool attempt failed, reported when batching is given up for good.
     pool_failure_reason: Option<String>,
     busy: bool,
@@ -208,6 +209,7 @@ impl CudaBackend {
             draft_slots: None,
             reclaimed_slot_capacity: None,
             slots_disabled: false,
+            deferred_pool_plan: None,
             pool_failure_reason: None,
             busy: false,
             fatal: None,

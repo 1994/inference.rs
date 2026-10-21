@@ -18,6 +18,7 @@ use cuda_core::{CudaContext, PinnedHostBuffer, f8e4m3fn};
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorStorage};
+use std::collections::BTreeSet;
 
 /// Pinned ring depth per external-hidden lane: one upload per draft or catch-up step,
 /// and a lane's chain between stream barriers never exceeds the maximum verify width.
@@ -658,6 +659,7 @@ impl SlotPool {
         }
         let start = paging.free.len() - blocks;
         *owned = paging.free.split_off(start);
+        debug_assert_eq!(owned.iter().collect::<BTreeSet<_>>().len(), owned.len());
         let table = self
             .tables
             .get_mut(slot)

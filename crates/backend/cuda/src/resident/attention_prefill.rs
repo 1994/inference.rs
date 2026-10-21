@@ -25,9 +25,9 @@ pub(crate) mod kernels {
     use cutile::core::{
         BroadcastScalar, ElementType, LoadTileLike, Reshape, Shape_0, Shape_1, Shape_2, Shape_3,
         StoreTileAtCurrentBlock, Tensor_1, Tensor_2, Tensor_3, Tile_0, Tile_1, Tile_2, Tile_3,
-        bf16, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, exp, ftz, ge_tile,
-        get_tile_block_id, gt_tile, iota, le_tile, lt_tile, max_tile, min_tile, mmaf, predicate,
-        reduce_max, reduce_sum, rsqrt, select, tile_to_scalar,
+        bf16, cat, cmp_ordering, cmpf, constant, convert_scalar, convert_tile, eq_tile, exp,
+        extract, ftz, ge_tile, get_tile_block_id, gt_tile, iota, le_tile, lt_tile, max_tile,
+        min_tile, mmaf, predicate, reduce_max, reduce_sum, rsqrt, select, tile_to_scalar,
     };
     /// Finite masked score keeps online rescaling defined before the first visible key.
     const MASKED: f32 = -1.0e30;
@@ -60,13 +60,142 @@ pub(crate) mod kernels {
         mmaf(lh, rh, low)
     }
 
+    fn cache_encode<E: ElementType, const R: i32, const D: i32, const QUANT: i32>(
+        mut value: Tile<f32, { [1, R, D] }>,
+        scale: f32,
+    ) -> Tile<E, { [1, R, D] }> {
+        if QUANT == 1 {
+            let low = (-448.0f32).broadcast(shape![1, R, D]);
+            let high = 448.0f32.broadcast(shape![1, R, D]);
+            value = min_tile(
+                max_tile(value / scale.broadcast(shape![1, R, D]), low),
+                high,
+            );
+        }
+        let encoded: Tile<E, { [1, R, D] }> = convert_tile(value);
+        encoded
+    }
+
+    // Two aligned lookup tiles cover a chunk beginning anywhere within the first tile.
+    // Matching the replay-time forward table avoids a separate inverse-map allocation.
+    // Only reachable entries are injective: SlotPool::assign pads the remainder with
+    // the first leased page, so mask logical indices before reducing the match.
+    fn logical_page<const W: i32, const BT: i32>(
+        table: &Tensor<i32, { [-1] }>,
+        start: i32,
+        end: i32,
+        page: i32,
+    ) -> i32 {
+        let first: Tile<i32, { [1] }> =
+            max_tile(start.broadcast(shape![1]), 0i32.broadcast(shape![1]));
+        let first: i32 = tile_to_scalar(first.reshape(shape![]));
+        let first = first / BT;
+        let last = (end + BT - 1i32) / BT;
+        let window = first / W;
+        let ids: Tile<i32, { [W] }> = iota(shape![W]) + (window * W).broadcast(shape![W]);
+        let pages = table.partition(shape![W]).load([window]);
+        let matches = eq_tile(pages, page.broadcast(shape![W]))
+            & ge_tile(ids, first.broadcast(shape![W]))
+            & lt_tile(ids, last.broadcast(shape![W]));
+        let selected = select(matches, ids, (-1i32).broadcast(shape![W]));
+        let mut found: Tile<i32, { [] }> = reduce_max(selected, 0i32);
+        if last > (window + 1i32) * W {
+            let ids2: Tile<i32, { [W] }> =
+                iota(shape![W]) + ((window + 1i32) * W).broadcast(shape![W]);
+            let pages2 = table.partition(shape![W]).load([window + 1i32]);
+            let matches2 = eq_tile(pages2, page.broadcast(shape![W]))
+                & ge_tile(ids2, first.broadcast(shape![W]))
+                & lt_tile(ids2, last.broadcast(shape![W]));
+            let selected2 = select(matches2, ids2, (-1i32).broadcast(shape![W]));
+            let found2: Tile<i32, { [] }> = reduce_max(selected2, 0i32);
+            found = max_tile(found, found2);
+        }
+        tile_to_scalar(found)
+    }
+
+    // Called only when CAP == BT: each mutable partition owns one physical page.
+    fn append_page<
+        E: ElementType,
+        const D: i32,
+        const CAP: i32,
+        const QUANT: i32,
+        const BT: i32,
+        const W: i32,
+    >(
+        keys: &mut Tensor<E, { [1, CAP, D] }>,
+        values: &mut Tensor<E, { [1, CAP, D] }>,
+        k: &Tensor<f32, { [-1, -1, D] }>,
+        v: &Tensor<f32, { [-1, -1, D] }>,
+        metadata: &Tensor<i32, { [-1] }>,
+        table: &Tensor<i32, { [-1] }>,
+        scales: Tile<f32, { [2] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let meta = metadata.partition(shape![1]);
+        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+        let start = base + offset;
+        let end = start + count;
+        if count > 0i32 && end > 0i32 {
+            let logical = logical_page::<W, BT>(table, start, end, pid.1);
+            if logical >= 0i32 {
+                let ks: Tile<f32, { [1] }> = extract(scales, [0i32.broadcast(shape![])]);
+                let k_scale: f32 = tile_to_scalar(ks.reshape(shape![]));
+                let vs: Tile<f32, { [1] }> = extract(scales, [1i32.broadcast(shape![])]);
+                let v_scale: f32 = tile_to_scalar(vs.reshape(shape![]));
+                let lane0 = logical * BT - start;
+                if lane0 >= 0i32 && lane0 + BT <= count && lane0 % BT == 0i32 {
+                    let key = k
+                        .partition(shape![BT, 1, D])
+                        .load([lane0 / BT, pid.0, 0i32])
+                        .reshape(shape![1, BT, D]);
+                    let value = v
+                        .partition(shape![BT, 1, D])
+                        .load([lane0 / BT, pid.0, 0i32])
+                        .reshape(shape![1, BT, D]);
+                    let key = cache_encode::<E, BT, D, QUANT>(key, k_scale);
+                    let value = cache_encode::<E, BT, D, QUANT>(value, v_scale);
+                    keys.partition_mut(shape![1, BT, D])
+                        .store(key, [0i32, 0i32, 0i32]);
+                    values
+                        .partition_mut(shape![1, BT, D])
+                        .store(value, [0i32, 0i32, 0i32]);
+                } else {
+                    for row in 0i32..BT {
+                        let position = logical * BT + row;
+                        let lane = position - start;
+                        if position >= 0i32 && lane >= 0i32 && lane < count {
+                            let key = k.partition(shape![1, 1, D]).load([lane, pid.0, 0i32]);
+                            let value = v.partition(shape![1, 1, D]).load([lane, pid.0, 0i32]);
+                            let key = cache_encode::<E, 1, D, QUANT>(key, k_scale);
+                            let value = cache_encode::<E, 1, D, QUANT>(value, v_scale);
+                            keys.partition_mut(shape![1, 1, D])
+                                .store(key, [0i32, row, 0i32]);
+                            values
+                                .partition_mut(shape![1, 1, D])
+                                .store(value, [0i32, row, 0i32]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Append all prompt rows before the causal query kernels read the shared cache.
     #[expect(
         clippy::useless_let_if_seq,
         reason = "cuTile DSL uses statement control flow"
     )]
     #[cutile::entry()]
-    fn append<E: ElementType, const D: i32, const CAP: i32, const QUANT: i32, const BT: i32>(
+    fn append<
+        E: ElementType,
+        const D: i32,
+        const CAP: i32,
+        const QUANT: i32,
+        const BT: i32,
+        const W: i32,
+    >(
         keys: &mut Tensor<E, { [1, CAP, D] }>,
         values: &mut Tensor<E, { [1, CAP, D] }>,
         k: &Tensor<f32, { [-1, -1, D] }>,
@@ -76,77 +205,62 @@ pub(crate) mod kernels {
         k_scale: f32,
         v_scale: f32,
     ) {
-        let pid = get_tile_block_id();
-        let meta = metadata.partition(shape![1]);
-        let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
-        let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
-        let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
-        let kp = k.partition(shape![1, 1, D]);
-        let vp = v.partition(shape![1, 1, D]);
-        let blocks = table.partition(shape![1]);
-        // A chunk whose first position starts a KV block moves whole blocks: one BT-row tile per
-        // iteration instead of BT dependent row copies. Rows past the last whole block, and any
-        // chunk that does not start on a block boundary, take the per-row loop below.
-        let start = base + offset;
-        let mut whole = 0i32;
-        if start >= 0i32 && start % BT == 0i32 {
-            whole = count / BT;
-        }
-        let kb = k.partition(shape![BT, 1, D]);
-        let vb = v.partition(shape![BT, 1, D]);
-        for group in 0i32..whole {
-            let physical: i32 = tile_to_scalar(blocks.load([start / BT + group]).reshape(shape![]));
-            let mut key = kb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
-            let mut value = vb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
-            if QUANT == 1 {
-                let low = (-448.0f32).broadcast(shape![1, BT, D]);
-                let high = 448.0f32.broadcast(shape![1, BT, D]);
-                key = min_tile(
-                    max_tile(key / k_scale.broadcast(shape![1, BT, D]), low),
-                    high,
-                );
-                value = min_tile(
-                    max_tile(value / v_scale.broadcast(shape![1, BT, D]), low),
-                    high,
-                );
+        if CAP == BT && QUANT == 1 {
+            let ks: Tile<f32, { [1] }> = k_scale.broadcast(shape![1]);
+            let vs: Tile<f32, { [1] }> = v_scale.broadcast(shape![1]);
+            let scales: Tile<f32, { [2] }> = cat(ks, vs, 0i32);
+            append_page::<E, D, CAP, QUANT, BT, W>(keys, values, k, v, metadata, table, scales);
+        } else {
+            let pid = get_tile_block_id();
+            let meta = metadata.partition(shape![1]);
+            let base: i32 = tile_to_scalar(meta.load([0i32]).reshape(shape![]));
+            let count: i32 = tile_to_scalar(meta.load([1i32]).reshape(shape![]));
+            let offset: i32 = tile_to_scalar(meta.load([2i32]).reshape(shape![]));
+            let kp = k.partition(shape![1, 1, D]);
+            let vp = v.partition(shape![1, 1, D]);
+            let blocks = table.partition(shape![1]);
+            // A chunk whose first position starts a KV block moves whole blocks: one BT-row tile per
+            // iteration instead of BT dependent row copies. Rows past the last whole block, and any
+            // chunk that does not start on a block boundary, take the per-row loop below.
+            let start = base + offset;
+            let mut whole = 0i32;
+            if start >= 0i32 && start % BT == 0i32 {
+                whole = count / BT;
             }
-            let key: Tile<E, { [1, BT, D] }> = convert_tile(key);
-            let value: Tile<E, { [1, BT, D] }> = convert_tile(value);
-            keys.partition_mut(shape![1, BT, D])
-                .store(key, [0i32, physical, 0i32]);
-            values
-                .partition_mut(shape![1, BT, D])
-                .store(value, [0i32, physical, 0i32]);
-        }
-        for lane in whole * BT..count {
-            let position = base + lane + offset;
-            if position >= 0 {
-                // Logical block to physical block, then the row inside it. Step 1's table is the
-                // identity, so this resolves to `position`; step 2's allocator is what makes the
-                // physical placement differ from the logical one.
-                let physical: i32 = tile_to_scalar(blocks.load([position / BT]).reshape(shape![]));
-                let position = physical * BT + position % BT;
-                let mut key = kp.load([lane, pid.0, 0i32]);
-                let mut value = vp.load([lane, pid.0, 0i32]);
-                if QUANT == 1 {
-                    let low = (-448.0f32).broadcast(shape![1, 1, D]);
-                    let high = 448.0f32.broadcast(shape![1, 1, D]);
-                    key = min_tile(
-                        max_tile(key / k_scale.broadcast(shape![1, 1, D]), low),
-                        high,
-                    );
-                    value = min_tile(
-                        max_tile(value / v_scale.broadcast(shape![1, 1, D]), low),
-                        high,
-                    );
-                }
-                let key: Tile<E, { [1, 1, D] }> = convert_tile(key);
-                let value: Tile<E, { [1, 1, D] }> = convert_tile(value);
-                keys.partition_mut(shape![1, 1, D])
-                    .store(key, [0i32, position, 0i32]);
+            let kb = k.partition(shape![BT, 1, D]);
+            let vb = v.partition(shape![BT, 1, D]);
+            for group in 0i32..whole {
+                let physical: i32 =
+                    tile_to_scalar(blocks.load([start / BT + group]).reshape(shape![]));
+                let key = kb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
+                let value = vb.load([group, pid.0, 0i32]).reshape(shape![1, BT, D]);
+                let key = cache_encode::<E, BT, D, QUANT>(key, k_scale);
+                let value = cache_encode::<E, BT, D, QUANT>(value, v_scale);
+                keys.partition_mut(shape![1, BT, D])
+                    .store(key, [0i32, physical, 0i32]);
                 values
-                    .partition_mut(shape![1, 1, D])
-                    .store(value, [0i32, position, 0i32]);
+                    .partition_mut(shape![1, BT, D])
+                    .store(value, [0i32, physical, 0i32]);
+            }
+            for lane in whole * BT..count {
+                let position = base + lane + offset;
+                if position >= 0 {
+                    // Logical block to physical block, then the row inside it. Step 1's table is the
+                    // identity, so this resolves to `position`; step 2's allocator is what makes the
+                    // physical placement differ from the logical one.
+                    let physical: i32 =
+                        tile_to_scalar(blocks.load([position / BT]).reshape(shape![]));
+                    let position = physical * BT + position % BT;
+                    let key = kp.load([lane, pid.0, 0i32]);
+                    let value = vp.load([lane, pid.0, 0i32]);
+                    let key = cache_encode::<E, 1, D, QUANT>(key, k_scale);
+                    let value = cache_encode::<E, 1, D, QUANT>(value, v_scale);
+                    keys.partition_mut(shape![1, 1, D])
+                        .store(key, [0i32, position, 0i32]);
+                    values
+                        .partition_mut(shape![1, 1, D])
+                        .store(value, [0i32, position, 0i32]);
+                }
             }
         }
     }
@@ -379,3 +493,7 @@ pub(crate) mod kernels {
 #[cfg(test)]
 #[path = "../../tests/unit/resident_attention_prefill.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_prefill_page_append.rs"]
+mod page_tests;
