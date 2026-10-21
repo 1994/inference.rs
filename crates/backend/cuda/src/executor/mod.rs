@@ -151,7 +151,12 @@ impl CudaBackend {
     /// speculation depth actually ran instead of restating the request.
     #[must_use]
     pub fn execution_profile(&self) -> infer_ir::ExecutionProfileInspection {
-        self.loaded.execution_profile()
+        let mut profile = self.loaded.execution_profile();
+        profile.pooled_prefill_width = self
+            .worker
+            .as_ref()
+            .map(|worker| worker.program.prefill_width());
+        profile
     }
 
     /// # Errors

@@ -5,6 +5,7 @@ use super::{
     capture::{Capture, CaptureMode, error},
     fp8_cache::Fp8Caches,
     profile,
+    slot_commit::CapturedCommit,
 };
 use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::F32_BYTES;
@@ -16,7 +17,7 @@ use crate::device::Readbacks;
 use crate::device::{CudaDevice, ReadbackSource, device_error};
 use cutile::prelude::*;
 use infer_core::{Error, Result};
-use infer_ir::{StateKind, TensorOp, TensorStorage};
+use infer_ir::{StateKind, TensorNode, TensorOp, TensorStorage};
 use std::result::Result as StdResult;
 use std::slice::from_ref;
 
@@ -35,12 +36,14 @@ pub(super) struct SlotVerifyGraph {
     /// [`Self::fused`] it instead applies the `accepted + 1` committed lanes to the untouched
     /// slot state, and runs on every commit.
     restore: Vec<Vec<CudaGraph<()>>>,
+    batched_commit: Option<CapturedCommit>,
     /// Recurrent nodes verify without writing state (`slot_recurrent`), so commits re-apply
     /// the accepted prefix instead of restoring snapshots.
     fused: bool,
     readbacks: Readbacks,
     token_readout: Option<super::token_readout::TokenReadout>,
-    metadata: Vec<Tensor<i32>>,
+    metadata_owner: Tensor<i32>,
+    metadata_upload: Vec<i32>,
     hidden: Arc<Tensor<f32>>,
     logits: Arc<Tensor<f32>>,
     /// Slot state sets the graph interleaves.
@@ -55,6 +58,7 @@ pub(super) struct SlotVerifyGraph {
     profile: Option<profile::SlotProfile>,
     /// Commit inputs the verify graph copies out and the commit graphs read.
     _staging: super::slot_recurrent::Staging,
+    _parameters: super::slot_states::RecurrentParameters,
     // The shared batched arena anchors the graph's activations; declared last so the graph
     // and the restore graphs drop before it.
     _arena: ActivationArena,
@@ -82,26 +86,40 @@ fn slot_lanes(
     })
 }
 
-impl BatchBuilder<'_> {
-    /// Whether every recurrent state writer verifies through the fused snapshot-free kernels.
-    fn fused_recurrent(&self, verify: usize) -> bool {
-        verify == super::slot_recurrent::LANES
-            && self.graph.nodes.iter().all(|node| {
-                !node.states.iter().any(|id| {
-                    self.graph.tensors.iter().any(|spec| {
-                        spec.id == *id
-                            && matches!(
-                                spec.storage,
-                                TensorStorage::State {
-                                    kind: StateKind::Conv | StateKind::LinearAttention,
-                                    ..
-                                }
-                            )
-                    })
-                }) || super::slot_recurrent::covers(node)
-            })
+fn validate_commits(pending: &[usize], commits: &[(usize, usize)]) -> Result<()> {
+    let mut seen = vec![false; pending.len()];
+    for &(slot, accepted) in commits {
+        let Some(&count) = pending.get(slot) else {
+            return Err(Error::invalid("slot verify commit"));
+        };
+        if accepted >= count || seen[slot] {
+            return Err(Error::invalid("slot verify commit count or duplicate"));
+        }
+        seen[slot] = true;
     }
+    Ok(())
+}
 
+/// Whether every recurrent writer uses snapshot-free pooled verification.
+pub(super) fn fused_recurrent(graph: &infer_ir::DataflowGraph, verify: usize) -> bool {
+    verify == super::slot_recurrent::LANES
+        && graph.nodes.iter().all(|node| {
+            !node.states.iter().any(|id| {
+                graph.tensors.iter().any(|spec| {
+                    spec.id == *id
+                        && matches!(
+                            spec.storage,
+                            TensorStorage::State {
+                                kind: StateKind::Conv | StateKind::LinearAttention,
+                                ..
+                            }
+                        )
+                })
+            }) || super::slot_recurrent::covers(node)
+        })
+}
+
+impl BatchBuilder<'_> {
     /// Per slot, one graph per committed lane count that applies the accepted prefix of the
     /// snapshot-free recurrent verification to the slot's state.
     fn capture_commits(
@@ -241,17 +259,52 @@ impl BatchBuilder<'_> {
         Ok(checkpoints)
     }
 
+    /// Bind one recurrent node to each slot's independent state and commit staging.
+    fn record_slot_recurrent(
+        &self,
+        scope: &Scope,
+        node: &TensorNode,
+        arena: &mut ActivationArena,
+        (states, metadata): (&[States], &[Tensor<i32>]),
+        (staging, index, value_split, batch): (
+            &mut super::slot_recurrent::Staging,
+            usize,
+            usize,
+            &super::slot_states::VerifyBatch<'_>,
+        ),
+    ) -> StdResult<(), DeviceError> {
+        staging.record_node(scope, node, arena, index)?;
+        if super::slot_convolution::record(scope, node, arena, batch, self.weights)?
+            || super::slot_states::record_batch(scope, node, arena, batch, value_split)?
+        {
+            return Ok(());
+        }
+        for (slot, states) in states.iter().enumerate() {
+            let lanes = slot_lanes(slot, metadata)?;
+            super::slot_recurrent::record_verify(
+                scope,
+                node,
+                arena,
+                states,
+                &lanes,
+                self.weights,
+                value_split,
+            )?;
+        }
+        Ok(())
+    }
+
     fn capture_slot_verify(
         &mut self,
         lane_states: &mut [States],
         lane_fp8: &mut [Fp8Caches],
-        geometry: (usize, &[Tensor<i32>]),
+        geometry: (usize, &[Tensor<i32>], &super::slot_states::VerifyBatch<'_>),
         arena: &mut ActivationArena,
         (checkpoints, staging): (&mut [Vec<States>], &mut super::slot_recurrent::Staging),
         profile: &mut Option<profile::SlotProfile>,
     ) -> Result<CudaGraph<()>> {
-        let (verify, metadata) = geometry;
-        let fused = self.fused_recurrent(verify);
+        let (verify, metadata, batch) = geometry;
+        let fused = fused_recurrent(self.graph, verify);
         let value_split =
             super::slot_recurrent::value_split(self.device.profile()?.multiprocessors);
         CudaGraph::scope(&self.device.stream, |scope| {
@@ -268,6 +321,18 @@ impl BatchBuilder<'_> {
                         self.weights,
                         self.nvfp4,
                     )?;
+                    continue;
+                }
+                if super::slot_rope::record(scope, node, arena, self.weights, batch.metadata)? {
+                    continue;
+                }
+                if self.record_slot_verify_attention(
+                    scope,
+                    node,
+                    arena,
+                    (lane_states, lane_fp8),
+                    (verify, metadata, batch.metadata),
+                )? {
                     continue;
                 }
                 match dispatch32(node, self.weights) {
@@ -289,22 +354,13 @@ impl BatchBuilder<'_> {
                     }
                     .record(node)?,
                     Dispatch32::Row if fused && super::slot_recurrent::covers(node) => {
-                        for (slot, states) in lane_states.iter().enumerate() {
-                            let lanes = slot_lanes(slot, metadata)?;
-                            let staged = staging
-                                .get_mut(&(slot, index))
-                                .ok_or_else(|| error("slot verify staging"))?;
-                            super::slot_recurrent::record_verify(
-                                scope,
-                                node,
-                                arena,
-                                states,
-                                &lanes,
-                                self.weights,
-                                value_split,
-                                staged,
-                            )?;
-                        }
+                        self.record_slot_recurrent(
+                            scope,
+                            node,
+                            arena,
+                            (lane_states, metadata),
+                            (staging, index, value_split, batch),
+                        )?;
                     }
                     Dispatch32::Row => {
                         for (lane, lane_metadata) in metadata.iter().enumerate() {
@@ -362,7 +418,7 @@ impl BatchBuilder<'_> {
     /// capture failures.
     pub fn build_slot_verify(
         &mut self,
-        lane_states: &mut [States],
+        lane_states: &mut super::slot_states::SlotStates,
         lane_fp8: &mut [Fp8Caches],
         verify: usize,
     ) -> Result<SlotVerifyGraph> {
@@ -378,7 +434,8 @@ impl BatchBuilder<'_> {
         {
             return Err(Error::invalid("slot verify lanes"));
         }
-        let fused = self.fused_recurrent(verify);
+        let (lane_states, roots) = lane_states.parts();
+        let fused = fused_recurrent(self.graph, verify);
         let mut checkpoints = if fused {
             (0..slots).map(|_| Vec::new()).collect()
         } else {
@@ -390,28 +447,43 @@ impl BatchBuilder<'_> {
             lanes,
             usize::try_from(self.device.profile()?.arena_budget_bytes()).map_err(device_error)?,
         )?;
-        let mut metadata = Vec::with_capacity(lanes);
-        for _ in 0..lanes {
-            metadata.push(
-                api::zeros::<i32>(&[METADATA_FIELDS])
-                    .sync_on(&self.device.stream)
-                    .map_err(device_error)?,
-            );
-        }
+        let (metadata_owner, metadata) = super::batch::batched_metadata(self.device, lanes)?;
         let mut profile = profile::SlotProfile::from_env(self.device);
         let mut staging = if fused {
             super::slot_recurrent::allocate_staging(self.device, &self.graph.nodes, &arena, slots)?
         } else {
             super::slot_recurrent::Staging::new()
         };
+        let parameters = if fused {
+            super::slot_states::prepare_parameters(self.device, &self.graph.nodes, self.weights)?
+        } else {
+            super::slot_states::RecurrentParameters::new()
+        };
+        let batch = super::slot_states::VerifyBatch {
+            roots,
+            parameters: &parameters,
+            metadata: &metadata_owner,
+        };
         let graph = self.capture_slot_verify(
             lane_states,
             lane_fp8,
-            (verify, &metadata),
+            (verify, &metadata, &batch),
             &mut arena,
             (&mut checkpoints, &mut staging),
             &mut profile,
         )?;
+        let batched_commit =
+            if fused && CapturedCommit::supported(&self.graph.nodes, &parameters, roots, slots) {
+                Some(CapturedCommit::new(
+                    self.device,
+                    &self.graph.nodes,
+                    roots,
+                    (&staging, &parameters, &metadata_owner),
+                    slots,
+                )?)
+            } else {
+                None
+            };
         let restore = if fused {
             self.capture_commits(lane_states, &arena, &metadata, (verify, &staging))?
         } else {
@@ -427,12 +499,15 @@ impl BatchBuilder<'_> {
             self.weights,
         )?;
         Ok(SlotVerifyGraph {
+            _parameters: parameters,
             token_readout,
             graph,
             restore,
+            batched_commit,
             fused,
             readbacks: Readbacks::default(),
-            metadata,
+            metadata_owner,
+            metadata_upload: Vec::with_capacity(lanes * METADATA_FIELDS),
             hidden,
             logits,
             slots,
@@ -467,8 +542,9 @@ impl SlotVerifyGraph {
         }
         let per_lane = verify_lanes(lanes, &self.cursors, self.verify, capacity, vocabulary)?;
         let total = self.slots * self.verify;
-        for (lane, metadata) in self.metadata.iter_mut().enumerate() {
-            let values = match per_lane[lane] {
+        self.metadata_upload.clear();
+        for entry in per_lane.iter().take(total) {
+            let values = match *entry {
                 Some((token, rope_pos, state_pos)) => [
                     i32::try_from(rope_pos).map_err(device_error)?,
                     i32::try_from(token).map_err(device_error)?,
@@ -477,8 +553,9 @@ impl SlotVerifyGraph {
                 ],
                 None => [0, 0, INACTIVE_LANE_STATE_POSITION, 0],
             };
-            super::metadata::update(&self.graph, metadata, values)?;
+            self.metadata_upload.extend_from_slice(&values);
         }
+        device.copy_host_slice(&mut self.metadata_owner, &self.metadata_upload)?;
         let hidden_size = self.hidden.size() / total;
         let vocabulary = self.logits.size() / total;
         let mut sources = Vec::with_capacity(2 * total);
@@ -550,30 +627,50 @@ impl SlotVerifyGraph {
     /// submitted token plus the accepted candidates.
     /// # Errors
     /// Rejects unknown slots, out-of-range counts and CUDA restore failures.
+    pub fn commit(&mut self, device: &CudaDevice, slot: usize, accepted: usize) -> Result<()> {
+        self.commit_many(device, from_ref(&(slot, accepted)))
+    }
+
+    /// Apply independently accepted prefixes together, after validating the complete batch.
+    /// # Errors
+    /// Rejects unknown, duplicate or non-pending slots, invalid counts and CUDA failures.
     #[expect(
         unsafe_code,
         reason = "Audited detached restore: single-stream ordering before any later replay, \
                   graph-owned tensors, drained by the owning pool's drop barrier"
     )]
-    pub fn commit(&mut self, device: &CudaDevice, slot: usize, accepted: usize) -> Result<()> {
-        if slot >= self.slots || accepted >= self.pending[slot] {
-            return Err(Error::invalid("slot verify commit"));
+    pub fn commit_many(&mut self, device: &CudaDevice, commits: &[(usize, usize)]) -> Result<()> {
+        validate_commits(&self.pending, commits)?;
+        if commits.is_empty() {
+            return Ok(());
         }
-        if let Some(restore) = self
-            .restore
-            .get(slot)
-            .and_then(|per_slot| per_slot.get(accepted))
-            .filter(|_| self.fused || accepted + 1 < self.verify)
-        {
-            // SAFETY: single-stream execution orders the restore before any later replay
-            // of this slot; every tensor it touches is owned by this graph, and the pool's
-            // drop barrier drains the stream before anything frees. Completion itself is
-            // never observed on the host — the restore only rewrites device state.
-            unsafe { restore.launch().async_on(&device.stream) }.map_err(device_error)?;
+        if let Some(batch) = self.batched_commit.as_mut().filter(|_| commits.len() > 1) {
+            batch.update(device, commits)?;
+            // SAFETY: same capture stream, retained state/count owners and the pool's drop barrier.
+            unsafe { batch.graph().launch().async_on(&device.stream) }.map_err(device_error)?;
+        } else {
+            for &(slot, accepted) in commits {
+                if let Some(restore) = self
+                    .restore
+                    .get(slot)
+                    .and_then(|per_slot| per_slot.get(accepted))
+                    .filter(|_| self.fused || accepted + 1 < self.verify)
+                {
+                    // SAFETY: ordered on the same stream; the pool's teardown drains all captures.
+                    unsafe { restore.launch().async_on(&device.stream) }.map_err(device_error)?;
+                }
+            }
         }
-        self.cursors[slot] += 1 + accepted;
-        self.pending[slot] = 0;
+        for &(slot, accepted) in commits {
+            self.cursors[slot] += 1 + accepted;
+            self.pending[slot] = 0;
+        }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) const fn has_batched_commit(&self) -> bool {
+        self.batched_commit.is_some()
     }
 
     /// Host-side state cursors of every slot.

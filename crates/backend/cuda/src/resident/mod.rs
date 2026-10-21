@@ -33,8 +33,13 @@ mod recurrent;
 mod recurrent_checkpoint;
 pub(crate) mod recurrent_prefill;
 pub(crate) mod slot_batch;
+mod slot_commit;
+mod slot_convolution;
 mod slot_recurrent;
+mod slot_rope;
+mod slot_states;
 mod slot_verify;
+mod slot_verify_attention;
 mod small_gemm;
 mod validation;
 pub use arena::ActivationArena;
@@ -71,3 +76,7 @@ pub(crate) mod gated_norm_discovery;
 
 #[cfg(test)]
 pub(crate) use prefill_projection::{narrow_dense_captures, with_dense_reference};
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_pooled_verify_model.rs"]
+mod pooled_verify_model_tests;

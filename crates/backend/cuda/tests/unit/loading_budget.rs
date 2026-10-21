@@ -153,15 +153,15 @@ fn pooled_admission_excludes_uncaptured_wide_prompt_and_private_readback() -> Re
         )?
         .at(256)
     };
-    // Two live F32 activation rows per graph lane; external rows retain their configured
-    // allocation, and prompt readback stages only its final row. Prompt arenas are shared by
+    // Two live F32 activation rows per graph lane; external rows follow the captured
+    // narrow geometry, and prompt readback stages only its final row. Prompt arenas are shared by
     // every sequence and priced once (`prompt_scratch_bytes`), never per sequence.
-    let pooled = (2 * 48) * F32 + (1 + 256) * 48 * F32 + 2 * (48 + 48) * F32;
+    let pooled = (2 * 48) * F32 + (1 + 64) * 48 * F32 + 2 * (48 + 48) * F32;
     assert_eq!(quote(false)?, pooled);
-    // Private capture adds three verification arena rows and three readback rows.
+    // Private capture adds the wide external rows, verification arena and readback rows.
     assert_eq!(
         quote(true)? - quote(false)?,
-        3 * (2 * 48) * F32 + 3 * (48 + 48) * F32
+        (256 - 64) * 48 * F32 + 3 * (2 * 48) * F32 + 3 * (48 + 48) * F32
     );
     // The shared scratch covers both prompt widths once.
     assert_eq!(
@@ -516,5 +516,114 @@ fn target_bf16_profile_admission_quotes_the_same_eligibility_decision() -> Resul
             quote(false, crate::AttentionProfile::Canonical)?
         );
     }
+    Ok(())
+}
+
+/// Pooled worker quotes follow the capture width, without changing private sequence geometry.
+#[test]
+fn worker_quote_uses_actual_prompt_rows_and_keeps_unscaled_kv() -> Result<()> {
+    let mut weights = fixture_weights();
+    weights.prefill_width = 2048;
+    weights.narrow_prefill_width = 32;
+    let graph = fixture_graph(48)?;
+    let profile = fixture_profile();
+    let geometry = ProgramGeometry::worker(&weights, 256);
+    assert_eq!(geometry.prompts, [256, 32]);
+    assert_eq!(ProgramGeometry::new(&weights, true).prompts, [2048, 32]);
+    assert_eq!(
+        external_bytes(&weights, 48, geometry, &profile)?,
+        257 * 48 * F32
+    );
+    let quote = |graph: &DataflowGraph, shared| {
+        worker_storage_bytes(graph, &weights, (8192, 48, 48), 256, shared, &profile)
+    };
+    let plain = quote(&graph, false)?;
+    assert_eq!(quote(&graph, true)?, plain);
+    let mut with_kv = graph;
+    let id = TensorId::new(9)?;
+    with_kv.tensors.push(TensorSpec {
+        id,
+        shape: vec![64, 128],
+        dtype: DType::F32,
+        storage: TensorStorage::State {
+            layer: 0,
+            kind: StateKind::AttentionKv,
+        },
+    });
+    // No FP8 scale: a shared paged FP8 pool does not own this F32 KV allocation.
+    assert_eq!(quote(&with_kv, true)?, quote(&with_kv, false)?);
+    assert_eq!(quote(&with_kv, true)? - plain, 8192 * 128 * 2 * F32);
+    weights.kv_scales.insert(id, [1.0, 1.0]);
+    let private = worker_storage_bytes(&with_kv, &weights, (8192, 48, 48), 256, false, &profile)?;
+    let shared = worker_storage_bytes(&with_kv, &weights, (8192, 48, 48), 256, true, &profile)?;
+    assert_eq!(private - shared, 8192 * 128 * 2);
+    Ok(())
+}
+
+#[test]
+fn pending_prompt_scratch_prices_only_uncached_captured_widths() -> Result<()> {
+    let mut weights = fixture_weights();
+    weights.prefill_width = 2048;
+    weights.narrow_prefill_width = 64;
+    let graph = fixture_graph(48)?;
+    let profile = fixture_profile();
+    for private in [false, true] {
+        let geometry = ProgramGeometry::new(&weights, private);
+        assert_eq!(
+            missing_prompt_scratch_bytes(&graph, &weights, geometry, &profile)?,
+            prompt_scratch_bytes(&graph, &weights, geometry, &profile)?
+        );
+    }
+    assert_eq!(
+        missing_prompt_scratch_bytes(
+            &graph,
+            &weights,
+            ProgramGeometry {
+                verification: 0,
+                prompts: [0, 0]
+            },
+            &profile
+        )?,
+        0
+    );
+    Ok(())
+}
+
+/// Physical-page budgeting must preserve useful per-slot capacity and round to whole pages.
+#[test]
+fn funded_kv_rounds_down_without_changing_logical_capacity() -> Result<()> {
+    let width = 16;
+    let capacity = 8192;
+    let maximum = width * 6144;
+    let fixed = 5_200_689_152;
+    let block_bytes = 1_048_576;
+    let envelope = 7_569_557_647;
+    let tokens = funded_kv_tokens(width, capacity, maximum, block_bytes, fixed, envelope)?
+        .ok_or_else(|| Error::invariant("funded fixture"))?;
+    assert_eq!(tokens, 72_288);
+    assert_eq!(tokens % KV_BLOCK_TOKENS, 0);
+    assert!(fixed + (tokens / KV_BLOCK_TOKENS) as u64 * block_bytes <= envelope);
+    assert!(fixed + (tokens / KV_BLOCK_TOKENS + 1) as u64 * block_bytes > envelope);
+    assert!(tokens >= width * (capacity / 2 + KV_BLOCK_TOKENS));
+    // A budget that cannot admit one minimum-bucket request per slot is not useful.
+    assert_eq!(
+        funded_kv_tokens(
+            width,
+            capacity,
+            maximum,
+            block_bytes,
+            fixed,
+            fixed + (width * capacity / 2 / KV_BLOCK_TOKENS) as u64 * block_bytes
+        )?,
+        None
+    );
+    assert_eq!(
+        funded_kv_tokens(width, capacity, maximum, 0, fixed, envelope)?,
+        None
+    );
+    assert_eq!(
+        funded_kv_tokens(width, capacity, maximum, block_bytes, fixed, fixed)?,
+        None
+    );
     Ok(())
 }

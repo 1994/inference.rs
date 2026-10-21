@@ -6,12 +6,14 @@ use super::{
     batch::{BatchOutput, SlotDecodeGraph, SlotLane, States},
     fp8_cache::{Fp8Caches, allocate},
     program::ProgramWeights,
+    slot_states::SlotStates,
     slot_verify::{SlotVerifyGraph, SlotVerifyLane},
 };
+use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::F32_BYTES;
 use crate::constants::KV_BLOCK_TOKENS;
 use crate::constants::MAX_VERIFICATION_WIDTH;
-use crate::device::{CudaDevice, device_error};
+use crate::device::{CudaDevice, DeviceProfile, device_error};
 use cuda_core::{CudaContext, PinnedHostBuffer, f8e4m3fn};
 use cutile::prelude::*;
 use infer_core::{Error, Result, TensorId};
@@ -25,7 +27,7 @@ const EXTERNAL_UPLOAD_RING: usize = MAX_VERIFICATION_WIDTH + 1;
 type ExternalLanes = (Vec<Tensor<f32>>, Vec<Vec<PinnedHostBuffer<f32>>>);
 
 /// One pool's per-slot recurrent states, KV caches and KV position tables.
-type SlotStorage = (Vec<States>, Vec<Fp8Caches>, Vec<Tensor<i32>>);
+type SlotStorage = (SlotStates, Vec<Fp8Caches>, Vec<Tensor<i32>>);
 
 /// How one state family moves into a slot at bind time: a token-row prefix of a
 /// capacity-sized KV cache (f32 or fp8), or the whole tensor (conv/delta state).
@@ -177,7 +179,7 @@ pub struct SlotPool {
     // arena buffers their kernels reference.
     decode: Option<SlotDecodeGraph>,
     verify: Option<SlotVerifyGraph>,
-    states: Vec<States>,
+    states: SlotStates,
     fp8: Vec<Fp8Caches>,
     /// Per-slot identity block tables; declared with the states so they outlive the captures.
     tables: Vec<Tensor<i32>>,
@@ -205,6 +207,73 @@ pub struct SlotPool {
 }
 
 impl SlotPool {
+    pub(crate) fn parameter_bytes(graph: &DataflowGraph, verify: usize) -> Result<u64> {
+        if super::slot_verify::fused_recurrent(graph, verify) {
+            super::slot_states::parameter_bytes(&graph.nodes)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub(crate) fn attention_bytes(
+        graph: &DataflowGraph,
+        weights: &ProgramWeights,
+        geometry: (usize, usize, usize),
+        profile: &DeviceProfile,
+    ) -> Result<u64> {
+        super::attention_decode::Workspace::pooled_bytes(graph, weights, geometry, profile)
+    }
+
+    /// Device staging or rollback storage used by the same recurrent policy as capture.
+    pub(crate) fn rollback_bytes(
+        graph: &DataflowGraph,
+        width: usize,
+        verify: usize,
+    ) -> Result<u64> {
+        let elements = if super::slot_verify::fused_recurrent(graph, verify) {
+            let mut elements = 0_u64;
+            for node in graph
+                .nodes
+                .iter()
+                .filter(|node| super::slot_recurrent::covers(node))
+            {
+                for id in super::slot_recurrent::commit_inputs(node) {
+                    let spec = graph
+                        .tensors
+                        .iter()
+                        .find(|spec| spec.id == *id)
+                        .ok_or_else(|| Error::invariant("pooled staging tensor"))?;
+                    elements = elements
+                        .checked_add(spec.elements()? as u64)
+                        .ok_or_else(|| Error::invalid("pooled staging overflow"))?;
+                }
+            }
+            elements.checked_mul(verify as u64)
+        } else {
+            let elements = graph
+                .tensors
+                .iter()
+                .filter(|spec| {
+                    matches!(
+                        spec.storage,
+                        TensorStorage::State {
+                            kind: StateKind::Conv | StateKind::LinearAttention,
+                            ..
+                        }
+                    )
+                })
+                .try_fold(0_u64, |sum, spec| {
+                    sum.checked_add(spec.elements()? as u64)
+                        .ok_or_else(|| Error::invalid("pooled snapshot overflow"))
+                })?;
+            elements.checked_mul(verify.saturating_sub(1) as u64)
+        }
+        .and_then(|n| n.checked_mul(width as u64))
+        .and_then(|n| n.checked_mul(F32_BYTES as u64))
+        .ok_or_else(|| Error::invalid("pooled rollback overflow"))?;
+        Ok(elements)
+    }
+
     /// Allocate `width` slots of `capacity` tokens each and capture the shared graph.
     /// `verify` ≥ 2 captures the pooled speculation graph with `verify` candidate lanes
     /// per slot; `verify` < 2 captures the plain decode graph.
@@ -227,7 +296,7 @@ impl SlotPool {
     ) -> Result<Self> {
         let (vocabulary, verify) = output;
         let capacity = super::capacity::padded(capacity)?;
-        if !(2..=MAX_VERIFICATION_WIDTH).contains(&width)
+        if !(2..=CB_DECODE_SLOTS).contains(&width)
             || capacity == 0
             || hidden == 0
             || vocabulary == 0
@@ -241,7 +310,7 @@ impl SlotPool {
         }
         let plan = copy_plan(graph, weights)?;
         let headroom = device.profile()?.device_headroom_bytes();
-        let budget = device.memory_info()?.0.saturating_sub(headroom);
+        let budget = device.allocatable_memory_bytes()?.saturating_sub(headroom);
         let paging = Self::paging(device, graph, weights, (width, capacity), kv_tokens)?;
         let (mut states, mut fp8, tables) = Self::allocate_slots(
             device,
@@ -263,6 +332,13 @@ impl SlotPool {
             })
             .collect::<Result<_>>()?;
         let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
+        attention.prepare_pooled(
+            device,
+            graph,
+            weights,
+            (width, verify, capacity),
+            paging.is_some(),
+        )?;
         let mut nvfp4 = super::nvfp4_gemm::Workspace::new(device, graph, weights, &[1, lanes])?;
         let mut placeholder_states = States::new();
         let mut placeholder_fp8 = Fp8Caches::new();
@@ -326,19 +402,25 @@ impl SlotPool {
         paging: Option<&Paging>,
         budget: u64,
     ) -> Result<SlotStorage> {
-        let mut states = Vec::with_capacity(width);
+        let paging_bytes = paging.map_or(0, |paging| state_bytes(&States::new(), &paging.shared));
+        let states = SlotStates::allocate(
+            device,
+            graph,
+            weights,
+            (width, capacity),
+            budget.saturating_sub(paging_bytes),
+        )?;
         let mut fp8 = Vec::with_capacity(width);
         let mut tables = Vec::with_capacity(width);
         let mut bytes = paging.map_or(0, |paging| state_bytes(&States::new(), &paging.shared));
-        for _ in 0..width {
-            let slot_states = super::program::allocate_states(device, graph, capacity, weights)?;
+        for slot_states in states.iter() {
             let slot_fp8 = match paging {
                 Some(paging) => paging.slot_caches()?,
                 None => allocate(device, graph, capacity, &weights.kv_scales)?,
             };
             let slot_bytes = paging.map_or_else(
-                || state_bytes(&slot_states, &slot_fp8),
-                |_| state_bytes(&slot_states, &Fp8Caches::new()),
+                || state_bytes(slot_states, &slot_fp8),
+                |_| state_bytes(slot_states, &Fp8Caches::new()),
             );
             bytes = bytes
                 .checked_add(slot_bytes)
@@ -349,7 +431,6 @@ impl SlotPool {
                     "slot decode pool exceeds available device memory minus headroom",
                 ));
             }
-            states.push(slot_states);
             fp8.push(slot_fp8);
             // Step 1 of the KV refactor: a per-slot identity mapping over that slot's own cache.
             // A paged pool fills the table from its shared blocks when the slot is assigned.
@@ -409,6 +490,13 @@ impl SlotPool {
     )]
     pub(crate) const fn quant_reuse_stats(&self) -> (usize, usize) {
         self._nvfp4.quant_reuse_totals()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_batched_commit(&self) -> bool {
+        self.verify
+            .as_ref()
+            .is_some_and(SlotVerifyGraph::has_batched_commit)
     }
 
     #[cfg(test)]
@@ -783,6 +871,23 @@ impl SlotPool {
             .as_mut()
             .ok_or_else(|| Error::invalid("slot pool has no verify graph"))?
             .commit(device, slot, accepted)
+    }
+
+    /// Commit independent accepted prefixes in one pooled update.
+    /// # Errors
+    /// Rejects unknown or duplicate slots, invalid counts and CUDA restore failures.
+    pub(crate) fn commit_verify_many(
+        &mut self,
+        device: &CudaDevice,
+        commits: &[(usize, usize)],
+    ) -> Result<()> {
+        if let [(slot, accepted)] = commits {
+            return self.commit_verify(device, *slot, *accepted);
+        }
+        self.verify
+            .as_mut()
+            .ok_or_else(|| Error::invalid("slot pool has no verify graph"))?
+            .commit_many(device, commits)
     }
 
     /// Copy the covered token-row prefix of one KV state family into the slot.

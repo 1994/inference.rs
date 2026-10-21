@@ -33,18 +33,18 @@ pub fn derive_config(
     )?;
     config.workspace_bytes = program.workspace_bytes.max(1);
     if capabilities.backend_kind() == infer_ir::BackendKind::Cuda {
-        // One logical chunk costs one captured prompt graph replay: a chunk wider than the
-        // captured graph is wasted work, and a graph wider than the chunk never runs. Ask
-        // the backend for the width it resolved at load and hand the scheduler exactly
-        // that, instead of leaving the generic 64-token default in place.
-        let width = backend
-            .execution_profile()
+        // Preserve the private program's default chunk width. A smaller pooled worker
+        // splits it internally; reporting that smaller width globally would make long
+        // private graphs replay half-filled.
+        let profile = backend.execution_profile();
+        let width = profile
+            .as_ref()
             .map_or(CUDA_PREFILL_CHUNK_TOKENS, |profile| profile.prefill_width)
             .max(1);
-        config.scheduler.prefill_chunk_tokens = config.scheduler.prefill_chunk_tokens.max(width);
-        config.max_num_batched_tokens = config
-            .max_num_batched_tokens
-            .max(config.scheduler.prefill_chunk_tokens);
+        let automatic = profile
+            .as_ref()
+            .is_some_and(|profile| profile.automatic_prefill);
+        cuda_prefill_limits(config, width, automatic);
         // One decode step of a large model already exceeds the generic 10 ms step budget, and
         // the cost model prices an unseen batch shape linearly, so a second decode was always
         // deferred and batched shapes were never observed: concurrent requests ran one at a
@@ -62,3 +62,24 @@ pub fn derive_config(
     }
     config.validate()
 }
+
+/// Keep one fixed-width prompt replay whole beside the round's ready decode requests.
+/// Without this headroom a single decode trims a full chunk by one token and creates
+/// another padded prompt replay for the remainder. Explicit token limits are retained.
+fn cuda_prefill_limits(config: &mut RuntimeConfig, width: usize, automatic: bool) {
+    config.scheduler.prefill_chunk_tokens = config.scheduler.prefill_chunk_tokens.max(width);
+    let decode_slots = if automatic {
+        config.max_num_seqs.saturating_sub(1)
+    } else {
+        0
+    };
+    let complete_round = config
+        .scheduler
+        .prefill_chunk_tokens
+        .saturating_add(decode_slots);
+    config.max_num_batched_tokens = config.max_num_batched_tokens.max(complete_round);
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/support_serving.rs"]
+mod tests;

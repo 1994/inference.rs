@@ -448,3 +448,75 @@ fn delta_verify_and_commit_match_sequential_lanes() -> TestResult {
     }
     Ok(())
 }
+
+/// Validate the non-power-of-two candidate axis and batched strides before hardware execution.
+#[test]
+fn batched_recurrent_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
+    use cutile::cutile_compiler::compile_api::KernelCompiler;
+    for (kh, vh, dim, block) in [(2, 4, 32, 32), (16, 48, 128, 32)] {
+        let output_strides = [3 * vh * dim, vh * dim, 1];
+        let state_strides = [dim * dim, dim, 1];
+        let mut strides = vec![
+            ("out", output_strides.as_slice()),
+            ("state", state_strides.as_slice()),
+        ];
+        for name in ["qkv", "beta", "alpha", "parameters", "metadata"] {
+            strides.push((name, &[1]));
+        }
+        KernelCompiler::new(fused::__module_ast_self, "fused", "delta_verify_batch")
+            .target("sm_120")
+            .generics(
+                [kh, vh, dim, block, 4]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            )
+            .strides(&strides)
+            .compile()?;
+        KernelCompiler::new(fused::__module_ast_self, "fused", "pack_parameters")
+            .target("sm_120")
+            .generics(vec![vh.to_string()])
+            .strides(&[("out", &[vh, 1]), ("rate", &[1]), ("bias", &[1])])
+            .compile()?;
+    }
+    Ok(())
+}
+
+#[path = "resident_slot_recurrent_batch.rs"]
+mod batched;
+
+#[test]
+fn batched_commit_kernels_compile_without_a_device() -> Result<(), Box<dyn Error>> {
+    use cutile::cutile_compiler::compile_api::KernelCompiler;
+    for (kh, vh, dim, block) in [(2, 4, 32, 32), (16, 48, 128, 32)] {
+        let state_strides = [vh * dim * dim, dim, 1];
+        let mut strides = vec![("state", state_strides.as_slice())];
+        for name in ["qkv", "beta", "alpha", "parameters", "metadata", "counts"] {
+            strides.push((name, &[1]));
+        }
+        KernelCompiler::new(fused::__module_ast_self, "fused", "delta_commit_batch")
+            .target("sm_120")
+            .generics(
+                [kh, vh, dim, block, 4]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            )
+            .strides(&strides)
+            .compile()?;
+    }
+    for channels in [32, 10240] {
+        let row_strides = [channels, 1];
+        let mut strides = vec![];
+        for name in ["h0", "h1", "h2", "input"] {
+            strides.push((name, row_strides.as_slice()));
+        }
+        strides.extend([("metadata", &[1][..]), ("counts", &[1][..])]);
+        KernelCompiler::new(fused::__module_ast_self, "fused", "conv_commit_batch")
+            .target("sm_120")
+            .generics(vec!["4".into()])
+            .strides(&strides)
+            .compile()?;
+    }
+    Ok(())
+}

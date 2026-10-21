@@ -4,8 +4,8 @@ use crate::constants::CB_SLOT_TOKENS;
 use crate::constants::MIB;
 use crate::constants::MTP_KV_OFFSET;
 use crate::constants::PREFILL_LANES;
+use crate::constants::WIDE_PREFILL_LANES;
 use crate::device::CudaDevice;
-use crate::device::DeviceProfile;
 use crate::loading::LoadedModel;
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, Result, StateId};
@@ -78,6 +78,14 @@ fn cacheable_prefix(
         draft,
         bytes,
     })
+}
+
+/// All storage needed before publishing a load-time pooled serving geometry.
+struct PoolPlan {
+    width: usize,
+    prompt_width: usize,
+    kv_tokens: usize,
+    bytes: u64,
 }
 
 impl CudaBackend {
@@ -207,7 +215,7 @@ impl CudaBackend {
         // Reserve the configured capture bucket, not the transient number of arrivals seen on
         // this tick. Otherwise a two-request first tick fixes the pool at two slots forever.
         let maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
-        let Some(pool) = self.create_slot_pool(capacity, maximum) else {
+        let Some(pool) = self.create_slot_pool(capacity, maximum, None) else {
             self.slots_disabled = true;
             // Batching is worth ~2.4x on the 27B (batch4 wall 1.11 vs 2.68 against vLLM) and
             // the fallback is otherwise silent: a caller only sees steps that never batched.
@@ -237,7 +245,7 @@ impl CudaBackend {
         }
         self.draft_slots = self.prepare_draft_pool(pool.width(), capacity);
         self.slots = Some(pool);
-        self.build_homes();
+        self.build_homes(self.loaded.pooled_prompt_width());
         self.reclaimed_slot_capacity = None;
     }
 
@@ -252,40 +260,78 @@ impl CudaBackend {
     }
 
     pub(super) fn warm_slot_pool_at(&mut self, capacity: usize) {
-        let mut maximum = self.maximum_states.clamp(2, CB_DECODE_SLOTS);
-        let width = loop {
-            let Some(pool) = self.create_slot_pool(capacity, maximum) else {
-                tracing::warn!(
-                    target: "infer::executor",
-                    capacity,
-                    last_failure = %self.pool_failure_reason.as_deref().unwrap_or("unknown"),
-                    "CUDA slot pool prewarm failed; will retry on the first batchable step"
-                );
+        if self.maximum_states < 2 {
+            return;
+        }
+        let maximum = self.maximum_states.min(CB_DECODE_SLOTS);
+        let envelope = match self.loaded.shared_scratch_bytes().and_then(|scratch| {
+            Ok(self
+                .physical_available()?
+                .min(self.budget.saturating_add(scratch)))
+        }) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.pool_failure_reason = Some(error.to_string());
                 return;
-            };
-            let width = pool.width();
-            self.draft_slots = self.prepare_draft_pool(width, capacity);
-            self.slots = Some(pool);
-            self.build_homes();
-            // The pool, its slot programs and the prompt worker must leave room for the
-            // runtime's own workspace and transient allocations; otherwise retry narrower.
-            let reserve = self
-                .loaded
-                .device()
-                .profile()
-                .map_or(SERVING_RESERVE_FALLBACK_BYTES, serving_reserve_bytes);
-            if width <= 2 || self.physical_available().unwrap_or(0) >= reserve {
-                break width;
             }
+        };
+        let selected = match self.pooled_plan(capacity, maximum, envelope) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.pool_failure_reason = Some(error.to_string());
+                return;
+            }
+        };
+        let Some(PoolPlan {
+            width: planned_width,
+            prompt_width,
+            kv_tokens,
+            bytes: quoted_bytes,
+        }) = selected
+        else {
+            self.pool_failure_reason = Some(format!("joint pool quote exceeds {envelope} bytes"));
+            return;
+        };
+        tracing::info!(target: "infer::executor", planned_width, prompt_width, quoted_bytes,
+            envelope_bytes = envelope, capacity, kv_tokens, "planned pooled CUDA serving storage");
+        let before_bytes = match self.physical_available() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.pool_failure_reason = Some(error.to_string());
+                return;
+            }
+        };
+        super::profiling::memory("before_pool", planned_width, self.loaded.device());
+        let Some(pool) = self.create_slot_pool(capacity, planned_width, Some(kv_tokens)) else {
+            return;
+        };
+        let width = pool.width();
+        super::profiling::memory("target_pool", width, self.loaded.device());
+        self.draft_slots = self.prepare_draft_pool(width, capacity);
+        super::profiling::memory("draft_pool", width, self.loaded.device());
+        self.slots = Some(pool);
+        self.build_homes(prompt_width);
+        super::profiling::memory("homes", width, self.loaded.device());
+        let allocated_bytes = self
+            .physical_available()
+            .map_or(u64::MAX, |free| before_bytes.saturating_sub(free));
+        // State-handle homes require a worker. Also validate the quote against allocation:
+        // never publish a plan that silently exceeds the operator's serving envelope.
+        if self.worker.is_none()
+            || (self.loaded.mtp_depth() > 0 && self.draft_slots.is_none())
+            || self.homes.iter().any(Option::is_none)
+            || allocated_bytes > envelope
+        {
+            tracing::warn!(target: "infer::executor", allocated_bytes, envelope,
+                "incomplete or oversized pooled CUDA serving plan; retaining private execution");
+            self.slots_disabled = true;
             self.worker = None;
             self.homes.clear();
             drop(self.draft_slots.take());
             drop(self.slots.take());
-            if self.loaded.device().reclaim_barrier().is_err() {
-                return;
-            }
-            maximum = width - 1;
-        };
+            let _ = self.loaded.reclaim_idle_prompt_scratch();
+            return;
+        }
         self.reclaimed_slot_capacity = None;
         tracing::info!(
             target: "infer::executor",
@@ -295,6 +341,43 @@ impl CudaBackend {
         );
     }
 
+    /// Quote all resources before capturing; retain the largest prompt rung at a width.
+    fn pooled_plan(
+        &self,
+        capacity: usize,
+        maximum: usize,
+        envelope: u64,
+    ) -> Result<Option<PoolPlan>> {
+        let configured = self.loaded.pooled_prompt_width();
+        // Preserve wide-prompt throughput: at most one halving, and never cross the
+        // delegated projection floor. Deeper shrinking saves memory but adds replays.
+        let minimum_prompt = (configured / 2).max(WIDE_PREFILL_LANES).min(configured);
+        for width in (2..=maximum).rev() {
+            let mut prompt_width = configured;
+            loop {
+                if let Some((kv_tokens, bytes)) = self.loaded.funded_pooled_serving(
+                    width,
+                    capacity,
+                    paged_tokens(width, capacity),
+                    prompt_width,
+                    envelope,
+                )? {
+                    return Ok(Some(PoolPlan {
+                        width,
+                        prompt_width,
+                        kv_tokens,
+                        bytes,
+                    }));
+                }
+                if prompt_width <= minimum_prompt {
+                    break;
+                }
+                prompt_width = (prompt_width / 2).max(minimum_prompt);
+            }
+        }
+        Ok(None)
+    }
+
     /// Capture each slot's resident target and draft programs. A slot without them still
     /// serves sequences that bind a private program's state, so failures only log.
     #[expect(
@@ -302,7 +385,7 @@ impl CudaBackend {
         reason = "Audited slot alias: homes are declared before the pools and cleared before \
                   either pool drops, and only the slot's lease holder replays them"
     )]
-    fn build_homes(&mut self) {
+    fn build_homes(&mut self, prompt_width: usize) {
         self.worker = None;
         self.homes.clear();
         let Some(pool) = self.slots.as_ref() else {
@@ -310,7 +393,7 @@ impl CudaBackend {
         };
         // SAFETY: the worker is cleared before the pool drops (see the expectation above).
         let kv = unsafe { pool.kv_views() };
-        let worker = kv.and_then(|kv| self.loaded.prompt_worker(pool.capacity(), kv));
+        let worker = kv.and_then(|kv| self.loaded.prompt_worker(pool.capacity(), kv, prompt_width));
         match worker {
             Ok((program, draft)) => self.worker = Some(super::Worker { program, draft }),
             Err(error) => tracing::warn!(
@@ -319,6 +402,7 @@ impl CudaBackend {
                 "wide prompt worker unavailable; slot-resident prompts use the narrow graph"
             ),
         }
+        super::profiling::memory("worker", pool.width(), self.loaded.device());
         for slot in 0..pool.width() {
             // SAFETY: see the expectation above.
             let built = unsafe {
@@ -345,13 +429,19 @@ impl CudaBackend {
     /// Each attempt that fails is followed by a reclaim so the next one is judged against
     /// memory that is actually free; a width that cannot fit is worth more to the server than
     /// no batching at all.
-    fn create_slot_pool(&mut self, capacity: usize, maximum: usize) -> Option<SlotPool> {
+    fn create_slot_pool(
+        &mut self,
+        capacity: usize,
+        maximum: usize,
+        kv_tokens: Option<usize>,
+    ) -> Option<SlotPool> {
         for width in (2..=maximum).rev() {
             loop {
-                match self
-                    .loaded
-                    .slot_pool(width, capacity, Some(paged_tokens(width, capacity)))
-                {
+                match self.loaded.slot_pool(
+                    width,
+                    capacity,
+                    Some(kv_tokens.unwrap_or_else(|| paged_tokens(width, capacity))),
+                ) {
                     Ok(pool) => return Some(pool),
                     Err(error) => {
                         super::profiling::pool_failure("target", width, capacity, &error);
@@ -642,21 +732,6 @@ const fn paged_tokens(width: usize, capacity: usize) -> usize {
     width * capacity * PAGED_KV_SHARE_NUMERATOR / PAGED_KV_SHARE_DENOMINATOR
 }
 
-/// Device memory the load-time slot pool leaves free for the runtime's workspace and transient
-/// allocations, as a fraction of total memory. A wider pool that would leave less is rebuilt
-/// narrower. The fraction is clamped so a 16 GiB card keeps a 1 GiB floor and a large card does
-/// not over-reserve what the runtime never uses.
-const SERVING_RESERVE_DIVISOR: u64 = 16;
-const MIN_SERVING_RESERVE_BYTES: u64 = 1 << 30;
-const MAX_SERVING_RESERVE_BYTES: u64 = 3 << 30;
-/// Reserve used when the driver profile is unavailable.
-const SERVING_RESERVE_FALLBACK_BYTES: u64 = 1 << 31;
-
-fn serving_reserve_bytes(profile: &DeviceProfile) -> u64 {
-    (profile.total_memory_bytes / SERVING_RESERVE_DIVISOR)
-        .clamp(MIN_SERVING_RESERVE_BYTES, MAX_SERVING_RESERVE_BYTES)
-}
-
 fn slot_replay(
     pools: (&mut SlotPool, Option<&mut SlotPool>),
     states: &mut BTreeMap<StateId, Sequence>,
@@ -795,6 +870,7 @@ fn slot_speculate(
         pool.run_verify_readout(device, &lanes, plain_greedy)
     })?;
     let rows = &mut readout.rows;
+    let mut commits = Vec::with_capacity(participants.len());
     for (&(index, slot), chain) in participants.iter().zip(candidates) {
         let state = states
             .get_mut(&tasks[index].state)
@@ -809,7 +885,7 @@ fn slot_speculate(
                 .map(|tokens| &tokens[slot * width..][..chain.len()]),
             defer_draft,
         )?;
-        pool.commit_verify(device, slot, output.tokens.len())?;
+        commits.push((slot, output.tokens.len()));
         if let Some(lease) = &mut state.slot {
             lease.position = state.history.len();
         }
@@ -818,6 +894,7 @@ fn slot_speculate(
             output,
         });
     }
+    pool.commit_verify_many(device, &commits)?;
     if defer_draft {
         super::drafting::catch_up(
             draft.ok_or_else(|| Error::invariant("batched draft pool"))?,
@@ -1062,7 +1139,8 @@ impl Sequence {
             offset += count;
         }
         if device_primed && let Some(spec) = self.speculation.as_mut() {
-            spec.last_hidden = spec.program.primed_hidden()?;
+            spec.last_hidden =
+                super::profiling::phase("prime_readback", || spec.program.primed_hidden())?;
         }
         if !matches!(task.tokens, ExecutionInput::Decode { .. }) {
             self.prime_draft(&priming)?;

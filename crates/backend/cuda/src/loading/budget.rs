@@ -18,6 +18,7 @@ use crate::resident::fusion_batch;
 use crate::resident::fusion_batch::required_bytes;
 use crate::resident::prompt_logits;
 use crate::resident::recurrent_prefill::required_bytes as recurrent_prefill_required_bytes;
+use crate::resident::slot_batch::SlotPool;
 use crate::tuning::attention::decode::GROUPED_ROWS;
 use crate::tuning::attention::decode::MAX_GROUPED_PARTS;
 use crate::{
@@ -38,6 +39,9 @@ const F32: u64 = F32_BYTES as u64;
 const READBACK_COPIES: u64 = 2;
 /// Private/shared verification crossed with full/other readout.
 const PRICE_GEOMETRIES: usize = 4;
+
+/// Conservative control words per pooled lane, covering metadata and token readout.
+const POOLED_CONTROL_WORDS: usize = 16;
 
 /// Exact storage price for one immutable program geometry.
 #[derive(Clone, Copy, Default)]
@@ -177,6 +181,347 @@ impl LoadedModel {
     }
 }
 
+/// Joint quote for the pooled target, draft, prompt worker and resident slot homes.
+/// The shared scratch is charged at the worker's geometry, rather than the private
+/// sequence's maximum prompt width. No graph is captured while evaluating a plan.
+impl LoadedModel {
+    pub(crate) fn pooled_serving_bytes(
+        &self,
+        width: usize,
+        capacity: usize,
+        kv_tokens: usize,
+        prompt_width: usize,
+    ) -> Result<u64> {
+        let capacity = self.validate_capacity(capacity)?;
+        let profile = self.device.profile()?;
+        let hidden = self.model.hidden_size;
+        let vocabulary = self.model.vocab_size;
+        let verify = if self.mtp_depth == 0 {
+            1
+        } else {
+            self.mtp_depth + 1
+        };
+        let mut bytes = pool_storage_bytes(
+            &self.graph,
+            &self.weights,
+            (width, capacity, kv_tokens),
+            verify,
+            hidden,
+            profile,
+        )?;
+        // A target home is a state handle: no forward/attention/projection capture.
+        let target_home = add(
+            ActivationArena::required_bytes(&self.graph, 1)? as u64,
+            external_bytes(
+                &self.weights,
+                hidden,
+                ProgramGeometry {
+                    verification: 0,
+                    prompts: [0, 0],
+                },
+                profile,
+            )?,
+        )?;
+        bytes = add(bytes, mul(target_home, width as u64)?)?;
+        bytes = add(
+            bytes,
+            worker_storage_bytes(
+                &self.graph,
+                &self.weights,
+                (capacity, hidden, vocabulary),
+                prompt_width,
+                true,
+                profile,
+            )?,
+        )?;
+        if let Some(draft) = &self.draft {
+            bytes = add(
+                bytes,
+                pool_storage_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    (width, capacity, width * capacity),
+                    1,
+                    hidden,
+                    profile,
+                )?,
+            )?;
+            let geometry = ProgramGeometry {
+                verification: 0,
+                prompts: [0, 0],
+            };
+            let home = program_price(
+                &draft.graph,
+                &draft.weights,
+                hidden,
+                vocabulary,
+                OutputReadout::Logits,
+                geometry,
+                profile,
+            )?;
+            // Slot homes alias the pool's recurrent and KV state, but own their workspaces.
+            let home_fixed = home
+                .fixed
+                .saturating_sub(recurrent_state_bytes(&draft.graph)?);
+            bytes = add(bytes, mul(home_fixed, width as u64)?)?;
+            bytes = add(
+                bytes,
+                worker_storage_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    (capacity, hidden, vocabulary),
+                    prompt_width,
+                    false,
+                    profile,
+                )?,
+            )?;
+        }
+        // Captures and allocator metadata are not tensor storage.
+        add(bytes, profile.graph_headroom_bytes())
+    }
+
+    /// Fund physical KV pages from the remaining whole-serving budget. Logical slot
+    /// capacity stays unchanged; admission leases pages for each request's actual capacity.
+    pub(crate) fn funded_pooled_serving(
+        &self,
+        width: usize,
+        capacity: usize,
+        maximum_kv_tokens: usize,
+        prompt_width: usize,
+        envelope: u64,
+    ) -> Result<Option<(usize, u64)>> {
+        let capacity = self.validate_capacity(capacity)?;
+        let maximum_kv_tokens = maximum_kv_tokens / KV_BLOCK_TOKENS * KV_BLOCK_TOKENS;
+        let full = self.pooled_serving_bytes(width, capacity, maximum_kv_tokens, prompt_width)?;
+        if full <= envelope {
+            return Ok(Some((maximum_kv_tokens, full)));
+        }
+        let fixed = self.pooled_serving_bytes(width, capacity, 0, prompt_width)?;
+        let blocks = maximum_kv_tokens / KV_BLOCK_TOKENS;
+        if fixed >= envelope || blocks == 0 {
+            return Ok(None);
+        }
+        let block_bytes = full.saturating_sub(fixed) / blocks as u64;
+        let Some(tokens) = funded_kv_tokens(
+            width,
+            capacity,
+            maximum_kv_tokens,
+            block_bytes,
+            fixed,
+            envelope,
+        )?
+        else {
+            return Ok(None);
+        };
+        let bytes = add(fixed, mul((tokens / KV_BLOCK_TOKENS) as u64, block_bytes)?)?;
+        Ok(Some((tokens, bytes)))
+    }
+
+    /// Physical scratch a new private program still needs, beyond its affine state quote.
+    /// This matters when a narrower pooled worker has not allocated the private prompt width.
+    pub(crate) fn pending_prompt_scratch_bytes(&self, private: bool) -> Result<u64> {
+        let profile = self.device.profile()?;
+        let mut bytes = missing_prompt_scratch_bytes(
+            &self.graph,
+            &self.weights,
+            ProgramGeometry::new(&self.weights, private),
+            profile,
+        )?;
+        if let Some(draft) = &self.draft {
+            bytes = add(
+                bytes,
+                missing_prompt_scratch_bytes(
+                    &draft.graph,
+                    &draft.weights,
+                    ProgramGeometry::new(&draft.weights, true),
+                    profile,
+                )?,
+            )?;
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) const fn pooled_prompt_width(&self) -> usize {
+        self.weights.prefill_width
+    }
+}
+
+/// A logical power-of-two bucket starts just above half its padded capacity. Keep
+/// enough pages for every resident slot to admit a request from that bucket, instead
+/// of funding many unusable state handles with only a handful of physical KV blocks.
+fn funded_kv_tokens(
+    width: usize,
+    capacity: usize,
+    maximum: usize,
+    block_bytes: u64,
+    fixed: u64,
+    envelope: u64,
+) -> Result<Option<usize>> {
+    if block_bytes == 0 || fixed >= envelope {
+        return Ok(None);
+    }
+    let per_slot = (capacity / 2 / KV_BLOCK_TOKENS + 1) * KV_BLOCK_TOKENS;
+    let minimum = width
+        .checked_mul(per_slot)
+        .ok_or_else(|| Error::invalid("pooled minimum KV overflow"))?;
+    let pages = (envelope - fixed) / block_bytes;
+    let tokens = usize::try_from(pages)
+        .unwrap_or(usize::MAX)
+        .min(maximum / KV_BLOCK_TOKENS)
+        * KV_BLOCK_TOKENS;
+    Ok((tokens >= minimum).then_some(tokens))
+}
+
+fn missing_prompt_scratch_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    geometry: ProgramGeometry,
+    profile: &DeviceProfile,
+) -> Result<u64> {
+    let mut bytes = 0;
+    for width in geometry.prompts.into_iter().filter(|width| *width > 0) {
+        if !weights.prompt_scratch.is_allocated(width)? {
+            bytes = add(
+                bytes,
+                prompt_scratch_bytes(
+                    graph,
+                    weights,
+                    ProgramGeometry {
+                        verification: 0,
+                        prompts: [width, 0],
+                    },
+                    profile,
+                )?,
+            )?;
+        }
+    }
+    Ok(bytes)
+}
+
+fn recurrent_state_bytes(graph: &DataflowGraph) -> Result<u64> {
+    graph
+        .tensors
+        .iter()
+        .filter(|spec| {
+            matches!(
+                spec.storage,
+                TensorStorage::State {
+                    kind: StateKind::Conv | StateKind::LinearAttention,
+                    ..
+                }
+            )
+        })
+        .try_fold(0, |bytes, spec| {
+            add(bytes, mul(spec.elements()? as u64, F32)?)
+        })
+}
+
+fn pool_storage_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    (width, capacity, kv_tokens): (usize, usize, usize),
+    verify: usize,
+    hidden: usize,
+    profile: &DeviceProfile,
+) -> Result<u64> {
+    let lanes = width * verify;
+    let mut bytes = mul(recurrent_state_bytes(graph)?, width as u64)?;
+    for spec in &graph.tensors {
+        if !matches!(
+            spec.storage,
+            TensorStorage::State {
+                kind: StateKind::AttentionKv,
+                ..
+            }
+        ) {
+            continue;
+        }
+        let columns = *spec
+            .shape
+            .get(1)
+            .ok_or_else(|| Error::invalid("pooled KV shape"))? as u64;
+        let (tokens, size) = if weights.kv_scales.contains_key(&spec.id) {
+            (kv_tokens, 1)
+        } else {
+            (width * capacity, F32)
+        };
+        bytes = add(bytes, mul(columns, mul(tokens as u64, 2 * size)?)?)?;
+    }
+    bytes = add(bytes, ActivationArena::required_bytes(graph, lanes)? as u64)?;
+    bytes = add(bytes, SlotPool::rollback_bytes(graph, width, verify)?)?;
+    bytes = add(bytes, SlotPool::parameter_bytes(graph, verify)?)?;
+    bytes = add(
+        bytes,
+        SlotPool::attention_bytes(graph, weights, (width, verify, capacity), profile)?,
+    )?;
+    // These widths prepare packed projection inputs; pooled verification writes directly
+    // into arena rows and needs none of the private graph's pack/unpack buffers.
+    bytes = add(
+        bytes,
+        projection_workspace(
+            graph,
+            weights,
+            ProgramGeometry {
+                verification: 0,
+                prompts: [lanes, 0],
+            },
+        )?,
+    )?;
+    bytes = add(bytes, attention_scratch(graph)?)?;
+    bytes = add(bytes, required_bytes(weights, lanes, profile))?;
+    let external_rows = 1 + lanes as u64
+        * if weights.fusion.is_some() {
+            MTP_FUSION_ROWS
+        } else {
+            1
+        };
+    bytes = add(bytes, mul(mul(hidden as u64, external_rows)?, F32)?)?;
+    // A block table per slot, plus scalar and per-lane control words.
+    let controls = width * capacity.div_ceil(KV_BLOCK_TOKENS) + (1 + lanes) * POOLED_CONTROL_WORDS;
+    bytes = add(bytes, mul(controls as u64, F32)?)?;
+    Ok(bytes)
+}
+
+fn worker_storage_bytes(
+    graph: &DataflowGraph,
+    weights: &ProgramWeights,
+    (capacity, hidden, vocabulary): (usize, usize, usize),
+    prompt_width: usize,
+    shared_kv: bool,
+    profile: &DeviceProfile,
+) -> Result<u64> {
+    let geometry = ProgramGeometry::worker(weights, prompt_width);
+    let price = program_price(
+        graph,
+        weights,
+        hidden,
+        vocabulary,
+        OutputReadout::Logits,
+        geometry,
+        profile,
+    )?;
+    let mut bytes = price.at(capacity as u64)?;
+    if shared_kv {
+        let shared = graph
+            .tensors
+            .iter()
+            .filter(|spec| weights.kv_scales.contains_key(&spec.id))
+            .try_fold(0, |sum, spec| {
+                let columns = *spec
+                    .shape
+                    .get(1)
+                    .ok_or_else(|| Error::invalid("shared worker KV shape"))?
+                    as u64;
+                add(sum, mul(columns, 2 * capacity as u64)?)
+            })?;
+        bytes = bytes.saturating_sub(shared);
+    }
+    add(
+        bytes,
+        prompt_scratch_bytes(graph, weights, geometry, profile)?,
+    )
+}
+
 /// One KV block's bytes over the graph's attention states: `columns` per position, keys and
 /// values, packed to one byte where the checkpoint carries fp8 scales.
 fn kv_block_bytes(graph: &DataflowGraph, weights: &ProgramWeights) -> Result<u64> {
@@ -270,7 +615,7 @@ fn program_price(
         bytes = add(bytes, amount)?;
     }
     bytes = add(bytes, projection_workspace(graph, weights, geometry)?)?;
-    bytes = add(bytes, external_bytes(weights, hidden, profile)?)?;
+    bytes = add(bytes, external_bytes(weights, hidden, geometry, profile)?)?;
     // Pinned readback is allocated on demand and capped per batch (device/readback.rs), so
     // charge what a step actually stages: one decode lane, the verification batch when it is
     // private, and the last prompt lane (prompt modes read only the last logits row).
@@ -351,13 +696,18 @@ fn prompt_partials_bytes(
     Ok(bytes)
 }
 
-fn external_bytes(weights: &ProgramWeights, hidden: usize, profile: &DeviceProfile) -> Result<u64> {
-    let width = weights.prefill_width.max(weights.batch_width).max(1) as u64;
+fn external_bytes(
+    weights: &ProgramWeights,
+    hidden: usize,
+    geometry: ProgramGeometry,
+    profile: &DeviceProfile,
+) -> Result<u64> {
+    let width = geometry.widths().into_iter().max().unwrap_or(1) as u64;
     let external_lanes = 1 + width;
     let fused_lanes = if weights.fusion.is_none() {
         0
     } else if fusion_batch::batched(weights, weights.prefill_width, profile) {
-        1 + weights.batch_width.max(1) as u64
+        1 + (weights.batch_width.max(1) as u64).min(width)
     } else {
         external_lanes
     };

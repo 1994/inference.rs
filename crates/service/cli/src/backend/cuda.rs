@@ -66,7 +66,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
         report_tuning(loaded.tuning());
         // Prompt scratch is allocated with the first sequence and shared by all of them.
         let used = free
-            .saturating_sub(loaded.device().memory_info()?.0)
+            .saturating_sub(loaded.device().allocatable_memory_bytes()?)
             .saturating_add(loaded.shared_scratch_bytes()?);
         let Some(state_budget) = limit.checked_sub(used).filter(|bytes| *bytes > 0) else {
             let error = Error::new(
@@ -79,7 +79,11 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
             );
             return Err(load_failure(&error, budget, selection));
         };
-        let maximum_states = loaded.profile().resident_states();
+        let device_states = loaded.profile().resident_states();
+        let maximum_states = selection
+            .max_num_seqs
+            .unwrap_or(device_states)
+            .min(device_states);
         tracing::info!(
             target: "infer::load",
             resident = %human_bytes(used),

@@ -231,6 +231,7 @@ impl LoadedModel {
     pub fn execution_profile(&self) -> infer_ir::ExecutionProfileInspection {
         infer_ir::ExecutionProfileInspection {
             prefill_width: self.weights.prefill_width,
+            pooled_prefill_width: None,
             batch_width: self.weights.batch_width,
             draft_depth: self.mtp_depth,
             automatic_prefill: self.automatic_prefill,
@@ -504,11 +505,18 @@ impl LoadedModel {
         &self,
         capacity: usize,
         kv: Option<Fp8Caches>,
+        prompt_width: usize,
     ) -> Result<(DeviceProgram, Option<DeviceProgram>)> {
         self.validate_capacity(capacity)?;
         let geometry = (capacity, self.model.hidden_size, self.model.vocab_size);
-        let program =
-            DeviceProgram::new_worker(&self.device, &self.graph, &self.weights, geometry, kv)?;
+        let program = DeviceProgram::new_worker(
+            &self.device,
+            &self.graph,
+            &self.weights,
+            geometry,
+            kv,
+            prompt_width,
+        )?;
         let draft = self
             .draft
             .as_ref()
@@ -519,6 +527,7 @@ impl LoadedModel {
                     &draft.weights,
                     geometry,
                     None,
+                    prompt_width,
                 )
             })
             .transpose()?;
@@ -566,6 +575,15 @@ impl LoadedModel {
             _ => None,
         };
         Ok((program, draft))
+    }
+
+    /// Drop unused prompt widths before a different serving geometry is allocated.
+    pub(crate) fn reclaim_idle_prompt_scratch(&self) -> Result<usize> {
+        let mut released = self.weights.prompt_scratch.reclaim_unused(&self.device)?;
+        if let Some(draft) = &self.draft {
+            released += draft.weights.prompt_scratch.reclaim_unused(&self.device)?;
+        }
+        Ok(released)
     }
 
     pub(crate) fn slot_pool(

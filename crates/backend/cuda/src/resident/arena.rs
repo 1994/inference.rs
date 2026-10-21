@@ -458,9 +458,9 @@ pub(super) fn batch_rows<T: DType>(owner: &Tensor<T>, lanes: usize) -> Result<Ve
 /// Rejects malformed slots, out-of-range lanes and offset overflows.
 #[expect(
     unsafe_code,
-    reason = "Audited from_foreign row view: the caller re-anchors the slot into the \
-              arena before any launch and the arena outlives its graphs; construction \
-              bounds the row inside the slot; same-stream ordering serializes accesses"
+    reason = "Audited from_foreign row view: the caller re-anchors the slot in its owning \
+              arena or workspace before any launch; that owner outlives its graphs; \
+              construction bounds the row; same-stream ordering serializes accesses"
 )]
 pub fn row_tensor(
     slot: Tensor<f32>,

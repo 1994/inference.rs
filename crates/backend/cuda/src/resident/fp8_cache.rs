@@ -16,8 +16,7 @@ pub(super) fn allocate(
     let mut plan = Vec::new();
     let mut bytes = 0usize;
     let budget = device
-        .memory_info()?
-        .0
+        .allocatable_memory_bytes()?
         .saturating_sub(device.profile()?.device_headroom_bytes());
     for spec in &graph.tensors {
         let Some(scale) = scales.get(&spec.id) else {

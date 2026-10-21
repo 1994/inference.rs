@@ -21,8 +21,7 @@ impl CudaBackend {
         Ok(self
             .loaded
             .device()
-            .memory_info()?
-            .0
+            .allocatable_memory_bytes()?
             .saturating_sub(self.loaded.profile().device_headroom_bytes()))
     }
     /// Prefill width the state's captured program will use.
@@ -34,7 +33,15 @@ impl CudaBackend {
     pub fn prefill_width_for(&self, state: StateId) -> Result<usize> {
         self.states
             .get(&state)
-            .map(|sequence| sequence.program.prefill_width())
+            .map(|sequence| {
+                if sequence.home.is_some()
+                    && let Some(worker) = &self.worker
+                {
+                    worker.program.prefill_width()
+                } else {
+                    sequence.program.prefill_width()
+                }
+            })
             .ok_or_else(|| Error::invalid("unknown CUDA state"))
     }
 
@@ -80,6 +87,10 @@ impl CudaBackend {
             && capacity <= previous
         {
             self.idle()?;
+            // Cached private programs retain the old wide scratch. Compatible requests
+            // return to the pool, so retire those idle shells before planning its storage.
+            while self.pool.evict() {}
+            self.loaded.reclaim_idle_prompt_scratch()?;
             self.warm_slot_pool_at(previous);
         }
         let Some(pool) = &self.slots else {
@@ -96,7 +107,15 @@ impl CudaBackend {
             return Ok(());
         }
         let needed = self.reservation_budget(capacity, readout, true)?;
-        if needed > self.budget || needed <= self.available()? {
+        let scratch = self.loaded.pending_prompt_scratch_bytes(true)?;
+        let reclaimable = self
+            .pool
+            .reclaimable_bytes
+            .saturating_add(self.prefix.bytes());
+        let physical = self.physical_available()?.saturating_add(reclaimable);
+        if needed > self.budget
+            || (needed <= self.available()? && needed.saturating_add(scratch) <= physical)
+        {
             return Ok(());
         }
         self.idle()?;
@@ -115,6 +134,7 @@ impl CudaBackend {
             self.fatal = Some(error.clone());
             return Err(error);
         }
+        self.loaded.reclaim_idle_prompt_scratch()?;
         let after = self.physical_available()?;
         tracing::info!(
             target: "infer::cuda_admission",
@@ -188,7 +208,10 @@ impl CudaBackend {
         if let Some(state) = self.pool.take(capacity, readout) {
             return self.reuse_pooled(id, state, capacity, budget, private_verification);
         }
-        self.make_room(budget)?;
+        let scratch = self
+            .loaded
+            .pending_prompt_scratch_bytes(private_verification)?;
+        self.make_room(budget, scratch)?;
         let program = match if private_verification {
             self.loaded.sequence(capacity)
         } else {
@@ -286,7 +309,7 @@ impl CudaBackend {
             .filter(|s| s.slot.is_some() && s.verification_priced)
             .map_or(0, |s| s.program.released_verification_bytes());
         if restore > 0 {
-            self.make_room(restore)?;
+            self.make_room(restore, 0)?;
         }
         let state = self
             .states

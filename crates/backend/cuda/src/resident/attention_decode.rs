@@ -489,6 +489,7 @@ pub(crate) mod kernels {
 #[path = "../../tests/unit/resident_attention_decode.rs"]
 mod tests;
 
+pub(super) mod pooled;
 mod workspace;
 pub use workspace::VERIFY_LANES;
 pub use workspace::Workspace;

@@ -162,7 +162,6 @@ pub(crate) fn prepare(
     graph: &infer_ir::DataflowGraph,
     weights: &ProgramWeights,
 ) -> Result<()> {
-    let architecture = &device.profile()?.architecture;
     // A target FP16 program never consults the BF16 target search. The draft program and the
     // explicit BF16 profile keep the existing BF16 behavior.
     let target_f16 = weights.attention_profile.is_fp16() && weights.fusion.is_none();
@@ -173,6 +172,58 @@ pub(crate) fn prepare(
         schema = if target_f16 { attention_mma::f16::SCHEMA } else { SCHEMA },
         "attention numerical profile"
     );
+    // Shape order prepares narrow graphs first, matching resident capture order.
+    for (shape, fp8, mma_eligible, f16_eligible) in prepared_shapes(device, graph, weights)? {
+        if !fp8 && weights.fusion.is_some() {
+            super::mma_f32::select(device, shape, weights.autotune, &weights.resident_tuning);
+        }
+        if !fp8 {
+            continue;
+        }
+        let baseline =
+            super::exact::select(device, shape, weights.autotune, &weights.resident_tuning);
+        let baseline = super::shared::select(
+            device,
+            shape,
+            weights.autotune,
+            &weights.resident_tuning,
+            baseline,
+        );
+        let baseline = super::vector::select(
+            device,
+            shape,
+            weights.autotune,
+            &weights.resident_tuning,
+            baseline,
+        );
+        let baseline = super::vector_combined::select(device, shape, baseline);
+        // Exact target tuning must finish before proposal search starts the shared
+        // wall-clock allowance. Only the shared eligibility decision may narrow precision.
+        if f16_eligible {
+            if let Err(error) = attention_mma::f16::select(device, shape) {
+                tracing::warn!(target:"infer::tuning",?shape,%error,"FP16 target attention unavailable: canonical fallback");
+            }
+        } else if mma_eligible {
+            select(
+                device,
+                shape,
+                weights.autotune,
+                &weights.resident_tuning,
+                baseline,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Enumerate the loaded program's attention geometries before selecting kernels.
+fn prepared_shapes(
+    device: &CudaDevice,
+    graph: &infer_ir::DataflowGraph,
+    weights: &ProgramWeights,
+) -> Result<BTreeSet<(Shape, bool, bool, bool)>> {
+    let architecture = &device.profile()?.architecture;
+    let target_f16 = weights.attention_profile.is_fp16() && weights.fusion.is_none();
     let mut shapes = BTreeSet::new();
     for lanes in weights.prompt_widths() {
         let mma_eligible = attention_mma::eligible(architecture, graph, weights, lanes);
@@ -225,48 +276,7 @@ pub(crate) fn prepare(
             }
         }
     }
-    // Shape order prepares narrow graphs first, matching resident capture order.
-    for (shape, fp8, mma_eligible, f16_eligible) in shapes {
-        if !fp8 {
-            if weights.fusion.is_some() {
-                super::mma_f32::select(device, shape, weights.autotune, &weights.resident_tuning);
-            }
-            continue;
-        }
-        let baseline =
-            super::exact::select(device, shape, weights.autotune, &weights.resident_tuning);
-        let baseline = super::shared::select(
-            device,
-            shape,
-            weights.autotune,
-            &weights.resident_tuning,
-            baseline,
-        );
-        let baseline = super::vector::select(
-            device,
-            shape,
-            weights.autotune,
-            &weights.resident_tuning,
-            baseline,
-        );
-        let baseline = super::vector_combined::select(device, shape, baseline);
-        // Exact target tuning must finish before proposal search starts the shared
-        // wall-clock allowance. Only the shared eligibility decision may narrow precision.
-        if f16_eligible {
-            if let Err(error) = attention_mma::f16::select(device, shape) {
-                tracing::warn!(target:"infer::tuning",?shape,%error,"FP16 target attention unavailable: canonical fallback");
-            }
-        } else if mma_eligible {
-            select(
-                device,
-                shape,
-                weights.autotune,
-                &weights.resident_tuning,
-                baseline,
-            );
-        }
-    }
-    Ok(())
+    Ok(shapes)
 }
 
 pub(crate) fn select(

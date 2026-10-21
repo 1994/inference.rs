@@ -13,10 +13,16 @@ fn capability_limits_scratch_to_validated_layout() -> Result<()> {
         Some(SCRATCH_BYTES),
         u64::try_from((ROWS * COLUMNS + ROWS * HIDDEN) * size_of::<f32>()).ok()
     );
-    for width in [1, 3, 4, 32, 64, 127, 129, 255, 257, 511] {
+    for width in [1, 17, 31, 32, 64, 127, 129, 255, 257, 511] {
         assert_eq!(
             layout_bytes("sm_120", width, Some(&WEIGHT_SHAPE), tiling),
             0
+        );
+    }
+    for width in [2, 3, 4, 5, 16] {
+        assert_eq!(
+            layout_bytes("sm_120", width, Some(&WEIGHT_SHAPE), tiling),
+            (width * (COLUMNS + HIDDEN) * size_of::<f32>()) as u64,
         );
     }
     for width in [256, 512, 1024, 2048] {

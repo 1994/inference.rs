@@ -1,7 +1,9 @@
+use super::super::ProgramGeometry;
 use super::*;
 use crate::resident::BatchOutput;
 use crate::resident::PromptScratchRegistry;
 use crate::resident::batch::BatchReadout;
+use crate::resident::metadata::identity_table;
 use crate::strategy::default_tiling;
 use crate::test_support::fixture_graph;
 use crate::tuning::resident_gemm::ResidentTuningSession;
@@ -295,5 +297,161 @@ fn fresh_pooled_prompt_and_retained_wide_prompt_match_for_continuation() -> Resu
             "position={position}"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn slot_program_external_rows_follow_captured_geometry() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let width = 48;
+    let graph = fixture_graph(width)?;
+    let mut weights = fixture_weights(&device, width)?;
+    let mut reference = DeviceProgram::new(&device, &graph, &weights, 64, width, width)?;
+    weights.prefill_width = 2048;
+    // This graph has no recurrent state or KV, so the slot handle needs no aliases.
+    let views = (
+        BTreeMap::new(),
+        BTreeMap::new(),
+        identity_table(&device, 64)?,
+    );
+    let mut home =
+        DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
+    assert_eq!(home.lane_external_owner.size(), width);
+    assert_eq!(home.lane_external.len(), 1);
+    assert_eq!(home.lane_fusion.len(), 1);
+    let previous = vec![0.125; width];
+    let expected = reference.step_greedy(7, 0, 0, Some(&previous))?;
+    let actual = home.step_greedy(7, 0, 0, Some(&previous))?;
+    assert_eq!(actual, expected);
+    let expected = device.read(&reference.logits)?;
+    let actual = device.read(&home.logits)?;
+    assert_eq!(
+        actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn slot_target_handle_runs_only_through_the_pool() -> Result<()> {
+    use crate::resident::slot_batch::SlotPool;
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let width = 48;
+    let graph = fixture_graph(width)?;
+    let mut weights = fixture_weights(&device, width)?;
+    weights.fusion = None;
+    let mut reference = DeviceProgram::new(&device, &graph, &weights, 64, width, width)?;
+    weights.prefill_width = 2048;
+    let mut pool = SlotPool::new(&device, &graph, &weights, 2, 64, width, (width, 0), None)?;
+    assert!(pool.take_slot(0));
+    let views = (
+        BTreeMap::new(),
+        BTreeMap::new(),
+        identity_table(&device, 64)?,
+    );
+    let mut home =
+        DeviceProgram::new_on_slot(&device, &graph, &weights, (64, width, width), views)?;
+    assert!(!home.forward_captured);
+    assert!(home.step(7, 0, 0, None, true).is_err());
+    home.reset()?;
+    let expected = reference.step(7, 0, 0, None, true)?;
+    let actual = pool.run_lanes(&device, &[(0, 7, 0, 0)])?;
+    assert_eq!(
+        actual[0].1.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        expected.1.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// A shared worker can capture fewer prompt rows than the model's global preference.
+/// Every delegated scratch must be prepared before capture at that actual geometry.
+#[test]
+#[ignore = "requires CUDA hardware and cuBLAS; run under safe-run"]
+fn delegated_worker_prewarms_its_actual_prompt_geometry() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 2048;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.prefill_width = 2048;
+    let geometry = ProgramGeometry::from_flags(0, 512, 0, false, true);
+    let program = DeviceProgram::new_impl(
+        &device,
+        &graph,
+        &weights,
+        (1024, hidden, hidden),
+        geometry,
+        None,
+    )?;
+    assert!(program.delegated.is_enabled());
+    assert_eq!(program.prefill_width(), 512);
+    Ok(())
+}
+
+/// Eviction must not invalidate another program's captured shared prompt storage.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn prompt_scratch_reclaims_only_after_all_captured_users_drop() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 48;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.fusion = None;
+    weights.prefill_width = 64;
+    weights.narrow_prefill_width = 32;
+    let mut first = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    let mut second = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    let prompt: Vec<_> = (0..64)
+        .map(|i| u32::try_from(i % hidden).unwrap())
+        .collect();
+    let expected = first.prefill_batch(&prompt, 0, true)?;
+    assert!(weights.prompt_scratch.is_allocated(64)?);
+    assert!(weights.prompt_scratch.is_allocated(32)?);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    drop(first);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    let actual = second.prefill_batch(&prompt, 0, true)?;
+    assert_eq!(actual, expected);
+    drop(second);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 2);
+    assert!(!weights.prompt_scratch.is_allocated(64)?);
+    assert!(!weights.prompt_scratch.is_allocated(32)?);
+    assert_eq!(weights.prompt_scratch.reclaim_unused(&device)?, 0);
+    let mut replacement = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    assert_eq!(replacement.prefill_batch(&prompt, 0, true)?, expected);
+    Ok(())
+}
+
+/// Shrinking pooled workers must leave private/long-context prompt geometry unchanged.
+#[test]
+#[ignore = "requires CUDA hardware; run under safe-run"]
+fn pooled_worker_width_is_independent_of_private_capture() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let hidden = 48;
+    let graph = fixture_graph(hidden)?;
+    let mut weights = fixture_weights(&device, hidden)?;
+    weights.fusion = None;
+    weights.prefill_width = 64;
+    weights.narrow_prefill_width = 0;
+    let mut worker =
+        DeviceProgram::new_worker(&device, &graph, &weights, (128, hidden, hidden), None, 32)?;
+    let mut private = DeviceProgram::new(&device, &graph, &weights, 128, hidden, hidden)?;
+    assert_eq!(worker.prefill_width(), 32);
+    assert_eq!(private.prefill_width(), 64);
+    let prompt: Vec<_> = (0..64)
+        .map(|i| u32::try_from(i % hidden).unwrap())
+        .collect();
+    let expected = private.prefill_batch(&prompt, 0, true)?;
+    worker.prefill_batch(&prompt[..32], 0, false)?;
+    assert_eq!(
+        worker.prefill_batch(&prompt[32..], 32, true)?,
+        expected[32..]
+    );
     Ok(())
 }

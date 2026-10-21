@@ -31,9 +31,9 @@ pub mod taps;
 /// Lanes of one MTP verification step that share a three-lane grouped launch.
 pub const VERIFY_LANES: usize = 3;
 /// Rows each verification lane owns in the stacked query tile of the three-lane kernel.
-const STACKED_LANE_ROWS: usize = 8;
+pub(super) const STACKED_LANE_ROWS: usize = 8;
 /// Query rows of the stacked three-lane tile: three lanes plus one padding lane.
-const STACKED_ROWS: usize = 32;
+pub(super) const STACKED_ROWS: usize = 32;
 
 struct Buffers {
     /// KV heads of the grouped kernel's partial layout, or `None` for one partial per query head.
@@ -65,6 +65,7 @@ pub struct Workspace {
     #[cfg(test)]
     pub taps: taps::Taps,
     buffers: BTreeMap<(usize, usize), Buffers>,
+    pub(super) pooled: Option<super::pooled::Workspace>,
     prefill: BTreeMap<(TensorId, usize), Choice>,
 }
 
@@ -143,6 +144,7 @@ impl Workspace {
             vector: None,
             combined: None,
             buffers,
+            pooled: None,
             prefill: BTreeMap::new(),
         })
     }
@@ -706,6 +708,6 @@ impl Workspace {
 
 /// Two CTAs per SM: the measured optimum of both grouped kernels on RTX 5090 at 32K tokens
 /// (the stacked three-lane kernel 150 → 59 µs, the one-lane kernel 53 → 46 µs per layer).
-fn grouped_options() -> CompileOptions {
+pub(super) fn grouped_options() -> CompileOptions {
     CompileOptions::default().occupancy(GROUPED_OCCUPANCY)
 }

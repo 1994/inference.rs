@@ -24,6 +24,12 @@ use infer_core::{Error, Result, TensorId};
 use infer_ir::{DataflowGraph, StateKind, TensorStorage};
 use std::collections::BTreeMap;
 
+type SlotState = (
+    super::batch::States,
+    super::fp8_cache::Fp8Caches,
+    Tensor<i32>,
+);
+
 pub struct FusionWeights {
     pub projection: ProjectionWeight,
     /// Tile for the fusion projection, selected like every other projection weight.
@@ -158,6 +164,8 @@ impl ProgramWeights {
 
 /// Captures a complete single-token forward pass; all state and activations stay on CUDA.
 pub struct DeviceProgram {
+    /// Slot target handles own state views and reset only; their forward runs in the pool.
+    forward_captured: bool,
     batch: Option<super::batch::BatchGraph>,
     last_batch: Option<(usize, usize)>,
     prompt_batch: Option<super::batch::BatchGraph>,
@@ -294,8 +302,9 @@ fn allocate_lane_fusion(
     device: &CudaDevice,
     hidden: usize,
     weights: &ProgramWeights,
+    geometry: ProgramGeometry,
 ) -> Result<LaneFusion> {
-    let width = weights.prefill_width.max(weights.batch_width).max(1);
+    let width = geometry.widths().into_iter().max().unwrap_or(1);
     let enabled = weights.fusion.is_some();
     let elements = width
         .checked_mul(hidden)
@@ -531,6 +540,7 @@ impl DeviceProgram {
         weights: &ProgramWeights,
         geometry: (usize, usize, usize),
         kv: Option<super::fp8_cache::Fp8Caches>,
+        prompt_width: usize,
     ) -> Result<Self> {
         // A paged pool's worker reads and writes the shared KV blocks of whichever sequence it
         // runs, through a table it copies from that sequence; its recurrent state is its own.
@@ -545,13 +555,10 @@ impl DeviceProgram {
             }
             None => None,
         };
-        let wide = ProgramGeometry::from_flags(
-            weights.batch_width,
-            weights.prefill_width,
-            weights.narrow_prefill_width,
-            false,
-            true,
-        );
+        let wide = ProgramGeometry::worker(weights, prompt_width);
+        if wide.prompts[0] == 0 {
+            return Err(Error::invalid("prompt worker width"));
+        }
         Self::new_impl(device, graph, weights, geometry, wide, slot)
     }
 
@@ -602,11 +609,7 @@ impl DeviceProgram {
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         (capacity, hidden, vocabulary): (usize, usize, usize),
-        slot: (
-            super::batch::States,
-            super::fp8_cache::Fp8Caches,
-            Tensor<i32>,
-        ),
+        slot: SlotState,
     ) -> Result<Self> {
         // Every prompt chunk runs on the prompt worker, so a slot's programs capture no prompt
         // graph: the draft's wide one alone retained 160 MB of projection scratch per slot.
@@ -650,30 +653,61 @@ impl DeviceProgram {
         states: &super::batch::States,
         fp8: &super::fp8_cache::Fp8Caches,
         activation_bytes: usize,
-        batch: Option<&super::batch::BatchGraph>,
-        prompts: [Option<&super::batch::BatchGraph>; 2],
+        captures: &super::batch::ProgramCaptures,
     ) -> u64 {
         retained_tensor_bytes(
             graph,
             states,
             fp8,
             activation_bytes,
-            batch.map_or(0, |graph| graph.width),
-            prompts.into_iter().flatten().map(|graph| graph.width).sum(),
+            captures.batch.as_ref().map_or(0, |graph| graph.width),
+            [
+                captures.prompt_batch.as_ref(),
+                captures.prompt_narrow.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|graph| graph.width)
+            .sum(),
         )
     }
 
-    fn projection_workspaces(
+    fn program_workspaces(
         device: &CudaDevice,
         graph: &DataflowGraph,
         weights: &ProgramWeights,
         geometry: ProgramGeometry,
-    ) -> Result<(super::nvfp4_gemm::Workspace, Support)> {
-        prepare(device, graph, weights, geometry.prompts);
-        let nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights, geometry)?;
-        let mut delegated = Support::new(device);
-        warm_delegated(&mut delegated, weights);
-        Ok((nvfp4, delegated))
+        capacity: usize,
+        forward_captured: bool,
+    ) -> Result<(
+        super::nvfp4_gemm::Workspace,
+        Support,
+        super::attention_decode::Workspace,
+    )> {
+        let empty = DataflowGraph::default();
+        let captured_graph = if forward_captured { graph } else { &empty };
+        let mut attention =
+            super::attention_decode::Workspace::new(device, captured_graph, capacity)?;
+        let (nvfp4, delegated) = if forward_captured {
+            attention.prepare_mma(
+                device,
+                graph,
+                weights,
+                capacity,
+                geometry.prompts.into_iter().max().unwrap_or(0),
+            )?;
+            prepare(device, graph, weights, geometry.prompts);
+            let nvfp4 = super::nvfp4_gemm::Workspace::program(device, graph, weights, geometry)?;
+            let mut delegated = Support::new(device);
+            warm_delegated(&mut delegated, weights, geometry);
+            (nvfp4, delegated)
+        } else {
+            (
+                super::nvfp4_gemm::Workspace::new(device, &empty, weights, &[])?,
+                Support::new(device),
+            )
+        };
+        Ok((nvfp4, delegated, attention))
     }
 
     fn new_impl(
@@ -682,26 +716,18 @@ impl DeviceProgram {
         weights: &ProgramWeights,
         (capacity, hidden, vocabulary): (usize, usize, usize),
         geometry: ProgramGeometry,
-        slot: Option<(
-            super::batch::States,
-            super::fp8_cache::Fp8Caches,
-            Tensor<i32>,
-        )>,
+        slot: Option<SlotState>,
     ) -> Result<Self> {
+        let forward_captured = !(slot.is_some()
+            && weights.fusion.is_none()
+            && geometry.verification == 0
+            && geometry.prompts == [0, 0]);
         super::validation::validate(graph, weights)?;
         let capacity = program_capacity(graph, weights, capacity, hidden, vocabulary)?;
         let mut arena = ActivationArena::new(device, graph, arena_budget(device)?)?;
         let activation_bytes = arena.bytes();
-        let mut attention = super::attention_decode::Workspace::new(device, graph, capacity)?;
-        attention.prepare_mma(
-            device,
-            graph,
-            weights,
-            capacity,
-            geometry.prompts.into_iter().max().unwrap_or(0),
-        )?;
-        let (mut nvfp4, mut delegated) =
-            Self::projection_workspaces(device, graph, weights, geometry)?;
+        let (mut nvfp4, mut delegated, mut attention) =
+            Self::program_workspaces(device, graph, weights, geometry, capacity, forward_captured)?;
         let (mut states, mut fp8_states, slot_table) = match slot {
             Some((states, fp8, table)) => (states, fp8, Some(table)),
             None => (
@@ -715,7 +741,7 @@ impl DeviceProgram {
         let table = slot_table.unwrap_or(identity);
         let mut fusion = FusionWorkspace::allocate(device, hidden, weights.fusion.is_some())?;
         let (lane_external_owner, mut lane_external, mut lane_fusion) =
-            allocate_lane_fusion(device, hidden, weights)?;
+            allocate_lane_fusion(device, hidden, weights, geometry)?;
         let prime_previous = api::zeros::<f32>(&[hidden])
             .sync_on(&device.stream)
             .map_err(device_error)?;
@@ -736,39 +762,40 @@ impl DeviceProgram {
             capacity,
             width: weights.batch_width,
         };
-        let (batch, prompt_batch, prompt_narrow) = builder.build_pair(geometry)?;
-        let graph_exec = builder.capture_single(&mut arena, &metadata, &mut fusion, false)?;
-        let prefill = builder.capture_single(&mut arena, &metadata, &mut fusion, true)?;
+        let captures = builder.build_program(
+            geometry,
+            &mut arena,
+            &metadata,
+            &mut fusion,
+            forward_captured,
+        )?;
         // Forward captures finalize the resident state bindings before reset records them.
         let reset_graph = capture_reset(device, &mut states)?;
-        let reclaimable_bytes = Self::program_retained_bytes(
+        let reclaimable_bytes =
+            Self::program_retained_bytes(graph, &states, &fp8_states, activation_bytes, &captures);
+        let readouts = greedy::ProgramReadouts::new(
+            device,
+            &mut arena,
             graph,
-            &states,
-            &fp8_states,
-            activation_bytes,
-            batch.as_ref(),
-            [prompt_batch.as_ref(), prompt_narrow.as_ref()],
-        );
-        let greedy::ProgramReadouts {
-            hidden,
-            logits,
-            greedy,
-            token_readout,
-        } = greedy::ProgramReadouts::new(device, &mut arena, graph, weights, vocabulary)?;
+            weights,
+            vocabulary,
+            forward_captured,
+        )?;
         Ok(Self {
+            forward_captured,
             table,
             nvfp4,
             delegated,
             attention,
-            batch,
-            prompt_batch,
-            prompt_narrow,
+            batch: captures.batch,
+            prompt_batch: captures.prompt_batch,
+            prompt_narrow: captures.prompt_narrow,
             last_batch: None,
-            graph: graph_exec,
-            greedy,
-            token_readout,
+            graph: captures.forward,
+            greedy: readouts.greedy,
+            token_readout: readouts.token_readout,
             readbacks: Readbacks::default(),
-            prefill,
+            prefill: captures.prefill,
             metadata,
             external,
             lane_external,
@@ -778,8 +805,8 @@ impl DeviceProgram {
             fp8_states,
             lane_fusion,
             reset_graph,
-            hidden,
-            logits,
+            hidden: readouts.hidden,
+            logits: readouts.logits,
             device: device.clone(),
             capacity,
             vocabulary,
@@ -924,6 +951,11 @@ impl DeviceProgram {
         external: Option<ExternalInput<'_>>,
         read_logits: bool,
     ) -> Result<()> {
+        if !self.forward_captured {
+            return Err(Error::invalid(
+                "slot target forwards require the shared pool",
+            ));
+        }
         if kv_position >= self.capacity
             || usize::try_from(token).map_err(device_error)? >= self.vocabulary
         {
@@ -1495,18 +1527,13 @@ fn capture_reset(
     .map_err(device_error)
 }
 
-pub fn allocate_states(
-    device: &CudaDevice,
+/// Allocation shapes shared by private and pooled state storage.
+pub(super) fn state_shapes(
     graph: &DataflowGraph,
     capacity: usize,
     weights: &ProgramWeights,
-) -> Result<BTreeMap<TensorId, Vec<Tensor<f32>>>> {
+) -> Result<Vec<(TensorId, Vec<Vec<usize>>)>> {
     let mut plan = Vec::new();
-    let mut total = 0usize;
-    let budget = device
-        .memory_info()?
-        .0
-        .saturating_sub(device.profile()?.device_headroom_bytes());
     for spec in &graph.tensors {
         let TensorStorage::State { kind, .. } = &spec.storage else {
             continue;
@@ -1531,7 +1558,24 @@ pub fn allocate_states(
             }
             _ => return Err(Error::unsupported("resident state recipe")),
         };
-        for shape in &shapes {
+        plan.push((spec.id, shapes));
+    }
+    Ok(plan)
+}
+
+pub fn allocate_states(
+    device: &CudaDevice,
+    graph: &DataflowGraph,
+    capacity: usize,
+    weights: &ProgramWeights,
+) -> Result<BTreeMap<TensorId, Vec<Tensor<f32>>>> {
+    let plan = state_shapes(graph, capacity, weights)?;
+    let mut total = 0usize;
+    let budget = device
+        .allocatable_memory_bytes()?
+        .saturating_sub(device.profile()?.device_headroom_bytes());
+    for (_, shapes) in &plan {
+        for shape in shapes {
             let elements = shape.iter().try_fold(1usize, |a, b| {
                 a.checked_mul(*b)
                     .ok_or_else(|| Error::invalid("state overflow"))
@@ -1551,7 +1595,6 @@ pub fn allocate_states(
                 ));
             }
         }
-        plan.push((spec.id, shapes));
     }
     let mut states = BTreeMap::new();
     for (id, shapes) in plan {
@@ -1584,7 +1627,7 @@ fn attention_only(graph: &DataflowGraph) -> bool {
 ///
 /// cuBLAS chooses workspace and algorithm the first time it sees a configuration, and a capturing
 /// stream rejects that host-side work, so the warmup has to happen here.
-fn warm_delegated(delegated: &mut Support, weights: &ProgramWeights) {
+fn warm_delegated(delegated: &mut Support, weights: &ProgramWeights, geometry: ProgramGeometry) {
     if !delegated.is_enabled() {
         return;
     }
@@ -1599,11 +1642,7 @@ fn warm_delegated(delegated: &mut Support, weights: &ProgramWeights) {
         };
         let rows = usize::try_from(rows).unwrap_or(0);
         let columns = usize::try_from(columns).unwrap_or(0);
-        for width in [
-            weights.batch_width,
-            weights.narrow_prefill_width,
-            weights.prefill_width,
-        ] {
+        for width in geometry.widths() {
             let _ = delegated.warm(width, dense, rows, columns);
         }
     }
