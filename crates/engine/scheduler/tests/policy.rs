@@ -2,6 +2,7 @@ use infer_core::*;
 use infer_ir::*;
 use infer_scheduler::*;
 use infer_spi::{CostModelProvider, SchedulingPolicy};
+use std::collections::BTreeSet;
 
 #[expect(
     clippy::unwrap_used,
@@ -655,4 +656,92 @@ fn an_intervening_prompt_cannot_reextend_an_aligned_grant_into_a_wide_tail() {
         15
     );
     assert_eq!(step.work.iter().map(|w| w.token_count).sum::<usize>(), 2003);
+}
+
+#[test]
+fn resident_geometry_preserves_budget_progress_and_decode_protection_across_rounds() {
+    let mut seed = 73usize;
+    let mut next = |bound: usize| {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        seed % bound
+    };
+    for _ in 0..512 {
+        let decode_count = next(16);
+        let decode_rounds = next(4);
+        let budget = next(4096) + 1;
+        let width = [32, 64, 128, 256, 512, 1024][next(6)];
+        let narrow_width = [0, 1, 8, 16, 32, 64][next(6)].min(width - 1);
+        let mut pending = vec![
+            work(101, ExecutionRole::Prefill, next(8192) + 1),
+            work(102, ExecutionRole::Prefill, next(8192) + 1),
+        ];
+        let original = pending
+            .iter()
+            .map(|w| w.remaining_tokens)
+            .collect::<Vec<_>>();
+        for item in &mut pending {
+            item.cost_query.prefill_geometry = Some(PrefillGeometry {
+                width,
+                narrow_width,
+            });
+        }
+        let mut totals = [0, 0];
+        let mut r = resources();
+        r.max_num_seqs = 32;
+        r.max_num_batched_tokens = budget;
+        r.gpu_budget_us = 1_000_000;
+        r.scheduler.prefill_chunk_tokens = 2048;
+        // Once finite decode work finishes, at least one prompt token must progress per round.
+        for round in 0..=original.iter().sum::<usize>() + decode_rounds {
+            if pending.iter().all(|w| w.remaining_tokens == 0) {
+                break;
+            }
+            let mut ready: Vec<_> = if round < decode_rounds {
+                (1..=decode_count)
+                    .map(|id| work(u64::try_from(id).unwrap(), ExecutionRole::Decode, 1))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            ready.extend(pending.iter().filter(|w| w.remaining_tokens > 0).cloned());
+            let result = plan(&ready, &r, 0);
+            let step = result.step.as_ref().unwrap();
+            assert!(step.work.iter().map(|w| w.token_count).sum::<usize>() <= budget);
+            let decodes = step
+                .work
+                .iter()
+                .filter(|w| w.role == ExecutionRole::Decode)
+                .count();
+            assert_eq!(
+                decodes,
+                if round < decode_rounds {
+                    decode_count.min(budget)
+                } else {
+                    0
+                }
+            );
+            let mut selected_ids = BTreeSet::new();
+            for selected in &step.work {
+                assert!(selected_ids.insert(selected.request));
+                if selected.role != ExecutionRole::Prefill {
+                    continue;
+                }
+                let index = pending
+                    .iter()
+                    .position(|w| w.request == selected.request)
+                    .unwrap();
+                let item = &mut pending[index];
+                let chunk = item.remaining_tokens.min(r.scheduler.prefill_chunk_tokens);
+                assert!(selected.token_count > 0 && selected.token_count <= chunk);
+                if chunk <= budget && selected.token_count < chunk {
+                    assert!(selected.token_count >= chunk.div_ceil(2));
+                }
+                item.remaining_tokens -= selected.token_count;
+                totals[index] += selected.token_count;
+                item.cost_query.context_tokens += selected.token_count;
+            }
+        }
+        assert!(pending.iter().all(|w| w.remaining_tokens == 0));
+        assert_eq!(totals.as_slice(), original.as_slice());
+    }
 }
