@@ -17,7 +17,9 @@ fn probe_command() -> StdResult<Command, Box<dyn StdError>> {
     command
         .args(["--exact", PROBE_TEST, "--test-threads=1"])
         .env(PROBE_ENV, "child")
-        .env(WORKER_ENV, WORKER_VALUE);
+        .env(WORKER_ENV, WORKER_VALUE)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     Ok(command)
 }
 
