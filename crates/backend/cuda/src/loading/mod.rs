@@ -103,6 +103,9 @@ impl LoadOptions {
             MID_PREFILL_LANES,
             MAX_PREFILL_LANES,
             WIDE_PREFILL_LANES,
+            EXTRA_WIDE_PREFILL_LANES,
+            WIDER_PREFILL_LANES,
+            WIDEST_PREFILL_LANES,
         ]
         .contains(&self.prefill_width)
             || self.verification_width > MAX_VERIFICATION_WIDTH
@@ -749,3 +752,7 @@ mod oxide_gdn_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_gated_norm_model.rs"]
 mod gated_norm_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_prompt_width_buckets.rs"]
+mod prompt_width_bucket_tests;
