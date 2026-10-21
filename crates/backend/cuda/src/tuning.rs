@@ -461,8 +461,9 @@ impl TilingTable {
     }
 }
 
-/// Derive the machine-local tuning table path. Nothing is configured by hand: the path comes
-/// from the user cache directory and the entries inside are keyed by the device identity, so
+/// Derive the machine-local tuning table path.
+///
+/// The path comes from the user cache directory and entries are keyed by device identity, so
 /// one file serves every GPU and model on this host.
 #[must_use]
 pub fn table_path() -> Option<PathBuf> {
