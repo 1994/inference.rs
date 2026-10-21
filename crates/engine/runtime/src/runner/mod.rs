@@ -70,6 +70,7 @@ struct Snapshot {
     state_capacity_bytes: Option<u64>,
     kv: Option<KvCacheInspection>,
     growth: BoundedMap<StateId, PageGrowth>,
+    prefill: BoundedMap<StateId, infer_ir::PrefillGeometry>,
     error: Option<Error>,
 }
 impl Snapshot {
@@ -79,6 +80,7 @@ impl Snapshot {
             state_capacity_bytes: None,
             kv: None,
             growth: BoundedMap::new(states)?,
+            prefill: BoundedMap::new(states)?,
             error: None,
         })
     }
