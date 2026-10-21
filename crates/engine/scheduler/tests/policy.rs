@@ -610,3 +610,49 @@ fn replay_geometry_keeps_singleton_progress_at_every_subgraph_budget() {
         assert_eq!(step.work[0].token_count, budget);
     }
 }
+
+#[test]
+fn an_intervening_prompt_cannot_reextend_an_aligned_grant_into_a_wide_tail() {
+    let mut r = resources();
+    r.max_num_seqs = 32;
+    r.max_num_batched_tokens = 2048;
+    r.gpu_budget_us = 1_000_000;
+    r.scheduler.prefill_chunk_tokens = 2048;
+    let mut items: Vec<_> = (1..=15)
+        .map(|id| work(id, ExecutionRole::Decode, 1))
+        .collect();
+    items.push(work(16, ExecutionRole::Prefill, 64));
+    let mut prompt = work(17, ExecutionRole::Prefill, 4096);
+    prompt.cost_query.prefill_geometry = Some(PrefillGeometry {
+        width: 1024,
+        narrow_width: 64,
+    });
+    items.push(prompt);
+    items.push(work(18, ExecutionRole::Prefill, 900));
+    let result = plan(&items, &r, 0);
+    let step = result.step.as_ref().unwrap();
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 17)
+            .unwrap()
+            .token_count,
+        1024
+    );
+    assert_eq!(
+        step.work
+            .iter()
+            .find(|w| w.request.get() == 18)
+            .unwrap()
+            .token_count,
+        900
+    );
+    assert_eq!(
+        step.work
+            .iter()
+            .filter(|w| w.role == ExecutionRole::Decode)
+            .count(),
+        15
+    );
+    assert_eq!(step.work.iter().map(|w| w.token_count).sum::<usize>(), 2003);
+}
