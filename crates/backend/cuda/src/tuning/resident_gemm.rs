@@ -87,6 +87,7 @@ const JIT_OPT_LEVEL: u8 = 3;
 const MODEL_SEARCH_BUDGET: Duration = Duration::from_secs(30);
 
 /// Shared by target/draft weights and every program created from one loaded model.
+///
 /// The allowance starts at the first new resident search, after weight binding.
 /// Cache identities and mandatory real-weight proofs remain available after it expires.
 pub struct ResidentTuningSession {
