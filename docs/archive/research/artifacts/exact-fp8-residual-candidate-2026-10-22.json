@@ -1,5 +1,5 @@
 {
-  "status": "implemented and numerically verified; draft, serving performance NOT qualified",
+  "status": "numerically verified, but serving performance failed qualification; draft retained, NOT merged",
   "parent_main": "2bc87fff3ff91f2fc600d93885c600996fffb57c",
   "implementation": {
     "arithmetic": "two explicit nearest-even, FTZ-disabled multiplies, then nearest-even Add in original operand order",
@@ -84,15 +84,212 @@
     "all_finished": true,
     "median_wall_reduction_percent": -0.805735070004987
   },
-  "decision": "Do not merge based on the microbenchmark. First serving pair is slower and only 13/48 full token sequences match; all requests finish. Same-workload/same-configuration reverse-order replication and task-quality gates are pending. Fixed-shape checkpoint bit equality does not substitute for asynchronous serving/task-quality evidence.",
+  "decision": "NOT QUALIFIED. Two of three process pairs regress; one improves only 0.12%. No reproducible serving gain. No merge and no downstream quality/regression claims.",
   "binary_v2_sha256": "b09eaa56f0de1de9aacfd3f47874a9ba641437423592a1eb9051bb3841dde672",
   "v1_to_v2": "Named scale tile constant, equivalent span guard destructuring, and test-only reference/model gate. No kernel arithmetic changed.",
   "diagnostic_failure": "Initial profile stopped after warmup because a historical >=6 MMA-log-count assertion expected six selections; both current baseline and candidate emit five identical selections. A separate v2 capture validates required 64/1024/2048 shapes and actual runtime profile instead. Failed v1 report and log retained.",
   "evidence_directory": "/home/r/benchmarks/inference.rs/fp8-residual-2026-10-22",
   "pending": [
-    "at least three complete adjacent process pairs with both orders and disclosed variance",
-    "default automatic-budget and 32K C1/C4 regression",
-    "complete paired task-quality outputs",
-    "final CI and review"
-  ]
+    "default automatic-budget and 32K C1/C4 regression deferred after performance failure",
+    "complete paired task-quality evaluation deferred after performance failure",
+    "CI/review do not override the failed performance gate"
+  ],
+  "serving_qualification": {
+    "orders": [
+      "AB",
+      "BA",
+      "AB"
+    ],
+    "pairs": [
+      {
+        "labels": [
+          "strict-a1",
+          "strict-b1"
+        ],
+        "completed": [
+          true,
+          true
+        ],
+        "binary_sha256": [
+          "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9",
+          "dc7a1f212e022091c698909f368c91c08384feff9e092dbbe0ffeaa146b925dc"
+        ],
+        "same_workload": true,
+        "same_config_readback": true,
+        "seconds": [
+          [
+            12.200628055,
+            12.296739722,
+            12.144152124
+          ],
+          [
+            12.298932794,
+            12.297092425,
+            12.304897861
+          ]
+        ],
+        "median_seconds": [
+          12.200628055,
+          12.298932794
+        ],
+        "median_ttft_seconds": [
+          5.223841351020383,
+          5.267730539519107
+        ],
+        "same_token_outputs": 13,
+        "total_outputs": 48,
+        "all_finished": true,
+        "median_wall_reduction_percent": -0.805735070004987
+      },
+      {
+        "labels": [
+          "strict-a2",
+          "strict-b2"
+        ],
+        "completed": [
+          true,
+          true
+        ],
+        "binary_sha256": [
+          "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9",
+          "b09eaa56f0de1de9aacfd3f47874a9ba641437423592a1eb9051bb3841dde672"
+        ],
+        "same_workload": true,
+        "same_config_readback": true,
+        "seconds": [
+          [
+            12.345440737,
+            12.313614461,
+            12.333210435
+          ],
+          [
+            12.35504343,
+            12.318104902,
+            12.236183097
+          ]
+        ],
+        "median_seconds": [
+          12.333210435,
+          12.318104902
+        ],
+        "median_ttft_seconds": [
+          5.0884775955055375,
+          5.086682448483771
+        ],
+        "same_token_outputs": 17,
+        "total_outputs": 48,
+        "all_finished": true,
+        "median_wall_reduction_percent": 0.12247851505989837
+      },
+      {
+        "labels": [
+          "strict-a3",
+          "strict-b3"
+        ],
+        "completed": [
+          true,
+          true
+        ],
+        "binary_sha256": [
+          "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9",
+          "b09eaa56f0de1de9aacfd3f47874a9ba641437423592a1eb9051bb3841dde672"
+        ],
+        "same_workload": true,
+        "same_config_readback": true,
+        "seconds": [
+          [
+            12.221804135,
+            12.241058057,
+            12.212022718
+          ],
+          [
+            12.463706976,
+            12.238820998,
+            12.301807445
+          ]
+        ],
+        "median_seconds": [
+          12.221804135,
+          12.301807445
+        ],
+        "median_ttft_seconds": [
+          5.202945370023372,
+          4.991392812487902
+        ],
+        "same_token_outputs": 20,
+        "total_outputs": 48,
+        "all_finished": true,
+        "median_wall_reduction_percent": -0.6545949281816066
+      }
+    ],
+    "all_control_seconds": [
+      12.200628055,
+      12.296739722,
+      12.144152124,
+      12.345440737,
+      12.313614461,
+      12.333210435,
+      12.221804135,
+      12.241058057,
+      12.212022718
+    ],
+    "all_candidate_seconds": [
+      12.298932794,
+      12.297092425,
+      12.304897861,
+      12.35504343,
+      12.318104902,
+      12.236183097,
+      12.463706976,
+      12.238820998,
+      12.301807445
+    ],
+    "pooled_medians_seconds": [
+      12.241058057,
+      12.301807445
+    ],
+    "pooled_median_reduction_percent": -0.496275630073173,
+    "decision": "NOT QUALIFIED. Two of three process pairs regress; one improves only 0.12%. No reproducible serving gain. No merge and no downstream quality/regression claims.",
+    "baseline_repeat": {
+      "labels": [
+        "strict-a1",
+        "strict-a2"
+      ],
+      "completed": [
+        true,
+        true
+      ],
+      "binary_sha256": [
+        "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9",
+        "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+      ],
+      "same_workload": true,
+      "same_config_readback": true,
+      "seconds": [
+        [
+          12.200628055,
+          12.296739722,
+          12.144152124
+        ],
+        [
+          12.345440737,
+          12.313614461,
+          12.333210435
+        ]
+      ],
+      "median_seconds": [
+        12.200628055,
+        12.333210435
+      ],
+      "median_ttft_seconds": [
+        5.223841351020383,
+        5.0884775955055375
+      ],
+      "same_token_outputs": 17,
+      "total_outputs": 48,
+      "all_finished": true,
+      "median_wall_reduction_percent": -1.0866848772237203
+    },
+    "v1_v2_scope": "Pair 1 used candidate v1; pairs 2/3 used v2. v2 changes only equivalent host span checks/named constants and test-only comparison support; both v2 pairs also fail to show reproducible gain."
+  }
 }
