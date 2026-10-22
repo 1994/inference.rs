@@ -1,0 +1,423 @@
+{
+  "decision": "PR39 residual fusion remains unqualified; standalone norm+maximum candidate merits integration investigation only",
+  "norm_maximum": {
+    "date": "2026-10-22",
+    "host": "192.168.1.45",
+    "source_base": "401e581d95f42b761088aeb8c991b2175cb469c6",
+    "status": "standalone candidate only; production dispatch unchanged; not qualified for merge",
+    "hypothesis": "Preserve normalized F32 output, compute exact FP8 row maximum before store, mask padding as the original reload does, and retain separate parallel FP8 conversion.",
+    "numeric_checks": {
+      "cases": 42,
+      "shapes": [
+        [
+          1,
+          5120
+        ],
+        [
+          64,
+          5120
+        ],
+        [
+          1024,
+          4608
+        ],
+        [
+          1024,
+          5120
+        ],
+        [
+          1024,
+          7168
+        ],
+        [
+          1024,
+          8192
+        ],
+        [
+          1024,
+          17408
+        ]
+      ],
+      "fixtures": [
+        "finite signed",
+        "tiny finite",
+        "nonfinite and signed zero",
+        "last valid column maximum",
+        "nontrivial mantissas",
+        "all zero"
+      ],
+      "complete_normalized_output_bits": true,
+      "complete_scale_bits": true,
+      "complete_fp8_code_bytes": true,
+      "epsilon": 1e-06,
+      "weight_offset": 1.0,
+      "gated": false
+    },
+    "complete_norm_max_conversion_cost_ms": [
+      {
+        "baseline_ms": 0.009344000369310379,
+        "candidate_ms": 0.0077760000713169575,
+        "clear_l2": false,
+        "shape": [
+          1,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.010879999957978725,
+        "candidate_ms": 0.009088000282645226,
+        "clear_l2": true,
+        "shape": [
+          1,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.010208000428974628,
+        "candidate_ms": 0.008511999621987343,
+        "clear_l2": false,
+        "shape": [
+          64,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.012319999746978283,
+        "candidate_ms": 0.010528000071644783,
+        "clear_l2": true,
+        "shape": [
+          64,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.041120000183582306,
+        "candidate_ms": 0.032287999987602234,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          4608
+        ]
+      },
+      {
+        "baseline_ms": 0.04623999819159508,
+        "candidate_ms": 0.0379519984126091,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          4608
+        ]
+      },
+      {
+        "baseline_ms": 0.03984000161290169,
+        "candidate_ms": 0.031055999919772148,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.04879999905824661,
+        "candidate_ms": 0.040608000010252,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.040800001472234726,
+        "candidate_ms": 0.0318400003015995,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          7168
+        ]
+      },
+      {
+        "baseline_ms": 0.06011199951171875,
+        "candidate_ms": 0.05236800014972687,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          7168
+        ]
+      },
+      {
+        "baseline_ms": 0.044319998472929,
+        "candidate_ms": 0.03481600061058998,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          8192
+        ]
+      },
+      {
+        "baseline_ms": 0.06763200461864471,
+        "candidate_ms": 0.058400001376867294,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          8192
+        ]
+      },
+      {
+        "baseline_ms": 0.1615999937057495,
+        "candidate_ms": 0.13942399621009827,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          17408
+        ]
+      },
+      {
+        "baseline_ms": 0.16497600078582764,
+        "candidate_ms": 0.14582400023937225,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          17408
+        ]
+      }
+    ],
+    "resource_probe": {
+      "shape": [
+        1024,
+        5120
+      ],
+      "baseline_norm": [
+        256,
+        255,
+        0
+      ],
+      "baseline_maximum": [
+        256,
+        255,
+        0
+      ],
+      "candidate_norm_max": [
+        256,
+        255,
+        0
+      ],
+      "fields": [
+        "block_threads",
+        "registers_per_thread",
+        "local_memory_per_thread"
+      ],
+      "limitation": "standalone CudaGraph with TensorView; production norm/max resource counts match earlier trace, but no production fused capture yet; first resource capture omitted graph-node trace and was superseded by resources-v2"
+    },
+    "limitations": [
+      "synthetic inputs and normalization weights only",
+      "single process per standalone sweep; not independent serving pairs",
+      "no planner, allocation-alias or quantization-reuse lifetime integration yet",
+      "no actual checkpoint or full task-quality validation",
+      "no model latency or throughput gain claimed"
+    ],
+    "raw_root": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22",
+    "sha256": {
+      "norm.rs": "8e8b877f7b9641bcca7bbb745ee1e9c3812b8daf4110cb6e845c921f43830572",
+      "maximum.rs": "3f1307ae5b0941e4b406568f9695afed55afb7d1604f463545f213b368519c20",
+      "probe-complete.rs": "0987b42f12196d7f9cbec1a8fee630ca102c72dcbe5b526b8387706c8dbb77c1",
+      "probe-complete": "bf7769e0e3d6fceb893a4075996798ce4f71bd464e3e1d31bcfc0d4fd6a21dda",
+      "complete-v1.log": "10e780683b26f3c51063ea9d036efdc74669a52c7989910e488da1bcf6a4802d",
+      "resources-v2.nsys-rep": "cfea0031651dbf898cea74992466135623edd9a197c52d923249e84de4447eee",
+      "resources.json": "0175ccd84c3f05d90db14fd2f340ee0e89392afed2a02df596b14612750a20d4"
+    }
+  },
+  "rejected_nvfp4": {
+    "root": "/home/r/benchmarks/inference.rs/nvfp4-pipeline-2026-10-22",
+    "tiles": {
+      "decision": "reject: both alternative tiles slower in all hot/cold cases; no production changes",
+      "cases": [
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.2059199959039688,
+          "candidate_ms": 0.23366400599479675,
+          "clear_l2": false,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ],
+          "tile": [
+            64,
+            128
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.21279999613761902,
+          "candidate_ms": 0.23318400979042053,
+          "clear_l2": true,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ],
+          "tile": [
+            64,
+            128
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.22392000257968903,
+          "candidate_ms": 0.25603199005126953,
+          "clear_l2": false,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ],
+          "tile": [
+            128,
+            256
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.2107200026512146,
+          "candidate_ms": 0.26579201221466064,
+          "clear_l2": true,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ],
+          "tile": [
+            128,
+            256
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.1834239959716797,
+          "candidate_ms": 0.22521600127220154,
+          "clear_l2": false,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ],
+          "tile": [
+            64,
+            128
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.2019999921321869,
+          "candidate_ms": 0.23443199694156647,
+          "clear_l2": true,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ],
+          "tile": [
+            64,
+            128
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.18385601043701172,
+          "candidate_ms": 0.2234240025281906,
+          "clear_l2": false,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ],
+          "tile": [
+            128,
+            256
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.19963198900222778,
+          "candidate_ms": 0.2301279902458191,
+          "clear_l2": true,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ],
+          "tile": [
+            128,
+            256
+          ]
+        }
+      ],
+      "sha256": {
+        "probe-tiles.rs": "b5fc93b3e21b43e2599b5a47638b9a7cd7bbbb8a499cc9ddeca69e416ca127d8",
+        "kernels.rs": "bc2edce88e086e8a0ba9e0478a8666ccfba0b1040c2a9d181ed00bac1eba1f32",
+        "tiles-v1.log": "c409c5d8de91345ed40caa3c266a28c534062000a48bd97f76d3f55c6f4b7c0a"
+      }
+    },
+    "occupancy": {
+      "decision": "reject: occupancy 2 roughly doubles cost for both dominant shapes; all output bits equal on fixture",
+      "cases": [
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.22049599885940552,
+          "candidate_ms": 0.42824000120162964,
+          "clear_l2": false,
+          "occupancy": 2,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.21262399852275848,
+          "candidate_ms": 0.44095999002456665,
+          "clear_l2": true,
+          "occupancy": 2,
+          "shape": [
+            1024,
+            17408,
+            5120
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.20769599080085754,
+          "candidate_ms": 0.4176959991455078,
+          "clear_l2": false,
+          "occupancy": 2,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ]
+        },
+        {
+          "all_bits_equal": true,
+          "baseline_ms": 0.1992959976196289,
+          "candidate_ms": 0.4301599860191345,
+          "clear_l2": true,
+          "occupancy": 2,
+          "shape": [
+            1024,
+            5120,
+            17408
+          ]
+        }
+      ],
+      "sha256": {
+        "probe-occupancy.rs": "1f05fa3969bc277e497c1acd2fe79fd68db234c50469e25fc205246aaf18e0f4",
+        "occupancy-v1.log": "f79ce84d2460e36d631bc73df78ed798f27a95570d27d133c928a560c9c9512c"
+      }
+    }
+  },
+  "historical_vendor_nvfp4": {
+    "evidence": "/home/r/benchmarks/inference.rs/vllm-parity/c5aec9e/first-principles/gdn-nvfp4-lt-runtime-perf-v5/status-first-cycle.json",
+    "finding": "Already implemented historically: one MTP0 cycle improved long TTFT by 4.095% but batch4 wall regressed 0.632%; quality pending. Not accepted, not evidence against or for current M1024 shape."
+  }
+}
