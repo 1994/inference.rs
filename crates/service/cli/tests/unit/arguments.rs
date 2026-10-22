@@ -6,7 +6,10 @@ fn model_path_serves_with_automatic_defaults() {
     let cli = Cli::try_parse_from(["infer", "/models/example"]).unwrap();
     assert_eq!(cli.backend, backend::BackendChoice::Auto);
     assert!(!cli.no_autotune);
-    assert_eq!(cli.num_speculative_tokens, None);
+    assert_eq!(
+        cli.num_speculative_tokens,
+        backend::SpeculativeTokens::Depth(0)
+    );
     assert!(Cli::try_parse_from(["infer", "/models/example", "--chunked-recurrent"]).is_err());
     assert!(cli.block_size.is_none());
     assert!(cli.max_num_batched_tokens.is_none());
@@ -23,6 +26,41 @@ fn model_path_serves_with_automatic_defaults() {
 
 #[test]
 fn speculation_distinguishes_automatic_selection_from_explicit_zero() {
+    for args in [
+        vec![
+            "infer",
+            "/models/example",
+            "--num-speculative-tokens",
+            "auto",
+        ],
+        vec![
+            "infer",
+            "serve",
+            "--package",
+            "/models/example",
+            "--num-speculative-tokens",
+            "auto",
+        ],
+    ] {
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert_eq!(cli.num_speculative_tokens, backend::SpeculativeTokens::Auto);
+    }
+    let legacy = Cli::try_parse_from(["infer", "serve", "--package", "/models/example"]).unwrap();
+    assert_eq!(
+        legacy.num_speculative_tokens,
+        backend::SpeculativeTokens::Depth(0)
+    );
+    for invalid in ["automatic", "AUTO", "-1", "1.5", "18446744073709551616"] {
+        assert!(
+            Cli::try_parse_from([
+                "infer",
+                "/models/example",
+                "--num-speculative-tokens",
+                invalid
+            ])
+            .is_err()
+        );
+    }
     for depth in [0, 1, 2, 8] {
         let value = depth.to_string();
         let cli = Cli::try_parse_from([
@@ -32,7 +70,10 @@ fn speculation_distinguishes_automatic_selection_from_explicit_zero() {
             &value,
         ])
         .unwrap();
-        assert_eq!(cli.num_speculative_tokens, Some(depth));
+        assert_eq!(
+            cli.num_speculative_tokens,
+            backend::SpeculativeTokens::Depth(depth)
+        );
     }
 }
 

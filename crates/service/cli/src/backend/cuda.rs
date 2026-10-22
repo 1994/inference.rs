@@ -186,7 +186,7 @@ fn report_environment(
     tracing::info!(
         target: "infer::load",
         mtp_depth,
-        automatic_mtp = selection.num_speculative_tokens.is_none(),
+        automatic_mtp = selection.num_speculative_tokens == super::SpeculativeTokens::Auto,
         attention_profile = selection.attention_profile.name(),
         autotune = selection.autotune,
         max_num_batched_tokens = %optional(selection.max_num_batched_tokens),

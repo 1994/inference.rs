@@ -1,21 +1,25 @@
 //! Choose the CLI draft depth from the provider's recipe and complete checkpoint bindings.
+use super::SpeculativeTokens;
 use infer_ir::{FeedForward, TensorStorage};
 use infer_models::QuantizedPackage;
 
 /// An explicit depth keeps the loader's existing validation. Automatic mode must not make a
 /// previously loadable target require an absent, partial or unsupported optional head.
 pub fn resolve(
-    requested: Option<usize>,
+    requested: SpeculativeTokens,
     prefill_cap: Option<usize>,
     package: &QuantizedPackage,
 ) -> usize {
-    requested.unwrap_or_else(|| {
-        if matches!(prefill_cap, Some(1 | 2)) || !complete_head(package) {
-            0
-        } else {
-            2
+    match requested {
+        SpeculativeTokens::Depth(depth) => depth,
+        SpeculativeTokens::Auto => {
+            if matches!(prefill_cap, Some(1 | 2)) || !complete_head(package) {
+                0
+            } else {
+                2
+            }
         }
-    })
+    }
 }
 
 fn complete_head(package: &QuantizedPackage) -> bool {
