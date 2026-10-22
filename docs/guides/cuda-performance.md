@@ -15,12 +15,22 @@ profiling、冻结缓存和测试的 A/B 控制是开发诊断工具，不能用
 或 `INFER_CUBLAS_PROJECTIONS` 切换算术。Chunk 与 BF16 Lt 委派由独立诊断程序显式构造，
 完成资格后才纳入默认策略。历史实验命令须使用其冻结制品，不能当成当前用户配置建议。
 
+### MTP 按能力选择（显式启用）
+
+默认和显式 `--num-speculative-tokens 0` 都关闭推测解码。显式
+`--num-speculative-tokens auto` 才检查 CUDA provider 的单层 dense MTP head、fusion
+和 draft graph 绑定；完整且支持时选深度 2，缺失、不完整、不支持、Metal 或显式
+prefill cap 为 1 / 2 时选 0。数字深度继续走现有 loader 校验，不静默降级。
+
+这是能力选择，不是质量或吞吐保证。原 1024 题质量门未通过，MTP2 在该 RTX 5090
+配置中还使 pooled KV token 容量从 98,304 降至 72,992（约 25.8%）；因此保留显式
+启用，默认 attention 仍为 canonical。原失败证据见
+[固定质量合同](../archive/research/artifacts/automatic-fast-profile-quality-2026-10-22.json)。
+
 ### 实验数值 profile：目标 attention BF16（未获准入）
 
-FA4 架构接入（`88dd26e`，包含 vector attention 与 linear exact bundle）已由 `e86e05b`
-合入当前 `main`；本分支以该 HEAD 为基线移植本地 `codex/target-attention-profile` 提交，
-新增 `--cuda-attention-profile canonical|bf16`。该 profile 提交本身仍只存在于本地分支，
-没有 push、PR 或 merge，不能据此声称已部署到 `main`。
+当前 `main` 已提供 `--cuda-attention-profile canonical|bf16|fp16`；接口可用不代表实验
+profile 已获默认准入。固定任务质量门的结论仍是未通过，默认保持 canonical。
 
 - 默认 `canonical`：保持既有精确 attention 路径；目标图的执行与结果不变。
 - 显式 `bf16`：只允许目标图的 **FP8-KV prefill** 使用已有 FA4 BF16 QKV / F32 累加 /

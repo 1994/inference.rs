@@ -45,9 +45,15 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
         });
         let limit = requested.min(free.saturating_sub(GIB_U64));
         let budget = LoadBudget { limit, free, total };
-        report_environment(device.profile()?, budget, selection, memory_bytes);
-        let summary = preflight(path, device.target(), limit)
+        let summary = preflight(path, device.target(), limit, selection)
             .map_err(|error| load_failure(&error, budget, selection))?;
+        report_environment(
+            device.profile()?,
+            budget,
+            selection,
+            memory_bytes,
+            summary.mtp_depth,
+        );
         report_model(path, &summary);
         let loaded = LoadedModel::open(
             device,
@@ -55,7 +61,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
             infer_core::ModelId::ONE,
             LoadOptions {
                 prefill_width: selection.max_num_batched_tokens.unwrap_or(0),
-                mtp_depth: selection.num_speculative_tokens,
+                mtp_depth: summary.mtp_depth,
                 autotune: selection.autotune,
                 attention_profile: selection.attention_profile.into(),
                 vision: !selection.text_only,
@@ -158,6 +164,7 @@ fn report_environment(
     budget: LoadBudget,
     selection: &Selection,
     memory_bytes: u64,
+    mtp_depth: usize,
 ) {
     tracing::info!(
         target: "infer::load",
@@ -178,7 +185,8 @@ fn report_environment(
     );
     tracing::info!(
         target: "infer::load",
-        mtp_depth = selection.num_speculative_tokens,
+        mtp_depth,
+        automatic_mtp = selection.num_speculative_tokens == super::SpeculativeTokens::Auto,
         attention_profile = selection.attention_profile.name(),
         autotune = selection.autotune,
         max_num_batched_tokens = %optional(selection.max_num_batched_tokens),
@@ -268,13 +276,19 @@ struct PackageSummary {
     max_sequence: usize,
     tensors: usize,
     mtp_tensors: usize,
+    mtp_depth: usize,
     payload_bytes: u64,
     native_fp4: bool,
     kv_cache: &'static str,
 }
 
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-fn preflight(path: &Path, target: &CudaTarget, budget: u64) -> Result<PackageSummary> {
+fn preflight(
+    path: &Path,
+    target: &CudaTarget,
+    budget: u64,
+    selection: &Selection,
+) -> Result<PackageSummary> {
     use infer_models::{QuantizedPackage, WeightEncoding};
     let package = QuantizedPackage::open(path, infer_core::ModelId::ONE)?;
     // The checkpoint's provider declares the precision preference; the device answers what it can
@@ -318,6 +332,11 @@ fn preflight(path: &Path, target: &CudaTarget, budget: u64) -> Result<PackageSum
         max_sequence: package.imported.model.max_sequence,
         tensors: package.weights.len(),
         mtp_tensors: package.mtp.len(),
+        mtp_depth: super::speculation::resolve(
+            selection.num_speculative_tokens,
+            selection.max_num_batched_tokens,
+            &package,
+        ),
         payload_bytes: minimum,
         native_fp4,
         kv_cache: kv_cache_label(&package),

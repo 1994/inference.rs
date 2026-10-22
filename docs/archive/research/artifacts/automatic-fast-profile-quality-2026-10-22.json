@@ -1,0 +1,468 @@
+{
+ "pr": 41,
+ "status": "contract_failed_gate",
+ "main": "4e345bbcdfcde608193d72d1eea705f05e2c3286",
+ "head": "8747225bbf4da4725e6b12f511e348cc007eecf1",
+ "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+ "environment": {
+  "host": "r@192.168.1.45",
+  "gpu": "NVIDIA GeForce RTX 5090 31.4 GiB total",
+  "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+  "quality_binary": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/infer-isolated-tuning-v3",
+  "quality_binary_sha256": "7b92dced7d536252b450f37e76a8bbc5fc5ef42052c91905c9f31ff669fd89f2",
+  "quality_binary_source": "6541f48",
+  "equivalence_binary_sha256": "b96248526a5464091eea34ea26e20a1e47a9e061ecf0eec2b2ee66c940b5a211",
+  "seed_sha256": "2e9ca3794b8dd967cf964342afe4c0bcb5f1bb2c1cac058692271c4f01e83d9d"
+ },
+ "protocol": {
+  "requests_per_arm": 1024,
+  "concurrency": 16,
+  "prefill_cap": 2048,
+  "max_new_tokens": 512,
+  "greedy": true,
+  "shard_order": [
+   [
+    "canonical0",
+    "bf162",
+    "canonical2"
+   ],
+   [
+    "canonical2",
+    "bf162",
+    "canonical0"
+   ],
+   [
+    "bf162",
+    "canonical0",
+    "canonical2"
+   ],
+   [
+    "canonical2",
+    "canonical0",
+    "bf162"
+   ]
+  ],
+  "cache": "Private identical seed copy for each process; no new search; each cached result independently live-weight revalidated.",
+  "margin": 0.02,
+  "confidence": 0.95,
+  "bound": "one-sided Clopper-Pearson upper bound on gross regressions (control correct, candidate incorrect)",
+  "note": "The registered binary is the pre-change main build: this PR only selects a draft depth, so depth-2 numerics are identical on both binaries."
+ },
+ "arms": {
+  "canonical0": {
+   "correct": 969,
+   "accuracy": 0.9462890625,
+   "zero_shot_correct": 481,
+   "eight_shot_correct": 488,
+   "length_capped": 40,
+   "length_capped_incorrect": 40,
+   "unfinished": 0
+  },
+  "canonical2": {
+   "correct": 968,
+   "accuracy": 0.9453125,
+   "zero_shot_correct": 479,
+   "eight_shot_correct": 489,
+   "length_capped": 39,
+   "length_capped_incorrect": 39,
+   "unfinished": 0
+  },
+  "bf162": {
+   "correct": 964,
+   "accuracy": 0.94140625,
+   "zero_shot_correct": 477,
+   "eight_shot_correct": 487,
+   "length_capped": 40,
+   "length_capped_incorrect": 40,
+   "unfinished": 0
+  }
+ },
+ "comparisons": {
+  "canonical2_vs_canonical0": {
+   "overall": {
+    "n": 1024,
+    "control_correct": 969,
+    "candidate_correct": 968,
+    "regressions": 14,
+    "gains": 13,
+    "gross_regression_rate": 0.013671875,
+    "cp95_upper": 0.021291168592313503,
+    "passes_2pct": false
+   },
+   "zero_shot": {
+    "n": 512,
+    "control_correct": 481,
+    "candidate_correct": 479,
+    "regressions": 10,
+    "gains": 8,
+    "gross_regression_rate": 0.01953125,
+    "cp95_upper": 0.032904108456953296,
+    "passes_2pct": false
+   },
+   "eight_shot": {
+    "n": 512,
+    "control_correct": 488,
+    "candidate_correct": 489,
+    "regressions": 4,
+    "gains": 5,
+    "gross_regression_rate": 0.0078125,
+    "cp95_upper": 0.017788140281130793,
+    "passes_2pct": true
+   }
+  },
+  "bf162_vs_canonical2": {
+   "overall": {
+    "n": 1024,
+    "control_correct": 968,
+    "candidate_correct": 964,
+    "regressions": 18,
+    "gains": 14,
+    "gross_regression_rate": 0.017578125,
+    "cp95_upper": 0.02595541826656391,
+    "passes_2pct": false
+   },
+   "zero_shot": {
+    "n": 512,
+    "control_correct": 479,
+    "candidate_correct": 477,
+    "regressions": 10,
+    "gains": 8,
+    "gross_regression_rate": 0.01953125,
+    "cp95_upper": 0.032904108456953296,
+    "passes_2pct": false
+   },
+   "eight_shot": {
+    "n": 512,
+    "control_correct": 489,
+    "candidate_correct": 487,
+    "regressions": 8,
+    "gains": 6,
+    "gross_regression_rate": 0.015625,
+    "cp95_upper": 0.028015636562057307,
+    "passes_2pct": false
+   }
+  },
+  "bf162_vs_canonical0": {
+   "overall": {
+    "n": 1024,
+    "control_correct": 969,
+    "candidate_correct": 964,
+    "regressions": 18,
+    "gains": 13,
+    "gross_regression_rate": 0.017578125,
+    "cp95_upper": 0.02595541826656391,
+    "passes_2pct": false
+   },
+   "zero_shot": {
+    "n": 512,
+    "control_correct": 481,
+    "candidate_correct": 477,
+    "regressions": 11,
+    "gains": 7,
+    "gross_regression_rate": 0.021484375,
+    "cp95_upper": 0.035311196175428716,
+    "passes_2pct": false
+   },
+   "eight_shot": {
+    "n": 512,
+    "control_correct": 488,
+    "candidate_correct": 487,
+    "regressions": 7,
+    "gains": 6,
+    "gross_regression_rate": 0.013671875,
+    "cp95_upper": 0.025525872900365287,
+    "passes_2pct": false
+   }
+  }
+ },
+ "gate": {
+  "name": "canonical2_vs_canonical0 (automatic MTP2 default versus MTP0 control)",
+  "passed": false,
+  "worst_upper": 0.032904108456953296,
+  "informational_bf16": {
+   "bf162_vs_canonical2": false,
+   "bf162_vs_canonical0": false
+  }
+ },
+ "equivalence": {
+  "checks": {
+   "control_depth_0": true,
+   "automatic_depth_2": true,
+   "explicit_depth_2": true,
+   "repeat_bitwise_identical": true,
+   "automatic_matches_explicit": true,
+   "all_requests_finished": true,
+   "capacity_preserved": false
+  },
+  "capacity_delta": {
+   "fits_device_budget": true,
+   "budget_gib": 27.7,
+   "envelope_bytes": 7569557647,
+   "resident_gib": {
+    "mtp0": 21.3,
+    "mtp2": 22.6
+   },
+   "state_budget_gib": {
+    "mtp0": 6.4,
+    "mtp2": 5.0
+   },
+   "max_resident_states": {
+    "mtp0": 16,
+    "mtp2": 16
+   },
+   "pooled_kv_tokens": {
+    "mtp0": 98304,
+    "mtp2": 72992,
+    "change_percent": -25.75
+   },
+   "block_capacity": {
+    "mtp0": 8192,
+    "mtp2": 8192
+   },
+   "preserved": false
+  },
+  "rows": 8,
+  "concurrency": 1,
+  "runs": {
+   "explicit0": {
+    "depth": 0,
+    "execution_profile": {
+     "prefill_width": 2048,
+     "pooled_prefill_width": 2048,
+     "batch_width": 0,
+     "draft_depth": 0,
+     "automatic_prefill": false,
+     "arena_budget_bytes": 1054928896,
+     "attention_profile": "canonical"
+    },
+    "resident": {
+     "model_gib": 21.3,
+     "state_budget_gib": 6.4,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7560476824,
+     "envelope_bytes": 8047002255,
+     "capacity": 8192,
+     "kv_tokens": 98304
+    }
+   },
+   "auto": {
+    "depth": 2,
+    "execution_profile": {
+     "prefill_width": 2048,
+     "pooled_prefill_width": 1024,
+     "batch_width": 3,
+     "draft_depth": 2,
+     "automatic_prefill": false,
+     "arena_budget_bytes": 1054928896,
+     "attention_profile": "canonical"
+    },
+    "resident": {
+     "model_gib": 22.6,
+     "state_budget_gib": 5.0,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7568623864,
+     "envelope_bytes": 7569557647,
+     "capacity": 8192,
+     "kv_tokens": 72992
+    }
+   },
+   "auto2": {
+    "depth": 2,
+    "execution_profile": {
+     "prefill_width": 2048,
+     "pooled_prefill_width": 1024,
+     "batch_width": 3,
+     "draft_depth": 2,
+     "automatic_prefill": false,
+     "arena_budget_bytes": 1054928896,
+     "attention_profile": "canonical"
+    },
+    "resident": {
+     "model_gib": 22.6,
+     "state_budget_gib": 5.0,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7568623864,
+     "envelope_bytes": 7569557647,
+     "capacity": 8192,
+     "kv_tokens": 72992
+    }
+   },
+   "explicit2": {
+    "depth": 2,
+    "execution_profile": {
+     "prefill_width": 2048,
+     "pooled_prefill_width": 1024,
+     "batch_width": 3,
+     "draft_depth": 2,
+     "automatic_prefill": false,
+     "arena_budget_bytes": 1054928896,
+     "attention_profile": "canonical"
+    },
+    "resident": {
+     "model_gib": 22.6,
+     "state_budget_gib": 5.0,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7568623864,
+     "envelope_bytes": 7569557647,
+     "capacity": 8192,
+     "kv_tokens": 72992
+    }
+   }
+  },
+  "capacity": {
+   "explicit0": {
+    "log": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fast-defaults-quality-v1/equivalence-explicit0.server.log",
+    "budget_gib": [
+     "27.7",
+     "31.4"
+    ],
+    "resident_gib": [
+     "21.3",
+     "6.4",
+     "16"
+    ],
+    "envelope": [
+     "7560476824",
+     "8047002255",
+     "8192",
+     "98304"
+    ],
+    "mtp_depth": [
+     "0"
+    ],
+    "resident": {
+     "model_gib": 21.3,
+     "state_budget_gib": 6.4,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7560476824,
+     "envelope_bytes": 8047002255,
+     "capacity": 8192,
+     "kv_tokens": 98304
+    }
+   },
+   "automatic": {
+    "log": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fast-defaults-quality-v1/equivalence-auto.server.log",
+    "budget_gib": [
+     "27.7",
+     "31.4"
+    ],
+    "resident_gib": [
+     "22.6",
+     "5.0",
+     "16"
+    ],
+    "envelope": [
+     "7568623864",
+     "7569557647",
+     "8192",
+     "72992"
+    ],
+    "mtp_depth": [
+     "2"
+    ],
+    "resident": {
+     "model_gib": 22.6,
+     "state_budget_gib": 5.0,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7568623864,
+     "envelope_bytes": 7569557647,
+     "capacity": 8192,
+     "kv_tokens": 72992
+    }
+   },
+   "explicit2": {
+    "log": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fast-defaults-quality-v1/equivalence-explicit2.server.log",
+    "budget_gib": [
+     "27.7",
+     "31.4"
+    ],
+    "resident_gib": [
+     "22.6",
+     "5.0",
+     "16"
+    ],
+    "envelope": [
+     "7568623864",
+     "7569557647",
+     "8192",
+     "72992"
+    ],
+    "mtp_depth": [
+     "2"
+    ],
+    "resident": {
+     "model_gib": 22.6,
+     "state_budget_gib": 5.0,
+     "max_resident_states": 16
+    },
+    "planned": {
+     "quoted_bytes": 7568623864,
+     "envelope_bytes": 7569557647,
+     "capacity": 8192,
+     "kv_tokens": 72992
+    }
+   },
+   "device_total_bytes": 33757724672
+  }
+ },
+ "determinism": {
+  "scope": "post-hoc diagnostic, shard 0 only, outside the preregistered single-invocation contract",
+  "same_configuration": {
+   "canonical0_repeat": {
+    "rows": 256,
+    "token_sequence_mismatches": 44,
+    "correctness_regressions": 2,
+    "correctness_gains": 1,
+    "median_first_differing_token": 20.0,
+    "max_first_differing_token": 299
+   },
+   "canonical2_repeat": {
+    "rows": 256,
+    "token_sequence_mismatches": 39,
+    "correctness_regressions": 0,
+    "correctness_gains": 0,
+    "median_first_differing_token": 28,
+    "max_first_differing_token": 214
+   }
+  },
+  "cross_arm_shard0": {
+   "canonical2_vs_canonical0": {
+    "rows": 256,
+    "token_sequence_mismatches": 198,
+    "correctness_regressions": 2,
+    "correctness_gains": 0,
+    "median_first_differing_token": 31.5,
+    "max_first_differing_token": 273
+   },
+   "canonical2b_vs_canonical0b": {
+    "rows": 256,
+    "token_sequence_mismatches": 195,
+    "correctness_regressions": 3,
+    "correctness_gains": 2,
+    "median_first_differing_token": 32,
+    "max_first_differing_token": 250
+   }
+  },
+  "conclusion": "Greedy decoding is not bitwise reproducible across processes even at identical configuration: repeats of one arm differ in 39-44 of 256 token sequences and flip 0-3 answer verdicts. The MTP2 arm changes most token sequences while leaving net accuracy within that noise band, so a single-run 2% gross-regression gate cannot separate the arm effect from serving nondeterminism."
+ },
+ "claims": {
+  "serving_speedup": false,
+  "performance_qualified": false,
+  "bf16_admitted": false,
+  "equal_precision_with_vllm": false,
+  "automatic_mtp2_admitted": false
+ },
+ "raw_results": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fast-defaults-quality-v1"
+}

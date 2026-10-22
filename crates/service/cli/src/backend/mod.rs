@@ -4,10 +4,14 @@ mod cuda;
 mod metal;
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod selected;
+#[cfg(any(test, all(target_os = "linux", feature = "cuda")))]
+mod speculation;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use infer_backend_cuda::device::CudaDevice;
 #[cfg(any(test, target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 use infer_core::{Error, Result};
+use std::result::Result as ParseResult;
+use std::str::FromStr;
 
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 pub use selected::{SelectedBackend, load};
@@ -17,6 +21,26 @@ pub enum BackendChoice {
     Auto,
     Metal,
     Cuda,
+}
+/// CLI draft-depth policy. Automatic selection is an explicit opt-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeculativeTokens {
+    Auto,
+    Depth(usize),
+}
+impl FromStr for SpeculativeTokens {
+    type Err = String;
+
+    fn from_str(value: &str) -> ParseResult<Self, Self::Err> {
+        if value == "auto" {
+            Ok(Self::Auto)
+        } else {
+            value
+                .parse::<usize>()
+                .map(Self::Depth)
+                .map_err(|_| "expected 'auto' or a non-negative draft token count".into())
+        }
+    }
 }
 /// Explicit target attention numerical profile.
 ///
@@ -96,7 +120,8 @@ pub struct Selection {
     /// Name clients address this deployment by (`--served-model-name`).
     pub served_model_name: Option<String>,
     pub upload_staging_mib: Option<usize>,
-    pub num_speculative_tokens: usize,
+    /// Defaults to depth zero; auto opts into capability-based CUDA draft selection.
+    pub num_speculative_tokens: SpeculativeTokens,
     /// Target attention numerical profile, experimental for `bf16`.
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     pub attention_profile: CudaAttentionProfile,
