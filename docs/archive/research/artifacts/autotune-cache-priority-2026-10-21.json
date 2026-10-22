@@ -1,0 +1,139 @@
+{
+  "status": "regression reproduced; candidate service validation pending at checkpoint",
+  "scope": "GEMM cache adoption bug fix; does not register a new serving baseline or qualify a numerical profile",
+  "issue": "https://github.com/1994/inference.rs/issues/34",
+  "pull_request": "https://github.com/1994/inference.rs/pull/40",
+  "reproduction": {
+    "cold": {
+      "report": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-cost-cold-v1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-autotune-cost-cold-v1.json",
+      "startup_seconds": 148.35341143101687,
+      "wall_median": 13.990164695,
+      "counts": {
+        "resident GEMM selected": 508,
+        "source_measured": 8,
+        "source_process-cache": 500,
+        "FP8 model tuning budget exhausted": 258,
+        "model search budget exhausted": 336
+      }
+    },
+    "warm": {
+      "report": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-cost-warm-v1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-autotune-cost-warm-v1.json",
+      "startup_seconds": 131.83528246899368,
+      "wall_median": 14.045215315,
+      "counts": {
+        "FP8 GEMM choice": 15,
+        "source_table-cache": 19,
+        "resident GEMM selected": 844,
+        "source_process-cache": 832,
+        "source_measured": 8,
+        "FP8 model tuning budget exhausted": 72
+      }
+    },
+    "disabled": {
+      "report": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-cost-disabled-v1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-autotune-cost-disabled-v1.json",
+      "startup_seconds": 41.74760556698311,
+      "wall_median": 12.223867294,
+      "counts": {
+        "FP8 GEMM choice": 15,
+        "source_table-cache": 19,
+        "resident GEMM selected": 840,
+        "source_process-cache": 500,
+        "source_autotune-disabled": 336
+      }
+    },
+    "default": {
+      "report": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-cost-default-v1/Qwen3.8-27B-NVFP4-mtp2-native-stage3-autotune-cost-default-v1.json",
+      "startup_seconds": 138.44158683600836,
+      "wall_median": 13.867256663,
+      "counts": {
+        "FP8 GEMM choice": 7,
+        "source_table-cache": 7,
+        "resident GEMM selected": 508,
+        "source_measured": 8,
+        "source_process-cache": 500,
+        "FP8 model tuning budget exhausted": 233,
+        "model search budget exhausted": 336
+      }
+    }
+  },
+  "preregistered_serving_check": {
+    "created_utc": "2026-10-21T09:15:47.638810+00:00",
+    "purpose": "Restore serving-qualified cached GEMM choices with autotune enabled; startup speed is not the acceptance objective.",
+    "source": {
+      "control": "44d10746988e68289ef09b1507e7b7be418e5ee3",
+      "candidate": "2f00826",
+      "control_binary": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/infer-packing-v2",
+      "control_binary_sha256": "82852d0d4d7f6647659df480c7ba05b2912631eb002c0cb9278c7bf3f880dc8f",
+      "candidate_binary": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/infer-cache-priority-v3"
+    },
+    "starting_table": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/autotune-cost-cold-v1-tuning.json",
+      "sha256": "2e9ca3794b8dd967cf964342afe4c0bcb5f1bb2c1cac058692271c4f01e83d9d",
+      "isolated_copy_for_every_process": true
+    },
+    "controls": {
+      "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+      "input": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json",
+      "input_sha256": "6a19beea55766865b0b6f718bfaf4fdd7d57f896137e4f72cea247f6173883e8",
+      "input_tokens": 4096,
+      "concurrency": 16,
+      "output_tokens": 256,
+      "mtp": 2,
+      "attention": "bf16",
+      "batched_token_cap": 2048,
+      "max_model_len": 32768,
+      "max_num_seqs": 16,
+      "gpu_memory_utilization": 0.88,
+      "autotune": true,
+      "excluded_warmups_per_process": 1,
+      "measured_repeats_per_process": 3,
+      "no_cpu_builds_during_timing": true,
+      "memory_limit_gib": 24,
+      "swap_limit_bytes": 0
+    },
+    "order": [
+      "cache-priority-control-a1",
+      "cache-priority-candidate-b1",
+      "cache-priority-candidate-b2",
+      "cache-priority-control-a2"
+    ],
+    "acceptance": {
+      "serving_warmed_wall_median_vs_old_autotune": "improve",
+      "serving_warmed_wall_median_vs_prior_same_table_no_search_12_223867294_s": "within 3% or faster",
+      "cached_real_weight_proof_rejections": 0,
+      "cache_identity_and_all_numeric_gates_preserved": true,
+      "new_search_budget_enforced": true,
+      "production_precision_change": false
+    },
+    "limits": [
+      "Startup costs are diagnostic samples, not hard upper bounds.",
+      "Per-category search budgets remain wall clocks and may leave missing shapes unmeasured.",
+      "This does not qualify BF16 as the default numerical profile.",
+      "Harness checkout revision is not the frozen binary build revision; use the explicit source/binary mapping."
+    ]
+  },
+  "correctness_checks": {
+    "source": "2f00826",
+    "cuda_clippy_all_targets": "passed",
+    "cuda_release_host_tests": {
+      "passed": 135,
+      "ignored": 143,
+      "failed": 0
+    },
+    "cuda_device_regressions": {
+      "nvfp4_tails_and_expired_search_cached_owner_proof": "passed",
+      "fp8_tails_owners_invalid_scales_and_expired_new_search": "passed"
+    }
+  },
+  "review": {
+    "provider": "local Claude",
+    "scope": "resident GEMM and FP8 tuning plus existing GPU test bodies; could not inspect git diff or execute tests",
+    "blocking_source_findings": 0,
+    "accepted_correction": "Independent proof wall clock was rejected because intervening searches would still consume it. Cached proofs are finite by loaded weights/geometries/fixtures and must finish.",
+    "remaining_limits": [
+      "New-search budgets remain per-category wall clocks.",
+      "First-load cached proofs may add startup time.",
+      "Serving acceptance is still pending at this checkpoint."
+    ]
+  }
+}

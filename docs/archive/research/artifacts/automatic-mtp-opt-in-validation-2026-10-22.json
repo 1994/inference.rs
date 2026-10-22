@@ -1,0 +1,193 @@
+{
+  "pr": 41,
+  "status": "opt_in_cli_equivalence_passed",
+  "source_commit": "3751d8d450eab5425df2ae33b92b63d72493d1e0",
+  "source_patch_base": "c4ed7d7ba7fe60f2265b2b75b0187acc73829ec2",
+  "source_patch_sha256": "099b8b25b775fcb0c534de2f51c40d0f8a6a4801a6bf1dc22d4a8254e451ee05",
+  "environment": {
+    "host": "r@192.168.1.45",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "model": "/home/r/models/Qwen3.8-27B-NVFP4",
+    "binary": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+    "binary_sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+  },
+  "behavior": {
+    "default": 0,
+    "explicit_zero": 0,
+    "explicit_auto": "Select depth 2 only for complete supported CUDA MTP bindings; otherwise 0. Metal and explicit prefill caps of 1/2 resolve auto to 0.",
+    "numeric_depths": "Existing loader validation is preserved.",
+    "attention_profile": "canonical"
+  },
+  "protocol": {
+    "scope": "Six fresh processes, 8 frozen prompts per arm, C1, strict 2048 prefill cap, canonical attention, greedy, 512 new tokens, private identical seed caches, no autotune search.",
+    "process_order": [
+      "default",
+      "default_repeat",
+      "explicit0",
+      "auto",
+      "auto_repeat",
+      "explicit2"
+    ],
+    "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+    "samples": "First 8 rows of the frozen 1024-question suite, in original order.",
+    "seed_sha256": "2e9ca3794b8dd967cf964342afe4c0bcb5f1bb2c1cac058692271c4f01e83d9d",
+    "rows_per_process": 8,
+    "processes": 6,
+    "requests": 48,
+    "gpu_runner": "tools/bench/safe-run.sh --memory-gib 12",
+    "performance_claim": false
+  },
+  "checks": {
+    "depths": true,
+    "all_requests_finished": true,
+    "all_pair_tokens_and_finish_reasons_match": true,
+    "execution_profiles_match_within_pairs": true,
+    "default_capacity_matches_explicit_zero": true,
+    "auto_capacity_matches_explicit_two": true,
+    "default_does_not_lose_kv_capacity": true,
+    "startup_policy_logs": true,
+    "eight_results_per_process": true,
+    "original_binary_unchanged": true,
+    "raw_results_unchanged": true
+  },
+  "pair_mismatches": {
+    "default_vs_default_repeat": [],
+    "default_vs_explicit0": [],
+    "auto_vs_auto_repeat": [],
+    "auto_vs_explicit2": []
+  },
+  "runs": {
+    "default": {
+      "depth": 0,
+      "kv_tokens": 98304,
+      "resident": {
+        "model_gib": 21.3,
+        "state_budget_gib": 6.4,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "954368a7b73eace1dd0c5508d7ab0bebe47437a9e358e5edc6ce41e628573971"
+    },
+    "default_repeat": {
+      "depth": 0,
+      "kv_tokens": 98304,
+      "resident": {
+        "model_gib": 21.3,
+        "state_budget_gib": 6.4,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "8b3dddc90d60e982fe5f8237524a30a97c2e53bffeeebd306bea63996787a3be"
+    },
+    "explicit0": {
+      "depth": 0,
+      "kv_tokens": 98304,
+      "resident": {
+        "model_gib": 21.3,
+        "state_budget_gib": 6.4,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "4cbee2738cee346c7d3d5e1f94a355e0546c939a6fd2a00b906602f8c45c5be5"
+    },
+    "auto": {
+      "depth": 2,
+      "kv_tokens": 72992,
+      "resident": {
+        "model_gib": 22.6,
+        "state_budget_gib": 5.0,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "2d9674b2072194dd10f26c175d1c704c8402471b66e8881a1da1bcdb273a2103"
+    },
+    "auto_repeat": {
+      "depth": 2,
+      "kv_tokens": 72992,
+      "resident": {
+        "model_gib": 22.6,
+        "state_budget_gib": 5.0,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "a6d4a4672d77658cb2144807c103760e82ef382f2b9ec2cd7c406c503fc6c3d1"
+    },
+    "explicit2": {
+      "depth": 2,
+      "kv_tokens": 72992,
+      "resident": {
+        "model_gib": 22.6,
+        "state_budget_gib": 5.0,
+        "max_resident_states": 16
+      },
+      "server_log_sha256": "dd6b25f6c8b1807962eb49cb0cfc864c04d2a7869fbe96fb0e406d484ca55168"
+    }
+  },
+  "profiles": {
+    "mtp0": {
+      "prefill_width": 2048,
+      "pooled_prefill_width": 2048,
+      "batch_width": 0,
+      "draft_depth": 0,
+      "automatic_prefill": false,
+      "arena_budget_bytes": 1054928896,
+      "attention_profile": "canonical"
+    },
+    "mtp2": {
+      "prefill_width": 2048,
+      "pooled_prefill_width": 1024,
+      "batch_width": 3,
+      "draft_depth": 2,
+      "automatic_prefill": false,
+      "arena_budget_bytes": 1054928896,
+      "attention_profile": "canonical"
+    }
+  },
+  "test_validation": {
+    "portable_cli": {
+      "unit_passed": 15,
+      "smoke_passed": 2
+    },
+    "cuda_cli": {
+      "unit_passed": 21,
+      "smoke_passed": 2
+    },
+    "clippy": "Passed: infer-cli --no-default-features --all-targets and --features cuda --all-targets, with -D warnings.",
+    "release_build": "Passed under safe-run, --release -p infer-cli --features cuda.",
+    "static_checks": "Test inventory (767 entries), layout, policy, formatting and git diff --check passed. Repository-wide scans used a clean temporary checkout to exclude pre-existing untracked staging trees.",
+    "cli_tests_log": {
+      "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/cli-tests.log",
+      "sha256": "664609d2579767889811e36e15f4586487ad598e048a4f285b0e8c79fede4621"
+    },
+    "lint_log": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/mtp-opt-in-lint-20261022.log",
+      "sha256": "f449465823320de1d7bf90d7d3a0778ee81f4e7e87bc04df38f71be5691d29ca"
+    },
+    "build_log": {
+      "path": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/mtp-opt-in-build-20261022.log",
+      "sha256": "f54619cc6fca081b8d161b534c64c9d97e1ab24eaf5d09a5a41367f10cb1ef2d"
+    }
+  },
+  "comparison_correction": {
+    "initial_report": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/summary.json",
+    "initial_report_sha256": "fe44b6859e550b798d0332a2bbdd3df83cee8d2a0d86240b566f53f2ec96bd84",
+    "initial_passed": false,
+    "reason": "Initial comparison used the entire Finished event, including per-run ttft_us/max_tpot_us/e2e_us. Offline analysis compares all other event fields, success and output-token count, token IDs, case and finish reason. Original raw data and failed initial summary are unchanged; no process is rerun."
+  },
+  "evidence": {
+    "directory": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22",
+    "raw_results_sha256": "94b0fb30dd6d8b94f1be74df91fb49bbf5010ad351ba14e21e953d7595f0bf5f",
+    "verified_summary_sha256": "b214f0ce6d86a11daa483cfd6c9e81b371cfaf6ee73b38e96c4d6497f9635434",
+    "runner_sha256": "739b679dff76ed4e5249ba0f8049b47249894c52251fe250f6cd9037e71b9918",
+    "analysis_sha256": "7addb6b620de254908d51aa787cc659f003bd0926ba75f8ee8dc7da749d35f3d",
+    "helper": "/home/r/benchmarks/inference.rs/norm-quant-2026-10-20/fast-defaults-quality-v1/equivalence.py",
+    "helper_sha256": "a094c0b0509a22c0fb9f85524f681b2d844c7b4604edcd9adfd2cc4860ccd3b3",
+    "commands_and_all_outputs": "raw-results.json",
+    "reanalysis": "python3 analyze.py (reads existing raw outputs; starts no server)"
+  },
+  "quality_contract": {
+    "artifact": "automatic-fast-profile-quality-2026-10-22.json",
+    "status": "failed",
+    "reinterpreted": false,
+    "rerun": false,
+    "automatic_mtp2_admitted": false,
+    "bf16_admitted": false,
+    "serving_performance_qualified": false,
+    "note": "These 48 requests validate CLI selection, functional equivalence and capacity only; they do not replace the original registered 1024-question quality gate."
+  }
+}

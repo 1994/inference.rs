@@ -284,9 +284,21 @@ fn fp8_native_candidates_and_lt_exact_gate_cover_tails_and_weight_owners() -> Re
         identity.m = m;
         identity.n = n;
         identity.k = k;
-        let session = ResidentTuningSession::default();
+        let expired = ResidentTuningSession::without_search_budget();
+        assert!(
+            verify(
+                &device,
+                &mut support,
+                &weight,
+                shape,
+                choice,
+                Some(&expired)
+            )?
+            .is_none()
+        );
+        assert!(tune(&device, &mut support, &weight, identity.clone(), &expired)?.is_none());
         assert_eq!(
-            cached_gate(&device, &mut support, &weight, &identity, choice, &session)?,
+            cached_gate(&device, &mut support, &weight, &identity, choice)?,
             choice
         );
         assert_eq!(remembered(&weight, &identity, choice)?, Some(true));
@@ -299,9 +311,16 @@ fn fp8_native_candidates_and_lt_exact_gate_cover_tails_and_weight_owners() -> Re
         );
         assert_eq!(remembered(&second, &identity, choice)?, None);
         assert_eq!(
-            cached_gate(&device, &mut support, &second, &identity, choice, &session)?,
+            cached_gate(&device, &mut support, &second, &identity, choice)?,
             choice
         );
+        let invalid =
+            ProjectionWeight::Fp8(Arc::clone(codes), device.upload(vec![f32::NAN; n], &[n])?);
+        assert_eq!(
+            cached_gate(&device, &mut support, &invalid, &identity, choice)?,
+            Choice::baseline(m)
+        );
+        assert_eq!(remembered(&invalid, &identity, choice)?, Some(false));
         assert_eq!(remembered(&weight, &identity, choice)?, Some(true));
     }
     Ok(())

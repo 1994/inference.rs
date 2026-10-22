@@ -9,6 +9,9 @@ use crate::{
 mod options;
 pub use options::*;
 
+#[cfg(any(all(test, unix), all(target_os = "linux", feature = "cuda")))]
+mod tuning_worker;
+
 #[cfg(any(target_os = "macos", all(target_os = "linux", feature = "cuda")))]
 mod server;
 

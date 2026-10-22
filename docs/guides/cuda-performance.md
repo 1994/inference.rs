@@ -15,12 +15,22 @@ profiling、冻结缓存和测试的 A/B 控制是开发诊断工具，不能用
 或 `INFER_CUBLAS_PROJECTIONS` 切换算术。Chunk 与 BF16 Lt 委派由独立诊断程序显式构造，
 完成资格后才纳入默认策略。历史实验命令须使用其冻结制品，不能当成当前用户配置建议。
 
+### MTP 按能力选择（显式启用）
+
+默认和显式 `--num-speculative-tokens 0` 都关闭推测解码。显式
+`--num-speculative-tokens auto` 才检查 CUDA provider 的单层 dense MTP head、fusion
+和 draft graph 绑定；完整且支持时选深度 2，缺失、不完整、不支持、Metal 或显式
+prefill cap 为 1 / 2 时选 0。数字深度继续走现有 loader 校验，不静默降级。
+
+这是能力选择，不是质量或吞吐保证。原 1024 题质量门未通过，MTP2 在该 RTX 5090
+配置中还使 pooled KV token 容量从 98,304 降至 72,992（约 25.8%）；因此保留显式
+启用，默认 attention 仍为 canonical。原失败证据见
+[固定质量合同](../archive/research/artifacts/automatic-fast-profile-quality-2026-10-22.json)。
+
 ### 实验数值 profile：目标 attention BF16（未获准入）
 
-FA4 架构接入（`88dd26e`，包含 vector attention 与 linear exact bundle）已由 `e86e05b`
-合入当前 `main`；本分支以该 HEAD 为基线移植本地 `codex/target-attention-profile` 提交，
-新增 `--cuda-attention-profile canonical|bf16`。该 profile 提交本身仍只存在于本地分支，
-没有 push、PR 或 merge，不能据此声称已部署到 `main`。
+当前 `main` 已提供 `--cuda-attention-profile canonical|bf16|fp16`；接口可用不代表实验
+profile 已获默认准入。固定任务质量门的结论仍是未通过，默认保持 canonical。
 
 - 默认 `canonical`：保持既有精确 attention 路径；目标图的执行与结果不变。
 - 显式 `bf16`：只允许目标图的 **FP8-KV prefill** 使用已有 FA4 BF16 QKV / F32 累加 /
@@ -127,10 +137,21 @@ Attention、图宽度和 GEMV/GEMM crossover 尚未全部纳入这个 chooser。
 graph replay，不含模型加载、分配或首次 JIT。单候选的 capture、数值或测量失败不终止其余合法
 候选；基线失败仍回退，不能据此假设 CUDA 错误已恢复。
 
-每次模型加载的 target、draft 和 program 共享 30 秒驻留调优软预算，首次驻留身份解析、搜索或
-数值验收才启动，后续新候选和新权重验收继续检查剩余预算。单次已经开始的 JIT/测量不可中断；
-超时或未完成证据时回退，不把未测 baseline 当成完整调优证据缓存。`--no-autotune` 不做新的
-性能搜索，但可读取有效缓存并做当前权重数值验收。arena 预算和解码分片由 `tuning/`
+CUDA 服务 CLI 默认先在准备进程中调优并保存缓存，再由干净的服务进程加载这些配置，避免
+搜索候选留下的设备模块挤占 KV 容量。准备进程不监听服务端口；父进程退出会终止整个准备
+进程组，包括 JIT 子进程。准备最多运行 10 分钟；失败或超时后，服务仍可使用已验证缓存或
+保守配置。`--no-autotune` 跳过准备进程。没有可写缓存时保留进程内调优；直接使用 SDK 的
+`LoadOptions` 也保持进程内调优语义。两阶段启动需要额外加载一次模型，不能承诺启动更快。
+
+自动调优默认开启。每次模型加载的 target、draft 和 program 共享 30 秒 GEMM 新搜索软预算，
+首次新搜索才启动；greedy、norm、recurrent、attention 各有独立的 30 秒软预算。已开始的
+JIT/测量不可中断，因此它们不是整体启动耗时的硬上限。搜索超时或证据未完成时回退，不把
+未测 baseline 当成完整调优证据缓存。
+
+GEMM 缓存身份解析和已缓存配置的当前真实权重数值验收不受新搜索预算限制，避免一个未缓存
+形状耗尽预算后，使后续已验证配置无法生效；它们仍可能增加启动时间。配置必须匹配完整身份，
+并通过当前权重的完整 finite/bitwise 验收，才能用于捕获。`--no-autotune` 仅禁止新的性能搜索，
+仍自动复用有效缓存并完成这些数值验收。arena 预算和解码分片由 `tuning/`
 按设备资源推导，量化 tile 由 GEMM chooser 选择，不提供环境变量覆盖器。宽 prompt 的 FP8
 投影默认使用设备库查询到的 cuBLASLt 算法；Lt 独立诊断仍只存在于 CUDA 测试程序。
 
