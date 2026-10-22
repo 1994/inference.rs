@@ -521,6 +521,85 @@ impl Workspace {
             Ok(())
         }
     }
+    /// Atomically record quantization, the prepared Lt GEMM and its exact residual epilogue.
+    /// The row-scale workspace is consumed here, before the next graph node can reuse it.
+    pub(crate) fn record_fp8_add(
+        &mut self,
+        scope: &Scope,
+        weight: &ProjectionWeight,
+        (input, columns, pointer): (&TensorView<'_, f32>, usize, u64),
+        (raw, output): (&mut Tensor<f32>, &mut Tensor<f32>),
+        (residual, projection_first): (&TensorView<'_, f32>, bool),
+    ) -> StdResult<bool, DeviceError> {
+        use super::super::capture::error;
+        let ProjectionWeight::Fp8(w, channel_scale) = weight else {
+            return Ok(false);
+        };
+        if self.vendor_diagnostic {
+            return Ok(false);
+        }
+        let rows = usize::try_from(raw.shape()[0]).map_err(error)?;
+        let outputs = usize::try_from(raw.shape()[1]).map_err(error)?;
+        let key = (
+            WeightKey::new(weight).map_err(error)?,
+            rows,
+            outputs,
+            columns,
+        );
+        let Some(Choice::Lt(config)) = self.fp8_strategies.get(&key).copied() else {
+            return Ok(false);
+        };
+        let Some((q, qs)) = self.fp8.get_mut(&(rows, columns, 1)) else {
+            return Ok(false);
+        };
+        if !self
+            .vendor_fp8
+            .can_record_config(config, q, w, raw, (qs, channel_scale))?
+        {
+            return Ok(false);
+        }
+        let key = quant_key(
+            Some(pointer),
+            input,
+            raw,
+            rows,
+            columns,
+            QuantKind::Fp8Token,
+            (&*q, &*qs),
+        );
+        let (reuse, ticket) = self.quant_reuse.prepare(key);
+        let mut record = || {
+            if !reuse {
+                super::super::fp8_quant_reduction::record(scope, q, qs, input, columns)?;
+            }
+            if !self.vendor_fp8.record_config_raw(
+                scope,
+                config,
+                (&*q, w),
+                raw,
+                (&*qs, channel_scale),
+            )? {
+                return Err(error("prepared FP8 residual GEMM changed after preflight"));
+            }
+            scope.record(
+                vendor_fp8::kernels::scale_add(
+                    output.partition(vendor_fp8::SCALE_TILE),
+                    &*raw,
+                    residual,
+                    &*qs,
+                    channel_scale,
+                )
+                .generics(vec![i32::from(!projection_first).to_string()]),
+            )?;
+            Ok(true)
+        };
+        let result = record();
+        self.quant_reuse.finish(ticket, result.is_ok());
+        // Absorbing Add also absorbs its normal reuse barrier.
+        self.quant_reuse.clear();
+        result
+    }
+
     pub(super) fn record_fp8_input(
         &mut self,
         scope: &Scope,

@@ -763,3 +763,7 @@ mod gated_norm_model_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_prompt_width_buckets.rs"]
 mod prompt_width_bucket_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_fp8_residual_model.rs"]
+mod fp8_residual_model_tests;

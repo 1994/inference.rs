@@ -16,6 +16,7 @@ mod capture_rope;
 mod capture_state;
 pub(crate) mod fp8_cache;
 pub(crate) mod fp8_gemm;
+mod fp8_residual;
 pub(crate) mod fusion_batch;
 pub(crate) mod kernels;
 mod linear_batch;
@@ -80,3 +81,8 @@ pub(crate) use prefill_projection::{narrow_dense_captures, with_dense_reference}
 #[cfg(test)]
 #[path = "../../tests/unit/resident_pooled_verify_model.rs"]
 mod pooled_verify_model_tests;
+
+#[cfg(test)]
+pub(crate) use fp8_residual::{
+    captures as fp8_residual_captures, with_separate as with_separate_fp8_residual,
+};

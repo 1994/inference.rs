@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 278
+      "tests": 283
     },
     "frontdoor": {
       "benches": 0,
@@ -171,11 +171,13 @@
     "requires CUDA hardware; run explicitly inside tools/bench/safe-run.sh": 5,
     "requires CUDA hardware; run inside safe-run": 25,
     "requires CUDA hardware; run release inside safe-run": 1,
+    "requires CUDA hardware; run release serially under safe-run": 1,
     "requires CUDA hardware; run under safe-run": 28,
     "requires CUDA hardware; run under safe-run in release": 1,
     "requires CUDA hardware; weak decay and correlated K expose unstable inverse construction": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS (JSON token array)": 1,
     "requires CUDA, INFER_TEST_MODEL and INFER_TEST_TOKENS; run under safe-run": 1,
+    "requires CUDA, INFER_TEST_MODEL and frozen 1025-token INFER_TEST_TOKENS; safe-run": 1,
     "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS": 1,
     "requires CUDA, INFER_TEST_MODEL and frozen 511-token INFER_TEST_TOKENS; safe-run": 1,
     "requires CUDA, INFER_TEST_MODEL, frozen 511-token INFER_TEST_TOKENS; safe-run": 1,
@@ -262,6 +264,11 @@
       "crate": "cuda",
       "file": "src/device/readback.rs",
       "mount": "../../tests/unit/device_readback_check.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/device/vendor_fp8.rs",
+      "mount": "../../tests/unit/resident_fp8_residual.rs"
     },
     {
       "crate": "cuda",
@@ -385,6 +392,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/resident_fp8_residual_model.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/nvfp4.rs",
       "mount": "../tests/unit/nvfp4.rs"
     },
@@ -462,6 +474,11 @@
       "crate": "cuda",
       "file": "src/resident/fp8_quant_reduction.rs",
       "mount": "../../tests/unit/resident_fp8_quant_reduction.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/resident/fp8_residual.rs",
+      "mount": "../../tests/unit/resident_fp8_residual_plan.rs"
     },
     {
       "crate": "cuda",
@@ -1135,11 +1152,11 @@
     }
   ],
   "totals": {
-    "all": 767,
+    "all": 772,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 767
+    "tests": 772
   }
 }

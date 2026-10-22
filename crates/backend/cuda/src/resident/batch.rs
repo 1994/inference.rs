@@ -1019,6 +1019,7 @@ impl BatchBuilder<'_> {
         let quant_plan = super::nvfp4_gemm::QuantPairPlan::new(self.graph, self.weights);
         let pairs = gdn_ba_pairs(self.graph, self.weights);
         let swiglu = super::prefill_projection::swiglu_plan(self.graph, self.weights);
+        let residuals = super::fp8_residual::plan(self.graph, self.weights);
         let absorbed: BTreeSet<usize> = swiglu
             .values()
             .flat_map(|&(silu, multiply, ..)| [silu, multiply])
@@ -1041,35 +1042,32 @@ impl BatchBuilder<'_> {
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
                 }
-                if !skip && let Some(&second) = pairs.get(&index) {
-                    let paired = &self.graph.nodes[second];
-                    let paired_skip = paired
-                        .outputs
-                        .iter()
-                        .any(|id| Some(*id) == self.graph.logits)
-                        && !last;
+                let graph = self.graph;
+                let allowed = |second: usize| {
+                    let paired_skip = !last
+                        && graph.nodes[second]
+                            .outputs
+                            .iter()
+                            .any(|id| Some(*id) == graph.logits);
                     #[cfg(test)]
                     let paired_skip =
                         paired_skip || demand.as_ref().is_some_and(|plan| !plan.retains(second));
-                    let fused = if paired_skip {
-                        false
-                    } else {
-                        let profile = self.device.profile().map_err(error)?;
-                        super::prefill_projection::record_pair(
-                            scope,
-                            node,
-                            paired,
-                            arena,
-                            (self.weights, profile),
-                        )?
-                    };
-                    if fused {
-                        if let Some(boundaries) = boundaries.as_mut() {
-                            boundaries.boundary(scope, second, paired)?;
-                        }
-                        fused_second = Some(second);
-                        continue;
+                    !paired_skip
+                };
+                if !skip
+                    && let Some(second) = self.record_prompt_fusions(
+                        scope,
+                        index,
+                        arena,
+                        (&residuals, &pairs),
+                        allowed,
+                    )?
+                {
+                    if let Some(boundaries) = boundaries.as_mut() {
+                        boundaries.boundary(scope, second, &self.graph.nodes[second])?;
                     }
+                    fused_second = Some(second);
+                    continue;
                 }
                 if logits && let Some(row) = prompt_row.as_deref_mut() {
                     super::prompt_logits::record(
@@ -1110,6 +1108,50 @@ impl BatchBuilder<'_> {
         });
         self.nvfp4.end_quant_capture();
         result.map_err(device_error)
+    }
+
+    fn record_prompt_fusions(
+        &mut self,
+        scope: &Scope,
+        index: usize,
+        arena: &mut ActivationArena,
+        (residuals, pairs): (
+            &BTreeMap<usize, super::fp8_residual::Pair>,
+            &BTreeMap<usize, usize>,
+        ),
+        allowed: impl Fn(usize) -> bool,
+    ) -> StdResult<Option<usize>, DeviceError> {
+        let node = &self.graph.nodes[index];
+        if let Some(&pair) = residuals.get(&index) {
+            let second = index + 1;
+            if allowed(second)
+                && super::fp8_residual::record(
+                    scope,
+                    (node, &self.graph.nodes[second]),
+                    pair,
+                    arena,
+                    self.weights,
+                    self.nvfp4,
+                )?
+            {
+                return Ok(Some(second));
+            }
+        }
+        if let Some(&second) = pairs.get(&index)
+            && allowed(second)
+        {
+            let profile = self.device.profile().map_err(error)?;
+            if super::prefill_projection::record_pair(
+                scope,
+                node,
+                &self.graph.nodes[second],
+                arena,
+                (self.weights, profile),
+            )? {
+                return Ok(Some(second));
+            }
+        }
+        Ok(None)
     }
 
     fn record_prompt_node(

@@ -1,0 +1,98 @@
+{
+  "status": "implemented and numerically verified; draft, serving performance NOT qualified",
+  "parent_main": "2bc87fff3ff91f2fc600d93885c600996fffb57c",
+  "implementation": {
+    "arithmetic": "two explicit nearest-even, FTZ-disabled multiplies, then nearest-even Add in original operand order",
+    "eligibility": "target FP8 token/channel projection with a sole adjacent Add consumer; prepared Lt algorithm, matching shapes and disjoint actual output spans",
+    "fallback": "native/unprepared/diagnostic projections, exposed intermediates and unproven aliases retain separate operations",
+    "workspace": "same allocations and scales, consumed atomically before the next quantizer; absorbed Add preserves the quantization-reuse barrier",
+    "new_gpu_allocations": false,
+    "new_unsafe_or_lint_exemptions": false
+  },
+  "numerics": {
+    "host_tests": "138 passed, 145 ignored",
+    "cuda_clippy": "passed",
+    "layout_policy_inventory": "passed; 772 test entries",
+    "kernel_gate": "both Add operand orders; shapes 1x1,3x255,3x256,3x257,64x5120,1024x5120; five fixtures including finite rounding, signed zeros, subnormals, infinity, NaN payloads and graph replay with changed scales; all output bits equal",
+    "checkpoint_gate": {
+      "test_binary_sha256": "c65031ad34e8b0582b626ed0b83ed0ea26f6b536eee631c4f71bfa96b9aca47d",
+      "source_patch_sha256": "a7ea5344fb19d04728d9045bd7654ed49ad6d4fe75b1ffe3aa7ebd845232d70e",
+      "frozen_token_source": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json, first workload first 1025 tokens",
+      "frozen_token_sha256": "661f26c13622f96ed5c41eaefffc686ef0d240e377116f76f5bf27b3af263c2a",
+      "test_results": [
+        "test result: ok. 138 passed; 0 failed; 145 ignored; 0 measured; 0 filtered out; finished in 7.13s",
+        "test loading::fp8_residual_model_tests::fp8_residual_preserves_checkpoint_model_bits ... checkpoint bits passed: prompt=1025, fused captures=144",
+        "checkpoint bits passed: prompt=511, fused captures=144",
+        "checkpoint bits passed: prompt=1024, fused captures=144",
+        "checkpoint bits passed: prompt=1, fused captures=144",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 282 filtered out; finished in 20.12s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 282 filtered out; finished in 1.17s"
+      ],
+      "scope": "same loaded checkpoint, 1024-row target capture, BF16 attention, full hidden/logit and F32/FP8 state bits, reset and subsequent decode; does not establish task quality across asynchronous batched schedules"
+    }
+  },
+  "actual_capture": {
+    "diagnostic_only": true,
+    "binary_sha256": "dc7a1f212e022091c698909f368c91c08384feff9e092dbbe0ffeaa146b925dc",
+    "target_graphs": 2,
+    "nodes_per_graph": 72,
+    "calls": 4608,
+    "rows": 1024,
+    "columns": 5120,
+    "threads": 128,
+    "registers_per_thread": 20,
+    "local_bytes_per_thread": 0,
+    "fused_kernel_seconds": 0.098981233
+  },
+  "first_fresh_serving_pair": {
+    "labels": [
+      "strict-a1",
+      "strict-b1"
+    ],
+    "completed": [
+      true,
+      true
+    ],
+    "binary_sha256": [
+      "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9",
+      "dc7a1f212e022091c698909f368c91c08384feff9e092dbbe0ffeaa146b925dc"
+    ],
+    "same_workload": true,
+    "same_config_readback": true,
+    "seconds": [
+      [
+        12.200628055,
+        12.296739722,
+        12.144152124
+      ],
+      [
+        12.298932794,
+        12.297092425,
+        12.304897861
+      ]
+    ],
+    "median_seconds": [
+      12.200628055,
+      12.298932794
+    ],
+    "median_ttft_seconds": [
+      5.223841351020383,
+      5.267730539519107
+    ],
+    "same_token_outputs": 13,
+    "total_outputs": 48,
+    "all_finished": true,
+    "median_wall_reduction_percent": -0.805735070004987
+  },
+  "decision": "Do not merge based on the microbenchmark. First serving pair is slower and only 13/48 full token sequences match; all requests finish. Same-workload/same-configuration reverse-order replication and task-quality gates are pending. Fixed-shape checkpoint bit equality does not substitute for asynchronous serving/task-quality evidence.",
+  "binary_v2_sha256": "b09eaa56f0de1de9aacfd3f47874a9ba641437423592a1eb9051bb3841dde672",
+  "v1_to_v2": "Named scale tile constant, equivalent span guard destructuring, and test-only reference/model gate. No kernel arithmetic changed.",
+  "diagnostic_failure": "Initial profile stopped after warmup because a historical >=6 MMA-log-count assertion expected six selections; both current baseline and candidate emit five identical selections. A separate v2 capture validates required 64/1024/2048 shapes and actual runtime profile instead. Failed v1 report and log retained.",
+  "evidence_directory": "/home/r/benchmarks/inference.rs/fp8-residual-2026-10-22",
+  "pending": [
+    "at least three complete adjacent process pairs with both orders and disclosed variance",
+    "default automatic-budget and 32K C1/C4 regression",
+    "complete paired task-quality outputs",
+    "final CI and review"
+  ]
+}

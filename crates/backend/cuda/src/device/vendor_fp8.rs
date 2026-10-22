@@ -69,7 +69,7 @@ const ALGO_WORDS: usize = 8;
 const HEURISTIC_RESERVED: usize = 4;
 const MATRIX_LAYOUTS: usize = 4;
 const GEMM_RANK: usize = 3;
-const SCALE_TILE: [usize; 2] = [1, 256];
+pub const SCALE_TILE: [usize; 2] = [1, 256];
 
 /// Transcribed from CUDA 13.4 cublasLt.h: `cublasLtMatmulAlgo_t` has eight uint64 words.
 #[repr(C)]
@@ -1053,7 +1053,7 @@ impl Support {
         let Some(prepared) = self.prepared.get(&shape) else {
             return Ok(false);
         };
-        self.record_prepared(scope, prepared, input, weight, output, xs, ws)
+        self.record_prepared(scope, prepared, input, weight, output, (xs, ws), true)
     }
     #[expect(
         clippy::too_many_arguments,
@@ -1073,8 +1073,45 @@ impl Support {
         let Some(prepared) = self.algorithms.get(&(shape, config)) else {
             return Ok(false);
         };
-        self.record_prepared(scope, prepared, input, weight, output, xs, ws)
+        self.record_prepared(scope, prepared, input, weight, output, (xs, ws), true)
     }
+    /// Preflight before a caller records quantization; false leaves the fallback untouched.
+    pub(crate) fn can_record_config(
+        &self,
+        config: AlgorithmConfig,
+        input: &Tensor<f8e4m3fn>,
+        weight: &Tensor<f8e4m3fn>,
+        output: &Tensor<f32>,
+        (xs, ws): (&Tensor<f32>, &Tensor<f32>),
+    ) -> Result<bool, DeviceError> {
+        let shape = Shape::from(input, weight, output)?;
+        Ok(self.context.is_some()
+            && self.algorithms.contains_key(&(shape, config))
+            && compatible(input, weight, output)
+            && xs.is_contiguous()
+            && ws.is_contiguous()
+            && xs.size() == shape.m
+            && ws.size() == shape.n)
+    }
+
+    /// The caller must immediately consume the raw output with the same scales, before any
+    /// quantization workspace can be overwritten. An error aborts capture.
+    pub(crate) fn record_config_raw(
+        &self,
+        scope: &Scope,
+        config: AlgorithmConfig,
+        operands: (&Tensor<f8e4m3fn>, &Tensor<f8e4m3fn>),
+        output: &mut Tensor<f32>,
+        scales: (&Tensor<f32>, &Tensor<f32>),
+    ) -> Result<bool, DeviceError> {
+        let (input, weight) = operands;
+        let shape = Shape::from(input, weight, output)?;
+        let Some(prepared) = self.algorithms.get(&(shape, config)) else {
+            return Ok(false);
+        };
+        self.record_prepared(scope, prepared, input, weight, output, scales, false)
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "The audited graph boundary receives all GEMM operands and scales with the selected algorithm owner"
@@ -1086,8 +1123,8 @@ impl Support {
         input: &Tensor<f8e4m3fn>,
         weight: &Tensor<f8e4m3fn>,
         output: &mut Tensor<f32>,
-        xs: &Tensor<f32>,
-        ws: &Tensor<f32>,
+        (xs, ws): (&Tensor<f32>, &Tensor<f32>),
+        scale_output: bool,
     ) -> Result<bool, DeviceError> {
         let Some(context) = self.context.as_ref() else {
             return Ok(false);
@@ -1115,7 +1152,9 @@ impl Support {
             weight,
             output,
         })?;
-        scope.record(kernels::scale(output.partition(SCALE_TILE), xs, ws))?;
+        if scale_output {
+            scope.record(kernels::scale(output.partition(SCALE_TILE), xs, ws))?;
+        }
         Ok(true)
     }
 }
@@ -1163,7 +1202,7 @@ impl IntoFuture for GemmFp8<'_> {
 pub(crate) mod kernels {
     use cutile::core::{
         LoadTileMutAtCurrentBlock, Reshape, Shape_1, Shape_2, StoreTileAtCurrentBlock, Tensor_1,
-        Tensor_2, Tile_2, ftz, get_tile_block_id, mulf, rounding,
+        Tensor_2, Tile_2, addf, ftz, get_tile_block_id, mulf, rounding,
     };
     #[cutile::entry()]
     fn scale(
@@ -1184,4 +1223,36 @@ pub(crate) mod kernels {
         let first = mulf(raw, row, rounding::NearestEven, ftz::Disabled);
         output.store(mulf(first, column, rounding::NearestEven, ftz::Disabled));
     }
+    #[cutile::entry()]
+    fn scale_add<const SIDE: i32>(
+        out: &mut Tensor<f32, { [1, 256] }>,
+        raw: &Tensor<f32, { [-1, -1] }>,
+        residual: &Tensor<f32, { [-1, -1] }>,
+        xs: &Tensor<f32, { [-1, 1] }>,
+        ws: &Tensor<f32, { [-1] }>,
+    ) {
+        let pid = get_tile_block_id();
+        let value = raw.partition(shape![1, 256]).load([pid.0, pid.1]);
+        let other = residual.partition(shape![1, 256]).load([pid.0, pid.1]);
+        let row = xs
+            .partition(shape![1, 1])
+            .load([pid.0, 0i32])
+            .broadcast(shape![1, 256]);
+        let column = ws
+            .partition(shape![256])
+            .load([pid.1])
+            .reshape(shape![1, 256]);
+        let first = mulf(value, row, rounding::NearestEven, ftz::Disabled);
+        let scaled = mulf(first, column, rounding::NearestEven, ftz::Disabled);
+        let result = if SIDE == 0 {
+            addf(scaled, other, rounding::NearestEven, ftz::Disabled)
+        } else {
+            addf(other, scaled, rounding::NearestEven, ftz::Disabled)
+        };
+        out.store(result);
+    }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_fp8_residual.rs"]
+mod residual_tests;
