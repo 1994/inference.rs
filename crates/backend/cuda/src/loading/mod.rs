@@ -763,3 +763,7 @@ mod gated_norm_model_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/loading_prompt_width_buckets.rs"]
 mod prompt_width_bucket_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/resident_norm_maximum_model.rs"]
+mod norm_maximum_model_tests;
