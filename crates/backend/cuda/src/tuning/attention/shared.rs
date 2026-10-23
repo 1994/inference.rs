@@ -193,12 +193,13 @@ fn resolve(
 }
 fn cases(
     device: &CudaDevice,
+    shape: Shape,
     fixtures: &[Fixture],
     reverse: bool,
     session: &ResidentTuningSession,
 ) -> Result<Option<Vec<Case>>> {
     let mut result = Vec::new();
-    for (fixture, history) in fixtures.iter().zip(histories(fixtures[0].shape)) {
+    for (fixture, history) in fixtures.iter().zip(histories(shape)) {
         if !session.permits_attention_search() {
             return Ok(None);
         }
@@ -247,10 +248,10 @@ fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Resul
             Fixture::history(key.shape, history, CAPACITY)?
         });
     }
-    let Some(forward) = cases(device, &fixtures, false, session)? else {
+    let Some(forward) = cases(device, key.shape, &fixtures, false, session)? else {
         return Ok(None);
     };
-    let Some(reverse) = cases(device, &fixtures, true, session)? else {
+    let Some(reverse) = cases(device, key.shape, &fixtures, true, session)? else {
         return Ok(None);
     };
     let selected = if forward.iter().chain(&reverse).all(Case::accepted) {

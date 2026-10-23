@@ -764,10 +764,10 @@
   },
   "validation_reports": {
     "protected_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-v3.log",
-    "serving_contract": "/home/r/benchmarks/inference.rs/default-attention-serving-2026-10-23/contract.json",
-    "serving_analysis": "/home/r/benchmarks/inference.rs/default-attention-serving-2026-10-23/analysis.json",
-    "quality_contract": "/home/r/benchmarks/inference.rs/default-attention-quality-2026-10-23/contract.json",
-    "quality_analysis": "/home/r/benchmarks/inference.rs/default-attention-quality-2026-10-23/analysis.json",
+    "serving_contract": "/home/r/benchmarks/inference.rs/default-attention-serving-patched-2026-10-23/contract.json",
+    "serving_analysis": "/home/r/benchmarks/inference.rs/default-attention-serving-patched-2026-10-23/analysis.json",
+    "quality_contract": "/home/r/benchmarks/inference.rs/default-attention-quality-patched-2026-10-23/contract.json",
+    "quality_analysis": "/home/r/benchmarks/inference.rs/default-attention-quality-patched-2026-10-23/analysis.json",
     "completion_record": "Final PR validation summary records the outcomes and hashes of serving/quality reports created after this evidence snapshot."
   },
   "negative_attempt": "Initial wide startup-style search exhausted the30second budget before producing a complete proof; no incomplete entry was enabled. This led to offline hardware proof and shipped evidence without increasing startup budget. Initial logs validate-v1/v2 are preserved.",
@@ -807,5 +807,12 @@
     "required": "All requests finish; fixed output work; same runtime readback and capacity; report complete token equality. Full1024question matching canonical/MTP0 quality keeps fixed2% one-sided95%gross regression bound overall and in zero/eight-shot strata. Investigate and fix failures without changing grading/limits.",
     "supplementary": "short/511/C4/hot-prefix functional/latency checks and32K C4 completion/capacity; confirm actual model-context default launch.",
     "status": "Plan frozen before any uninstrumented candidate serving comparison. Bind source and binary/cache hashes in contract before starting."
+  },
+  "security_fix": {
+    "advisory": "RUSTSEC-2026-0386",
+    "tokio_from": "1.53.2",
+    "tokio_to": "1.53.3",
+    "control_commit": "fb8b6d8",
+    "scope": "Same patch on control and candidate. Original unpatched study retired before any candidate arm ran; all raw data retained."
   }
 }
