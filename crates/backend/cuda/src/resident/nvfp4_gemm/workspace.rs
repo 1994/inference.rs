@@ -46,6 +46,7 @@ type Fp8Buffers = (Tensor<f8e4m3fn>, Tensor<f32>);
 
 pub struct Workspace {
     quant_reuse: CaptureQuantReuse,
+    norm_maximum: Option<super::super::norm_maximum::Pending>,
     strategies: BTreeMap<StrategyKey, GemmConfig>,
     buffers: BTreeMap<(usize, usize), Quantized>,
     fp8_strategies: BTreeMap<(WeightKey, usize, usize, usize), Choice>,
@@ -62,15 +63,24 @@ pub struct Workspace {
 impl Workspace {
     /// Start a fresh graph-local permission epoch; no device memory is changed.
     pub(crate) const fn begin_quant_capture(&mut self) {
+        self.norm_maximum = None;
         self.quant_reuse.begin();
     }
     pub(crate) fn enter_quant_node(&mut self, index: usize, role: Option<QuantPairRole>) {
+        if self
+            .norm_maximum
+            .is_some_and(|pending| pending.next != index)
+        {
+            self.norm_maximum = None;
+        }
         self.quant_reuse.enter(index, role);
     }
     pub(crate) const fn end_quant_capture(&mut self) {
+        self.norm_maximum = None;
         self.quant_reuse.end();
     }
     pub(crate) const fn clear_quant_reuse(&mut self) {
+        self.norm_maximum = None;
         self.quant_reuse.clear();
     }
     #[cfg(test)]
@@ -167,6 +177,7 @@ impl Workspace {
     ) -> Result<Self> {
         let mut workspace = Self {
             quant_reuse: CaptureQuantReuse::default(),
+            norm_maximum: None,
             strategies: BTreeMap::new(),
             buffers: BTreeMap::new(),
             fp8: BTreeMap::new(),
@@ -521,6 +532,45 @@ impl Workspace {
             Ok(())
         }
     }
+    /// Keep the existing scale allocation; its permission lasts exactly one graph node.
+    pub(crate) fn record_norm_maximum(
+        &mut self,
+        scope: &Scope,
+        next: usize,
+        input: &TensorView<'_, f32>,
+        weight: &Tensor<f32>,
+        output: &mut Tensor<f32>,
+        (epsilon, offset): (f32, f32),
+    ) -> StdResult<bool, DeviceError> {
+        let rows = usize::try_from(output.shape()[0]).map_err(super::super::capture::error)?;
+        let columns = usize::try_from(output.shape()[1]).map_err(super::super::capture::error)?;
+        let Some((_, scales)) = self.fp8.get_mut(&(rows, columns, 1)) else {
+            return Ok(false);
+        };
+        let pointer = output.device_pointer().cu_deviceptr();
+        scope.record(
+            super::super::norm_maximum_kernel::kernels::norm_max(
+                output.partition([1, columns.next_power_of_two()]),
+                scales.partition([1, 1]),
+                input,
+                weight,
+                epsilon,
+                offset,
+            )
+            .generics(vec![
+                columns.to_string(),
+                columns.next_power_of_two().to_string(),
+            ]),
+        )?;
+        self.norm_maximum = Some(super::super::norm_maximum::Pending {
+            next,
+            pointer,
+            rows,
+            columns,
+        });
+        Ok(true)
+    }
+
     pub(super) fn record_fp8_input(
         &mut self,
         scope: &Scope,
@@ -540,6 +590,10 @@ impl Workspace {
         let rows = usize::try_from(output.shape()[0]).map_err(error)?;
         // The scales layout follows the weight's quantization mode, and the key has to say which.
         let scale_columns = fp8_scale_columns(weight, columns);
+        let maximum_ready = self.norm_maximum.take().is_some_and(|pending| {
+            matches!(weight, ProjectionWeight::Fp8(..))
+                && pending.matches(input_pointer, rows, columns)
+        });
         let (q, qs) = self
             .fp8
             .get_mut(&(rows, columns, scale_columns))
@@ -579,7 +633,16 @@ impl Workspace {
                 }
                 ProjectionWeight::Fp8(w, channel_scale) => {
                     if !reuse {
-                        super::super::fp8_quant_reduction::record(scope, q, qs, input, columns)?;
+                        super::super::fp8_quant_reduction::record_with_maximum(
+                            scope,
+                            q,
+                            qs,
+                            input,
+                            columns,
+                            maximum_ready,
+                        )?;
+                        #[cfg(test)]
+                        super::super::norm_maximum::record_consumption(maximum_ready);
                     }
                     if self.vendor_diagnostic
                         && self

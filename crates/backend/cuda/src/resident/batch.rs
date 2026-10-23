@@ -997,6 +997,17 @@ impl BatchBuilder<'_> {
 
     /// One graph covering all 32 lanes: Linear reads batched slots directly,
     /// shape-agnostic auxiliaries record once, state/metadata kernels stay per-lane.
+    fn record_prompt_pair(
+        &self,
+        scope: &Scope,
+        first: &TensorNode,
+        second: &TensorNode,
+        arena: &mut ActivationArena,
+    ) -> StdResult<bool, DeviceError> {
+        let profile = self.device.profile().map_err(error)?;
+        super::prefill_projection::record_pair(scope, first, second, arena, (self.weights, profile))
+    }
+
     fn capture32(
         &mut self,
         arena: &mut ActivationArena,
@@ -1041,6 +1052,16 @@ impl BatchBuilder<'_> {
                 if let Some(boundaries) = boundaries.as_mut() {
                     boundaries.boundary(scope, index, node)?;
                 }
+                if super::norm_maximum::record(
+                    scope,
+                    index,
+                    &self.graph.nodes,
+                    arena,
+                    self.weights,
+                    self.nvfp4,
+                )? {
+                    continue;
+                }
                 if !skip && let Some(&second) = pairs.get(&index) {
                     let paired = &self.graph.nodes[second];
                     let paired_skip = paired
@@ -1051,18 +1072,8 @@ impl BatchBuilder<'_> {
                     #[cfg(test)]
                     let paired_skip =
                         paired_skip || demand.as_ref().is_some_and(|plan| !plan.retains(second));
-                    let fused = if paired_skip {
-                        false
-                    } else {
-                        let profile = self.device.profile().map_err(error)?;
-                        super::prefill_projection::record_pair(
-                            scope,
-                            node,
-                            paired,
-                            arena,
-                            (self.weights, profile),
-                        )?
-                    };
+                    let fused =
+                        !paired_skip && self.record_prompt_pair(scope, node, paired, arena)?;
                     if fused {
                         if let Some(boundaries) = boundaries.as_mut() {
                             boundaries.boundary(scope, second, paired)?;

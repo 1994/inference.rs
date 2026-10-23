@@ -80,3 +80,11 @@ pub(crate) use prefill_projection::{narrow_dense_captures, with_dense_reference}
 #[cfg(test)]
 #[path = "../../tests/unit/resident_pooled_verify_model.rs"]
 mod pooled_verify_model_tests;
+
+mod norm_maximum;
+mod norm_maximum_kernel;
+#[cfg(test)]
+pub(crate) use norm_maximum::{
+    captures as norm_maximum_captures, consumptions as norm_maximum_consumptions,
+    with_separate as with_separate_norm_maximum,
+};

@@ -1,0 +1,364 @@
+{
+  "standalone": {
+    "date": "2026-10-22",
+    "host": "192.168.1.45",
+    "source_base": "401e581d95f42b761088aeb8c991b2175cb469c6",
+    "status": "standalone candidate only; production dispatch unchanged; not qualified for merge",
+    "hypothesis": "Preserve normalized F32 output, compute exact FP8 row maximum before store, mask padding as the original reload does, and retain separate parallel FP8 conversion.",
+    "numeric_checks": {
+      "cases": 42,
+      "shapes": [
+        [
+          1,
+          5120
+        ],
+        [
+          64,
+          5120
+        ],
+        [
+          1024,
+          4608
+        ],
+        [
+          1024,
+          5120
+        ],
+        [
+          1024,
+          7168
+        ],
+        [
+          1024,
+          8192
+        ],
+        [
+          1024,
+          17408
+        ]
+      ],
+      "fixtures": [
+        "finite signed",
+        "tiny finite",
+        "nonfinite and signed zero",
+        "last valid column maximum",
+        "nontrivial mantissas",
+        "all zero"
+      ],
+      "complete_normalized_output_bits": true,
+      "complete_scale_bits": true,
+      "complete_fp8_code_bytes": true,
+      "epsilon": 1e-06,
+      "weight_offset": 1.0,
+      "gated": false
+    },
+    "complete_norm_max_conversion_cost_ms": [
+      {
+        "baseline_ms": 0.009344000369310379,
+        "candidate_ms": 0.0077760000713169575,
+        "clear_l2": false,
+        "shape": [
+          1,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.010879999957978725,
+        "candidate_ms": 0.009088000282645226,
+        "clear_l2": true,
+        "shape": [
+          1,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.010208000428974628,
+        "candidate_ms": 0.008511999621987343,
+        "clear_l2": false,
+        "shape": [
+          64,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.012319999746978283,
+        "candidate_ms": 0.010528000071644783,
+        "clear_l2": true,
+        "shape": [
+          64,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.041120000183582306,
+        "candidate_ms": 0.032287999987602234,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          4608
+        ]
+      },
+      {
+        "baseline_ms": 0.04623999819159508,
+        "candidate_ms": 0.0379519984126091,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          4608
+        ]
+      },
+      {
+        "baseline_ms": 0.03984000161290169,
+        "candidate_ms": 0.031055999919772148,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.04879999905824661,
+        "candidate_ms": 0.040608000010252,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          5120
+        ]
+      },
+      {
+        "baseline_ms": 0.040800001472234726,
+        "candidate_ms": 0.0318400003015995,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          7168
+        ]
+      },
+      {
+        "baseline_ms": 0.06011199951171875,
+        "candidate_ms": 0.05236800014972687,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          7168
+        ]
+      },
+      {
+        "baseline_ms": 0.044319998472929,
+        "candidate_ms": 0.03481600061058998,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          8192
+        ]
+      },
+      {
+        "baseline_ms": 0.06763200461864471,
+        "candidate_ms": 0.058400001376867294,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          8192
+        ]
+      },
+      {
+        "baseline_ms": 0.1615999937057495,
+        "candidate_ms": 0.13942399621009827,
+        "clear_l2": false,
+        "shape": [
+          1024,
+          17408
+        ]
+      },
+      {
+        "baseline_ms": 0.16497600078582764,
+        "candidate_ms": 0.14582400023937225,
+        "clear_l2": true,
+        "shape": [
+          1024,
+          17408
+        ]
+      }
+    ],
+    "resource_probe": {
+      "shape": [
+        1024,
+        5120
+      ],
+      "baseline_norm": [
+        256,
+        255,
+        0
+      ],
+      "baseline_maximum": [
+        256,
+        255,
+        0
+      ],
+      "candidate_norm_max": [
+        256,
+        255,
+        0
+      ],
+      "fields": [
+        "block_threads",
+        "registers_per_thread",
+        "local_memory_per_thread"
+      ],
+      "limitation": "standalone CudaGraph with TensorView; production norm/max resource counts match earlier trace, but no production fused capture yet; first resource capture omitted graph-node trace and was superseded by resources-v2"
+    },
+    "limitations": [
+      "synthetic inputs and normalization weights only",
+      "single process per standalone sweep; not independent serving pairs",
+      "no planner, allocation-alias or quantization-reuse lifetime integration yet",
+      "no actual checkpoint or full task-quality validation",
+      "no model latency or throughput gain claimed"
+    ],
+    "raw_root": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22",
+    "sha256": {
+      "norm.rs": "8e8b877f7b9641bcca7bbb745ee1e9c3812b8daf4110cb6e845c921f43830572",
+      "maximum.rs": "3f1307ae5b0941e4b406568f9695afed55afb7d1604f463545f213b368519c20",
+      "probe-complete.rs": "0987b42f12196d7f9cbec1a8fee630ca102c72dcbe5b526b8387706c8dbb77c1",
+      "probe-complete": "bf7769e0e3d6fceb893a4075996798ce4f71bd464e3e1d31bcfc0d4fd6a21dda",
+      "complete-v1.log": "10e780683b26f3c51063ea9d036efdc74669a52c7989910e488da1bcf6a4802d",
+      "resources-v2.nsys-rep": "cfea0031651dbf898cea74992466135623edd9a197c52d923249e84de4447eee",
+      "resources.json": "0175ccd84c3f05d90db14fd2f340ee0e89392afed2a02df596b14612750a20d4"
+    }
+  },
+  "integration_and_serving": {
+    "decision": "not qualified for merge: small pooled gain is not reproducible across run orders",
+    "pair_order": [
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB"
+    ],
+    "pair_wall_reduction_percent": [
+      0.8453249605695268,
+      -0.3499403206853158,
+      1.0199056173404775,
+      -0.1572506716203348,
+      0.8653012891838396
+    ],
+    "pair_median_seconds": [
+      [
+        12.352261186,
+        12.247844439
+      ],
+      [
+        12.258112445,
+        12.301008523
+      ],
+      [
+        12.320167559,
+        12.194513478
+      ],
+      [
+        12.263267178,
+        12.282551248
+      ],
+      [
+        12.316460328,
+        12.209885838
+      ]
+    ],
+    "pooled_medians_seconds": [
+      12.29694314,
+      12.2441278
+    ],
+    "pooled_wall_reduction_percent": 0.4294997496426589,
+    "independent_pair_mean_percent": 0.44466817495763866,
+    "descriptive_paired_t95_interval_percent": [
+      -0.3557153031808292,
+      1.2450516530961067
+    ],
+    "uncertainty_limit": "Exploratory interval only: two pairs added after inspecting the first three. Repeated groups within a process are not independent units. Both BA pairs regress and all AB pairs improve, demonstrating run-order sensitivity. No thermal/clock normalization or exclusions.",
+    "same_configuration_all_pairs": true,
+    "same_workload_all_pairs": true,
+    "all_requests_finished": true,
+    "full_token_matches_per_pair": [
+      10,
+      10,
+      5,
+      10,
+      7
+    ],
+    "outputs_per_pair": [
+      48,
+      48,
+      48,
+      48,
+      48
+    ],
+    "quality_limit": "Concurrent token equality is not a quality verdict. Complete checkpoint bit reference passed. Full paired task-quality, default-budget, and 32K serving gates deferred after failed reproducible-performance gate.",
+    "candidate": {
+      "base": "2bc87fff3ff91f2fc600d93885c600996fffb57c",
+      "source_sha256": {
+        "crates/backend/cuda/src/loading/mod.rs": "c8b497e8b07002d83a47c0683bb22e21f6188d61d27dc344c621c4b64a111155",
+        "crates/backend/cuda/src/resident/batch.rs": "b15ffed8adf9fb3f89c8dde2a25fc8a7574051c373901cf6dfd93ca63d2ce062",
+        "crates/backend/cuda/src/resident/fp8_quant_reduction.rs": "4ecf8b86029ed96f43f71d409a866903e6cd84b9d633aaeac73732c9004dda07",
+        "crates/backend/cuda/src/resident/mod.rs": "425a16d89856280302776f2a7fee3d5035ab8a96824f5a2d15d586c4c000a504",
+        "crates/backend/cuda/src/resident/norm_maximum.rs": "f86b01772490007b78f3a15e2060fe0544a8da48c14049a90f953c381e6355ab",
+        "crates/backend/cuda/src/resident/norm_maximum_kernel.rs": "2b6dc8f6188ebfb2e27f55a992db14aa444394f61ae9ddd00989eaa12bf2131d",
+        "crates/backend/cuda/src/resident/nvfp4_gemm/workspace.rs": "8b4fc9caecd63d1642a9c0f20e31067f3704e5c4ad1e6f0037691dce9cfa6f55",
+        "crates/backend/cuda/tests/unit/resident_norm_maximum_model.rs": "ff91fad5e2caa3b76feabe461b428919fea8b5993a8b18e1a0615181f728346d"
+      },
+      "patch_sha256": "049695feaab9d45d0f093bc32c0cfff4b5fcb8cace2644678edd927363f96003",
+      "correction": "check-v1, clippy-v1, model-build-v1 omitted cuda feature and do not validate CUDA implementation; retained logs. clippy-cuda-v1/v2 failed lint; validate-v3 explicitly enables CUDA.",
+      "binary": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22/infer-candidate-v3",
+      "binary_sha256": "e8e992fdfc5a4b818adaddc6d071c1f7eae37411f6c0b7129340449058cc5c43",
+      "model_reference": "model-v3-summary.json",
+      "clippy_cuda": "passed in validate-v3.log",
+      "source_is_uncommitted_patch": true
+    },
+    "model_reference": {
+      "test": "norm_maximum_preserves_checkpoint_model_bits",
+      "binary_sha256": "b2d8fdaf046510f8a9ed6925f16cb3ebd18e2b2481f004c713021e7782c758af",
+      "source_manifest": "integration-v3.json",
+      "fused_captures": 146,
+      "prompt_lengths": [
+        1025,
+        511,
+        1024,
+        1
+      ],
+      "decode_steps_per_prompt": 4,
+      "full_hidden_logits_states_bits_equal": true,
+      "limitation": "MTP0 model reference; serving MTP2 validation remains separate"
+    },
+    "production_source_v4_note": "Only factored unchanged >4096/aligned512 predicate into parallel_columns and recorded test inventory after v3 binary freeze. Kernel and arithmetic unchanged. v3 code+binary preserved."
+  },
+  "raw_root": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22",
+  "validation": {
+    "cuda_clippy_v4": "passed",
+    "layout_policy_inventory_v4": "passed",
+    "ordinary_backend_tests_v3": {
+      "passed": 135,
+      "failed": 0,
+      "ignored": 144
+    },
+    "test_inventory_entries": 768,
+    "no_gpu_allocations_added": true,
+    "no_new_unsafe_or_lint_exemptions": true,
+    "publication": "experimental branch only; do not merge without new independent serving evidence"
+  },
+  "final_source_sha256": {
+    "crates/backend/cuda/src/loading/mod.rs": "c8b497e8b07002d83a47c0683bb22e21f6188d61d27dc344c621c4b64a111155",
+    "crates/backend/cuda/src/resident/batch.rs": "b15ffed8adf9fb3f89c8dde2a25fc8a7574051c373901cf6dfd93ca63d2ce062",
+    "crates/backend/cuda/src/resident/fp8_quant_reduction.rs": "8ca6cafed9d7890e27dedcb5e61988ec640b7a42fb5aa00f7503da6f409891b3",
+    "crates/backend/cuda/src/resident/mod.rs": "425a16d89856280302776f2a7fee3d5035ab8a96824f5a2d15d586c4c000a504",
+    "crates/backend/cuda/src/resident/norm_maximum.rs": "e6183d071531ac832ba50b1f3d44908f35757d9417ce289874d1d4f5f60d96be",
+    "crates/backend/cuda/src/resident/norm_maximum_kernel.rs": "2b6dc8f6188ebfb2e27f55a992db14aa444394f61ae9ddd00989eaa12bf2131d",
+    "crates/backend/cuda/src/resident/nvfp4_gemm/workspace.rs": "8b4fc9caecd63d1642a9c0f20e31067f3704e5c4ad1e6f0037691dce9cfa6f55",
+    "crates/backend/cuda/tests/unit/resident_norm_maximum_model.rs": "ff91fad5e2caa3b76feabe461b428919fea8b5993a8b18e1a0615181f728346d",
+    "tools/check/test-inventory.json": "3a3cd36008b2605cecb840c56c1e8f36510c362a4e2bddf994191833b9d1a9f7"
+  },
+  "validation_log_sha256": {
+    "clippy-cuda-v4.log": "a132ac403ba35756633744504456b1fb7875a0a0f8adf5ebd0235ce186fe2510",
+    "checks-v4.json": "f823cef57ae1a7dba96b1c6e9a2a4ae52b7eade8192c795813c013759d44ab24",
+    "ordinary-v3.log": "f9df4ca51ab4cc39721522d7197821766eeecc42da7dfca912b502946ad297e7",
+    "validate-v3.log": "8ca93a1ba00d946b9ce57c6200397b4143431c743758ea84b60d50d62b05450a",
+    "serving-decision.json": "c7a3b035f9b3460b2eace07b6cc52404252a2111480348527b7ac54eb5d674d0"
+  }
+}

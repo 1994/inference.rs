@@ -1,0 +1,1597 @@
+{
+  "a2": [
+    {
+      "group": "warmup",
+      "steps": 128,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1488
+      },
+      "accepted": {
+        "0": 159,
+        "2": 1225,
+        "1": 151
+      },
+      "phase_us": {
+        "prefill_chunk": 7945246,
+        "prime_draft": 232371,
+        "prime_readback": 1159,
+        "worker_load": 13378,
+        "worker_store": 14143,
+        "draft_propose": 708118,
+        "verify": 3118702
+      },
+      "execution_us": 12101050
+    },
+    {
+      "group": "batch0",
+      "steps": 134,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1493
+      },
+      "accepted": {
+        "0": 167,
+        "2": 1221,
+        "1": 152
+      },
+      "phase_us": {
+        "prefill_chunk": 7969362,
+        "prime_draft": 236493,
+        "prime_readback": 924,
+        "worker_load": 13290,
+        "worker_store": 14111,
+        "draft_propose": 722775,
+        "verify": 3286856
+      },
+      "execution_us": 12293969
+    },
+    {
+      "group": "batch1",
+      "steps": 130,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1502
+      },
+      "accepted": {
+        "0": 188,
+        "2": 1225,
+        "1": 136
+      },
+      "phase_us": {
+        "prefill_chunk": 7976959,
+        "prime_draft": 236197,
+        "prime_readback": 915,
+        "worker_load": 13262,
+        "worker_store": 14059,
+        "draft_propose": 752855,
+        "verify": 3192800
+      },
+      "execution_us": 12212385
+    },
+    {
+      "group": "serial0",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 468599,
+        "prime_draft": 12045,
+        "prime_readback": 46,
+        "worker_load": 639,
+        "worker_store": 614,
+        "draft_propose": 0,
+        "verify": 2152848
+      },
+      "execution_us": 2943393
+    },
+    {
+      "group": "serial1",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 469163,
+        "prime_draft": 12119,
+        "prime_readback": 43,
+        "worker_load": 644,
+        "worker_store": 629,
+        "draft_propose": 0,
+        "verify": 2154059
+      },
+      "execution_us": 2942575
+    }
+  ],
+  "b2": [
+    {
+      "group": "warmup",
+      "steps": 127,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1484
+      },
+      "accepted": {
+        "0": 154,
+        "2": 1230,
+        "1": 147
+      },
+      "phase_us": {
+        "prefill_chunk": 7849045,
+        "prime_draft": 231598,
+        "prime_readback": 949,
+        "worker_load": 13006,
+        "worker_store": 13782,
+        "draft_propose": 719819,
+        "verify": 3090849
+      },
+      "execution_us": 11979049
+    },
+    {
+      "group": "batch0",
+      "steps": 127,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1473
+      },
+      "accepted": {
+        "0": 142,
+        "2": 1239,
+        "1": 139
+      },
+      "phase_us": {
+        "prefill_chunk": 7872178,
+        "prime_draft": 234699,
+        "prime_readback": 948,
+        "worker_load": 12800,
+        "worker_store": 13719,
+        "draft_propose": 699161,
+        "verify": 3113675
+      },
+      "execution_us": 11992366
+    },
+    {
+      "group": "batch1",
+      "steps": 130,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1491
+      },
+      "accepted": {
+        "0": 164,
+        "2": 1228,
+        "1": 146
+      },
+      "phase_us": {
+        "prefill_chunk": 7899667,
+        "prime_draft": 234830,
+        "prime_readback": 945,
+        "worker_load": 12753,
+        "worker_store": 13829,
+        "draft_propose": 722474,
+        "verify": 3189065
+      },
+      "execution_us": 12117293
+    },
+    {
+      "group": "serial0",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 465369,
+        "prime_draft": 12135,
+        "prime_readback": 54,
+        "worker_load": 619,
+        "worker_store": 662,
+        "draft_propose": 0,
+        "verify": 2153376
+      },
+      "execution_us": 2940167
+    },
+    {
+      "group": "serial1",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 465245,
+        "prime_draft": 12067,
+        "prime_readback": 46,
+        "worker_load": 611,
+        "worker_store": 594,
+        "draft_propose": 0,
+        "verify": 2153906
+      },
+      "execution_us": 2945198
+    }
+  ],
+  "b0": [
+    {
+      "group": "warmup",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9153015,
+        "worker_load": 12752,
+        "worker_store": 13193
+      },
+      "execution_us": 16371721
+    },
+    {
+      "group": "batch0",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 8977172,
+        "worker_load": 12647,
+        "worker_store": 12850
+      },
+      "execution_us": 16221070
+    },
+    {
+      "group": "batch1",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9010971,
+        "worker_load": 12626,
+        "worker_store": 12747
+      },
+      "execution_us": 16256217
+    },
+    {
+      "group": "serial0",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 460610,
+        "worker_load": 587,
+        "worker_store": 575
+      },
+      "execution_us": 5637111
+    },
+    {
+      "group": "serial1",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 460099,
+        "worker_load": 594,
+        "worker_store": 583
+      },
+      "execution_us": 5637356
+    }
+  ],
+  "a0": [
+    {
+      "group": "warmup",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9014564,
+        "worker_load": 13953,
+        "worker_store": 13431,
+        "selected_step": 46966
+      },
+      "execution_us": 16262324
+    },
+    {
+      "group": "batch0",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9034095,
+        "worker_load": 12819,
+        "worker_store": 13410
+      },
+      "execution_us": 16279997
+    },
+    {
+      "group": "batch1",
+      "steps": 289,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9067506,
+        "worker_load": 12864,
+        "worker_store": 13258
+      },
+      "execution_us": 16332759
+    },
+    {
+      "group": "serial0",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 463205,
+        "worker_load": 595,
+        "worker_store": 618
+      },
+      "execution_us": 5641737
+    },
+    {
+      "group": "serial1",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 462795,
+        "worker_load": 604,
+        "worker_store": 556
+      },
+      "execution_us": 5641227
+    }
+  ],
+  "comparisons": {
+    "a2 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "b2 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "b0 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a0 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a2 b2 batch0": {
+      "pairs": 16,
+      "identical": 2,
+      "first_diff": [
+        25,
+        76,
+        80,
+        42,
+        4,
+        4,
+        12,
+        31,
+        null,
+        null,
+        25,
+        35,
+        9,
+        92,
+        208,
+        99
+      ]
+    },
+    "a2 b2 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        4,
+        82,
+        90,
+        110,
+        4,
+        4,
+        75,
+        78,
+        4,
+        68,
+        4,
+        67,
+        11,
+        97,
+        98,
+        99
+      ]
+    },
+    "a2 b2 serial0": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a0 b0 batch0": {
+      "pairs": 16,
+      "identical": 10,
+      "first_diff": [
+        25,
+        12,
+        17,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        30,
+        211,
+        97
+      ]
+    },
+    "a0 b0 batch1": {
+      "pairs": 16,
+      "identical": 2,
+      "first_diff": [
+        null,
+        null,
+        129,
+        96,
+        75,
+        4,
+        95,
+        163,
+        4,
+        81,
+        120,
+        4,
+        9,
+        4,
+        84,
+        84
+      ]
+    },
+    "a0 b0 serial0": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a2 a0 batch0": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        35,
+        12,
+        37,
+        4,
+        20,
+        4,
+        4,
+        40,
+        31,
+        25,
+        12,
+        20,
+        9,
+        92,
+        172,
+        97
+      ]
+    },
+    "a2 a0 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        83,
+        84,
+        90,
+        96,
+        75,
+        4,
+        75,
+        78,
+        177,
+        73,
+        4,
+        241,
+        84,
+        4,
+        4,
+        101
+      ]
+    },
+    "a2 a0 serial0": {
+      "pairs": 1,
+      "identical": 0,
+      "first_diff": [
+        25
+      ]
+    },
+    "b2 b0 batch0": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        86,
+        14,
+        17,
+        4,
+        4,
+        26,
+        4,
+        31,
+        31,
+        25,
+        12,
+        20,
+        74,
+        30,
+        172,
+        99
+      ]
+    },
+    "b2 b0 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        4,
+        82,
+        152,
+        110,
+        4,
+        4,
+        89,
+        163,
+        8,
+        68,
+        120,
+        4,
+        9,
+        94,
+        4,
+        84
+      ]
+    },
+    "b2 b0 serial0": {
+      "pairs": 1,
+      "identical": 0,
+      "first_diff": [
+        25
+      ]
+    }
+  },
+  "repeat_prompt_note": "C16 batch0 and batch1 have different prompts in all 16 slots. Within-process comparisons across these groups are not determinism evidence. Serial0 and serial1 intentionally use the exact same prompt.",
+  "findings": [
+    "All four serial repeated prompts are token-identical; baseline vs candidate serial outputs also match at either fixed MTP depth.",
+    "C16 admission order differs from the first prefill task across every matched diagnostic pair. Prefill chunk boundaries and slot placement differ afterward.",
+    "MTP0 has exactly4080decode tasks in each16request256output batch; MTP2 has variable1473to1502decode tasks in measured batches.",
+    "Baseline versus candidate prefill execution phase improves in both measured groups at both depths. Profiling timing is diagnostic, not qualification.",
+    "First token divergence between MTP0 and MTP2 on the serial prompt occurs at token25 in both baseline and candidate; it is not introduced by the norm fusion.",
+    "Pending scale permission is cleared on graph boundaries and intervening nodes, consumed once, and checks input pointer and geometry. No erroneous reuse identified in review."
+  ],
+  "sha256": {
+    "a0/report.json": "5c922ac82d529cca95b52f5abee22d1dd492ee0e14015bad9c904f9f87c01532",
+    "a0/execution.jsonl": "bf6cf550863cd52036ecb1aa37cefa2aff1096ebd440c2dad6281490bb9c1da7",
+    "b0/report.json": "0f22820adb4b89911999aab1855b1040799b37d11837c1150bbf92b02bd8adde",
+    "b0/execution.jsonl": "46fbcca9690427eaeb2f227a38509be0fc84ba7075ce699a795a416e190e22a2",
+    "a2/report.json": "8b8f2682b953c4b12b8cccb56033b0c6aad6e8540663f5e824ae31b03ee75fd3",
+    "a2/execution.jsonl": "d8de49e50a7f2df4a67aed78aeb1159cd0d24b6ecd9b54ae3f18934c2be4b33f",
+    "b2/report.json": "57e3edb6e3acc290418e1e0df640286fd8647802981f5d01c05fa315d8ced68f",
+    "b2/execution.jsonl": "fb25c54e41e17cbce834162bb893121b4065b4c113a4b9cbeb39f0289b2c68e7"
+  },
+  "qualification_status": "BF16-only implementation passed the fixed six-pair BF16/MTP2 performance criterion, final1024case matching-profile quality gate, checkpoint bit tests, changed-answer C1 replays and final-binary MTP0/MTP2 serving confirmation. No default canonical throughput improvement is claimed.",
+  "review_limits": "Admission and partition differences are observed. They explain a source of work variation but do not yet prove the entire original AB/BA bias. No thermal correction, row exclusions, or adjusted speedup is used.",
+  "scheduling_evidence": {
+    "request_ids_mapped_to_workload_slots": true,
+    "raw": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/schedules.json",
+    "sha256": "8189197df9b2145ee749cc0565e13640d88cbdf31a58b4d43d8a9b8fb17851cd",
+    "first_prefill_slots": {
+      "a0": {
+        "batch0": [
+          0,
+          13,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          14,
+          15
+        ],
+        "batch1": [
+          13,
+          2,
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          14,
+          15
+        ]
+      },
+      "b0": {
+        "batch0": [
+          2,
+          15,
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "batch1": [
+          12,
+          8,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          13,
+          14,
+          15
+        ]
+      },
+      "a2": {
+        "batch0": [
+          10,
+          7,
+          15,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14
+        ],
+        "batch1": [
+          15,
+          11,
+          13,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12,
+          14
+        ]
+      },
+      "b2": {
+        "batch0": [
+          15,
+          13,
+          11,
+          1,
+          0,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12,
+          14
+        ],
+        "batch1": [
+          0,
+          3,
+          1,
+          2,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ]
+      }
+    }
+  },
+  "default_checkpoint_test": {
+    "name": "norm_maximum_preserves_default_checkpoint_bits",
+    "profile": "canonical",
+    "prefill_width": 2048,
+    "narrow_width": 64,
+    "status": "passed",
+    "fused_captures": 292,
+    "full_hidden_logits_and_f32_fp8_states_bit_equal": true,
+    "prompt_lengths": [
+      1025,
+      511,
+      1024,
+      1
+    ],
+    "decode_steps_per_prompt": 4,
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
+  },
+  "quality_contract": "/home/r/benchmarks/inference.rs/norm-maximum-quality-2026-10-23/contract.json",
+  "ordered_performance_contract": "/home/r/benchmarks/inference.rs/norm-maximum-ordered-2026-10-23/contract.json",
+  "quality": {
+    "contract": {
+      "purpose": "Matched full task-quality gate for exact norm maximum fusion; actual default canonical attention and MTP0.",
+      "samples": 1024,
+      "concurrency": 16,
+      "max_new_tokens": 512,
+      "max_num_batched_tokens": 2048,
+      "margin": 0.02,
+      "confidence": 0.95,
+      "gate": "Gross regression one-sided Clopper-Pearson upper bound below 2% overall and in each frozen zero/eight-shot stratum. Preserve all runs.",
+      "order": [
+        [
+          "a",
+          0
+        ],
+        [
+          "b",
+          0
+        ],
+        [
+          "b",
+          1
+        ],
+        [
+          "a",
+          1
+        ],
+        [
+          "a",
+          2
+        ],
+        [
+          "b",
+          2
+        ],
+        [
+          "b",
+          3
+        ],
+        [
+          "a",
+          3
+        ]
+      ],
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22/infer-candidate-v3",
+          "sha256": "e8e992fdfc5a4b818adaddc6d071c1f7eae37411f6c0b7129340449058cc5c43"
+        }
+      }
+    },
+    "comparison": {
+      "overall": {
+        "n": 1024,
+        "control_correct": 966,
+        "candidate_correct": 969,
+        "regressions": 2,
+        "gains": 5,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.00613535239623017,
+        "passes_2pct": true
+      },
+      "zero_shot": {
+        "n": 512,
+        "control_correct": 477,
+        "candidate_correct": 481,
+        "regressions": 1,
+        "gains": 5,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.009231554007099723,
+        "passes_2pct": true
+      },
+      "eight_shot": {
+        "n": 512,
+        "control_correct": 489,
+        "candidate_correct": 488,
+        "regressions": 1,
+        "gains": 0,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.009231554007099723,
+        "passes_2pct": true
+      }
+    },
+    "token_identical": 814,
+    "scorer_analysis_sha256": "b4c9354d26eaec357facac2a922c98b7584692e97a66e058c019eee3f4326914",
+    "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+    "runner_sha256": "f9e41ba9a974337f65bd9b99f882d13998a4e0b6e030161d80c0ec0cdd799298",
+    "raw_sha256": {
+      "a-shard0.json": "e9418cd6ecdef83444217464b3e2befb4770782953180b7e6f0327b5ba3de753",
+      "a-shard1.json": "3b357d368b29dbbb94b12c96955ca70df638d03b8e99b0ad9ee32a37e3dbc925",
+      "a-shard2.json": "fb1aeb0316c31019e4143da531a521e734b6dfc86d25a2bbb6c1a91db565f475",
+      "a-shard3.json": "5a928e19d3d1b7cc0133131386c477466ea393cd2283e5cef83cb6b31b5341b0",
+      "b-shard0.json": "1c9994cf476caa59d008bf1a34f1a56cf3859ee28a525e53c2c0a8c0ba73d760",
+      "b-shard1.json": "f8738d6d9a0375ee5f0e0b1ef4a53cce2291ec8bef3feb4119cb54454e19d98e",
+      "b-shard2.json": "7661ddf52c76fc906cfb1bdff1634687b125ad150bdf540fb27f8ecacd9549df",
+      "b-shard3.json": "a7ad7a681153891164891d7c6c021468afdc9a9da6e767de735cfa6078002f7b"
+    },
+    "passed": true,
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
+  },
+  "changed_answer_replays": {
+    "all_seven_identical_between_variants": true,
+    "baseline_repeat_identical": true,
+    "profiles_identical": true,
+    "all_finished": true,
+    "cases": [
+      {
+        "case": "gsm8k-independent-v1:1052:zero_shot",
+        "expected": "110",
+        "c1_prediction_all_three_runs": "110",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:458:zero_shot",
+        "expected": "35",
+        "c1_prediction_all_three_runs": "35",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:102:eight_shot",
+        "expected": "26",
+        "c1_prediction_all_three_runs": "26",
+        "original": {
+          "a": true,
+          "b": false
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:979:zero_shot",
+        "expected": "50",
+        "c1_prediction_all_three_runs": "50",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:982:zero_shot",
+        "expected": "12",
+        "c1_prediction_all_three_runs": "None",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:331:zero_shot",
+        "expected": "8400",
+        "c1_prediction_all_three_runs": "None",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:301:zero_shot",
+        "expected": "8",
+        "c1_prediction_all_three_runs": "16",
+        "original": {
+          "a": true,
+          "b": false
+        }
+      }
+    ],
+    "interpretation": "At fixed C1 scheduling, every changed-answer case is token-identical across baseline, candidate and repeated baseline. Together with whole-checkpoint bit tests and observed C16 admission/partition changes, this supports scheduling-dependent numerical trajectories rather than a fusion arithmetic defect. C16 original regressions remain in the primary quality gate.",
+    "raw_sha256": "c78a59388788805509c9c3b0ab2fd1bf99f826dd9564c853e9e6e4f496c15276"
+  },
+  "additional_validation": {
+    "cuda_clippy": "passed",
+    "model_tests": {
+      "passed": 2,
+      "failed": 0,
+      "bf16_captures": 146,
+      "canonical_narrow64_captures": 292
+    },
+    "layout_policy_inventory": "passed;769entries,0in src",
+    "log_sha256": "192546ebc7f20beb5632725e9983fc1f48bc693babac16bad9bf392bbff36101",
+    "binary_sha256": "edb7e74c1f10944bc8f3dd495d12556ea37cd58e83ca347d2b28bdd058002e53",
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
+  },
+  "canonical_serving_qualification": {
+    "passed": false,
+    "decision": {
+      "decision": "stop as a failed qualification for mathematical futility; never promote this result to a pass",
+      "completed_pair_gains_percent": [
+        -0.16283168875004012,
+        0.11106716737409422,
+        0.20149396929464367
+      ],
+      "planned_pairs": 6,
+      "remaining_pairs": 3,
+      "fixed_sum": 0.14972944791869777,
+      "fixed_sum_squares": 0.07944989419180581,
+      "global_upper_bound_on_final_positive_paired_t": 2.4572840964822675,
+      "required_two_sided95_t_df5": 2.5705818366,
+      "possible_to_pass": false,
+      "derivation": "For any remaining values with sum R, sum of squares is at least R^2/k. Maximizing S_total^2/Q_total over R gives k+S_fixed^2/Q_fixed (S_fixed>0). Therefore t_final^2 <= (N-1)*(k+S_fixed^2/Q_fixed)/(m-S_fixed^2/Q_fixed). This bound holds even for arbitrary future gains, so the planned positive-lower-bound gate cannot pass.",
+      "limitations": "An early failed stop does not provide a six-pair estimate or non-regression proof. Preserve all3completed pairs and any partial next arm. No adaptive extra pairs; no relaxation of this criterion. Work continues on the original fast-profile workload and any necessary implementation change.",
+      "stop_note": "Stopping b4 systemd unit returned success, so the original driver unexpectedly started a4. Driver PID164759 was then terminated before stopping a4 unit189268. Both partial arms are retained and are not counted as complete pairs. Follow-up drivers now require report.completed in addition to process exit success.",
+      "partial_arms": [
+        "b4",
+        "a4"
+      ]
+    },
+    "completed_pairs": [
+      {
+        "pair": 1,
+        "c16_wall_reduction_percent": -0.16283168875004012,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.03389411161569142,
+        "long_token_matches": 3
+      },
+      {
+        "pair": 2,
+        "c16_wall_reduction_percent": 0.11106716737409422,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.03505394814335798,
+        "long_token_matches": 3
+      },
+      {
+        "pair": 3,
+        "c16_wall_reduction_percent": 0.20149396929464367,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.042509367858393175,
+        "long_token_matches": 3
+      }
+    ],
+    "raw_sha256": {
+      "a1": "3269a0d1482dd5bf9a2def269db8354beb8097e9350937d40a014e69579e6440",
+      "b1": "a07b3f602e46dbcea976d696d1c7f5e5792c5b7ef35e8a73016fe1757d96b069",
+      "a2": "45d48f19de07f04e9abce86ff3a0a6adb06a16e659eaf7a6b7b6fc0ee9745520",
+      "b2": "d3d8fc837121e320968571a703fa57d42aeedaedfe724db10ee0de1f575b409c",
+      "a3": "032579f7db3c93319803709efef2a342241018870ac99eddaa7f6d1ad61cda8e",
+      "b3": "90860247cef020b45f32ad0b9fadf8f53d16fe2d86a0e253c2b0795b1750b09a"
+    },
+    "contract_sha256": "fda8e6050f38a959daae6c4b6eaed6f47f3276a4fe1d46c164c50222ce43167e",
+    "source_scope": "Broad v3 prototype; final dispatch will retain canonical separate kernels."
+  },
+  "planned_final_scope": "Only AttentionProfile::Bf16 may fuse; no change to numerical-profile or MTP defaults.",
+  "bf16_ordered_performance": {
+    "contract": {
+      "purpose": "Direct follow-up of the original MTP2/BF16 serving failure: same original binary, workload and flags, with fixed10ms arrival order. The canonical/MTP0 six-pair experiment is retained and analyzed separately.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22/infer-candidate-v3",
+          "sha256": "e8e992fdfc5a4b818adaddc6d071c1f7eae37411f6c0b7129340449058cc5c43"
+        }
+      },
+      "workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json",
+      "long_workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-32k-c1.json",
+      "order": [
+        "a1",
+        "b1",
+        "b2",
+        "a2",
+        "a3",
+        "b3",
+        "b4",
+        "a4",
+        "a5",
+        "b5",
+        "b6",
+        "a6"
+      ],
+      "pairs": 6,
+      "independent_unit": "fresh process pair; one excluded warmup and3measured prompt groups per case",
+      "arrival": "C16 requests pre-serialized then released at fixed10ms intervals; actual client send order checked. C1 long context is sequential.",
+      "configuration": "bf16,MTP2,strict2048,.88memory,maxlen32768,maxseq16,frozenprivatecache,noautotune,noexecutionprofiling",
+      "primary": "C16 median makespan per process; fixed6fresh pairs AB,BA,AB,BA,AB,BA; two-sided95%paired Student t interval(df5). Require lower bound>0; no adaptive extra pairs.",
+      "secondary": "Every request finished with256output token IDs; matched configuration; report exact token equality and execution batch counts. Default-budget and32K coverage belongs to the separate canonical suite.",
+      "limitation": "Controls client arrival order, not server internal scheduling. All results retained even if send order fails; such failure prevents a deterministic-order claim.",
+      "workload_sha256": "7e571edb5f3e8b88b08ead6ce84069f6a75007c96f26237db068283a6626e04f",
+      "long_workload_sha256": "d541b0d25bb720d6f822d9a3fca4536d9c4d07b105791762a87ae3bf7b354a04",
+      "output_work_gate": "Every measured C16 request must produce256token IDs, so end-to-end gain cannot come from fewer generated tokens.",
+      "scripts_sha256": {
+        "worker.py": "aa7c04a91a9f3c6e4bc42b8b83a5fa4398d5476c6f11289095c2d443938dc9df",
+        "driver.py": "81ff4e7ab61e884d2f2725242babf2ca09f1d6853ed4ba2ca1863ba8887fc534",
+        "analyze.py": "f61c7dc9ddc344819a40ec2eea07cbe6384febffc64f22885dc43e00c9000caf"
+      },
+      "scope": "Any positive result applies specifically to this pre-existing opt-in numerical/speculative profile; it cannot be labeled a default canonical throughput improvement. Existing canonical primary criterion is unchanged and its result must be reported even if it fails."
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "a": 12.34818988700863,
+        "b": 12.303752813022584,
+        "reduction_percent": 0.35986710920924275,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            132,
+            132
+          ],
+          "b": [
+            137,
+            133,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 2,
+        "a": 12.338117220031563,
+        "b": 12.308674659987446,
+        "reduction_percent": 0.2386308990184967,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            131
+          ],
+          "b": [
+            137,
+            133,
+            132
+          ]
+        }
+      },
+      {
+        "pair": 3,
+        "a": 12.365735955070704,
+        "b": 12.279613776016049,
+        "reduction_percent": 0.6964581757816024,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            133,
+            132
+          ],
+          "b": [
+            137,
+            132,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 4,
+        "a": 12.335847718059085,
+        "b": 12.296307759010233,
+        "reduction_percent": 0.3205289166383574,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            132,
+            131
+          ],
+          "b": [
+            138,
+            132,
+            132
+          ]
+        }
+      },
+      {
+        "pair": 5,
+        "a": 12.354569849034306,
+        "b": 12.31383141502738,
+        "reduction_percent": 0.32974384786136435,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            132
+          ],
+          "b": [
+            138,
+            133,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 6,
+        "a": 12.341183829004876,
+        "b": 12.310036732989829,
+        "reduction_percent": 0.25238337299411906,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            131
+          ],
+          "b": [
+            137,
+            133,
+            131
+          ]
+        }
+      }
+    ],
+    "paired_mean_percent": 0.3662687202505305,
+    "paired_t95_percent": [
+      0.1895682269052901,
+      0.5429692135957709
+    ],
+    "checks": {
+      "positive_lower_bound": true,
+      "fixed_output_work": true,
+      "all_finished": true,
+      "ordered_sends": true,
+      "same_config": true
+    },
+    "passed": true,
+    "raw_sha256": {
+      "a1": "643aaa0749db239576695cb5a40fc817bbae8cf40db521a5ba34d7f57abce2c1",
+      "b1": "d5677d31cf3a63d0e4c2befe8ab0b08435a0a8ccc79e2397f0c6898e7ea8ec30",
+      "b2": "190b834173c3c270df4d1cf4af059c675d0feb165036150963031874fb5ae6ae",
+      "a2": "38e2f40c5bfa0c2a532fec0255686f99101a3278f4b75bac4849483a34a5ca51",
+      "a3": "528677ab3679a6d13ef927a5b7eeefc63d7b83ca4110baa70bd91e8f3d26d556",
+      "b3": "64762359cb567577b76547f3320466d47bfb7c3a5b81ee30b027e3c9614f8971",
+      "b4": "1443360772ef4c0676f12bf153108b5bd2b81c4f52c009e54228c1af3777d372",
+      "a4": "dab193e41afdf163fd14a776308926b56089a6197446414d2a507c0080319d89",
+      "a5": "3af4d0b40bf673c4771c4fbd9427c9dc32ad83a76a56544fa0321836ec1ee9db",
+      "b5": "b4f9a1b6e8abb8159ebff7eb00f6e5fa406fd31dd90d9eec807a0f8d39f624c6",
+      "b6": "b521c9337b63e01b60e92795e0fa54010ba481be46c1017a38786aea9818aa70",
+      "a6": "9d81ef4e5e373ab4c873927a0149ab2fb47c29ac7798238dde5e984e9c0027dd"
+    }
+  },
+  "final_scoped_validation": {
+    "scope": "Only explicit BF16 attention enables fusion; canonical/FP16 and numerical/MTP defaults unchanged.",
+    "cuda_clippy": "passed",
+    "checkpoint_tests": 3,
+    "full_hidden_logits_and_f32_fp8_states_bit_equal": true,
+    "captures_and_maximum_skips": {
+      "canonical": [
+        0,
+        0
+      ],
+      "bf16_width1024": [
+        146,
+        144
+      ],
+      "bf16_width2048_narrow64": [
+        292,
+        288
+      ]
+    },
+    "inventory": "770 entries; zero in src",
+    "binary_sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42",
+    "log_sha256": "778cc41d83bf8c9720cf4fddd0348cfcf320f95a7c72f04d571081868e61b281",
+    "performance_source_binding": "Six-pair study used broad v3. Final v5 adds a host BF16 dispatch guard and test-only counters; GPU kernel arithmetic unchanged. Final-binary serving confirmation is separate and not added to the six-pair estimate."
+  },
+  "final_bf16_mtp2_quality": {
+    "contract": {
+      "purpose": "Full paired task-quality validation of the existing BF16/MTP2 opt-in profile after serving qualification; profile-scoped candidate build will be bound before any run.",
+      "samples": 1024,
+      "concurrency": 16,
+      "max_new_tokens": 512,
+      "mtp": 2,
+      "profile": "bf16",
+      "max_num_batched_tokens": 2048,
+      "order": [
+        [
+          "a",
+          0
+        ],
+        [
+          "b",
+          0
+        ],
+        [
+          "b",
+          1
+        ],
+        [
+          "a",
+          1
+        ],
+        [
+          "a",
+          2
+        ],
+        [
+          "b",
+          2
+        ],
+        [
+          "b",
+          3
+        ],
+        [
+          "a",
+          3
+        ]
+      ],
+      "gate": "Same one-sided95%Clopper-Pearson gross-regression bound below2%, overall and each frozen zero/eight-shot stratum. No new samples, exclusions or relaxed margin.",
+      "scope": "Compare the same existing numerical/speculative profile between builds; does not approve BF16/MTP2 versus canonical/MTP0.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/infer-scoped-v5",
+          "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42"
+        }
+      }
+    },
+    "comparison": {
+      "overall": {
+        "n": 1024,
+        "control_correct": 966,
+        "candidate_correct": 965,
+        "regressions": 2,
+        "gains": 1,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.00613535239623017,
+        "passes_2pct": true
+      },
+      "zero_shot": {
+        "n": 512,
+        "control_correct": 479,
+        "candidate_correct": 478,
+        "regressions": 2,
+        "gains": 1,
+        "gross_regression_rate": 0.00390625,
+        "cp95_upper": 0.01224498839614846,
+        "passes_2pct": true
+      },
+      "eight_shot": {
+        "n": 512,
+        "control_correct": 487,
+        "candidate_correct": 487,
+        "regressions": 0,
+        "gains": 0,
+        "gross_regression_rate": 0.0,
+        "cp95_upper": 0.005833955600555739,
+        "passes_2pct": true
+      }
+    },
+    "token_identical": 868,
+    "scorer_analysis_sha256": "b4c9354d26eaec357facac2a922c98b7584692e97a66e058c019eee3f4326914",
+    "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+    "runner_sha256": "f9e41ba9a974337f65bd9b99f882d13998a4e0b6e030161d80c0ec0cdd799298",
+    "raw_sha256": {
+      "a-shard0.json": "eaaa1761c77338fadee62362e2036d982a835f3ff76c3ca381080c52acf509ff",
+      "a-shard1.json": "15ce1d42650a989fefccec69863389d93c325b24e5b6267584a9acd97cf7fc38",
+      "a-shard2.json": "49a2ccc71595badbffa68cc7b7cf5ac60652868b6b65aff1ef4a5f86c4b3632e",
+      "a-shard3.json": "57ba77f246ad2f8f0fa509c67e3bd2a2913f514b2e30b978124557780251e02e",
+      "b-shard0.json": "cbf028777fd768a67a43d8c9cf874db6e7d6c9a0e17a2c8ce63db3c6bae1400e",
+      "b-shard1.json": "0228d51aa09b0d992df8a3fa109c8766df10f5edd1e3c7ada62cf49508b311c8",
+      "b-shard2.json": "27ab1cc2fb11923569d8f79ed9664ead85ff5d244146eee37578bad51c27a6ba",
+      "b-shard3.json": "74a23fd3df5b865465a8876826d57b5ee5d0e8b023169c5053dfe47b34945c55"
+    },
+    "passed": true
+  },
+  "final_bf16_changed_answer_replays": {
+    "cases": [
+      "gsm8k-independent-v1:1052:zero_shot",
+      "gsm8k-independent-v1:415:zero_shot",
+      "gsm8k-independent-v1:1122:zero_shot"
+    ],
+    "baseline_repeat_mismatch": [],
+    "candidate_mismatch": [],
+    "all_finished": true,
+    "profiles_identical": true,
+    "original_changes": [
+      {
+        "case": "gsm8k-independent-v1:1052:zero_shot",
+        "expected": "110",
+        "a_correct": false,
+        "b_correct": true,
+        "a_prediction": "111",
+        "b_prediction": "110",
+        "a_length": 268,
+        "b_length": 249,
+        "a_finish": "Eos",
+        "b_finish": "Eos",
+        "a_tail": "ple who descended board the train.\n    Number boarding = $2 \\times 50 = 100$ people.\n    Current total = $91 + 100 = 191$ people.\n\n4.  **Third Stop:**\n    80 more people descend.\n    Current total = $191 - 80 = 111$ people.\n\nThe total number of people on the train at the final stop is 111.\n\n#### 111",
+        "b_tail": "hange in passengers: $-50 + 100 = +50$ people.\n    *   Current total: $140 + 50 = 190$ people.\n4.  **Third stop:** 80 people descend.\n    *   Change in passengers: $-80$ people.\n    *   Final total: $190 - 80 = 110$ people.\n\nThe total number of people on the train at the final stop is 110.\n\n#### 110"
+      },
+      {
+        "case": "gsm8k-independent-v1:415:zero_shot",
+        "expected": "350",
+        "a_correct": true,
+        "b_correct": false,
+        "a_prediction": "350",
+        "b_prediction": null,
+        "a_length": 459,
+        "b_length": 512,
+        "a_finish": "Eos",
+        "b_finish": "Length",
+        "a_tail": "s 500. Since the sister didn't take any from the average trees, all apples from the average trees were gathered by Joanne.\n*   Apples from average trees = Total apples - Apples from tallest and shortest trees\n*   Apples from average trees = $500 - 150$\n*   Apples from average trees = $350$\n\n#### 350",
+        "b_tail": "J_{avg} + 60 + 45 + 0$$\n\n**Step 4: Solve for $J_{avg}$.**\nFirst, sum the known quantities:\n$$30 + 15 + 60 + 45 = 150$$\n\nSo the equation becomes:\n$$500 = 150 + J_{avg}$$\n\nSubtract 150 from both sides:\n$$J_{avg} = 500 - 150$$\n$$J_{avg} = 350$$\n\nJoanne gathered 350 apples from the average trees.\n\n#### "
+      },
+      {
+        "case": "gsm8k-independent-v1:1122:zero_shot",
+        "expected": "18",
+        "a_correct": true,
+        "b_correct": false,
+        "a_prediction": "18",
+        "b_prediction": null,
+        "a_length": 414,
+        "b_length": 512,
+        "a_finish": "Eos",
+        "b_finish": "Length",
+        "a_tail": "e total produced minus the contribution of the first four workers:\n$380 - 200 = 180 \\text{ toys}$.\n\n**Step 5: Calculate the hourly rate of the fifth worker.**\nThe fifth worker worked for 10 hours to produce 180 toys.\nRate = $\\frac{180 \\text{ toys}}{10 \\text{ hours}} = 18 \\text{ toys/hour}$.\n\n#### 18",
+        "b_tail": "the fifth worker produced:\n$380 \\text{ total toys} - 200 \\text{ toys (from first 4 workers)} = 180 \\text{ toys}$.\n\n**Step 5: Calculate the hourly rate of the fifth worker.**\nThe fifth worker worked for 10 hours and produced 180 toys.\nRate = $\\frac{180 \\text{ toys}}{10 \\text{ hours}} = 18 \\text{ toys"
+      }
+    ],
+    "interpretation": "Both original C16 regressions reached the512token cap after calculating the correct numeric value but before a complete final answer. All3changed cases have identical C1 token streams for baseline, candidate and repeated baseline, all ending naturally within512tokens. This supports scheduling-dependent generation trajectories rather than a fusion arithmetic defect; the original2regressions remain counted.",
+    "raw_sha256": "f763b5ff51727f224d8a1c9343a97ea60a0542ae8fdc5f64769e640fb8a95bd4"
+  },
+  "final_kernel_source_binding": {
+    "crates/backend/cuda/src/resident/norm_maximum_kernel.rs": {
+      "current_sha256": "2b6dc8f6188ebfb2e27f55a992db14aa444394f61ae9ddd00989eaa12bf2131d",
+      "initial_norm_commit_identical": true
+    },
+    "crates/backend/cuda/src/resident/fp8_quant_reduction.rs": {
+      "current_sha256": "8ca6cafed9d7890e27dedcb5e61988ec640b7a42fb5aa00f7503da6f409891b3",
+      "initial_norm_commit_identical": true
+    }
+  },
+  "final_scoped_serving_confirmation": {
+    "contract": {
+      "purpose": "Final scoped executable confirmation, not additional samples for the six-pair qualification. Bind final binary hash before starting.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/infer-scoped-v5",
+          "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42"
+        }
+      },
+      "workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json",
+      "long_workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-32k-c1.json",
+      "order": [
+        "a2",
+        "b2",
+        "b0",
+        "a0"
+      ],
+      "independent_unit": "fresh process pair; one excluded warmup and3measured prompt groups per case",
+      "arrival": "C16 requests pre-serialized then released at fixed10ms intervals; actual client send order checked. C1 long context is sequential.",
+      "configuration": "bf16,MTP2,strict2048,.88memory,maxlen32768,maxseq16,frozenprivatecache,noautotune,noexecutionprofiling",
+      "limitation": "Controls client arrival order, not server internal scheduling. All results retained even if send order fails; such failure prevents a deterministic-order claim.",
+      "workload_sha256": "7e571edb5f3e8b88b08ead6ce84069f6a75007c96f26237db068283a6626e04f",
+      "long_workload_sha256": "d541b0d25bb720d6f822d9a3fca4536d9c4d07b105791762a87ae3bf7b354a04",
+      "output_work_gate": "Every measured C16 request must produce256token IDs, so end-to-end gain cannot come from fewer generated tokens.",
+      "scope": "Any positive result applies specifically to this pre-existing opt-in numerical/speculative profile; it cannot be labeled a default canonical throughput improvement. Existing canonical primary criterion is unchanged and its result must be reported even if it fails.",
+      "profile": "bf16",
+      "mtp": "label suffix2 or0",
+      "checks": "all finished, fixed output work, same per-depth readback/capacity; report complete token equality and paired latency; investigate any >1% regression. No new general default-speed claim.",
+      "workload_description": "same frozen C16x4096/256-output, fixed10ms sends, one excluded warmup and three measured groups"
+    },
+    "pairs": [
+      {
+        "mtp": 2,
+        "a_seconds": 12.321890861028805,
+        "b_seconds": 12.29868033004459,
+        "reduction_percent": 0.18836825651187025,
+        "token_matches": 48,
+        "outputs": 48,
+        "same_readback": true,
+        "capacity": {
+          "a": {
+            "planned_width": "16",
+            "prompt_width": "1024",
+            "quoted_bytes": "7568623872",
+            "envelope_bytes": "7569557647",
+            "capacity": "8192",
+            "kv_tokens": "71200"
+          },
+          "b": {
+            "planned_width": "16",
+            "prompt_width": "1024",
+            "quoted_bytes": "7568623872",
+            "envelope_bytes": "7569557647",
+            "capacity": "8192",
+            "kv_tokens": "71200"
+          }
+        },
+        "same_capacity": true
+      },
+      {
+        "mtp": 0,
+        "a_seconds": 16.57918724103365,
+        "b_seconds": 16.50143459899118,
+        "reduction_percent": 0.46897740469466853,
+        "token_matches": 48,
+        "outputs": 48,
+        "same_readback": true,
+        "capacity": {
+          "a": {
+            "planned_width": "16",
+            "prompt_width": "2048",
+            "quoted_bytes": "7644362912",
+            "envelope_bytes": "8047002255",
+            "capacity": "8192",
+            "kv_tokens": "98304"
+          },
+          "b": {
+            "planned_width": "16",
+            "prompt_width": "2048",
+            "quoted_bytes": "7644362912",
+            "envelope_bytes": "8047002255",
+            "capacity": "8192",
+            "kv_tokens": "98304"
+          }
+        },
+        "same_capacity": true
+      }
+    ],
+    "checks": {
+      "complete": true,
+      "binary_binding": true,
+      "fixed_output_work": true,
+      "same_configuration_and_capacity": true,
+      "no_gt_one_percent_regression": true
+    },
+    "passed": true,
+    "raw_sha256": {
+      "a2": "1763f60b739b6ce4f19b0795dfd487eb1dddb937098baada481457f7d0873884",
+      "b2": "ddedb453dddd4b00082589fde0129c7d54651f2916aa06198b7b821845eecadd",
+      "b0": "d66cb2d9146aa1d6a1824faada4f32e0645a881a7e2a224c74ba456487aa0d02",
+      "a0": "205fdfb9942f52f663ace2406803e02c8842b3fbf00bdfbf3041e46a873136ad"
+    }
+  },
+  "final_default_functional_coverage": {
+    "purpose": "Supplementary default canonical/MTP0 budget,32K C1/C4 completion and capacity checks. This does not contribute samples to the failed canonical performance study or qualified BF16 study.",
+    "contract": "/home/r/benchmarks/inference.rs/norm-maximum-final-default-2026-10-23/contract.json",
+    "report": "/home/r/benchmarks/inference.rs/norm-maximum-final-default-2026-10-23/analysis.json",
+    "completion_record": "See final PR validation summary and hash-bound raw report on192.168.1.45; this evidence commit precedes completion of the supplemental run."
+  }
+}
