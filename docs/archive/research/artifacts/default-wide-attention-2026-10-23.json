@@ -459,5 +459,38 @@
     "quality": "The unchanged full1024question quality gate is independent of the performance confirmation. Final PR summary records raw report hashes and results.",
     "physical_capacity_diagnosis": "Runtime inspection uses slot-granular block vocabulary while funded paged KV tokens come from the joint storage plan. Original b1/b2 fund67264/66912physical positions, below the69632needed for the fullC16workload; b3 funds75488. Thus a16-slot check alone does not establish equal usable capacity. The added physical floor was frozen before any independent confirmation arm.",
     "automatic_rung_control": "Actual-default quality startup selected2048when external free memory increased. Before any independent confirmation arm, the protocol allows either already-qualified automatic rung and requires exact paired readback/prompt-width equality,16slots,8192slot capacity and>=69632physical KV positions. Unequal pairs fail the entire study; no automatic retry or replacement samples."
+  },
+  "upstream_integration": {
+    "upstream_main": "9fa8f6c5d8c55baf52739aa667f166f3c4eec5ed",
+    "integration_commit": "f370f3ce84c24ff7cbe4cb350df74d3b4664421b",
+    "frozen_production_source": "4b9c17015f054e04079610769c748dc6f36d87f3",
+    "production_inputs_unchanged": true,
+    "changed_nonproduction_paths": [
+      "Makefile",
+      "crates/backend/cuda/README.md",
+      "crates/backend/cuda/kernels/README.md",
+      "crates/backend/cuda/kernels/oxide-attention/verify-artifact.py",
+      "crates/backend/cuda/kernels/oxide-gdn/verify-artifact.py",
+      "crates/backend/cuda/kernels/shared-attention/verify-artifact.py",
+      "crates/backend/cuda/kernels/vector-attention-combined/verify-artifact.py",
+      "crates/backend/cuda/kernels/vector-attention/verify-artifact.py",
+      "docs/archive/research/artifacts/default-wide-attention-2026-10-23.json",
+      "docs/research/cuda-kernel-engineering-2026-10-23.md",
+      "tools/README.md",
+      "tools/check/gate.sh",
+      "tools/check/test_cuda_artifacts.py",
+      "tools/cuda/compile_f16.py",
+      "tools/cuda/fa4.py",
+      "tools/cuda/kernels.json",
+      "tools/cuda/kernels.py"
+    ],
+    "artifact_integrity": {
+      "verified": 8,
+      "abi": "LinuxFA4verified"
+    },
+    "artifact_tool_tests": {
+      "passed": 10,
+      "failed": 0
+    }
   }
 }
