@@ -661,7 +661,7 @@
     "b2/report.json": "57e3edb6e3acc290418e1e0df640286fd8647802981f5d01c05fa315d8ced68f",
     "b2/execution.jsonl": "fb25c54e41e17cbce834162bb893121b4065b4c113a4b9cbeb39f0289b2c68e7"
   },
-  "qualification_status": "Six-pair BF16/MTP2 ordered performance passed. Final BF16-only build passed three checkpoint bit tests and CUDA clippy. Matching 1024-case BF16/MTP2 task quality and final serving confirmation pending.",
+  "qualification_status": "BF16-only implementation passed the fixed six-pair BF16/MTP2 performance criterion, final1024case matching-profile quality gate, checkpoint bit tests, changed-answer C1 replays and final-binary MTP0/MTP2 serving confirmation. No default canonical throughput improvement is claimed.",
   "review_limits": "Admission and partition differences are observed. They explain a source of work variation but do not yet prove the entire original AB/BA bias. No thermal correction, row exclusions, or adjusted speedup is used.",
   "scheduling_evidence": {
     "request_ids_mapped_to_workload_slots": true,
@@ -1309,5 +1309,289 @@
     "binary_sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42",
     "log_sha256": "778cc41d83bf8c9720cf4fddd0348cfcf320f95a7c72f04d571081868e61b281",
     "performance_source_binding": "Six-pair study used broad v3. Final v5 adds a host BF16 dispatch guard and test-only counters; GPU kernel arithmetic unchanged. Final-binary serving confirmation is separate and not added to the six-pair estimate."
+  },
+  "final_bf16_mtp2_quality": {
+    "contract": {
+      "purpose": "Full paired task-quality validation of the existing BF16/MTP2 opt-in profile after serving qualification; profile-scoped candidate build will be bound before any run.",
+      "samples": 1024,
+      "concurrency": 16,
+      "max_new_tokens": 512,
+      "mtp": 2,
+      "profile": "bf16",
+      "max_num_batched_tokens": 2048,
+      "order": [
+        [
+          "a",
+          0
+        ],
+        [
+          "b",
+          0
+        ],
+        [
+          "b",
+          1
+        ],
+        [
+          "a",
+          1
+        ],
+        [
+          "a",
+          2
+        ],
+        [
+          "b",
+          2
+        ],
+        [
+          "b",
+          3
+        ],
+        [
+          "a",
+          3
+        ]
+      ],
+      "gate": "Same one-sided95%Clopper-Pearson gross-regression bound below2%, overall and each frozen zero/eight-shot stratum. No new samples, exclusions or relaxed margin.",
+      "scope": "Compare the same existing numerical/speculative profile between builds; does not approve BF16/MTP2 versus canonical/MTP0.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/infer-scoped-v5",
+          "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42"
+        }
+      }
+    },
+    "comparison": {
+      "overall": {
+        "n": 1024,
+        "control_correct": 966,
+        "candidate_correct": 965,
+        "regressions": 2,
+        "gains": 1,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.00613535239623017,
+        "passes_2pct": true
+      },
+      "zero_shot": {
+        "n": 512,
+        "control_correct": 479,
+        "candidate_correct": 478,
+        "regressions": 2,
+        "gains": 1,
+        "gross_regression_rate": 0.00390625,
+        "cp95_upper": 0.01224498839614846,
+        "passes_2pct": true
+      },
+      "eight_shot": {
+        "n": 512,
+        "control_correct": 487,
+        "candidate_correct": 487,
+        "regressions": 0,
+        "gains": 0,
+        "gross_regression_rate": 0.0,
+        "cp95_upper": 0.005833955600555739,
+        "passes_2pct": true
+      }
+    },
+    "token_identical": 868,
+    "scorer_analysis_sha256": "b4c9354d26eaec357facac2a922c98b7584692e97a66e058c019eee3f4326914",
+    "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+    "runner_sha256": "f9e41ba9a974337f65bd9b99f882d13998a4e0b6e030161d80c0ec0cdd799298",
+    "raw_sha256": {
+      "a-shard0.json": "eaaa1761c77338fadee62362e2036d982a835f3ff76c3ca381080c52acf509ff",
+      "a-shard1.json": "15ce1d42650a989fefccec69863389d93c325b24e5b6267584a9acd97cf7fc38",
+      "a-shard2.json": "49a2ccc71595badbffa68cc7b7cf5ac60652868b6b65aff1ef4a5f86c4b3632e",
+      "a-shard3.json": "57ba77f246ad2f8f0fa509c67e3bd2a2913f514b2e30b978124557780251e02e",
+      "b-shard0.json": "cbf028777fd768a67a43d8c9cf874db6e7d6c9a0e17a2c8ce63db3c6bae1400e",
+      "b-shard1.json": "0228d51aa09b0d992df8a3fa109c8766df10f5edd1e3c7ada62cf49508b311c8",
+      "b-shard2.json": "27ab1cc2fb11923569d8f79ed9664ead85ff5d244146eee37578bad51c27a6ba",
+      "b-shard3.json": "74a23fd3df5b865465a8876826d57b5ee5d0e8b023169c5053dfe47b34945c55"
+    },
+    "passed": true
+  },
+  "final_bf16_changed_answer_replays": {
+    "cases": [
+      "gsm8k-independent-v1:1052:zero_shot",
+      "gsm8k-independent-v1:415:zero_shot",
+      "gsm8k-independent-v1:1122:zero_shot"
+    ],
+    "baseline_repeat_mismatch": [],
+    "candidate_mismatch": [],
+    "all_finished": true,
+    "profiles_identical": true,
+    "original_changes": [
+      {
+        "case": "gsm8k-independent-v1:1052:zero_shot",
+        "expected": "110",
+        "a_correct": false,
+        "b_correct": true,
+        "a_prediction": "111",
+        "b_prediction": "110",
+        "a_length": 268,
+        "b_length": 249,
+        "a_finish": "Eos",
+        "b_finish": "Eos",
+        "a_tail": "ple who descended board the train.\n    Number boarding = $2 \\times 50 = 100$ people.\n    Current total = $91 + 100 = 191$ people.\n\n4.  **Third Stop:**\n    80 more people descend.\n    Current total = $191 - 80 = 111$ people.\n\nThe total number of people on the train at the final stop is 111.\n\n#### 111",
+        "b_tail": "hange in passengers: $-50 + 100 = +50$ people.\n    *   Current total: $140 + 50 = 190$ people.\n4.  **Third stop:** 80 people descend.\n    *   Change in passengers: $-80$ people.\n    *   Final total: $190 - 80 = 110$ people.\n\nThe total number of people on the train at the final stop is 110.\n\n#### 110"
+      },
+      {
+        "case": "gsm8k-independent-v1:415:zero_shot",
+        "expected": "350",
+        "a_correct": true,
+        "b_correct": false,
+        "a_prediction": "350",
+        "b_prediction": null,
+        "a_length": 459,
+        "b_length": 512,
+        "a_finish": "Eos",
+        "b_finish": "Length",
+        "a_tail": "s 500. Since the sister didn't take any from the average trees, all apples from the average trees were gathered by Joanne.\n*   Apples from average trees = Total apples - Apples from tallest and shortest trees\n*   Apples from average trees = $500 - 150$\n*   Apples from average trees = $350$\n\n#### 350",
+        "b_tail": "J_{avg} + 60 + 45 + 0$$\n\n**Step 4: Solve for $J_{avg}$.**\nFirst, sum the known quantities:\n$$30 + 15 + 60 + 45 = 150$$\n\nSo the equation becomes:\n$$500 = 150 + J_{avg}$$\n\nSubtract 150 from both sides:\n$$J_{avg} = 500 - 150$$\n$$J_{avg} = 350$$\n\nJoanne gathered 350 apples from the average trees.\n\n#### "
+      },
+      {
+        "case": "gsm8k-independent-v1:1122:zero_shot",
+        "expected": "18",
+        "a_correct": true,
+        "b_correct": false,
+        "a_prediction": "18",
+        "b_prediction": null,
+        "a_length": 414,
+        "b_length": 512,
+        "a_finish": "Eos",
+        "b_finish": "Length",
+        "a_tail": "e total produced minus the contribution of the first four workers:\n$380 - 200 = 180 \\text{ toys}$.\n\n**Step 5: Calculate the hourly rate of the fifth worker.**\nThe fifth worker worked for 10 hours to produce 180 toys.\nRate = $\\frac{180 \\text{ toys}}{10 \\text{ hours}} = 18 \\text{ toys/hour}$.\n\n#### 18",
+        "b_tail": "the fifth worker produced:\n$380 \\text{ total toys} - 200 \\text{ toys (from first 4 workers)} = 180 \\text{ toys}$.\n\n**Step 5: Calculate the hourly rate of the fifth worker.**\nThe fifth worker worked for 10 hours and produced 180 toys.\nRate = $\\frac{180 \\text{ toys}}{10 \\text{ hours}} = 18 \\text{ toys"
+      }
+    ],
+    "interpretation": "Both original C16 regressions reached the512token cap after calculating the correct numeric value but before a complete final answer. All3changed cases have identical C1 token streams for baseline, candidate and repeated baseline, all ending naturally within512tokens. This supports scheduling-dependent generation trajectories rather than a fusion arithmetic defect; the original2regressions remain counted.",
+    "raw_sha256": "f763b5ff51727f224d8a1c9343a97ea60a0542ae8fdc5f64769e640fb8a95bd4"
+  },
+  "final_kernel_source_binding": {
+    "crates/backend/cuda/src/resident/norm_maximum_kernel.rs": {
+      "current_sha256": "2b6dc8f6188ebfb2e27f55a992db14aa444394f61ae9ddd00989eaa12bf2131d",
+      "initial_norm_commit_identical": true
+    },
+    "crates/backend/cuda/src/resident/fp8_quant_reduction.rs": {
+      "current_sha256": "8ca6cafed9d7890e27dedcb5e61988ec640b7a42fb5aa00f7503da6f409891b3",
+      "initial_norm_commit_identical": true
+    }
+  },
+  "final_scoped_serving_confirmation": {
+    "contract": {
+      "purpose": "Final scoped executable confirmation, not additional samples for the six-pair qualification. Bind final binary hash before starting.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/infer-scoped-v5",
+          "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42"
+        }
+      },
+      "workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json",
+      "long_workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-32k-c1.json",
+      "order": [
+        "a2",
+        "b2",
+        "b0",
+        "a0"
+      ],
+      "independent_unit": "fresh process pair; one excluded warmup and3measured prompt groups per case",
+      "arrival": "C16 requests pre-serialized then released at fixed10ms intervals; actual client send order checked. C1 long context is sequential.",
+      "configuration": "bf16,MTP2,strict2048,.88memory,maxlen32768,maxseq16,frozenprivatecache,noautotune,noexecutionprofiling",
+      "limitation": "Controls client arrival order, not server internal scheduling. All results retained even if send order fails; such failure prevents a deterministic-order claim.",
+      "workload_sha256": "7e571edb5f3e8b88b08ead6ce84069f6a75007c96f26237db068283a6626e04f",
+      "long_workload_sha256": "d541b0d25bb720d6f822d9a3fca4536d9c4d07b105791762a87ae3bf7b354a04",
+      "output_work_gate": "Every measured C16 request must produce256token IDs, so end-to-end gain cannot come from fewer generated tokens.",
+      "scope": "Any positive result applies specifically to this pre-existing opt-in numerical/speculative profile; it cannot be labeled a default canonical throughput improvement. Existing canonical primary criterion is unchanged and its result must be reported even if it fails.",
+      "profile": "bf16",
+      "mtp": "label suffix2 or0",
+      "checks": "all finished, fixed output work, same per-depth readback/capacity; report complete token equality and paired latency; investigate any >1% regression. No new general default-speed claim.",
+      "workload_description": "same frozen C16x4096/256-output, fixed10ms sends, one excluded warmup and three measured groups"
+    },
+    "pairs": [
+      {
+        "mtp": 2,
+        "a_seconds": 12.321890861028805,
+        "b_seconds": 12.29868033004459,
+        "reduction_percent": 0.18836825651187025,
+        "token_matches": 48,
+        "outputs": 48,
+        "same_readback": true,
+        "capacity": {
+          "a": {
+            "planned_width": "16",
+            "prompt_width": "1024",
+            "quoted_bytes": "7568623872",
+            "envelope_bytes": "7569557647",
+            "capacity": "8192",
+            "kv_tokens": "71200"
+          },
+          "b": {
+            "planned_width": "16",
+            "prompt_width": "1024",
+            "quoted_bytes": "7568623872",
+            "envelope_bytes": "7569557647",
+            "capacity": "8192",
+            "kv_tokens": "71200"
+          }
+        },
+        "same_capacity": true
+      },
+      {
+        "mtp": 0,
+        "a_seconds": 16.57918724103365,
+        "b_seconds": 16.50143459899118,
+        "reduction_percent": 0.46897740469466853,
+        "token_matches": 48,
+        "outputs": 48,
+        "same_readback": true,
+        "capacity": {
+          "a": {
+            "planned_width": "16",
+            "prompt_width": "2048",
+            "quoted_bytes": "7644362912",
+            "envelope_bytes": "8047002255",
+            "capacity": "8192",
+            "kv_tokens": "98304"
+          },
+          "b": {
+            "planned_width": "16",
+            "prompt_width": "2048",
+            "quoted_bytes": "7644362912",
+            "envelope_bytes": "8047002255",
+            "capacity": "8192",
+            "kv_tokens": "98304"
+          }
+        },
+        "same_capacity": true
+      }
+    ],
+    "checks": {
+      "complete": true,
+      "binary_binding": true,
+      "fixed_output_work": true,
+      "same_configuration_and_capacity": true,
+      "no_gt_one_percent_regression": true
+    },
+    "passed": true,
+    "raw_sha256": {
+      "a2": "1763f60b739b6ce4f19b0795dfd487eb1dddb937098baada481457f7d0873884",
+      "b2": "ddedb453dddd4b00082589fde0129c7d54651f2916aa06198b7b821845eecadd",
+      "b0": "d66cb2d9146aa1d6a1824faada4f32e0645a881a7e2a224c74ba456487aa0d02",
+      "a0": "205fdfb9942f52f663ace2406803e02c8842b3fbf00bdfbf3041e46a873136ad"
+    }
+  },
+  "final_default_functional_coverage": {
+    "purpose": "Supplementary default canonical/MTP0 budget,32K C1/C4 completion and capacity checks. This does not contribute samples to the failed canonical performance study or qualified BF16 study.",
+    "contract": "/home/r/benchmarks/inference.rs/norm-maximum-final-default-2026-10-23/contract.json",
+    "report": "/home/r/benchmarks/inference.rs/norm-maximum-final-default-2026-10-23/analysis.json",
+    "completion_record": "See final PR validation summary and hash-bound raw report on192.168.1.45; this evidence commit precedes completion of the supplemental run."
   }
 }
