@@ -151,6 +151,7 @@ fn usage_is_published_once_when_requested() {
     stream.completion_tokens = 4;
     stream.finish("stop");
     let chunks = chunks(&stream);
+    assert!(chunks[0].get("usage").unwrap().is_null());
     assert_eq!(chunks[1]["choices"].as_array().unwrap().len(), 0);
     assert_eq!(chunks[1]["usage"]["prompt_tokens"], 3);
     assert_eq!(chunks[1]["usage"]["completion_tokens"], 4);
@@ -163,7 +164,9 @@ fn a_failure_ends_the_stream_with_one_error_event() {
     stream.fail(&Error::new(ErrorCode::Backend, "device fault"));
     let chunks = chunks(&stream);
     assert_eq!(chunks[0]["error"]["message"], "device fault");
-    assert_eq!(chunks[0]["error"]["code"], "Backend");
+    assert_eq!(chunks[0]["error"]["code"], "backend_error");
+    assert_eq!(chunks[0]["error"]["type"], "server_error");
+    assert!(chunks[0]["error"].get("param").unwrap().is_null());
     assert_eq!(stream.queue.back().unwrap(), DONE);
     assert_eq!(stream.phase, Phase::Done);
 }

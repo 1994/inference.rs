@@ -4,6 +4,7 @@
 //! requests and resolve the same limits. Text is decoded and parsed incrementally on the CPU
 //! pool: each committed token is detokenized once and fed to the parser once, and no published
 //! delta is ever rewritten.
+use super::error::ApiError;
 use super::execution::{completion_reason, finish_reason, prepare};
 use super::{ApiResult, GenerationRequest, TextState};
 use crate::cpu::CpuPool;
@@ -67,11 +68,20 @@ struct Stream {
 impl Stream {
     /// Serialize one chunk of this response.
     fn chunk(&self, delta: &Value, finish_reason: Option<&str>) -> String {
-        json!({
+        let mut choice = json!({"index":0, "finish_reason":finish_reason, "logprobs":null});
+        if self.chat {
+            choice["delta"] = delta.clone();
+        } else {
+            choice["text"] = json!(delta["text"].as_str().unwrap_or_default());
+        }
+        let mut chunk = json!({
             "id":self.id, "object":self.object, "created":self.created, "model":self.model,
-            "choices":[{"index":0, "delta":delta, "finish_reason":finish_reason, "logprobs":null}]
-        })
-        .to_string()
+            "choices":[choice]
+        });
+        if self.include_usage {
+            chunk["usage"] = Value::Null;
+        }
+        chunk.to_string()
     }
     fn queue_chunk(&mut self, delta: &Value, finish_reason: Option<&str>) {
         let chunk = self.chunk(delta, finish_reason);
@@ -127,7 +137,8 @@ impl Stream {
     /// Queue an error event and end the stream.
     fn fail(&mut self, error: &Error) {
         self.queue.push_back(
-            json!({"error":{"message":error.message, "code":format!("{:?}", error.code)}})
+            ApiError::from(Error::new(error.code, error.message.clone()))
+                .body()
                 .to_string(),
         );
         self.queue.push_back(DONE.to_string());

@@ -190,3 +190,52 @@ fn completions_refuse_the_chat_only_tool_fields() {
         assert!(parse(object).validate(false).is_err(), "{extra}");
     }
 }
+
+#[test]
+fn nullable_tool_calls_from_sdk_history_are_accepted() {
+    let request = chat(
+        &json!([
+            {"role":"user", "content":"hello"},
+            {"role":"assistant", "content":"hi", "tool_calls":null}
+        ]),
+        &json!({}),
+    );
+    request.validate(true).unwrap();
+    let messages = request.chat_messages().unwrap();
+    assert_eq!(messages[1].tool_calls.len(), 0);
+    assert_eq!(messages[1].content, "hi");
+}
+
+#[test]
+fn invalid_function_names_and_choices_are_parameter_errors() {
+    for name in [
+        "with space",
+        " leading",
+        "trailing ",
+        "a.b",
+        "中文",
+        &"a".repeat(65),
+    ] {
+        let request = chat(
+            &json!([{"role":"user", "content":"hi"}]),
+            &json!({"tools":[{"type":"function", "function":{"name":name}}]}),
+        );
+        assert_eq!(
+            request.tool_policy(true).unwrap_err().code,
+            infer_core::ErrorCode::InvalidInput
+        );
+    }
+    for choice in [
+        json!({"type":"function", "function":{"name":"missing"}}),
+        json!({"type":"invalid", "function":{"name":"get_weather"}}),
+    ] {
+        let request = chat(
+            &json!([{"role":"user", "content":"hi"}]),
+            &json!({"tools":weather_tool(), "tool_choice":choice}),
+        );
+        assert_eq!(
+            request.tool_policy(true).unwrap_err().code,
+            infer_core::ErrorCode::InvalidInput
+        );
+    }
+}
