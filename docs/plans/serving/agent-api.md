@@ -1,6 +1,6 @@
 # Agent 工具调用与服务配置方案
 
-状态：基础工具协议与增量 parser 已实施，生成约束保留设计。初始调研源码基点为 `7c79d99`，日期为 2026 年 10 月 9 日；本次实现基于 `3a188f4`。当前公开能力以 [OpenAI 接口指南](../../guides/openai-api.md) 为准，下面的约束设计不表示已经交付。
+状态：基础工具协议与增量 parser 已实施，生成约束的采样基础已开始实现，HTTP 严格工具模式仍未开放。初始调研源码基点为 `7c79d99`，日期为 2026 年 10 月 9 日；本次实现基于 `3a188f4`。当前公开能力以 [OpenAI 接口指南](../../guides/openai-api.md) 为准，下面的约束设计不表示已经交付。
 
 整体排期与任务状态见 [路线图](../README.md) 的 S1、S2；生成约束按实际需求另行启动。本文维护本项设计与验收。性能对比的 release、配置、统计和证据规则沿用 [统一基线方案](../performance/baseline.md)，不另设一套门槛。
 
@@ -31,6 +31,23 @@
 | 服务配置 | [CLI](../../../crates/service/cli/src/arguments.rs) 支持总上下文、输出/序列 cap、部署名；有效值和来源可读回 | 需要新覆盖时先确定真实调用场景 |
 
 当前采样并非始终 greedy：[GenerationDefaults](../../../crates/model/package/src/generation/mod.rs) 已加载包内 generation config / EOS，应用识别到的模型模式预设，再覆盖请求参数。基线需要保存最终参数和来源，不能只比较客户端是否传了同名字段。
+
+## 严格工具实施进度
+
+2026-10-23 开始接入生成约束。首步在 `infer-workloads` 增加借用的词表 bitset
+`TokenMask`、`sample_constrained` 与 `probabilities_constrained`：合法集合先于
+top-k/top-p/min-p 过滤；penalty 仍按原始 token ID 处理；greedy 与随机采样均不能选中
+被禁止的 token（包括 EOS）。空合法集合、词表尺寸不匹配和非有限 logits 显式失败，
+不回退无约束采样。全允许 mask 保持原来的确定性采样轨迹；已有调用者继续走无约束路径。
+
+这一步仅建立采样原语，不表示 `strict=true` 已可用。后续接入项：
+
+- 将受支持的 JSON Schema 和工具调用模式编译成模型方言对应的 grammar；不支持的关键字提前拒绝。
+- 在 preparation / output worker 中维护每请求 matcher、tokenizer 对齐和资源预算，按已提交 token 推进。
+- 为受约束请求关闭绕过 host sampler 的 backend token 快路径；推测模式需逐前缀 matcher 与回滚，未实现组合显式拒绝。
+- 打通 `required` / 指定 function / `strict` / `parallel_tool_calls=false`，验证完整与 SSE 的一致性、EOS 和长度截断。
+
+当前 HTTP 对上述模式继续返回不支持；尚未进行真实模型或 GPU 严格工具验收。
 
 ## 可以参考哪些实现
 
