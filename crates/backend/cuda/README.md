@@ -2,6 +2,13 @@
 
 `infer-backend-cuda` 使用 NVIDIA cuTile Rust 0.4.0 实现设备 kernel、驻留执行图、权重加载和 `BackendProvider`。模型拓扑由 provider 提供，后端按设备能力、dtype 和形状选择具体实现，不按模型名分派。
 
+## Kernel 工程入口
+
+通用算子沿用 Rust/cuTile；手写 SIMT 新增实现统一走 CUDA C++ AOT，已有 oxide 保留为
+已验证兼容实现，FA4 按固定版本的第三方 AOT 库管理。具体技术边界、清单、重建和准入流程见
+[Kernel 制品工程](kernels/README.md)。`make check-cuda-artifacts` 在无 GPU 主机验证全部
+嵌入制品，`make list-cuda-kernels` 查看统一登记。
+
 ## 构建与运行
 
 需要 Linux、Rust、CUDA Toolkit 开发头文件、libclang 及标准 C 头文件；执行还需要 NVIDIA driver 与支持目标设备的 `tileiras`。打包 CI 使用 CUDA 13.2 开发头文件，本地设备验证使用 CUDA 13.4。构建通过不代表目标硬件与 JIT 工具链已验收。
