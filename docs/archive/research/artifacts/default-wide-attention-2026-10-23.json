@@ -830,7 +830,8 @@
     },
     "checkpoint_bits": "passed again afterTokio patch;32actualwidecaptures,lengths2049/1025/511/1",
     "log_sha256": "45c2872a3bdeb73a59beb7b46d3cb9cfe7929323e49a48bd3f82d411b4ae0abc",
-    "wide_cache_injection": "Formal cache has no2048attention entries; candidate must accept the shipped proof."
+    "wide_cache_injection": "Formal cache has no2048attention entries; candidate must accept the shipped proof.",
+    "source_scope": "Historical patched private-only build, before the pooled physical-stride fix. See pooled_checkpoint_bits and final_pooled_binary_binding for the final source."
   },
   "historical_patched_binary_binding": {
     "source_commit": "563e4c6806a4a3941db56931b5c32efd473e7fe4",
@@ -891,6 +892,23 @@
       "passed": 136,
       "failed": 0,
       "ignored": 149
-    }
+    },
+    "log_sha256": "7f261dec86ec4c6d4d66488dfe3badf7dd4021c7706ce7d3ed166d65f5fad987"
+  },
+  "final_pooled_binary_binding": {
+    "source_commit": "bfb3f825e00e302ea21b19cf2d479fadc7e8b67d",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
+    "binaries": {
+      "a": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-control-patched",
+        "sha256": "5f6a9ec28f75f7cfd15cd0c3c7b8e13475bc82e0e7fe454716c287664ff1d641"
+      },
+      "b": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-default-pooled",
+        "sha256": "53f5a12ab8bb1c3ba8fc67d43b319ff35660fa0d3ecec96bc8043bc3668fd8ec"
+      }
+    },
+    "build_log_sha256": "7f261dec86ec4c6d4d66488dfe3badf7dd4021c7706ce7d3ed166d65f5fad987",
+    "same_tokio_lock": true
   }
 }
