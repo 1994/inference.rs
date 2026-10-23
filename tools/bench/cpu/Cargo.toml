@@ -6,6 +6,7 @@ rust-version = "1.90"
 license = "Apache-2.0"
 publish = false
 [dependencies]
+infer-models.workspace = true
 infer-model-recipes.workspace = true
 infer-kernel-api.workspace = true
 infer-state.workspace = true

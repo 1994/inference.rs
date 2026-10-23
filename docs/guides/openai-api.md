@@ -4,7 +4,7 @@
 
 响应格式参考官方 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) 与 [Completions](https://developers.openai.com/api/reference/resources/completions/methods/create)，但兼容范围是明确限定的。
 
-首批已交付长度预算、有效配置读回、typed 工具历史、`none/auto` 工具闭环与参数增量输出。生成约束（`required`、指定 function、`strict` schema）仍待实施，见 [独立方案](../plans/serving/agent-api.md)。扩展按实际使用场景选择，以下只说明当前能力。
+已交付长度预算、有效配置读回、typed 工具历史、工具闭环与参数增量输出，以及非推测解码中的 `required`、指定 function、`strict` schema 生成约束。设计与后续推测组合见 [独立方案](../plans/serving/agent-api.md)。扩展按实际使用场景选择，以下只说明当前能力。
 
 ## 路由
 
@@ -38,8 +38,8 @@
 | `repetition_penalty` | 正有限数；省略时使用解析后的默认值 |
 | `enable_thinking` | 布尔值，控制模板与受支持模型的模式预设 |
 | `tools` | 仅 chat，至多 128 个 function 工具，名称唯一，1..64 个 ASCII 字母、数字、下划线或短横线 |
-| `tool_choice` | `"none"` 或 `"auto"`；其他合法模式返回 501；指定未声明的 function 或错误的 type 返回 400 |
-| `parallel_tool_calls` | 仅 `true`；`false` 需要生成约束，返回 501 |
+| `tool_choice` | `"none"`、`"auto"`、`"required"` 或指定 function；指定未声明的 function、缺少工具的 required 或错误的 type 返回 400 |
+| `parallel_tool_calls` | 默认 `true`；`false` 通过生成约束限制至多一次调用 |
 
 可选字段允许为 `null`，按未提供处理。服务已读取包内 `generation_config.json`，并从 generation config / model config 解析 EOS；识别到的模型还会应用模式预设，显式请求字段最后覆盖。模型包配置了 EOS 时会参与停止判断，未配置时不凭空增加 EOS。请求级 `eos_token` 覆盖使用原生 API。
 
@@ -48,6 +48,18 @@
 `content` 可以是字符串、`null`，或 `{"type":"text","text":...}` 组成的列表；其他 content part 类型返回 501。`null` 按空文本处理，这是只有工具调用的 assistant 消息的常见形式。
 
 assistant 消息可以带 `tool_calls`（`null` 按空列表处理），每项为 `{"id":..., "type":"function", "function":{"name":..., "arguments":...}}`，`arguments` 是该调用收到或产生的原始 JSON 文本。`tool` 消息必须带 `tool_call_id`，并关联到同一段历史中更早的一次 assistant 调用。id 重复、关联不存在的历史、或把 `tool_calls` / `tool_call_id` 放错 role 都返回 400。历史可以包含本次未声明的工具调用，本次声明集合只约束新产生的调用。
+
+### 严格工具调用
+
+遵循 [OpenAI 工具选择语义](https://developers.openai.com/api/docs/guides/function-calling)：required 至少一次调用，指定 function 恰好一次指定调用；parallel=false 至多一次。
+
+`strict: true`、`required`、指定 function 或 `parallel_tool_calls: false` 会在 CPU 准备池中编译 llguidance 1.9.1 grammar，逐 token 在采样前屏蔽非法候选。greedy 与随机采样共用约束；top-k/top-p/min-p 在合法集合上计算。普通 `auto` 且无严格工具的请求保留原有路径。
+
+严格 schema 支持 object、array、string、number、integer、boolean、null、nullable type 数组、enum 和嵌套 anyOf。根必须为 object；严格 object 必须设置 `additionalProperties: false`，并在 required 中列出全部 properties。支持 description/title；`$ref`、`$defs`、pattern、数值/长度边界等未实现关键字返回 501，不会忽略。function/parameter 方言不支持根 enum/anyOf，参数名不可有首尾空白、尖括号或换行。
+
+要求 byte-level decoder、模板中的受支持工具方言和 tokenizer 特殊 EOS。约束与推测解码组合返回 501；活动 matcher 的 checkpoint/replay 也显式拒绝。长度上限仍可截断调用，终末原因保留 `length`，不能当作完整调用执行。
+
+资源边界：工具声明合计不超过 64 KiB，schema 深度 16、每个 schema 256 个节点；每个请求预留 32 MiB 主机信用，受约束输出最多 4096 字节（含 reasoning 与标签），超过后返回生成错误。共享缓存至多保留 4 个已编译 grammar，每个请求独立 matcher；grammar 大小、lexer 状态和单步计算也有上限。严格模式保证受支持 schema 的格式，不保证参数语义或工具选择正确。
 
 ### 长度预算
 

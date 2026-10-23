@@ -84,6 +84,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         };
         let generate = matches!(r.request.workload, Workload::Generate { .. });
         Ok(OutputJob {
+            constraint: r.constraint.take(),
             request: r.request.clone(),
             generated: r.generated.clone(),
             output,

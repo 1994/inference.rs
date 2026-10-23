@@ -290,6 +290,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .requests
             .get_mut(work.request)
             .ok_or_else(|| Error::invariant("completion request lost"))?;
+        r.constraint = output.constraint.take();
         if r.status != RequestStatus::Runnable {
             return Err(Error::invariant("completion owner is not runnable"));
         }

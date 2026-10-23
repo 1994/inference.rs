@@ -60,7 +60,7 @@ fn tool_choice_none_keeps_the_declaration_but_disables_publishing() {
 }
 
 #[test]
-fn modes_that_need_generation_constraints_are_refused() {
+fn constrained_modes_request_a_generation_matcher() {
     for extra in [
         json!({"tools": weather_tool(), "tool_choice": "required"}),
         json!({"tools": weather_tool(), "parallel_tool_calls": false}),
@@ -70,8 +70,10 @@ fn modes_that_need_generation_constraints_are_refused() {
             "name": "get_weather", "strict": true}}]}),
     ] {
         let request = chat(&json!([{"role": "user", "content": "x"}]), &extra);
-        let error = request.tool_policy(true).unwrap_err();
-        assert_eq!(error.code, infer_core::ErrorCode::Unsupported, "{extra}");
+        assert!(
+            request.tool_policy(true).unwrap().constraint().is_some(),
+            "{extra}"
+        );
     }
 }
 

@@ -24,7 +24,15 @@ enum ReservationQuote {
     Query,
     Acknowledged(Option<u64>),
 }
+type PreparedParts = (
+    WorkloadPlan,
+    infer_ir::TokenBuffer,
+    Arc<str>,
+    Option<infer_spi::ConstraintHandle>,
+);
+
 struct PreparedAdmission {
+    constraint: Option<infer_spi::ConstraintHandle>,
     request: Arc<CanonicalRequest>,
     tenant: Arc<str>,
     plan: WorkloadPlan,
@@ -48,6 +56,7 @@ impl PreparedAdmission {
         }
         self.context.attach_credit(credit.clone());
         RequestRecord {
+            constraint: self.constraint,
             request: self.request,
             tenant: self.tenant,
             host_lease: Some(credit),
@@ -124,7 +133,12 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         let id = prepared.request.id;
         let result = self.submit_inner(
             prepared.request,
-            Some((prepared.plan, prepared.generated, prepared.tenant)),
+            Some((
+                prepared.plan,
+                prepared.generated,
+                prepared.tenant,
+                prepared.constraint,
+            )),
         );
         self.record_admission_result(id, parent, &result);
         result
@@ -167,7 +181,12 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         let id = prepared.id();
         let result = self.submit_inner_quoted(
             prepared.request,
-            Some((prepared.plan, prepared.generated, prepared.tenant)),
+            Some((
+                prepared.plan,
+                prepared.generated,
+                prepared.tenant,
+                prepared.constraint,
+            )),
             ReservationQuote::Acknowledged(bytes),
         );
         self.record_admission_result(id, parent, &result);
@@ -227,14 +246,14 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     fn submit_inner(
         &mut self,
         request: Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
+        plan: Option<PreparedParts>,
     ) -> Result<()> {
         self.submit_inner_quoted(request, plan, ReservationQuote::Query)
     }
     fn submit_inner_quoted(
         &mut self,
         request: Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
+        plan: Option<PreparedParts>,
         quote: ReservationQuote,
     ) -> Result<()> {
         if self.fault.is_some() {
@@ -252,6 +271,14 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             &self.model,
             self.config.block_size,
         )?;
+        let bytes = bytes
+            .checked_add(
+                prepared
+                    .constraint
+                    .as_ref()
+                    .map_or(0, infer_spi::ConstraintHandle::retained_bytes),
+            )
+            .ok_or_else(|| Error::invalid("constraint reservation overflow"))?;
         let bytes = self.execution_host_bytes(&prepared, bytes)?;
         let byte_credit = self.host.bytes.reserve(bytes)?;
         let state = self.reserve_execution_state(&prepared)?;
@@ -259,7 +286,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         self.retain_request_identity(id);
         self.register_tenant(&prepared.request, prepared.tenant.clone(), &prepared.plan)?;
         let record = prepared.into_record(state, self.now_us, credit, byte_credit);
-        self.record_action(crate::ReplayAction::Submit(record.request.clone()));
+        self.record_action(if record.constraint.is_some() {
+            crate::ReplayAction::ConstrainedSubmit(id)
+        } else {
+            crate::ReplayAction::Submit(record.request.clone())
+        });
         self.host.requests.insert(id, record)?;
         self.discard_prepared();
         self.enqueue_request(id)?;
@@ -287,12 +318,12 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     fn prepare_admission(
         &mut self,
         request: Arc<CanonicalRequest>,
-        plan: Option<(WorkloadPlan, infer_ir::TokenBuffer, Arc<str>)>,
+        plan: Option<PreparedParts>,
         quote: ReservationQuote,
     ) -> Result<PreparedAdmission> {
         self.apply_cost_feedback()?;
         self.validate_request_admission(&request)?;
-        let (plan, generated, tenant) = if let Some(plan) = plan {
+        let (plan, generated, tenant, constraint) = if let Some(plan) = plan {
             plan
         } else {
             request.validate()?;
@@ -308,8 +339,14 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 plan,
                 generation_storage(&request)?,
                 Arc::from(request.qos.tenant.as_str()),
+                None,
             )
         };
+        if constraint.is_some() && self.backend.speculation_capability().draft_depth > 0 {
+            return Err(Error::unsupported(
+                "constrained generation requires speculation disabled",
+            ));
+        }
         let admission = match quote {
             ReservationQuote::Acknowledged(bytes) => {
                 self.check_admission_with_bytes(&request, &plan, bytes)?
@@ -328,6 +365,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
             .cloned()
             .ok_or_else(|| Error::invariant("validated plan has no initial unit"))?;
         Ok(PreparedAdmission {
+            constraint,
             request,
             tenant,
             plan,

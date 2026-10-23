@@ -15,6 +15,15 @@ impl RuntimeSnapshot {
         costs: &impl CostModelProvider,
         admission: &impl AdmissionPolicy,
     ) -> Result<()> {
+        if self
+            .requests
+            .values()
+            .any(|record| record.constraint.is_some())
+        {
+            return Err(Error::unsupported(
+                "live generation constraints cannot be restored",
+            ));
+        }
         if self.fault.is_some() {
             return Err(Error::invalid(
                 "cannot restore a quarantined diagnostic snapshot",
