@@ -10,15 +10,19 @@
 |---|---|---|
 | 设备生命周期、buffer、CUDA Graph、调度 | Rust + CUDA Rust host runtime | 共用 stream、内存和错误处理 |
 | 通用 tile 算子、投影、融合 | cuTile Rust | 新增 tile 算子的首选，沿用现有 Cargo 工具链 |
-| 必须控制 warp、共享内存、向量访存和运算顺序的 SIMT | CUDA C++ / nvcc AOT | 新增手写 SIMT 的统一入口；只生成 PTX，无 C++ host runtime |
-| 已有 Rust SIMT attention/GDN | 固定 cuda-oxide + nightly | 保留已验证实现，暂不扩展；迁移必须证明数值、图执行和性能 |
+| 必须控制 warp、共享内存、向量访存和运算顺序的 SIMT | CUDA C++ / nvcc AOT | 新增手写 SIMT 的默认入口；只生成 PTX，无 C++ host runtime |
+| 已有 Rust SIMT attention/GDN | 固定 cuda-oxide + nightly | 保留已验证实现；有实测收益且工具链可复现时允许扩展 |
 | FA4 tensor-core attention | 固定上游 CuTe DSL 离线 AOT | 作为第三方库管理；Python 只用于生成，运行时是固定 C ABI |
 | cuBLASLt 等厂商库 | 已有 Rust adapter | 使用库算法，不复制为新的自研 kernel 系统 |
 
 cuTile 和 cuda-oxide 属于 [NVIDIA CUDA Rust](https://nvidia.github.io/cuda-rust/) 的两种
 编程模型；混用本身不是错误。当前自写 SIMT 已存在 nvcc 实现，而 oxide 还需要独立 nightly、
-编译器后端及 Git SDK。新增 SIMT 统一到 nvcc，可避免继续扩大这套独立编译链。
-已有 oxide 保留为兼容实现，不能仅因为语言统一就替换其已验证 PTX。
+编译器后端及 Git SDK。新增 SIMT 默认优先 nvcc，以控制独立编译链的维护成本；存在明确实测收益且可复现时允许 Rust 实现。
+已有 oxide 保留为已验证实现，不能仅因为语言统一就替换其 PTX。
+45 的历史 GDN 对照中，同算法和启动配置的 C++ 流水线比 oxide 慢约 2.2%～5.0%；
+它不是所有算子的结论，也没有测量 C++ host FFI 开销。具体证据见
+[技术选型复核](../../../../docs/research/cuda-kernel-engineering-2026-10-23.md#技术选型复核)。
+编译器文件丢失是制品管理问题，不是 Rust 性能或语言能力的证据。
 
 不同 dtype、KV 布局、硬件能力和数值 profile 仍然需要不同算法。`shared`、`vector`、
 `combined` 是同一 canonical 合同下的实现变体；BF16/FP16 FA4 是不同数值合同。

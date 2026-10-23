@@ -81,18 +81,25 @@ def verify(entry, generated=None):
     )
     ptx = directory / entry["ptx"]
     source = directory / entry["source"]
+    verified_files = set()
     if "source_sha256" in provenance:
         check_hash(source, provenance["source_sha256"])
         check_hash(ptx, provenance["ptx_sha256"])
+        verified_files.update((source, ptx))
     manifest_path = directory / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         for file, digest in manifest.get("common_files", {}).items():
             check_hash(directory / file, digest)
+            verified_files.add(directory / file)
         for variant in manifest["entries"]:
             base = directory if entry["name"].endswith("f16") else directory / variant["name"]
             for file, digest in variant["files"].items():
                 check_hash(base / file, digest)
+                verified_files.add(base / file)
+    require(
+        {source, ptx} <= verified_files, "Missing source/PTX identity in provenance or manifest"
+    )
     text = ptx.read_text()
     require(
         re.search(r"\.target\s+" + re.escape(entry["target"]) + r"\b", text),

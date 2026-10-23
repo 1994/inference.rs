@@ -4,7 +4,7 @@
 
 ## Kernel 工程入口
 
-通用算子沿用 Rust/cuTile；手写 SIMT 新增实现统一走 CUDA C++ AOT，已有 oxide 保留为
+通用算子沿用 Rust/cuTile；手写 SIMT 新增实现默认优先 CUDA C++ AOT，已有 oxide 保留为
 已验证兼容实现，FA4 按固定版本的第三方 AOT 库管理。具体技术边界、清单、重建和准入流程见
 [Kernel 制品工程](kernels/README.md)。`make check-cuda-artifacts` 在无 GPU 主机验证全部
 嵌入制品，`make list-cuda-kernels` 查看统一登记。

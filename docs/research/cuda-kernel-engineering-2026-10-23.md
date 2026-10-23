@@ -16,7 +16,7 @@
 - 两个 oxide 原 provenance 指定的编译器后端 `.so` 已消失。统一入口校验哈希并明确失败，不自动换工具链。
 
 技术边界及后续准入方法见 [Kernel 制品工程](../../crates/backend/cuda/kernels/README.md)。
-新增 tile 算子继续采用 cuTile，新增精细 SIMT 统一 nvcc，FA4 作为第三方离线 AOT 库。
+新增 tile 算子继续采用 cuTile，新增精细 SIMT 默认优先 nvcc，保留有实测优势且可复现的 Rust 实现，FA4 作为第三方离线 AOT 库。
 两个现有 oxide kernel 保留，后续逐算子迁移需要独立数值、CUDA Graph、质量和性能证据。
 
 ## 验证结果
@@ -44,3 +44,15 @@
 
 本轮证明工程入口能复现现有产物。没有新的 GPU 数值、模型质量或服务吞吐结论；
 其他 GPU 架构仍仅为交叉编译，不因本轮重建而获得硬件资格。
+
+## 技术选型复核
+
+45 的历史记录 `cuda-oxide-vs-cpp-2026-10-15/comparison-summary-v1.json` 比较 GDN
+流水线：相同算法、FP32 运算顺序、launch 和设备地址，两者均经现有 Rust CUDA Driver
+图提交；只改变 PTX 生成器。5 个独立进程、19,200 个样本，全部数值逐位对照通过。
+C++ 流水线在已测 cold/warm 几何上的延迟比 oxide 高 2.1649%～5.0102%。
+该结果只适用于这些 GDN 用例，不证明全模型吞吐，也没有测量 C++ host ABI 包装开销。
+
+因此 nvcc 是新增精细 SIMT 的工程默认，不能成为强制替换 Rust 实现的依据。
+统一的是 buffer/stream/graph 所有权、调用合同、构建和验收；有明确实测收益且工具链
+可复现时允许 Rust kernel。迁移以独立数值和性能门禁为准。

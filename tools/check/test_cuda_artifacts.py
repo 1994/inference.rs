@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -77,6 +78,35 @@ class ArtifactTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "directories differ"),
             ):
                 kernels.catalog()
+
+    def test_missing_provenance_cannot_bypass_source_and_ptx_identity(self):
+        entry = self.entries["shared-attention"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / entry["name"]
+            shutil.copytree(kernels.ROOT / entry["name"], directory)
+            (directory / "provenance.json").unlink()
+            with (
+                patch.object(kernels, "ROOT", root),
+                self.assertRaisesRegex(ValueError, "Missing source/PTX identity"),
+            ):
+                kernels.verify(entry)
+
+    def test_manifest_must_bind_bridge_source_and_ptx(self):
+        entry = self.entries["fa4-attention-f16"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / entry["name"]
+            shutil.copytree(kernels.ROOT / entry["name"], directory)
+            path = directory / "manifest.json"
+            manifest = json.loads(path.read_text())
+            del manifest["entries"][0]["files"]["bridge.cu"]
+            path.write_text(json.dumps(manifest))
+            with (
+                patch.object(kernels, "ROOT", root),
+                self.assertRaisesRegex(ValueError, "Missing source/PTX identity"),
+            ):
+                kernels.verify(entry)
 
     def test_hash_corruption_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
