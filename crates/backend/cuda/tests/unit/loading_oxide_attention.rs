@@ -1,9 +1,14 @@
 //! Same-checkpoint output and complete recurrent/KV-state gate for Rust SIMT attention.
 use super::{LoadOptions, LoadedModel, quant_reuse_model_tests as reference};
+use crate::device::device_error;
 use crate::{
     device::CudaDevice,
-    resident::attention_oxide::{captures, with_cutile},
+    resident::{
+        attention_oxide::{captures, with_cutile},
+        fp8_cache::Fp8Caches,
+    },
 };
+use cutile::prelude::*;
 use infer_core::{Error, ModelId, Result};
 use std::{env::var, fs::read};
 
@@ -103,6 +108,33 @@ fn rust_attention_preserves_checkpoint_model_bits() -> Result<()> {
 #[test]
 #[ignore = "requires CUDA/checkpoint/frozen1025tokens/safe-run; default-width full chunks and state bits"]
 fn wide_attention_preserves_checkpoint_model_bits() -> Result<()> {
+    checkpoint_bits(false)
+}
+
+#[test]
+#[ignore = "requires CUDA/checkpoint/frozen1025tokens/safe-run; pooled physical KV stride and complete bits"]
+fn pooled_prefill_preserves_checkpoint_model_bits() -> Result<()> {
+    checkpoint_bits(true)
+}
+
+fn pooled_caches(loaded: &LoadedModel) -> Result<Fp8Caches> {
+    let mut result = Fp8Caches::new();
+    for spec in &loaded.graph.tensors {
+        if loaded.weights.kv_scales.contains_key(&spec.id) {
+            let shape = [12288 * spec.shape[1]];
+            let keys = api::zeros(&shape)
+                .sync_on(&loaded.device.stream)
+                .map_err(device_error)?;
+            let values = api::zeros(&shape)
+                .sync_on(&loaded.device.stream)
+                .map_err(device_error)?;
+            result.insert(spec.id, (keys, values));
+        }
+    }
+    Ok(result)
+}
+
+fn checkpoint_bits(pooled: bool) -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let prompt = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
@@ -129,10 +161,19 @@ fn wide_attention_preserves_checkpoint_model_bits() -> Result<()> {
         },
     )?;
     loaded.weights.narrow_prefill_width = 0;
+    let build = || {
+        if pooled {
+            loaded
+                .prompt_worker(4096, Some(pooled_caches(&loaded)?), 2048)
+                .map(|(program, _)| program)
+        } else {
+            loaded.sequence(4096)
+        }
+    };
     let before = captures();
-    let mut control = with_cutile(|| loaded.sequence(4096))?;
+    let mut control = with_cutile(build)?;
     assert_eq!(captures(), before);
-    let mut candidate = loaded.sequence(4096)?;
+    let mut candidate = build()?;
     assert!(
         captures() >= before + 16,
         "wide exact attention must be captured"
@@ -161,7 +202,7 @@ fn wide_attention_preserves_checkpoint_model_bits() -> Result<()> {
             next = reference::greedy(&a.1)?;
         }
         println!(
-            "wide checkpoint bits passed: length={length}, captures={}",
+            "wide checkpoint bits passed: pooled={pooled}, length={length}, captures={}",
             captures() - before
         );
     }
