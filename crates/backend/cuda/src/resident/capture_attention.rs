@@ -260,6 +260,8 @@ impl Capture<'_> {
         {
             return Ok((output, keys, values));
         }
+        // Shared paged KV uses the pool's physical stride, not one sequence's limit.
+        let physical_rows = keys.size() / (kv_heads * head_dim);
         if let Some(oxide) = self.attention.prefill_oxide(node.outputs[0], lanes)
             && oxide.record(
                 self.scope,
@@ -271,7 +273,7 @@ impl Capture<'_> {
                     metadata: self.metadata,
                     table: self.table,
                 },
-                (query_heads, kv_heads, head_dim, lanes, self.capacity),
+                (query_heads, kv_heads, head_dim, lanes, physical_rows),
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 scales,
             )?

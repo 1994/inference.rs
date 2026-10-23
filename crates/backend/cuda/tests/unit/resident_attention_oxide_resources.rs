@@ -108,7 +108,8 @@ fn shared_attention_graph_retains_operands_and_write_lease() -> Result<()> {
     let support = Support::load_shared(&device)?
         .ok_or_else(|| infer_core::Error::invalid("SM120 required"))?;
     assert_eq!(support.rows_per_cta, 12);
-    resource_contract(&device, &support, 256)
+    resource_contract(&device, &support, 256)?;
+    resource_contract(&device, &support, 2048)
 }
 
 #[test]
