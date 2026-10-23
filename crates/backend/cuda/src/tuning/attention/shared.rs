@@ -21,14 +21,20 @@ use std::{
 };
 
 const SCHEMA: &str = "shared-kv32:gqa6:q2:canonical-f32:original-append:short-no-regress5:history8k32k:cold-warm-ab-ba-v1";
-const GEOMETRY: (usize, usize, usize, usize) = (24, 4, 256, 256);
+const GEOMETRY: (usize, usize, usize) = (24, 4, 256);
+const LANES: [usize; 2] = [256, 2048];
 const CAPACITY: usize = 32768;
-const HISTORIES: [usize; 3] = [0, 8192, 32512];
+const HISTORY_CASES: usize = 3;
+const MID_HISTORY: usize = 8192;
+const fn histories(shape: Shape) -> [usize; HISTORY_CASES] {
+    [0, MID_HISTORY, CAPACITY - shape.lanes]
+}
 const MAX_SHORT_REGRESSION: f32 = 1.05;
 const SHA256_HEX_LEN: usize = 64;
 
 fn supported(shape: Shape) -> bool {
-    (shape.heads, shape.kv_heads, shape.dim, shape.lanes) == GEOMETRY
+    (shape.heads, shape.kv_heads, shape.dim) == GEOMETRY
+        && LANES.contains(&shape.lanes)
         && i32::try_from(shape.window).is_ok()
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,14 +77,17 @@ impl Entry {
             && self.key.driver_build.as_ref().is_none_or(|x| !x.is_empty())
             && self.verified_fixtures == reference::FIXTURES
             && self.verified_elements == reference::FIXTURES * elements
-            && self.history_verified_elements == HISTORIES.len() * elements
+            && self.history_verified_elements == HISTORY_CASES * elements
             && self.max_f64_error.is_finite()
             && (0.0..super::MAX_ERROR).contains(&self.max_f64_error)
             && [&self.forward, &self.reverse].iter().all(|cases| {
-                cases.len() == HISTORIES.len()
-                    && cases.iter().zip(HISTORIES).all(|(case, history)| {
-                        case.history == history && case.cold.valid() && case.warm.valid()
-                    })
+                cases.len() == HISTORY_CASES
+                    && cases
+                        .iter()
+                        .zip(histories(self.key.shape))
+                        .all(|(case, history)| {
+                            case.history == history && case.cold.valid() && case.warm.valid()
+                        })
             })
             && (self.selected == Choice::RustSimt
                 || self.selected == Choice::SharedKv
@@ -160,7 +169,8 @@ fn resolve(
             return Ok(entry.selected);
         }
     }
-    if !autotune || !session.permits_attention_search() {
+    // Wide quadratic F64 proofs are prepared offline, never added to model startup.
+    if shape.lanes > LANES[0] || !autotune || !session.permits_attention_search() {
         return Ok(Choice::RustSimt);
     }
     let Some(entry) = tune(device, key.clone(), session)? else {
@@ -188,7 +198,7 @@ fn cases(
     session: &ResidentTuningSession,
 ) -> Result<Option<Vec<Case>>> {
     let mut result = Vec::new();
-    for (fixture, history) in fixtures.iter().zip(HISTORIES) {
+    for (fixture, history) in fixtures.iter().zip(histories(fixtures[0].shape)) {
         if !session.permits_attention_search() {
             return Ok(None);
         }
@@ -230,7 +240,7 @@ fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Resul
         verified_elements += shared.exact_match(device, &baseline)?;
     }
     let mut fixtures = Vec::new();
-    for history in HISTORIES {
+    for history in histories(key.shape) {
         fixtures.push(if history == 0 {
             Fixture::new(key.shape, 0)?
         } else {
@@ -248,12 +258,14 @@ fn tune(device: &CudaDevice, key: Key, session: &ResidentTuningSession) -> Resul
     } else {
         Choice::RustSimt
     };
+    let history_verified_elements =
+        fixtures.len() * key.shape.heads * key.shape.dim * key.shape.lanes;
     let entry = Entry {
         key,
         selected,
         verified_fixtures: reference::FIXTURES,
         verified_elements,
-        history_verified_elements: fixtures.len() * GEOMETRY.0 * GEOMETRY.2 * GEOMETRY.3,
+        history_verified_elements,
         max_f64_error,
         forward,
         reverse,

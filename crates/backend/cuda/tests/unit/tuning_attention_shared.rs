@@ -17,7 +17,7 @@ fn entry() -> Entry {
         candidate_ms: vec![1.0; MIN_REPS],
     };
     let cases = || {
-        HISTORIES
+        histories(shape())
             .into_iter()
             .map(|history| Case {
                 history,
@@ -38,7 +38,7 @@ fn entry() -> Entry {
         selected: Choice::SharedKv,
         verified_fixtures: reference::FIXTURES,
         verified_elements: reference::FIXTURES * 256 * 24 * 256,
-        history_verified_elements: HISTORIES.len() * 256 * 24 * 256,
+        history_verified_elements: HISTORY_CASES * 256 * 24 * 256,
         max_f64_error: 1e-7,
         forward: cases(),
         reverse: cases(),
@@ -112,6 +112,61 @@ fn hardware_shared_search_and_cache_reuse() -> Result<()> {
     );
     println!(
         "SHARED_KV_TUNING {}",
+        serde_json::to_string(&entry).map_err(device_error)?
+    );
+    Ok(())
+}
+
+#[test]
+fn wide_shared_evidence_requires_the_complete_width_and_tail_history() {
+    let mut wide = entry();
+    wide.key.shape.lanes = 2048;
+    wide.verified_elements = reference::FIXTURES * 2048 * 24 * 256;
+    wide.history_verified_elements = HISTORY_CASES * 2048 * 24 * 256;
+    for cases in [&mut wide.forward, &mut wide.reverse] {
+        for (case, history) in cases.iter_mut().zip(histories(wide.key.shape)) {
+            case.history = history;
+        }
+    }
+    assert!(wide.valid());
+    wide.reverse[2].history = 32512;
+    assert!(
+        !wide.valid(),
+        "256-row history proof must not qualify 2048 rows"
+    );
+}
+
+#[test]
+#[ignore = "requires CUDA/safe-run; wide full F64/bitwise and history cold/warm AB/BA gates"]
+fn hardware_wide_shared_search_and_cache_reuse() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let device = CudaDevice::new(0)?;
+    let shape = Shape {
+        lanes: 2048,
+        ..shape()
+    };
+    let session = ResidentTuningSession::for_hardware_validation();
+    let baseline = super::super::exact::validate_and_cache(&device, shape, &session)?;
+    assert_eq!(baseline, Choice::RustSimt);
+    assert_eq!(
+        super::super::exact::select(&device, shape, false, &session),
+        baseline
+    );
+    let key = key(&device, shape)?;
+    let entry = tune(&device, key.clone(), &session)?
+        .ok_or_else(|| Error::invalid("wide shared KV offline proof budget expired"))?;
+    assert!(entry.valid());
+    assert_eq!(entry.selected, Choice::SharedKv);
+    assert!(update_table(table_path().as_deref(), |table| {
+        table.resident_shared_attention.retain(|e| e.key != key);
+        table.resident_shared_attention.push(entry.clone());
+    }));
+    assert_eq!(
+        select(&device, shape, false, &session, baseline),
+        entry.selected
+    );
+    println!(
+        "WIDE_SHARED_KV_TUNING {}",
         serde_json::to_string(&entry).map_err(device_error)?
     );
     Ok(())

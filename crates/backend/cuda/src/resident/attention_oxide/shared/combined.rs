@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 const PTX: &str = include_str!("../../../../kernels/vector-attention-combined/v-combined.ptx");
 const THREADS: u32 = 384;
 const ROWS_PER_CTA: usize = 12;
+const LANES: &[usize] = &[256];
 
 impl Support {
     /// Load the SM120 combined vector key/consumer module.
@@ -32,6 +33,7 @@ impl Support {
             stream: device.stream.cu_stream() as usize,
             threads: THREADS,
             rows_per_cta: ROWS_PER_CTA,
+            lanes: LANES,
         }))
     }
 

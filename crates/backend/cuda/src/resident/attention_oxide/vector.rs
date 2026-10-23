@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 const PTX: &str = include_str!("../../../kernels/vector-attention/attention-sm120.ptx");
 const THREADS: u32 = 384;
 const ROWS_PER_CTA: usize = 12;
+const LANES: &[usize] = &[256];
 pub(super) fn load(device: &CudaDevice) -> Result<Option<Support>> {
     if device.profile()?.architecture != "sm_120" {
         return Ok(None);
@@ -24,6 +25,7 @@ pub(super) fn load(device: &CudaDevice) -> Result<Option<Support>> {
         stream: device.stream.cu_stream() as usize,
         threads: THREADS,
         rows_per_cta: ROWS_PER_CTA,
+        lanes: LANES,
     }))
 }
 pub(super) fn artifact_identity() -> &'static str {

@@ -1,0 +1,811 @@
+{
+  "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+  "host": "192.168.1.45",
+  "bottleneck": {
+    "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+    "diagnostic_only": true,
+    "contract": {
+      "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+      "binary": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-main",
+      "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42",
+      "source_binding": "Same production tree as4231667;2085fe7 and merge only documentation/tree-preserving merge. Frozen scoped-v5 validation and source binding retained in previous evidence.",
+      "configuration": "Default canonical/MTP0, autotune enabled, default batch budget;32768context and16sequence resource envelope for all arms.",
+      "profile_only": "Per-node events and execution traces are diagnostic, not performance acceptance."
+    },
+    "execution_profile": {
+      "prefill_width": 2048,
+      "pooled_prefill_width": 2048,
+      "batch_width": 0,
+      "draft_depth": 0,
+      "automatic_prefill": true,
+      "arena_budget_bytes": 1054928896,
+      "attention_profile": "canonical"
+    },
+    "cases": [
+      {
+        "case": "c16",
+        "prefill_records": 32,
+        "device_event_ms": 21032.316748227895,
+        "by_op_ms": {
+          "add": 202.12774312496185,
+          "attention": 13830.527236938477,
+          "conv": 179.6042539998889,
+          "delta": 934.4977291822433,
+          "embedding": 77.7257285118103,
+          "gated_norm": 138.27500741183758,
+          "linear": 5056.658153824479,
+          "multiply": 111.71110483258963,
+          "norm": 243.86393523216248,
+          "rope": 125.25772624462843,
+          "sigmoid": 26.133504401892424,
+          "silu": 47.510624185204506,
+          "split": 58.42400033771992
+        },
+        "fraction": {
+          "add": 0.009610341340166076,
+          "attention": 0.6575845829301609,
+          "conv": 0.008539442237861013,
+          "delta": 0.04443151652615638,
+          "embedding": 0.003695538130308882,
+          "gated_norm": 0.006574406855273712,
+          "linear": 0.24042325980329934,
+          "multiply": 0.005311402741307706,
+          "norm": 0.011594725305414087,
+          "rope": 0.005955488772067023,
+          "sigmoid": 0.001242540454041723,
+          "silu": 0.0022589344176364963,
+          "split": 0.0027778204863067456
+        },
+        "profiled_wall_seconds": 23.563574001018424
+      },
+      {
+        "case": "long",
+        "prefill_records": 16,
+        "device_event_ms": 57300.58466980641,
+        "by_op_ms": {
+          "add": 99.82415940612555,
+          "attention": 53680.071197509766,
+          "conv": 91.37907136976719,
+          "delta": 463.60182523727417,
+          "embedding": 38.12774419784546,
+          "gated_norm": 69.38687990605831,
+          "linear": 2550.2078406963265,
+          "multiply": 55.54348845034838,
+          "norm": 122.69481553509831,
+          "rope": 64.36783912405372,
+          "sigmoid": 12.142784103751183,
+          "silu": 24.42377609014511,
+          "split": 28.813248179852962
+        },
+        "fraction": {
+          "add": 0.001742114150865309,
+          "attention": 0.9368154183214745,
+          "conv": 0.0015947319193396969,
+          "delta": 0.008090699735592077,
+          "embedding": 0.0006653988683982179,
+          "gated_norm": 0.0012109279565976326,
+          "linear": 0.04450579091630309,
+          "multiply": 0.0009693354574026903,
+          "norm": 0.0021412489286474993,
+          "rope": 0.0011233365155865727,
+          "sigmoid": 0.00021191379064845075,
+          "silu": 0.0004262395616185538,
+          "split": 0.000502843877525662
+        },
+        "profiled_wall_seconds": 58.442206321
+      },
+      {
+        "case": "long4",
+        "prefill_records": 64,
+        "device_event_ms": 223289.82035811915,
+        "by_op_ms": {
+          "add": 397.59519762918353,
+          "attention": 208944.10272789001,
+          "conv": 356.8929252848029,
+          "delta": 1831.909008860588,
+          "embedding": 150.79340863227844,
+          "gated_norm": 275.4551680088043,
+          "linear": 10120.767060513783,
+          "multiply": 221.84832134842873,
+          "norm": 482.627581872046,
+          "rope": 248.77929289266467,
+          "sigmoid": 48.11699218675494,
+          "silu": 94.0425922870636,
+          "split": 116.89008071273565
+        },
+        "fraction": {
+          "add": 0.0017806239307797732,
+          "attention": 0.9357529259183378,
+          "conv": 0.0015983394348761935,
+          "delta": 0.008204176105845378,
+          "embedding": 0.0006753259436118999,
+          "gated_norm": 0.0012336217010118094,
+          "linear": 0.04532569843211742,
+          "multiply": 0.0009935442690249896,
+          "norm": 0.002161440145806884,
+          "rope": 0.001114154207718313,
+          "sigmoid": 0.00021549120380670922,
+          "silu": 0.00042116829211575864,
+          "split": 0.000523490414947102
+        },
+        "profiled_wall_seconds": 226.44455362
+      }
+    ],
+    "requests_finished": true,
+    "raw_sha256": {
+      "report.json": "80540c8d8a30f898b1a866abdaa1f4070af0a1bbdfcf8cf7e6a6e33a7659ddf9",
+      "operators.jsonl": "4022b97c8b0cbcbc46bc2312ede3678a116f96a398b1b30d1c3a4c018fc1061b",
+      "execution.jsonl": "aa73585a7a482db36c386adf3ebaf7708cfefe1c66f2ec7d8e8982ee522870ec"
+    }
+  },
+  "change": "Qualify2048-row exact Rust SIMT and shared KV attention, with shipped fingerprint-bound offline proof. Preserve canonical F32 arithmetic, FP8 KV encoding and numerical/speculative defaults. Wide proofs are cache-only at startup, avoiding quadratic F64 work outside the existing30second search budget.",
+  "hardware_proof": {
+    "resident_exact_attention": [
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "cb93a12253e1b8fadf2ed79cda4e2edfaf2a890eb54bd56df012f85852179f26",
+          "schema": "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 2048,
+            "window": 0
+          }
+        },
+        "selected": "RustSimt",
+        "verified_fixtures": 4,
+        "verified_elements": 50331648,
+        "max_f64_error": 5.275024328454947e-07,
+        "forward": [
+          {
+            "fixture": 0,
+            "cold": {
+              "baseline_ms": [
+                13.700576,
+                13.697888,
+                13.703264,
+                13.699136,
+                13.691776,
+                13.7008,
+                13.699648,
+                13.700928,
+                13.69888,
+                14.307872
+              ],
+              "candidate_ms": [
+                7.8656,
+                7.876608,
+                7.875072,
+                7.876256,
+                7.880448,
+                7.879168,
+                7.879424,
+                7.885088,
+                7.896096,
+                7.891264
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                13.692512,
+                13.691872,
+                13.69744,
+                13.689536,
+                13.834272,
+                13.834144,
+                13.841152,
+                13.842688,
+                13.846304,
+                13.845184
+              ],
+              "candidate_ms": [
+                7.898464,
+                7.892192,
+                7.898112,
+                7.901472,
+                7.965408,
+                7.96672,
+                7.966464,
+                7.975264,
+                7.972768,
+                7.968928
+              ]
+            }
+          },
+          {
+            "fixture": 1,
+            "cold": {
+              "baseline_ms": [
+                40.403008,
+                40.658527,
+                40.683807,
+                40.765377,
+                40.7728,
+                40.74608,
+                40.774048,
+                41.382656,
+                40.775616,
+                40.76995
+              ],
+              "candidate_ms": [
+                23.799007,
+                23.66672,
+                23.900928,
+                23.891905,
+                23.907904,
+                23.917215,
+                23.887169,
+                23.922625,
+                23.911713,
+                23.917952
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                40.751778,
+                40.77792,
+                40.779297,
+                41.5904,
+                40.778625,
+                40.765823,
+                40.770176,
+                40.77011,
+                40.75424,
+                40.777824
+              ],
+              "candidate_ms": [
+                23.932096,
+                23.91456,
+                23.9272,
+                23.95008,
+                23.924095,
+                23.940449,
+                23.940737,
+                23.916992,
+                23.946848,
+                23.769567
+              ]
+            }
+          }
+        ],
+        "reverse": [
+          {
+            "fixture": 0,
+            "cold": {
+              "baseline_ms": [
+                13.76416,
+                13.910688,
+                13.904384,
+                13.909984,
+                13.763744,
+                13.770176,
+                13.768256,
+                13.770144,
+                13.762176,
+                13.8816
+              ],
+              "candidate_ms": [
+                7.961184,
+                7.947008,
+                8.015744,
+                8.006624,
+                7.951712,
+                7.944544,
+                7.953728,
+                7.947264,
+                7.95696,
+                7.954528
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                13.851936,
+                13.771776,
+                13.878752,
+                13.909632,
+                13.911872,
+                13.91216,
+                14.514656,
+                13.903104,
+                13.91232,
+                13.904832
+              ],
+              "candidate_ms": [
+                8.020032,
+                7.953312,
+                7.957632,
+                8.009984,
+                8.02032,
+                8.008288,
+                8.016736,
+                8.017376,
+                8.012544,
+                8.0088
+              ]
+            }
+          },
+          {
+            "fixture": 1,
+            "cold": {
+              "baseline_ms": [
+                40.764767,
+                40.76387,
+                40.75648,
+                41.37661,
+                40.75517,
+                40.75635,
+                40.69008,
+                40.749695,
+                40.759422,
+                40.762753
+              ],
+              "candidate_ms": [
+                23.895617,
+                23.939808,
+                23.911455,
+                23.935392,
+                23.912449,
+                23.937887,
+                23.9328,
+                23.838112,
+                23.939009,
+                23.928352
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                40.775967,
+                40.765408,
+                40.76099,
+                40.76211,
+                40.746494,
+                40.579647,
+                40.777374,
+                41.282143,
+                40.770657,
+                40.582527
+              ],
+              "candidate_ms": [
+                24.632511,
+                23.939936,
+                23.943424,
+                23.955168,
+                23.908833,
+                23.932257,
+                23.953184,
+                23.91952,
+                23.895391,
+                23.935232
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "resident_shared_attention": [
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "39df31e7a521eed152fd98910fe2a7caa89738765b64245c5899fa0198005075",
+          "schema": "shared-kv32:gqa6:q2:canonical-f32:original-append:short-no-regress5:history8k32k:cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 2048,
+            "window": 0
+          }
+        },
+        "selected": "SharedKv",
+        "verified_fixtures": 4,
+        "verified_elements": 50331648,
+        "history_verified_elements": 37748736,
+        "max_f64_error": 5.275024328454947e-07,
+        "forward": [
+          {
+            "history": 0,
+            "cold": {
+              "baseline_ms": [
+                8.177856,
+                7.836096,
+                7.839968,
+                7.859936,
+                7.937632,
+                7.951552,
+                7.970624,
+                8.009216,
+                8.00336,
+                8.034816
+              ],
+              "candidate_ms": [
+                4.695584,
+                4.349376,
+                4.36544,
+                4.380608,
+                4.39712,
+                4.41616,
+                4.417984,
+                4.427968,
+                4.440384,
+                4.43712
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                8.139136,
+                8.144544,
+                8.161984,
+                8.16336,
+                8.187712,
+                8.196288,
+                8.19936,
+                8.204384,
+                8.209056,
+                8.21152
+              ],
+              "candidate_ms": [
+                4.473856,
+                4.484064,
+                4.480512,
+                4.502048,
+                4.49872,
+                4.50432,
+                4.519328,
+                4.522656,
+                4.520736,
+                4.529568
+              ]
+            }
+          },
+          {
+            "history": 8192,
+            "cold": {
+              "baseline_ms": [
+                70.148,
+                71.33165,
+                70.754814,
+                71.14621,
+                70.88762,
+                70.87539,
+                71.58224,
+                70.86563,
+                70.946594,
+                70.88365
+              ],
+              "candidate_ms": [
+                37.412064,
+                37.493664,
+                37.718143,
+                37.699936,
+                37.773567,
+                37.71824,
+                37.661503,
+                37.75456,
+                37.689632,
+                37.754944
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                70.90438,
+                70.93984,
+                71.01795,
+                71.49475,
+                70.86995,
+                71.024864,
+                70.98842,
+                71.00391,
+                71.59558,
+                70.968094
+              ],
+              "candidate_ms": [
+                37.84384,
+                37.77837,
+                37.720703,
+                37.759777,
+                37.716415,
+                37.719456,
+                37.77072,
+                37.70144,
+                37.723007,
+                37.724384
+              ]
+            }
+          },
+          {
+            "history": 30720,
+            "cold": {
+              "baseline_ms": [
+                243.9711,
+                243.41104,
+                244.15242,
+                244.14243,
+                243.48749,
+                243.56982,
+                244.22108,
+                244.32208,
+                243.64977,
+                243.7287
+              ],
+              "candidate_ms": [
+                130.11491,
+                129.35046,
+                129.40833,
+                129.44989,
+                130.11713,
+                129.45033,
+                129.43478,
+                129.48634,
+                130.27037,
+                129.50954
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                243.99901,
+                244.46042,
+                244.53104,
+                243.98828,
+                243.91658,
+                244.63171,
+                244.63162,
+                243.67862,
+                244.14922,
+                244.87207
+              ],
+              "candidate_ms": [
+                129.64359,
+                129.60938,
+                129.56227,
+                130.4944,
+                129.64583,
+                129.68039,
+                129.64108,
+                130.54413,
+                129.7448,
+                129.75967
+              ]
+            }
+          }
+        ],
+        "reverse": [
+          {
+            "history": 0,
+            "cold": {
+              "baseline_ms": [
+                8.030432,
+                8.03376,
+                8.033696,
+                8.09968,
+                8.798176,
+                8.121536,
+                8.159104,
+                8.176064,
+                8.187424,
+                8.233824,
+                8.2336
+              ],
+              "candidate_ms": [
+                4.447552,
+                4.44112,
+                4.464928,
+                4.463488,
+                4.473184,
+                4.483072,
+                4.494144,
+                4.510048,
+                4.520576,
+                4.522656,
+                4.5376
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                8.26688,
+                8.27408,
+                8.274208,
+                8.286848,
+                8.300288,
+                8.302016,
+                8.311648,
+                8.313888,
+                8.317664,
+                8.31968,
+                8.319168
+              ],
+              "candidate_ms": [
+                4.555904,
+                4.558528,
+                4.547744,
+                4.547616,
+                4.551744,
+                4.547712,
+                4.544352,
+                4.557472,
+                4.55744,
+                4.56032,
+                4.566432
+              ]
+            }
+          },
+          {
+            "history": 8192,
+            "cold": {
+              "baseline_ms": [
+                70.61302,
+                71.16109,
+                71.1848,
+                71.97766,
+                71.18013,
+                71.34704,
+                71.27158,
+                71.344864,
+                71.90371,
+                71.327774
+              ],
+              "candidate_ms": [
+                37.74195,
+                37.68285,
+                37.915455,
+                37.918144,
+                37.892544,
+                37.934784,
+                37.919006,
+                37.960194,
+                37.935295,
+                37.911423
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                71.15229,
+                71.97146,
+                71.31603,
+                71.29917,
+                71.34755,
+                71.33827,
+                71.262146,
+                71.35981,
+                71.31299,
+                71.408226
+              ],
+              "candidate_ms": [
+                37.95299,
+                37.920418,
+                37.901184,
+                37.93408,
+                37.97584,
+                37.946144,
+                38.73312,
+                37.91824,
+                37.95981,
+                37.968414
+              ]
+            }
+          },
+          {
+            "history": 30720,
+            "cold": {
+              "baseline_ms": [
+                243.79254,
+                243.77892,
+                243.16211,
+                243.15729,
+                244.90771,
+                245.40273,
+                243.3633,
+                244.90039,
+                243.88611,
+                243.95107
+              ],
+              "candidate_ms": [
+                129.26483,
+                129.5529,
+                129.70464,
+                130.56442,
+                129.76643,
+                130.0048,
+                130.03923,
+                130.5315,
+                130.04509,
+                129.60138
+              ]
+            },
+            "warm": {
+              "baseline_ms": [
+                243.41148,
+                243.38336,
+                243.9753,
+                244.07884,
+                243.45532,
+                249.37344,
+                244.077,
+                245.48445,
+                243.59587,
+                243.68413
+              ],
+              "candidate_ms": [
+                129.31354,
+                130.53497,
+                129.90445,
+                129.81905,
+                129.77939,
+                130.56119,
+                130.10054,
+                129.88004,
+                130.1638,
+                130.64502
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "checkpoint_bits": {
+    "passed": true,
+    "prefill_width": 2048,
+    "narrow_width": 0,
+    "lengths": [
+      2049,
+      1025,
+      511,
+      1
+    ],
+    "captures": 32,
+    "decode_steps_per_prompt": 4,
+    "full_hidden_logits_and_recurrent_fp8_kv_state_bits": true
+  },
+  "validation_reports": {
+    "protected_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-v3.log",
+    "serving_contract": "/home/r/benchmarks/inference.rs/default-attention-serving-2026-10-23/contract.json",
+    "serving_analysis": "/home/r/benchmarks/inference.rs/default-attention-serving-2026-10-23/analysis.json",
+    "quality_contract": "/home/r/benchmarks/inference.rs/default-attention-quality-2026-10-23/contract.json",
+    "quality_analysis": "/home/r/benchmarks/inference.rs/default-attention-quality-2026-10-23/analysis.json",
+    "completion_record": "Final PR validation summary records the outcomes and hashes of serving/quality reports created after this evidence snapshot."
+  },
+  "negative_attempt": "Initial wide startup-style search exhausted the30second budget before producing a complete proof; no incomplete entry was enabled. This led to offline hardware proof and shipped evidence without increasing startup budget. Initial logs validate-v1/v2 are preserved.",
+  "performance_plan": {
+    "purpose": "Default numerical and speculative configuration throughput/long-prefill qualification, separate from instrumented diagnosis.",
+    "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+    "configuration": {
+      "attention": "default canonical; no profile flag",
+      "mtp": "default0; no speculation flag",
+      "autotune": "enabled; no disable flag",
+      "batch_budget": "default; no max-num-batched-tokens flag",
+      "gpu_memory_utilization": 0.88,
+      "max_model_len": 32768,
+      "max_num_seqs": 16
+    },
+    "pairs": 6,
+    "order": [
+      "a1",
+      "b1",
+      "b2",
+      "a2",
+      "a3",
+      "b3",
+      "b4",
+      "a4",
+      "a5",
+      "b5",
+      "b6",
+      "a6"
+    ],
+    "per_process": "Each workload one excluded warmup and one measured frozen group. Independent statistical unit is the fresh process pair, not token or request.",
+    "workloads": {
+      "c16": "Frozen4K C16,256output tokens each,pre-serialized sends at10ms intervals",
+      "long": "Frozen32K C1,16output tokens"
+    },
+    "primary": "For each of C16 makespan and32K C1 TTFT, require positive lower bound of two-sided95%paired Student t interval(df5) across fixed6pairs. No adaptive extra pairs or exclusions.",
+    "required": "All requests finish; fixed output work; same runtime readback and capacity; report complete token equality. Full1024question matching canonical/MTP0 quality keeps fixed2% one-sided95%gross regression bound overall and in zero/eight-shot strata. Investigate and fix failures without changing grading/limits.",
+    "supplementary": "short/511/C4/hot-prefix functional/latency checks and32K C4 completion/capacity; confirm actual model-context default launch.",
+    "status": "Plan frozen before any uninstrumented candidate serving comparison. Bind source and binary/cache hashes in contract before starting."
+  }
+}

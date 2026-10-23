@@ -5,7 +5,7 @@ use crate::{
     resident::attention_oxide::{captures, with_cutile},
 };
 use infer_core::{Error, ModelId, Result};
-use std::env::var;
+use std::{env::var, fs::read};
 
 #[test]
 #[ignore = "requires CUDA/checkpoint/frozen511tokens/safe-run; complete model output and state equivalence"]
@@ -97,5 +97,73 @@ fn rust_attention_preserves_checkpoint_model_bits() -> Result<()> {
             "chunked_recurrent":false,
         })
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CUDA/checkpoint/frozen1025tokens/safe-run; default-width full chunks and state bits"]
+fn wide_attention_preserves_checkpoint_model_bits() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let prompt = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<u32> =
+        serde_json::from_slice(&read(prompt).map_err(|e| Error::invalid(e.to_string()))?)
+            .map_err(|e| Error::invalid(e.to_string()))?;
+    assert_eq!(tokens.len(), 1025);
+    let tokens = tokens
+        .iter()
+        .copied()
+        .cycle()
+        .take(2049)
+        .collect::<Vec<_>>();
+    let mut loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        path,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 2048,
+            verification_width: 3,
+            mtp_depth: 0,
+            autotune: false,
+            ..LoadOptions::default()
+        },
+    )?;
+    loaded.weights.narrow_prefill_width = 0;
+    let before = captures();
+    let mut control = with_cutile(|| loaded.sequence(4096))?;
+    assert_eq!(captures(), before);
+    let mut candidate = loaded.sequence(4096)?;
+    assert!(
+        captures() >= before + 16,
+        "wide exact attention must be captured"
+    );
+    for length in [2049, 1025, 511, 1] {
+        control.reset()?;
+        candidate.reset()?;
+        let mut next = tokens[0];
+        for (chunk, input) in tokens[..length].chunks(2048).enumerate() {
+            let a = candidate.prefill_batch(input, chunk * 2048, true)?;
+            let b = control.prefill_batch(input, chunk * 2048, true)?;
+            reference::outputs(&a, &b);
+            reference::program_states(&loaded, &candidate, &control)?;
+            next = reference::greedy(
+                &a.last()
+                    .ok_or_else(|| Error::invariant("prefill output"))?
+                    .1,
+            )?;
+        }
+        for _ in 0..4 {
+            let position = candidate.position();
+            let a = candidate.step(next, position, position, None, true)?;
+            let b = control.step(next, position, position, None, true)?;
+            reference::outputs(&vec![a.clone()], &vec![b]);
+            reference::program_states(&loaded, &candidate, &control)?;
+            next = reference::greedy(&a.1)?;
+        }
+        println!(
+            "wide checkpoint bits passed: length={length}, captures={}",
+            captures() - before
+        );
+    }
     Ok(())
 }
