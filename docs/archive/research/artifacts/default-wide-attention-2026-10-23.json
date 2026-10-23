@@ -768,7 +768,8 @@
     "serving_analysis": "/home/r/benchmarks/inference.rs/default-attention-serving-patched-2026-10-23/analysis.json",
     "quality_contract": "/home/r/benchmarks/inference.rs/default-attention-quality-patched-2026-10-23/contract.json",
     "quality_analysis": "/home/r/benchmarks/inference.rs/default-attention-quality-patched-2026-10-23/analysis.json",
-    "completion_record": "Final PR validation summary records the outcomes and hashes of serving/quality reports created after this evidence snapshot."
+    "completion_record": "Final PR validation summary records the outcomes and hashes of serving/quality reports created after this evidence snapshot.",
+    "protected_patched_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-patched.log"
   },
   "negative_attempt": "Initial wide startup-style search exhausted the30second budget before producing a complete proof; no incomplete entry was enabled. This led to offline hardware proof and shipped evidence without increasing startup budget. Initial logs validate-v1/v2 are preserved.",
   "performance_plan": {
@@ -779,9 +780,9 @@
       "mtp": "default0; no speculation flag",
       "autotune": "enabled; no disable flag",
       "batch_budget": "default; no max-num-batched-tokens flag",
-      "gpu_memory_utilization": 0.88,
-      "max_model_len": 32768,
-      "max_num_seqs": 16
+      "gpu_memory_utilization": "default0.9; no flag",
+      "max_model_len": "model default262144; no flag",
+      "max_num_seqs": "default16; no flag"
     },
     "pairs": 6,
     "order": [
@@ -806,13 +807,42 @@
     "primary": "For each of C16 makespan and32K C1 TTFT, require positive lower bound of two-sided95%paired Student t interval(df5) across fixed6pairs. No adaptive extra pairs or exclusions.",
     "required": "All requests finish; fixed output work; same runtime readback and capacity; report complete token equality. Full1024question matching canonical/MTP0 quality keeps fixed2% one-sided95%gross regression bound overall and in zero/eight-shot strata. Investigate and fix failures without changing grading/limits.",
     "supplementary": "short/511/C4/hot-prefix functional/latency checks and32K C4 completion/capacity; confirm actual model-context default launch.",
-    "status": "Plan frozen before any uninstrumented candidate serving comparison. Bind source and binary/cache hashes in contract before starting."
+    "status": "Plan frozen before any uninstrumented candidate serving comparison. Bind source and binary/cache hashes in contract before starting.",
+    "default_launch": "Only executable, model path and --listen are supplied. Every numerical, speculative, memory, context, sequence and batching option uses the CLI default.",
+    "security_control": "Both builds useTokio1.53.3. The old .88/32768envelope study was retired before any candidate arm ran. This new contract uses actual CLI defaults and is frozen before all patched measurements."
   },
   "security_fix": {
     "advisory": "RUSTSEC-2026-0386",
     "tokio_from": "1.53.2",
     "tokio_to": "1.53.3",
-    "control_commit": "fb8b6d8",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
     "scope": "Same patch on control and candidate. Original unpatched study retired before any candidate arm ran; all raw data retained."
+  },
+  "final_binary_binding": {
+    "source_commit": "563e4c6806a4a3941db56931b5c32efd473e7fe4",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
+    "binaries": {
+      "a": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-control-patched",
+        "sha256": "5f6a9ec28f75f7cfd15cd0c3c7b8e13475bc82e0e7fe454716c287664ff1d641"
+      },
+      "b": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-wide-patched",
+        "sha256": "f013ea3a896374a8e31a1308d6886cf51d13e5b883a4fcfac8e9edcc9b2dac6d"
+      }
+    },
+    "build_log_sha256": "45c2872a3bdeb73a59beb7b46d3cb9cfe7929323e49a48bd3f82d411b4ae0abc",
+    "same_tokio_lock": true
+  },
+  "patched_validation": {
+    "cuda_clippy": "passed",
+    "ordinary_backend": {
+      "passed": 136,
+      "failed": 0,
+      "ignored": 148
+    },
+    "checkpoint_bits": "passed again afterTokio patch;32actualwidecaptures,lengths2049/1025/511/1",
+    "log_sha256": "45c2872a3bdeb73a59beb7b46d3cb9cfe7929323e49a48bd3f82d411b4ae0abc",
+    "wide_cache_injection": "Formal cache has no2048attention entries; candidate must accept the shipped proof."
   }
 }
