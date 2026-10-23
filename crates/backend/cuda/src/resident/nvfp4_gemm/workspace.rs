@@ -641,6 +641,8 @@ impl Workspace {
                             columns,
                             maximum_ready,
                         )?;
+                        #[cfg(test)]
+                        super::super::norm_maximum::record_consumption(maximum_ready);
                     }
                     if self.vendor_diagnostic
                         && self

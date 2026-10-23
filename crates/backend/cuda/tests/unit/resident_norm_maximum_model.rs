@@ -6,7 +6,7 @@ use super::{
 use crate::{
     AttentionProfile,
     device::CudaDevice,
-    resident::{norm_maximum_captures, with_separate_norm_maximum},
+    resident::{norm_maximum_captures, norm_maximum_consumptions, with_separate_norm_maximum},
 };
 use infer_core::{Error, ModelId, Result};
 use std::{env::var, fs::read};
@@ -19,8 +19,14 @@ fn norm_maximum_preserves_checkpoint_model_bits() -> Result<()> {
 
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 1025-token INFER_TEST_TOKENS; safe-run"]
-fn norm_maximum_preserves_default_checkpoint_bits() -> Result<()> {
+fn norm_maximum_keeps_canonical_checkpoint_bits() -> Result<()> {
     checkpoint_bits(AttentionProfile::Canonical, 2048, 64)
+}
+
+#[test]
+#[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 1025-token INFER_TEST_TOKENS; safe-run"]
+fn norm_maximum_preserves_wide_bf16_checkpoint_bits() -> Result<()> {
+    checkpoint_bits(AttentionProfile::Bf16, 2048, 64)
 }
 
 fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Result<()> {
@@ -48,15 +54,24 @@ fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Re
     )?;
     loaded.weights.narrow_prefill_width = narrow;
     let before = norm_maximum_captures();
+    let before_consumed = norm_maximum_consumptions();
     let mut fused = loaded.sequence(2048)?;
     let captured = norm_maximum_captures();
-    assert!(captured > before, "must execute the fused model capture");
+    let consumed = norm_maximum_consumptions();
+    if profile.is_bf16() {
+        assert!(captured > before, "must execute the fused model capture");
+        assert!(consumed > before_consumed, "must skip the separate maximum");
+    } else {
+        assert_eq!(captured, before, "canonical must retain separate kernels");
+        assert_eq!(consumed, before_consumed, "canonical must not prime scales");
+    }
     let mut separate = with_separate_norm_maximum(|| loaded.sequence(2048))?;
     assert_eq!(
         norm_maximum_captures(),
         captured,
         "reference must use separate norm and maximum"
     );
+    assert_eq!(norm_maximum_consumptions(), consumed);
     for length in [1025, 511, 1024, 1] {
         fused.reset()?;
         separate.reset()?;
@@ -77,8 +92,9 @@ fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Re
         }
         program_states(&loaded, &fused, &separate)?;
         println!(
-            "checkpoint bits passed: prompt={length}, fused captures={}",
-            captured - before
+            "checkpoint bits passed: prompt={length}, fused captures={}, maximum skips={}",
+            captured - before,
+            consumed - before_consumed
         );
     }
     Ok(())

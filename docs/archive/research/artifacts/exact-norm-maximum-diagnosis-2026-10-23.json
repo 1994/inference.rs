@@ -661,7 +661,7 @@
     "b2/report.json": "57e3edb6e3acc290418e1e0df640286fd8647802981f5d01c05fa315d8ced68f",
     "b2/execution.jsonl": "fb25c54e41e17cbce834162bb893121b4065b4c113a4b9cbeb39f0289b2c68e7"
   },
-  "qualification_status": "Correctness and full task-quality passed. All changed-answer C1 replays match. Preregistered6pair ordered serving running; merge remains blocked on performance/default-budget/32K qualification.",
+  "qualification_status": "Six-pair BF16/MTP2 ordered performance passed. Final BF16-only build passed three checkpoint bit tests and CUDA clippy. Matching 1024-case BF16/MTP2 task quality and final serving confirmation pending.",
   "review_limits": "Admission and partition differences are observed. They explain a source of work variation but do not yet prove the entire original AB/BA bias. No thermal correction, row exclusions, or adjusted speedup is used.",
   "scheduling_evidence": {
     "request_ids_mapped_to_workload_slots": true,
@@ -836,7 +836,8 @@
       1024,
       1
     ],
-    "decode_steps_per_prompt": 4
+    "decode_steps_per_prompt": 4,
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
   },
   "quality_contract": "/home/r/benchmarks/inference.rs/norm-maximum-quality-2026-10-23/contract.json",
   "ordered_performance_contract": "/home/r/benchmarks/inference.rs/norm-maximum-ordered-2026-10-23/contract.json",
@@ -941,7 +942,8 @@
       "b-shard2.json": "7661ddf52c76fc906cfb1bdff1634687b125ad150bdf540fb27f8ecacd9549df",
       "b-shard3.json": "a7ad7a681153891164891d7c6c021468afdc9a9da6e767de735cfa6078002f7b"
     },
-    "passed": true
+    "passed": true,
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
   },
   "changed_answer_replays": {
     "all_seven_identical_between_variants": true,
@@ -1026,6 +1028,286 @@
     },
     "layout_policy_inventory": "passed;769entries,0in src",
     "log_sha256": "192546ebc7f20beb5632725e9983fc1f48bc693babac16bad9bf392bbff36101",
-    "binary_sha256": "edb7e74c1f10944bc8f3dd495d12556ea37cd58e83ca347d2b28bdd058002e53"
+    "binary_sha256": "edb7e74c1f10944bc8f3dd495d12556ea37cd58e83ca347d2b28bdd058002e53",
+    "source_scope": "Historical broad prototype; final canonical dispatch retains separate kernels."
+  },
+  "canonical_serving_qualification": {
+    "passed": false,
+    "decision": {
+      "decision": "stop as a failed qualification for mathematical futility; never promote this result to a pass",
+      "completed_pair_gains_percent": [
+        -0.16283168875004012,
+        0.11106716737409422,
+        0.20149396929464367
+      ],
+      "planned_pairs": 6,
+      "remaining_pairs": 3,
+      "fixed_sum": 0.14972944791869777,
+      "fixed_sum_squares": 0.07944989419180581,
+      "global_upper_bound_on_final_positive_paired_t": 2.4572840964822675,
+      "required_two_sided95_t_df5": 2.5705818366,
+      "possible_to_pass": false,
+      "derivation": "For any remaining values with sum R, sum of squares is at least R^2/k. Maximizing S_total^2/Q_total over R gives k+S_fixed^2/Q_fixed (S_fixed>0). Therefore t_final^2 <= (N-1)*(k+S_fixed^2/Q_fixed)/(m-S_fixed^2/Q_fixed). This bound holds even for arbitrary future gains, so the planned positive-lower-bound gate cannot pass.",
+      "limitations": "An early failed stop does not provide a six-pair estimate or non-regression proof. Preserve all3completed pairs and any partial next arm. No adaptive extra pairs; no relaxation of this criterion. Work continues on the original fast-profile workload and any necessary implementation change.",
+      "stop_note": "Stopping b4 systemd unit returned success, so the original driver unexpectedly started a4. Driver PID164759 was then terminated before stopping a4 unit189268. Both partial arms are retained and are not counted as complete pairs. Follow-up drivers now require report.completed in addition to process exit success.",
+      "partial_arms": [
+        "b4",
+        "a4"
+      ]
+    },
+    "completed_pairs": [
+      {
+        "pair": 1,
+        "c16_wall_reduction_percent": -0.16283168875004012,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.03389411161569142,
+        "long_token_matches": 3
+      },
+      {
+        "pair": 2,
+        "c16_wall_reduction_percent": 0.11106716737409422,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.03505394814335798,
+        "long_token_matches": 3
+      },
+      {
+        "pair": 3,
+        "c16_wall_reduction_percent": 0.20149396929464367,
+        "c16_token_matches": 48,
+        "long_wall_reduction_percent": 0.042509367858393175,
+        "long_token_matches": 3
+      }
+    ],
+    "raw_sha256": {
+      "a1": "3269a0d1482dd5bf9a2def269db8354beb8097e9350937d40a014e69579e6440",
+      "b1": "a07b3f602e46dbcea976d696d1c7f5e5792c5b7ef35e8a73016fe1757d96b069",
+      "a2": "45d48f19de07f04e9abce86ff3a0a6adb06a16e659eaf7a6b7b6fc0ee9745520",
+      "b2": "d3d8fc837121e320968571a703fa57d42aeedaedfe724db10ee0de1f575b409c",
+      "a3": "032579f7db3c93319803709efef2a342241018870ac99eddaa7f6d1ad61cda8e",
+      "b3": "90860247cef020b45f32ad0b9fadf8f53d16fe2d86a0e253c2b0795b1750b09a"
+    },
+    "contract_sha256": "fda8e6050f38a959daae6c4b6eaed6f47f3276a4fe1d46c164c50222ce43167e",
+    "source_scope": "Broad v3 prototype; final dispatch will retain canonical separate kernels."
+  },
+  "planned_final_scope": "Only AttentionProfile::Bf16 may fuse; no change to numerical-profile or MTP defaults.",
+  "bf16_ordered_performance": {
+    "contract": {
+      "purpose": "Direct follow-up of the original MTP2/BF16 serving failure: same original binary, workload and flags, with fixed10ms arrival order. The canonical/MTP0 six-pair experiment is retained and analyzed separately.",
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22/infer-candidate-v3",
+          "sha256": "e8e992fdfc5a4b818adaddc6d071c1f7eae37411f6c0b7129340449058cc5c43"
+        }
+      },
+      "workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-4k-c16.json",
+      "long_workload": "/home/r/benchmarks/inference.rs/parity-2026-10-18/inputs-32k-c1.json",
+      "order": [
+        "a1",
+        "b1",
+        "b2",
+        "a2",
+        "a3",
+        "b3",
+        "b4",
+        "a4",
+        "a5",
+        "b5",
+        "b6",
+        "a6"
+      ],
+      "pairs": 6,
+      "independent_unit": "fresh process pair; one excluded warmup and3measured prompt groups per case",
+      "arrival": "C16 requests pre-serialized then released at fixed10ms intervals; actual client send order checked. C1 long context is sequential.",
+      "configuration": "bf16,MTP2,strict2048,.88memory,maxlen32768,maxseq16,frozenprivatecache,noautotune,noexecutionprofiling",
+      "primary": "C16 median makespan per process; fixed6fresh pairs AB,BA,AB,BA,AB,BA; two-sided95%paired Student t interval(df5). Require lower bound>0; no adaptive extra pairs.",
+      "secondary": "Every request finished with256output token IDs; matched configuration; report exact token equality and execution batch counts. Default-budget and32K coverage belongs to the separate canonical suite.",
+      "limitation": "Controls client arrival order, not server internal scheduling. All results retained even if send order fails; such failure prevents a deterministic-order claim.",
+      "workload_sha256": "7e571edb5f3e8b88b08ead6ce84069f6a75007c96f26237db068283a6626e04f",
+      "long_workload_sha256": "d541b0d25bb720d6f822d9a3fca4536d9c4d07b105791762a87ae3bf7b354a04",
+      "output_work_gate": "Every measured C16 request must produce256token IDs, so end-to-end gain cannot come from fewer generated tokens.",
+      "scripts_sha256": {
+        "worker.py": "aa7c04a91a9f3c6e4bc42b8b83a5fa4398d5476c6f11289095c2d443938dc9df",
+        "driver.py": "81ff4e7ab61e884d2f2725242babf2ca09f1d6853ed4ba2ca1863ba8887fc534",
+        "analyze.py": "f61c7dc9ddc344819a40ec2eea07cbe6384febffc64f22885dc43e00c9000caf"
+      },
+      "scope": "Any positive result applies specifically to this pre-existing opt-in numerical/speculative profile; it cannot be labeled a default canonical throughput improvement. Existing canonical primary criterion is unchanged and its result must be reported even if it fails."
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "a": 12.34818988700863,
+        "b": 12.303752813022584,
+        "reduction_percent": 0.35986710920924275,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            132,
+            132
+          ],
+          "b": [
+            137,
+            133,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 2,
+        "a": 12.338117220031563,
+        "b": 12.308674659987446,
+        "reduction_percent": 0.2386308990184967,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            131
+          ],
+          "b": [
+            137,
+            133,
+            132
+          ]
+        }
+      },
+      {
+        "pair": 3,
+        "a": 12.365735955070704,
+        "b": 12.279613776016049,
+        "reduction_percent": 0.6964581757816024,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            133,
+            132
+          ],
+          "b": [
+            137,
+            132,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 4,
+        "a": 12.335847718059085,
+        "b": 12.296307759010233,
+        "reduction_percent": 0.3205289166383574,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            138,
+            132,
+            131
+          ],
+          "b": [
+            138,
+            132,
+            132
+          ]
+        }
+      },
+      {
+        "pair": 5,
+        "a": 12.354569849034306,
+        "b": 12.31383141502738,
+        "reduction_percent": 0.32974384786136435,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            132
+          ],
+          "b": [
+            138,
+            133,
+            131
+          ]
+        }
+      },
+      {
+        "pair": 6,
+        "a": 12.341183829004876,
+        "b": 12.310036732989829,
+        "reduction_percent": 0.25238337299411906,
+        "token_matches": 48,
+        "outputs": 48,
+        "execution_batches": {
+          "a": [
+            137,
+            132,
+            131
+          ],
+          "b": [
+            137,
+            133,
+            131
+          ]
+        }
+      }
+    ],
+    "paired_mean_percent": 0.3662687202505305,
+    "paired_t95_percent": [
+      0.1895682269052901,
+      0.5429692135957709
+    ],
+    "checks": {
+      "positive_lower_bound": true,
+      "fixed_output_work": true,
+      "all_finished": true,
+      "ordered_sends": true,
+      "same_config": true
+    },
+    "passed": true,
+    "raw_sha256": {
+      "a1": "643aaa0749db239576695cb5a40fc817bbae8cf40db521a5ba34d7f57abce2c1",
+      "b1": "d5677d31cf3a63d0e4c2befe8ab0b08435a0a8ccc79e2397f0c6898e7ea8ec30",
+      "b2": "190b834173c3c270df4d1cf4af059c675d0feb165036150963031874fb5ae6ae",
+      "a2": "38e2f40c5bfa0c2a532fec0255686f99101a3278f4b75bac4849483a34a5ca51",
+      "a3": "528677ab3679a6d13ef927a5b7eeefc63d7b83ca4110baa70bd91e8f3d26d556",
+      "b3": "64762359cb567577b76547f3320466d47bfb7c3a5b81ee30b027e3c9614f8971",
+      "b4": "1443360772ef4c0676f12bf153108b5bd2b81c4f52c009e54228c1af3777d372",
+      "a4": "dab193e41afdf163fd14a776308926b56089a6197446414d2a507c0080319d89",
+      "a5": "3af4d0b40bf673c4771c4fbd9427c9dc32ad83a76a56544fa0321836ec1ee9db",
+      "b5": "b4f9a1b6e8abb8159ebff7eb00f6e5fa406fd31dd90d9eec807a0f8d39f624c6",
+      "b6": "b521c9337b63e01b60e92795e0fa54010ba481be46c1017a38786aea9818aa70",
+      "a6": "9d81ef4e5e373ab4c873927a0149ab2fb47c29ac7798238dde5e984e9c0027dd"
+    }
+  },
+  "final_scoped_validation": {
+    "scope": "Only explicit BF16 attention enables fusion; canonical/FP16 and numerical/MTP defaults unchanged.",
+    "cuda_clippy": "passed",
+    "checkpoint_tests": 3,
+    "full_hidden_logits_and_f32_fp8_states_bit_equal": true,
+    "captures_and_maximum_skips": {
+      "canonical": [
+        0,
+        0
+      ],
+      "bf16_width1024": [
+        146,
+        144
+      ],
+      "bf16_width2048_narrow64": [
+        292,
+        288
+      ]
+    },
+    "inventory": "770 entries; zero in src",
+    "binary_sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42",
+    "log_sha256": "778cc41d83bf8c9720cf4fddd0348cfcf320f95a7c72f04d571081868e61b281",
+    "performance_source_binding": "Six-pair study used broad v3. Final v5 adds a host BF16 dispatch guard and test-only counters; GPU kernel arithmetic unchanged. Final-binary serving confirmation is separate and not added to the six-pair estimate."
   }
 }

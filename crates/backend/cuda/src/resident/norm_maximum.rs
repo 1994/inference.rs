@@ -42,7 +42,9 @@ pub(super) fn record(
     else {
         return Ok(false);
     };
-    if weights.fusion.is_some()
+    // Canonical serving did not qualify; enable only the explicitly selected BF16 profile.
+    if !weights.attention_profile.is_bf16()
+        || weights.fusion.is_some()
         || norm.inputs.len() != 2
         || norm.outputs.len() != 1
         || !norm.states.is_empty()
@@ -125,10 +127,21 @@ fn disjoint(a: &Tensor<f32>, b: &Tensor<f32>) -> bool {
 thread_local! {
     static DISABLED: Cell<bool> = const { Cell::new(false) };
     static CAPTURES: Cell<usize> = const { Cell::new(0) };
+    static CONSUMPTIONS: Cell<usize> = const { Cell::new(0) };
 }
 #[cfg(test)]
 pub fn captures() -> usize {
     CAPTURES.get()
+}
+#[cfg(test)]
+pub fn consumptions() -> usize {
+    CONSUMPTIONS.get()
+}
+#[cfg(test)]
+pub(super) fn record_consumption(ready: bool) {
+    if ready {
+        CONSUMPTIONS.set(CONSUMPTIONS.get() + 1);
+    }
 }
 #[cfg(test)]
 pub fn with_separate<T>(run: impl FnOnce() -> T) -> T {
