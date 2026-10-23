@@ -22,7 +22,7 @@ use std::{
 
 const SCHEMA: &str = "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1";
 const SUPPORTED_GEOMETRY: (usize, usize, usize) = (24, 4, 256);
-const SUPPORTED_LANES: [usize; 3] = [64, 256, 2048];
+const SUPPORTED_LANES: [usize; 4] = [64, 256, 1024, 2048];
 const SHA256_HEX_LEN: usize = 64;
 const TIMED_FIXTURES: [usize; 2] = [0, 1];
 

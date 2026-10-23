@@ -141,33 +141,32 @@ fn wide_shared_evidence_requires_the_complete_width_and_tail_history() {
 fn hardware_wide_shared_search_and_cache_reuse() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let device = CudaDevice::new(0)?;
-    let shape = Shape {
-        lanes: 2048,
-        ..shape()
-    };
-    let session = ResidentTuningSession::for_hardware_validation();
-    let baseline = super::super::exact::validate_and_cache(&device, shape, &session)?;
-    assert_eq!(baseline, Choice::RustSimt);
-    assert_eq!(
-        super::super::exact::select(&device, shape, false, &session),
-        baseline
-    );
-    let key = key(&device, shape)?;
-    let entry = tune(&device, key.clone(), &session)?
-        .ok_or_else(|| Error::invalid("wide shared KV offline proof budget expired"))?;
-    assert!(entry.valid());
-    assert_eq!(entry.selected, Choice::SharedKv);
-    assert!(update_table(table_path().as_deref(), |table| {
-        table.resident_shared_attention.retain(|e| e.key != key);
-        table.resident_shared_attention.push(entry.clone());
-    }));
-    assert_eq!(
-        select(&device, shape, false, &session, baseline),
-        entry.selected
-    );
-    println!(
-        "WIDE_SHARED_KV_TUNING {}",
-        serde_json::to_string(&entry).map_err(device_error)?
-    );
+    for lanes in [1024, 2048] {
+        let shape = Shape { lanes, ..shape() };
+        let session = ResidentTuningSession::for_hardware_validation();
+        let baseline = super::super::exact::validate_and_cache(&device, shape, &session)?;
+        assert_eq!(baseline, Choice::RustSimt);
+        assert_eq!(
+            super::super::exact::select(&device, shape, false, &session),
+            baseline
+        );
+        let key = key(&device, shape)?;
+        let entry = tune(&device, key.clone(), &session)?
+            .ok_or_else(|| Error::invalid("wide shared KV offline proof budget expired"))?;
+        assert!(entry.valid());
+        assert_eq!(entry.selected, Choice::SharedKv);
+        assert!(update_table(table_path().as_deref(), |table| {
+            table.resident_shared_attention.retain(|e| e.key != key);
+            table.resident_shared_attention.push(entry.clone());
+        }));
+        assert_eq!(
+            select(&device, shape, false, &session, baseline),
+            entry.selected
+        );
+        println!(
+            "WIDE_SHARED_KV_TUNING {}",
+            serde_json::to_string(&entry).map_err(device_error)?
+        );
+    }
     Ok(())
 }

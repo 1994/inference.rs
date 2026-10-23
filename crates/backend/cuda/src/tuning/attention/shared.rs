@@ -22,7 +22,7 @@ use std::{
 
 const SCHEMA: &str = "shared-kv32:gqa6:q2:canonical-f32:original-append:short-no-regress5:history8k32k:cold-warm-ab-ba-v1";
 const GEOMETRY: (usize, usize, usize) = (24, 4, 256);
-const LANES: [usize; 2] = [256, 2048];
+const LANES: [usize; 3] = [256, 1024, 2048];
 const CAPACITY: usize = 32768;
 const HISTORY_CASES: usize = 3;
 const MID_HISTORY: usize = 8192;

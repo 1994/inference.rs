@@ -108,13 +108,16 @@ fn rust_attention_preserves_checkpoint_model_bits() -> Result<()> {
 #[test]
 #[ignore = "requires CUDA/checkpoint/frozen1025tokens/safe-run; default-width full chunks and state bits"]
 fn wide_attention_preserves_checkpoint_model_bits() -> Result<()> {
-    checkpoint_bits(false)
+    checkpoint_bits(false, 2048)
 }
 
 #[test]
 #[ignore = "requires CUDA/checkpoint/frozen1025tokens/safe-run; pooled physical KV stride and complete bits"]
 fn pooled_prefill_preserves_checkpoint_model_bits() -> Result<()> {
-    checkpoint_bits(true)
+    for width in [1024, 2048] {
+        checkpoint_bits(true, width)?;
+    }
+    Ok(())
 }
 
 fn pooled_caches(loaded: &LoadedModel) -> Result<Fp8Caches> {
@@ -134,7 +137,7 @@ fn pooled_caches(loaded: &LoadedModel) -> Result<Fp8Caches> {
     Ok(result)
 }
 
-fn checkpoint_bits(pooled: bool) -> Result<()> {
+fn checkpoint_bits(pooled: bool, width: usize) -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let prompt = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
@@ -153,6 +156,7 @@ fn checkpoint_bits(pooled: bool) -> Result<()> {
         path,
         ModelId::ONE,
         LoadOptions {
+            // Match serving: the loaded model stays wide while its worker may halve.
             prefill_width: 2048,
             verification_width: 3,
             mtp_depth: 0,
@@ -164,7 +168,7 @@ fn checkpoint_bits(pooled: bool) -> Result<()> {
     let build = || {
         if pooled {
             loaded
-                .prompt_worker(4096, Some(pooled_caches(&loaded)?), 2048)
+                .prompt_worker(4096, Some(pooled_caches(&loaded)?), width)
                 .map(|(program, _)| program)
         } else {
             loaded.sequence(4096)
@@ -182,9 +186,9 @@ fn checkpoint_bits(pooled: bool) -> Result<()> {
         control.reset()?;
         candidate.reset()?;
         let mut next = tokens[0];
-        for (chunk, input) in tokens[..length].chunks(2048).enumerate() {
-            let a = candidate.prefill_batch(input, chunk * 2048, true)?;
-            let b = control.prefill_batch(input, chunk * 2048, true)?;
+        for (chunk, input) in tokens[..length].chunks(width).enumerate() {
+            let a = candidate.prefill_batch(input, chunk * width, true)?;
+            let b = control.prefill_batch(input, chunk * width, true)?;
             reference::outputs(&a, &b);
             reference::program_states(&loaded, &candidate, &control)?;
             next = reference::greedy(
@@ -202,7 +206,7 @@ fn checkpoint_bits(pooled: bool) -> Result<()> {
             next = reference::greedy(&a.1)?;
         }
         println!(
-            "wide checkpoint bits passed: pooled={pooled}, length={length}, captures={}",
+            "wide checkpoint bits passed: pooled={pooled}, width={width}, length={length}, captures={}",
             captures() - before
         );
     }

@@ -24,7 +24,7 @@ const HEADS: usize = 24;
 const KV_HEADS: usize = 4;
 const DIM: usize = 256;
 const THREADS: u32 = 256;
-const SUPPORTED_LANES: [usize; 4] = [64, 256, 512, 2048];
+const SUPPORTED_LANES: [usize; 5] = [64, 256, 512, 1024, 2048];
 const REQUIRED_METADATA_FIELDS: usize = 3;
 
 pub struct Support {
