@@ -1,0 +1,1031 @@
+{
+  "a2": [
+    {
+      "group": "warmup",
+      "steps": 128,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1488
+      },
+      "accepted": {
+        "0": 159,
+        "2": 1225,
+        "1": 151
+      },
+      "phase_us": {
+        "prefill_chunk": 7945246,
+        "prime_draft": 232371,
+        "prime_readback": 1159,
+        "worker_load": 13378,
+        "worker_store": 14143,
+        "draft_propose": 708118,
+        "verify": 3118702
+      },
+      "execution_us": 12101050
+    },
+    {
+      "group": "batch0",
+      "steps": 134,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1493
+      },
+      "accepted": {
+        "0": 167,
+        "2": 1221,
+        "1": 152
+      },
+      "phase_us": {
+        "prefill_chunk": 7969362,
+        "prime_draft": 236493,
+        "prime_readback": 924,
+        "worker_load": 13290,
+        "worker_store": 14111,
+        "draft_propose": 722775,
+        "verify": 3286856
+      },
+      "execution_us": 12293969
+    },
+    {
+      "group": "batch1",
+      "steps": 130,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1502
+      },
+      "accepted": {
+        "0": 188,
+        "2": 1225,
+        "1": 136
+      },
+      "phase_us": {
+        "prefill_chunk": 7976959,
+        "prime_draft": 236197,
+        "prime_readback": 915,
+        "worker_load": 13262,
+        "worker_store": 14059,
+        "draft_propose": 752855,
+        "verify": 3192800
+      },
+      "execution_us": 12212385
+    },
+    {
+      "group": "serial0",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 468599,
+        "prime_draft": 12045,
+        "prime_readback": 46,
+        "worker_load": 639,
+        "worker_store": 614,
+        "draft_propose": 0,
+        "verify": 2152848
+      },
+      "execution_us": 2943393
+    },
+    {
+      "group": "serial1",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 469163,
+        "prime_draft": 12119,
+        "prime_readback": 43,
+        "worker_load": 644,
+        "worker_store": 629,
+        "draft_propose": 0,
+        "verify": 2154059
+      },
+      "execution_us": 2942575
+    }
+  ],
+  "b2": [
+    {
+      "group": "warmup",
+      "steps": 127,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1484
+      },
+      "accepted": {
+        "0": 154,
+        "2": 1230,
+        "1": 147
+      },
+      "phase_us": {
+        "prefill_chunk": 7849045,
+        "prime_draft": 231598,
+        "prime_readback": 949,
+        "worker_load": 13006,
+        "worker_store": 13782,
+        "draft_propose": 719819,
+        "verify": 3090849
+      },
+      "execution_us": 11979049
+    },
+    {
+      "group": "batch0",
+      "steps": 127,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1473
+      },
+      "accepted": {
+        "0": 142,
+        "2": 1239,
+        "1": 139
+      },
+      "phase_us": {
+        "prefill_chunk": 7872178,
+        "prime_draft": 234699,
+        "prime_readback": 948,
+        "worker_load": 12800,
+        "worker_store": 13719,
+        "draft_propose": 699161,
+        "verify": 3113675
+      },
+      "execution_us": 11992366
+    },
+    {
+      "group": "batch1",
+      "steps": 130,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 1491
+      },
+      "accepted": {
+        "0": 164,
+        "2": 1228,
+        "1": 146
+      },
+      "phase_us": {
+        "prefill_chunk": 7899667,
+        "prime_draft": 234830,
+        "prime_readback": 945,
+        "worker_load": 12753,
+        "worker_store": 13829,
+        "draft_propose": 722474,
+        "verify": 3189065
+      },
+      "execution_us": 12117293
+    },
+    {
+      "group": "serial0",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 465369,
+        "prime_draft": 12135,
+        "prime_readback": 54,
+        "worker_load": 619,
+        "worker_store": 662,
+        "draft_propose": 0,
+        "verify": 2153376
+      },
+      "execution_us": 2940167
+    },
+    {
+      "group": "serial1",
+      "steps": 94,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 92
+      },
+      "accepted": {
+        "0": 7,
+        "2": 77,
+        "1": 10
+      },
+      "phase_us": {
+        "prefill_chunk": 465245,
+        "prime_draft": 12067,
+        "prime_readback": 46,
+        "worker_load": 611,
+        "worker_store": 594,
+        "draft_propose": 0,
+        "verify": 2153906
+      },
+      "execution_us": 2945198
+    }
+  ],
+  "b0": [
+    {
+      "group": "warmup",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9153015,
+        "worker_load": 12752,
+        "worker_store": 13193
+      },
+      "execution_us": 16371721
+    },
+    {
+      "group": "batch0",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 8977172,
+        "worker_load": 12647,
+        "worker_store": 12850
+      },
+      "execution_us": 16221070
+    },
+    {
+      "group": "batch1",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9010971,
+        "worker_load": 12626,
+        "worker_store": 12747
+      },
+      "execution_us": 16256217
+    },
+    {
+      "group": "serial0",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 460610,
+        "worker_load": 587,
+        "worker_store": 575
+      },
+      "execution_us": 5637111
+    },
+    {
+      "group": "serial1",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 460099,
+        "worker_load": 594,
+        "worker_store": 583
+      },
+      "execution_us": 5637356
+    }
+  ],
+  "a0": [
+    {
+      "group": "warmup",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9014564,
+        "worker_load": 13953,
+        "worker_store": 13431,
+        "selected_step": 46966
+      },
+      "execution_us": 16262324
+    },
+    {
+      "group": "batch0",
+      "steps": 288,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9034095,
+        "worker_load": 12819,
+        "worker_store": 13410
+      },
+      "execution_us": 16279997
+    },
+    {
+      "group": "batch1",
+      "steps": 289,
+      "task_kinds": {
+        "prefill": 47,
+        "decode": 4080
+      },
+      "accepted": {
+        "0": 4127
+      },
+      "phase_us": {
+        "prefill_chunk": 9067506,
+        "worker_load": 12864,
+        "worker_store": 13258
+      },
+      "execution_us": 16332759
+    },
+    {
+      "group": "serial0",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 463205,
+        "worker_load": 595,
+        "worker_store": 618
+      },
+      "execution_us": 5641737
+    },
+    {
+      "group": "serial1",
+      "steps": 257,
+      "task_kinds": {
+        "prefill": 2,
+        "decode": 255
+      },
+      "accepted": {
+        "0": 257
+      },
+      "phase_us": {
+        "prefill_chunk": 462795,
+        "worker_load": 604,
+        "worker_store": 556
+      },
+      "execution_us": 5641227
+    }
+  ],
+  "comparisons": {
+    "a2 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "b2 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "b0 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a0 serial repeat": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a2 b2 batch0": {
+      "pairs": 16,
+      "identical": 2,
+      "first_diff": [
+        25,
+        76,
+        80,
+        42,
+        4,
+        4,
+        12,
+        31,
+        null,
+        null,
+        25,
+        35,
+        9,
+        92,
+        208,
+        99
+      ]
+    },
+    "a2 b2 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        4,
+        82,
+        90,
+        110,
+        4,
+        4,
+        75,
+        78,
+        4,
+        68,
+        4,
+        67,
+        11,
+        97,
+        98,
+        99
+      ]
+    },
+    "a2 b2 serial0": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a0 b0 batch0": {
+      "pairs": 16,
+      "identical": 10,
+      "first_diff": [
+        25,
+        12,
+        17,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        30,
+        211,
+        97
+      ]
+    },
+    "a0 b0 batch1": {
+      "pairs": 16,
+      "identical": 2,
+      "first_diff": [
+        null,
+        null,
+        129,
+        96,
+        75,
+        4,
+        95,
+        163,
+        4,
+        81,
+        120,
+        4,
+        9,
+        4,
+        84,
+        84
+      ]
+    },
+    "a0 b0 serial0": {
+      "pairs": 1,
+      "identical": 1,
+      "first_diff": [
+        null
+      ]
+    },
+    "a2 a0 batch0": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        35,
+        12,
+        37,
+        4,
+        20,
+        4,
+        4,
+        40,
+        31,
+        25,
+        12,
+        20,
+        9,
+        92,
+        172,
+        97
+      ]
+    },
+    "a2 a0 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        83,
+        84,
+        90,
+        96,
+        75,
+        4,
+        75,
+        78,
+        177,
+        73,
+        4,
+        241,
+        84,
+        4,
+        4,
+        101
+      ]
+    },
+    "a2 a0 serial0": {
+      "pairs": 1,
+      "identical": 0,
+      "first_diff": [
+        25
+      ]
+    },
+    "b2 b0 batch0": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        86,
+        14,
+        17,
+        4,
+        4,
+        26,
+        4,
+        31,
+        31,
+        25,
+        12,
+        20,
+        74,
+        30,
+        172,
+        99
+      ]
+    },
+    "b2 b0 batch1": {
+      "pairs": 16,
+      "identical": 0,
+      "first_diff": [
+        4,
+        82,
+        152,
+        110,
+        4,
+        4,
+        89,
+        163,
+        8,
+        68,
+        120,
+        4,
+        9,
+        94,
+        4,
+        84
+      ]
+    },
+    "b2 b0 serial0": {
+      "pairs": 1,
+      "identical": 0,
+      "first_diff": [
+        25
+      ]
+    }
+  },
+  "repeat_prompt_note": "C16 batch0 and batch1 have different prompts in all 16 slots. Within-process comparisons across these groups are not determinism evidence. Serial0 and serial1 intentionally use the exact same prompt.",
+  "findings": [
+    "All four serial repeated prompts are token-identical; baseline vs candidate serial outputs also match at either fixed MTP depth.",
+    "C16 admission order differs from the first prefill task across every matched diagnostic pair. Prefill chunk boundaries and slot placement differ afterward.",
+    "MTP0 has exactly4080decode tasks in each16request256output batch; MTP2 has variable1473to1502decode tasks in measured batches.",
+    "Baseline versus candidate prefill execution phase improves in both measured groups at both depths. Profiling timing is diagnostic, not qualification.",
+    "First token divergence between MTP0 and MTP2 on the serial prompt occurs at token25 in both baseline and candidate; it is not introduced by the norm fusion.",
+    "Pending scale permission is cleared on graph boundaries and intervening nodes, consumed once, and checks input pointer and geometry. No erroneous reuse identified in review."
+  ],
+  "sha256": {
+    "a0/report.json": "5c922ac82d529cca95b52f5abee22d1dd492ee0e14015bad9c904f9f87c01532",
+    "a0/execution.jsonl": "bf6cf550863cd52036ecb1aa37cefa2aff1096ebd440c2dad6281490bb9c1da7",
+    "b0/report.json": "0f22820adb4b89911999aab1855b1040799b37d11837c1150bbf92b02bd8adde",
+    "b0/execution.jsonl": "46fbcca9690427eaeb2f227a38509be0fc84ba7075ce699a795a416e190e22a2",
+    "a2/report.json": "8b8f2682b953c4b12b8cccb56033b0c6aad6e8540663f5e824ae31b03ee75fd3",
+    "a2/execution.jsonl": "d8de49e50a7f2df4a67aed78aeb1159cd0d24b6ecd9b54ae3f18934c2be4b33f",
+    "b2/report.json": "57e3edb6e3acc290418e1e0df640286fd8647802981f5d01c05fa315d8ced68f",
+    "b2/execution.jsonl": "fb25c54e41e17cbce834162bb893121b4065b4c113a4b9cbeb39f0289b2c68e7"
+  },
+  "qualification_status": "Correctness and full task-quality passed. All changed-answer C1 replays match. Preregistered6pair ordered serving running; merge remains blocked on performance/default-budget/32K qualification.",
+  "review_limits": "Admission and partition differences are observed. They explain a source of work variation but do not yet prove the entire original AB/BA bias. No thermal correction, row exclusions, or adjusted speedup is used.",
+  "scheduling_evidence": {
+    "request_ids_mapped_to_workload_slots": true,
+    "raw": "/home/r/benchmarks/inference.rs/norm-maximum-diagnosis-2026-10-22/schedules.json",
+    "sha256": "8189197df9b2145ee749cc0565e13640d88cbdf31a58b4d43d8a9b8fb17851cd",
+    "first_prefill_slots": {
+      "a0": {
+        "batch0": [
+          0,
+          13,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          14,
+          15
+        ],
+        "batch1": [
+          13,
+          2,
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          14,
+          15
+        ]
+      },
+      "b0": {
+        "batch0": [
+          2,
+          15,
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "batch1": [
+          12,
+          8,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          13,
+          14,
+          15
+        ]
+      },
+      "a2": {
+        "batch0": [
+          10,
+          7,
+          15,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14
+        ],
+        "batch1": [
+          15,
+          11,
+          13,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12,
+          14
+        ]
+      },
+      "b2": {
+        "batch0": [
+          15,
+          13,
+          11,
+          1,
+          0,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12,
+          14
+        ],
+        "batch1": [
+          0,
+          3,
+          1,
+          2,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ]
+      }
+    }
+  },
+  "default_checkpoint_test": {
+    "name": "norm_maximum_preserves_default_checkpoint_bits",
+    "profile": "canonical",
+    "prefill_width": 2048,
+    "narrow_width": 64,
+    "status": "passed",
+    "fused_captures": 292,
+    "full_hidden_logits_and_f32_fp8_states_bit_equal": true,
+    "prompt_lengths": [
+      1025,
+      511,
+      1024,
+      1
+    ],
+    "decode_steps_per_prompt": 4
+  },
+  "quality_contract": "/home/r/benchmarks/inference.rs/norm-maximum-quality-2026-10-23/contract.json",
+  "ordered_performance_contract": "/home/r/benchmarks/inference.rs/norm-maximum-ordered-2026-10-23/contract.json",
+  "quality": {
+    "contract": {
+      "purpose": "Matched full task-quality gate for exact norm maximum fusion; actual default canonical attention and MTP0.",
+      "samples": 1024,
+      "concurrency": 16,
+      "max_new_tokens": 512,
+      "max_num_batched_tokens": 2048,
+      "margin": 0.02,
+      "confidence": 0.95,
+      "gate": "Gross regression one-sided Clopper-Pearson upper bound below 2% overall and in each frozen zero/eight-shot stratum. Preserve all runs.",
+      "order": [
+        [
+          "a",
+          0
+        ],
+        [
+          "b",
+          0
+        ],
+        [
+          "b",
+          1
+        ],
+        [
+          "a",
+          1
+        ],
+        [
+          "a",
+          2
+        ],
+        [
+          "b",
+          2
+        ],
+        [
+          "b",
+          3
+        ],
+        [
+          "a",
+          3
+        ]
+      ],
+      "binaries": {
+        "a": {
+          "path": "/home/r/benchmarks/inference.rs/mtp-opt-in-2026-10-22/infer",
+          "sha256": "bc9c6bed063389cdb0f2fdada98f306765846ad1f829ffb14930798ffb4ea0b9"
+        },
+        "b": {
+          "path": "/home/r/benchmarks/inference.rs/norm-maximum-2026-10-22/infer-candidate-v3",
+          "sha256": "e8e992fdfc5a4b818adaddc6d071c1f7eae37411f6c0b7129340449058cc5c43"
+        }
+      }
+    },
+    "comparison": {
+      "overall": {
+        "n": 1024,
+        "control_correct": 966,
+        "candidate_correct": 969,
+        "regressions": 2,
+        "gains": 5,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.00613535239623017,
+        "passes_2pct": true
+      },
+      "zero_shot": {
+        "n": 512,
+        "control_correct": 477,
+        "candidate_correct": 481,
+        "regressions": 1,
+        "gains": 5,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.009231554007099723,
+        "passes_2pct": true
+      },
+      "eight_shot": {
+        "n": 512,
+        "control_correct": 489,
+        "candidate_correct": 488,
+        "regressions": 1,
+        "gains": 0,
+        "gross_regression_rate": 0.001953125,
+        "cp95_upper": 0.009231554007099723,
+        "passes_2pct": true
+      }
+    },
+    "token_identical": 814,
+    "scorer_analysis_sha256": "b4c9354d26eaec357facac2a922c98b7584692e97a66e058c019eee3f4326914",
+    "suite_sha256": "0f961033fc51f032f33b4948081d8f7b8cea78337a55b633cb052ae03f7b500f",
+    "runner_sha256": "f9e41ba9a974337f65bd9b99f882d13998a4e0b6e030161d80c0ec0cdd799298",
+    "raw_sha256": {
+      "a-shard0.json": "e9418cd6ecdef83444217464b3e2befb4770782953180b7e6f0327b5ba3de753",
+      "a-shard1.json": "3b357d368b29dbbb94b12c96955ca70df638d03b8e99b0ad9ee32a37e3dbc925",
+      "a-shard2.json": "fb1aeb0316c31019e4143da531a521e734b6dfc86d25a2bbb6c1a91db565f475",
+      "a-shard3.json": "5a928e19d3d1b7cc0133131386c477466ea393cd2283e5cef83cb6b31b5341b0",
+      "b-shard0.json": "1c9994cf476caa59d008bf1a34f1a56cf3859ee28a525e53c2c0a8c0ba73d760",
+      "b-shard1.json": "f8738d6d9a0375ee5f0e0b1ef4a53cce2291ec8bef3feb4119cb54454e19d98e",
+      "b-shard2.json": "7661ddf52c76fc906cfb1bdff1634687b125ad150bdf540fb27f8ecacd9549df",
+      "b-shard3.json": "a7ad7a681153891164891d7c6c021468afdc9a9da6e767de735cfa6078002f7b"
+    },
+    "passed": true
+  },
+  "changed_answer_replays": {
+    "all_seven_identical_between_variants": true,
+    "baseline_repeat_identical": true,
+    "profiles_identical": true,
+    "all_finished": true,
+    "cases": [
+      {
+        "case": "gsm8k-independent-v1:1052:zero_shot",
+        "expected": "110",
+        "c1_prediction_all_three_runs": "110",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:458:zero_shot",
+        "expected": "35",
+        "c1_prediction_all_three_runs": "35",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:102:eight_shot",
+        "expected": "26",
+        "c1_prediction_all_three_runs": "26",
+        "original": {
+          "a": true,
+          "b": false
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:979:zero_shot",
+        "expected": "50",
+        "c1_prediction_all_three_runs": "50",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:982:zero_shot",
+        "expected": "12",
+        "c1_prediction_all_three_runs": "None",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:331:zero_shot",
+        "expected": "8400",
+        "c1_prediction_all_three_runs": "None",
+        "original": {
+          "a": false,
+          "b": true
+        }
+      },
+      {
+        "case": "gsm8k-independent-v1:301:zero_shot",
+        "expected": "8",
+        "c1_prediction_all_three_runs": "16",
+        "original": {
+          "a": true,
+          "b": false
+        }
+      }
+    ],
+    "interpretation": "At fixed C1 scheduling, every changed-answer case is token-identical across baseline, candidate and repeated baseline. Together with whole-checkpoint bit tests and observed C16 admission/partition changes, this supports scheduling-dependent numerical trajectories rather than a fusion arithmetic defect. C16 original regressions remain in the primary quality gate.",
+    "raw_sha256": "c78a59388788805509c9c3b0ab2fd1bf99f826dd9564c853e9e6e4f496c15276"
+  },
+  "additional_validation": {
+    "cuda_clippy": "passed",
+    "model_tests": {
+      "passed": 2,
+      "failed": 0,
+      "bf16_captures": 146,
+      "canonical_narrow64_captures": 292
+    },
+    "layout_policy_inventory": "passed;769entries,0in src",
+    "log_sha256": "192546ebc7f20beb5632725e9983fc1f48bc693babac16bad9bf392bbff36101",
+    "binary_sha256": "edb7e74c1f10944bc8f3dd495d12556ea37cd58e83ca347d2b28bdd058002e53"
+  }
+}

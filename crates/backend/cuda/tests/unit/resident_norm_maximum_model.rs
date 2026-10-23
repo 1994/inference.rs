@@ -14,6 +14,16 @@ use std::{env::var, fs::read};
 #[test]
 #[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 1025-token INFER_TEST_TOKENS; safe-run"]
 fn norm_maximum_preserves_checkpoint_model_bits() -> Result<()> {
+    checkpoint_bits(AttentionProfile::Bf16, 1024, 0)
+}
+
+#[test]
+#[ignore = "requires CUDA, INFER_TEST_MODEL and frozen 1025-token INFER_TEST_TOKENS; safe-run"]
+fn norm_maximum_preserves_default_checkpoint_bits() -> Result<()> {
+    checkpoint_bits(AttentionProfile::Canonical, 2048, 64)
+}
+
+fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let token_path = var("INFER_TEST_TOKENS").map_err(|e| Error::invalid(e.to_string()))?;
@@ -26,17 +36,17 @@ fn norm_maximum_preserves_checkpoint_model_bits() -> Result<()> {
         path,
         ModelId::ONE,
         LoadOptions {
-            prefill_width: 1024,
+            prefill_width: width,
             verification_width: 0,
             mtp_depth: 0,
             autotune: false,
             chunked_recurrent: true,
-            attention_profile: AttentionProfile::Bf16,
+            attention_profile: profile,
             vision: false,
             ..LoadOptions::default()
         },
     )?;
-    loaded.weights.narrow_prefill_width = 0;
+    loaded.weights.narrow_prefill_width = narrow;
     let before = norm_maximum_captures();
     let mut fused = loaded.sequence(2048)?;
     let captured = norm_maximum_captures();
@@ -50,10 +60,10 @@ fn norm_maximum_preserves_checkpoint_model_bits() -> Result<()> {
     for length in [1025, 511, 1024, 1] {
         fused.reset()?;
         separate.reset()?;
-        for (chunk, input) in tokens[..length].chunks(1024).enumerate() {
+        for (chunk, input) in tokens[..length].chunks(width).enumerate() {
             outputs(
-                &fused.prefill_batch(input, chunk * 1024, true)?,
-                &separate.prefill_batch(input, chunk * 1024, true)?,
+                &fused.prefill_batch(input, chunk * width, true)?,
+                &separate.prefill_batch(input, chunk * width, true)?,
             );
         }
         program_states(&loaded, &fused, &separate)?;
