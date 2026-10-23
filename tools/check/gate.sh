@@ -27,16 +27,9 @@ rust_checks() {
     # device checks to check-cuda.
     # Every registered golden records what produced it, so it can be regenerated rather than trusted.
     python3 tools/check/golden-provenance.py
-    # Embedded device artifacts are checked on CPU-only CI as well as CUDA hosts.
-    python3 crates/backend/cuda/kernels/shared-attention/verify-artifact.py
-python3 crates/backend/cuda/kernels/vector-attention/verify-artifact.py
-python3 crates/backend/cuda/kernels/vector-attention-combined/verify-artifact.py
-    # The AOT host ABI targets Linux; readelf checks its CUDA runtime dependencies there.
-    if [ "$(uname -s)" = Linux ]; then
-        python3 crates/backend/cuda/kernels/fa4-attention/verify-artifact.py
-        python3 crates/backend/cuda/kernels/fa4-attention-f32/verify-artifact.py
-        python3 crates/backend/cuda/kernels/fa4-attention-f16/verify-artifact.py
-    fi
+    # All embedded device artifacts, including Rust SIMT, share one CPU-only gate.
+    # Linux additionally validates the frozen FA4 ELF/host ABI dependencies.
+    python3 tools/cuda/kernels.py verify
     # Each workspace boundary states the dependency or toolchain isolation it exists for.
     python3 tools/check/workspaces.py
     # A signed baseline's numbers have to follow from the evidence it froze, not merely hash to it.
@@ -113,6 +106,7 @@ cuda_bindgen_env() {
 # modules: without it a test-only break stays invisible to every other gate.
 cuda_hosted_checks() {
     cuda_bindgen_env
+    python3 tools/cuda/kernels.py verify
     cargo clippy --locked -p infer-backend-cuda --features cuda --all-targets -- -D warnings
     # Release profile the baseline contract requires, reporting what it collected. The suite
     # branches on `cfg!(debug_assertions)` where the two differ.
