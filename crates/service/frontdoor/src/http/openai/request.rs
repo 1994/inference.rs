@@ -13,6 +13,8 @@ const MAX_CHAT_MESSAGES: usize = 256;
 const DEFAULT_MAX_COMPLETION_TOKENS: usize = 16;
 /// Largest number of function tools accepted in one request.
 const MAX_TOOLS: usize = 128;
+/// OpenAI function names contain at most 64 ASCII characters.
+const MAX_TOOL_NAME_BYTES: usize = 64;
 
 /// The generated-token budget a request asked for, before the service cap and remaining
 /// context apply.
@@ -175,7 +177,7 @@ impl GenerationRequest {
             }
             let name = &tool.function.name;
             if name.is_empty()
-                || name.len() > 64
+                || name.len() > MAX_TOOL_NAME_BYTES
                 || !name
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
