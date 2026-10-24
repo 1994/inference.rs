@@ -1,37 +1,52 @@
 {
-  "status": "Draft automatic-default candidate: source/numeric validation passed, selected diagnostic15 recovery14, expanded51 diagnosis running; actual-default performance and complete final task quality pending. Not approved for merge.",
+  "status": "Qualified one automatic BF16+MTP2 default: source/numeric/runtime validation, all1024 original paired tasks using retained complete old-default control, and two fresh fixed-resource performance pairs pass. Reused regression corpus is not an unseen holdout.",
   "host": "192.168.1.45",
-  "base_commit": "3a74be076f0b2134acd00b9d14a99a4580d1712d",
+  "base_commit": "54145f4b60302fbd252c389c995254d9c1d261f8",
   "binary": {
-    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-default-bf16-mtp-v3",
-    "sha256": "fb3a3145674e6a49d6f5bb9a19b0d780ac2b030d9bd6dd2c17b98bf5e4713d66"
+    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-default-bf16-mtp-v12",
+    "sha256": "8913cd905927ec5c740bbc8b4deb11b4084f10f6b062d54037991a27ed38b6ee"
   },
   "source_files": {
-    "crates/backend/cuda/src/loading/mod.rs": "9be5fbfe6a93b59dc79d07169d5a7547f7db4a904808c29fbbdab6e51e686e26",
+    "crates/backend/cuda/src/attention_profile.rs": "a17fbecca6dafbfca5a842d38c042571389cd9c0c3ee2cc2355175e9a1c1c839",
+    "crates/backend/cuda/src/executor/execution.rs": "198682a742324b1e586259bbb4c3e2950a9a0b2776c5d4306e763f54553cb44f",
+    "crates/backend/cuda/src/executor/pool.rs": "062f59dcb3437cc7449b024272792b4ebe5d426e3b65ed47afbec8cc000e8162",
+    "crates/backend/cuda/src/executor/provider.rs": "3814740b60d5143167a5e8221217405150355b066bb03961e67877fdb53317ed",
+    "crates/backend/cuda/src/executor/state.rs": "19ed062517bc43990f5f39e12afcde9bffbf65162b1fea4b2a3e05e98f50831f",
+    "crates/backend/cuda/src/loading/mod.rs": "bf802a958a25c7ad13cd3153b7b7c548d34ae190f4b77863a7a93f0487b80ae9",
     "crates/backend/cuda/src/resident/attention_decode/workspace.rs": "4070b9487293fcace2f95a40b32465e230b456156b7834253e9e149a4db1facc",
-    "crates/backend/cuda/src/resident/batch.rs": "89def17ba276f23f0f98dd3023434a323bc12786db7dff3007dd6539698b8ca4",
-    "crates/backend/cuda/src/resident/capture.rs": "8cea71b4e6a0a59519a29f97f5cfa4d65deedb686832b3a3430c16e689b3fffe",
-    "crates/backend/cuda/src/resident/mod.rs": "8fb15b948180c76674bd6cf6082b11c43d48c124f96c0d411e896e80c6ad4a10",
-    "crates/backend/cuda/src/resident/pool_gemv.rs": "9aa2aa5e078e0168505206ffddfb31e1c54e05fe907cdbb0949cb88881cb7062",
-    "crates/backend/cuda/src/resident/slot_batch.rs": "70e2026498808cb4d42ab2c3f4b7fb4a92ef904cc085c4dd0d632696fde1f6c7",
-    "crates/backend/cuda/src/resident/slot_verify.rs": "dc1baa758147f27dc1265f37c9bf5b09dad15895a186c0a2fce971d52eee68b4",
-    "crates/backend/cuda/src/resident/slot_verify_attention.rs": "05e1fa0c130acc921b1a5310b49659ba2195827f118a31c7aa39d77c1482d4f5",
-    "crates/backend/cuda/tests/unit/loading_pool_gemv_cost.rs": "3d8008b0d1c8c22c6bc15f06794514aa7e0b764aa76eb442ec1a4114fa762a45",
-    "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "d5bb66fb1cdaef3eb768109b3d7c9cc2b9b006fb13c1955a8c65b658b2afbc2d",
+    "crates/backend/cuda/src/resident/batch.rs": "ae1cc69c20045e15deedf0f24d6657fc456f0f64dc2692968883e3b358dfa7a4",
     "crates/backend/cuda/src/resident/canonical_recurrent.rs": "9a12e69443696da0d6278f0797e886879e54968b2397499aa750345c97d9c533",
-    "crates/backend/cuda/tests/unit/loading_pooled_reference_verification.rs": "0ff19e95b04cb7779c30172fc90760369e8efb6d7ad059c5714d2560cfcb547c",
+    "crates/backend/cuda/src/resident/capture.rs": "6e24b529dc672f79ddd24d93c1cd66ff1d7f12b07b96e7a2534c664cdb635eb1",
+    "crates/backend/cuda/src/resident/mod.rs": "8fb15b948180c76674bd6cf6082b11c43d48c124f96c0d411e896e80c6ad4a10",
+    "crates/backend/cuda/src/resident/norm_maximum.rs": "e174aaa04b83a2ccb7f01f665728b24a779d49ece7d4252dcf7c34f596e7fd23",
+    "crates/backend/cuda/src/resident/pool_gemv.rs": "9aa2aa5e078e0168505206ffddfb31e1c54e05fe907cdbb0949cb88881cb7062",
+    "crates/backend/cuda/src/resident/slot_batch.rs": "d2d7085e66eba9a414fb2fbd07fc81fd10053ff6d24b19d63b950708a8f5a8ce",
+    "crates/backend/cuda/src/resident/slot_verify.rs": "9de13d2d5399c1717b362fa7487b3d929d332174b17d3b9aae87b7924c3fdb8a",
+    "crates/backend/cuda/src/resident/slot_verify_attention.rs": "05e1fa0c130acc921b1a5310b49659ba2195827f118a31c7aa39d77c1482d4f5",
+    "crates/backend/cuda/src/tuning/greedy.rs": "0f9c7b48dce61bb94f9ffe1e3aa8407ee88e1db8d1afb27d3a4f67e1418cd57f",
+    "crates/backend/cuda/tests/unit/attention_profile_capabilities.rs": "9583a28014930ce9f468ec6864748f86d341dd35c15a9153417063afe9df0207",
+    "crates/backend/cuda/tests/unit/executor_execution.rs": "1b535a4b2dfd50632eca8728476ce2e05cb773c141a00a7a185b96b128d3b4aa",
+    "crates/backend/cuda/tests/unit/executor_state.rs": "fecc138edc8d261cf957c7fb9344223373d4129d872a5571b1abba6c11473bbb",
+    "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "d5bb66fb1cdaef3eb768109b3d7c9cc2b9b006fb13c1955a8c65b658b2afbc2d",
+    "crates/backend/cuda/tests/unit/loading_pool_gemv_cost.rs": "3d8008b0d1c8c22c6bc15f06794514aa7e0b764aa76eb442ec1a4114fa762a45",
+    "crates/backend/cuda/tests/unit/loading_pooled_reference_verification.rs": "8eb6dbc0de04c42e39ac38e4b07a67e4e3fd0b9eab2ce2a2ff86fd44c52e8266",
+    "crates/backend/cuda/tests/unit/resident_norm_maximum_model.rs": "c37558fd893cfc0c283eb536d9e5ffdc7f75928bbe69e190768ede8fb27ce5f3",
+    "crates/engine/runtime/src/pipeline/admission.rs": "8c112cc1447b5ebd87e0e3cb4b2e9bb5a3ab140f0b249d6cfa4f238c45a1fa4b",
+    "crates/engine/runtime/src/pipeline/dispatch.rs": "62bc847b4b007dd9ebde9d78e4062193a5828e0a6bca2555895836d5e8e07536",
+    "crates/engine/runtime/tests/checkpoint_owner.rs": "02c32c94c6e1c25ec4ac7db2cc912229d08eaff565d5a9ad2cfd9b689227b8da",
+    "crates/engine/runtime/tests/support/mod.rs": "5cdcca9659fa137fbd8be040491c13da7142b664a0a655d2b07b099d6e3c8339",
+    "crates/engine/scheduler/src/policy/packing.rs": "f92d0b341585fe348cd47e27a263e4ac9b9d451ea06c9c6164b6b05c884df6c8",
+    "crates/engine/scheduler/tests/policy.rs": "5b9082df3e4b17660156df5004a3b1f85160cf218efc15f36bf8f3dbf18c7329",
     "crates/service/cli/src/arguments.rs": "bd3eb5d87e191eafcaf410b0c3a44519ecd41c784e53a1b415a6e59dfe39e9f8",
-    "crates/service/cli/tests/unit/arguments.rs": "722c2ef35b3b4883a282d3f1e9370bd5207a487c932cca4914557a1fa8d77eee",
-    "crates/service/cli/tests/unit/backend_selected.rs": "a024c5bbf2b06dff00d2a3b41f8cd5bca910629469d64b27471ec980bd5130a6",
-    "crates/service/cli/tests/unit/backend_defaults.rs": "124ca855542aa4b6270e550d5044596ee660f6567f92163401f975ad6ceebd5f",
-    "crates/service/cli/src/backend/cuda.rs": "f135e1b14acb6f3c772105abc35b387527d39d33b78d9562d731d306d78185e7",
+    "crates/service/cli/src/backend/cuda.rs": "addd39b4ea8388063867c9ce0af2429a2df5a8449053cba61c8b06ce1a8ebd21",
+    "crates/service/cli/src/backend/defaults.rs": "295e8e3528eaf3014f881c44638cf7b726da48e842511a6fe309be39e108323f",
     "crates/service/cli/src/backend/metal.rs": "179d2844729c498cd1356a690256a300b8842b7f74960068ff31cf9eb64c52a1",
     "crates/service/cli/src/backend/mod.rs": "5f231d4581eb74899607364394382ea2dc96628724a53049d3b5d71f353ca4b9",
-    "crates/service/cli/src/backend/defaults.rs": "295e8e3528eaf3014f881c44638cf7b726da48e842511a6fe309be39e108323f",
-    "crates/backend/cuda/src/attention_profile.rs": "f842c8e16d594819daaf9e2b197e4697784ab404ab53abcdd3bb0aa0eddfb98b",
-    "crates/backend/cuda/tests/unit/resident_norm_maximum_model.rs": "d6e490ef33703f380dd1786ec7f97de10bf7202ab550eb1dd8058d7cc765c3fc",
-    "crates/backend/cuda/tests/unit/attention_profile_capabilities.rs": "9583a28014930ce9f468ec6864748f86d341dd35c15a9153417063afe9df0207",
-    "crates/backend/cuda/src/resident/norm_maximum.rs": "e174aaa04b83a2ccb7f01f665728b24a779d49ece7d4252dcf7c34f596e7fd23"
+    "crates/service/cli/tests/unit/arguments.rs": "722c2ef35b3b4883a282d3f1e9370bd5207a487c932cca4914557a1fa8d77eee",
+    "crates/service/cli/tests/unit/backend_defaults.rs": "124ca855542aa4b6270e550d5044596ee660f6567f92163401f975ad6ceebd5f",
+    "crates/service/cli/tests/unit/backend_selected.rs": "a024c5bbf2b06dff00d2a3b41f8cd5bca910629469d64b27471ec980bd5130a6",
+    "crates/service/frontdoor/src/actor/handle.rs": "e3de5ce93f7f00a4a1ca7996d456b2e5497216be57ac345e0996f08fec277398",
+    "crates/service/frontdoor/tests/isolation.rs": "0b8896d0ca644b397a2d57f8ac0bb8aa8a6b088974997528035f9dd95bef579f"
   },
   "raw_logs": {
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/geometry.log": "3b3a1dbb917497b7ac47a4d4747dd303824b1dc970b4f234e3a6718b867efe26",
@@ -72,7 +87,9 @@
     "Canonical Delta scratch fixesfirstDelta; pooledfirstremainingGatedNorm differs1146/6144elements, max4.76837158203125e-7.",
     "V1 full quality failed despite private-oracle proof: canonical2 zero-shot upper bound2.80156%; BF162 overall2.71076%,zero4.24174%,eight2.04229%.",
     "V2 test fixture full discarded KV comparison failed; retained evidence shows all live prefix bytes/F32 states exact, differences only beyond committed cursor.",
-    "V2 first ordinary-reference fixture accidentally created a verification-only pool and had no decode graph; retained failure, corrected reference constructor before successful oracle."
+    "V2 first ordinary-reference fixture accidentally created a verification-only pool and had no decode graph; retained failure, corrected reference constructor before successful oracle.",
+    "V10fullquality16grossregressions failed despite same968accuracy; Qnormalization changed withpoolfunding. Realteacherforcedregression andoperatortrace reproduce, V11repairs andpasses exactoracle.",
+    "First new regression harness incorrectly replayed verification twice withoutcommit; failed invariant after exactprefix, corrected by reading residentlogits fromsingleactualGPUgreedyreplay."
   ],
   "numeric_regression": {
     "historical14teacher_forced_cases": {
@@ -100,10 +117,10 @@
       48,
       144
     ],
-    "ordinary_tests": 138,
+    "ordinary_tests": 143,
     "affected_gpu_tests": 9,
     "strict_cuda_clippy": "passed",
-    "layout_source_policy_inventory": "passed;782testentries/4CPUexecutorconsumers",
+    "layout_source_policy_inventory": "passed;818testentries",
     "v1_private_oracle_limitation": "V1 compared large pools with a private single-step reference, but ordinary serving pools already select norm_rows. Passing that oracle did not establish preservation of serving target math.",
     "ordinary_serving_oracle": {
       "output_pairs": 219,
@@ -137,26 +154,39 @@
         127,
         257,
         511,
-        1024
+        1024,
+        1025,
+        1536,
+        2048
       ],
       "subsequent_decode_steps_per_length": 4,
-      "complete_hidden_logits_recurrent_KV_bits": "exact vscanonical",
-      "bulk_after1024_differing_hidden_logits_values": 253440,
-      "scope": "Bulk-path assertion proves BF16 not silently replaced everywhere."
-    }
+      "full_hidden_logits_recurrent_KV_bits": "exact versus canonical",
+      "bulk_after2048_differing_values": 253439
+    },
+    "actual_default_target": {
+      "fixture": "regression580-teacher-forced.json",
+      "prompt_tokens": 128,
+      "teacher_forced_steps": 81,
+      "reference_slots": 16,
+      "candidate_slots": 10,
+      "hidden_full_logits_pairs": 810,
+      "device_greedy_choices": 810,
+      "recurrent_live_KV_slot_checks": 270,
+      "all_bit_differences": 0
+    },
+    "independent_bf16_pool_oracle": {
+      "fixture": "shared-quant-reuse-2026-10-13/tokens-511.json",
+      "pairs": "BF16 ordinary7/verify7;canonical ordinary16/BF16verify7;BF16ordinary10/verify10;canonicalordinary16/BF16verify10",
+      "coverage": "Masked tail rows,physicalstrides8704/8448,prefix127across128boundary,all/even/last active,accepted1/2/3,release/rebind,fullhidden/logits/F32/liveFP8 exact.",
+      "all_bit_differences": 0
+    },
+    "scheduler_tests": 51
   },
   "scratch": {
     "geometries": "one state and output per unique(value_heads,key_dim,value_dim)",
     "qwen_bytes": 3170304,
     "persistent_target_state": "scoring leaves untouched; accepted prefix replays original single-step kernel",
     "per_slot_full_rollback_snapshots": false
-  },
-  "qualification_pending": {
-    "expanded_diagnostic": "51cases:ALL33V2gradechanges,available4MTP-onlyregressions,16unchangedcorrect8perstratum. Before explicitoldBF16/MTP2 vsafterimplicitdefault. Running;notfullquality.",
-    "task_quality": "Only olddefault/newdefault; full original1024each,512cap/C16/scorer/CP95grossupper2pct overall/strata unchanged. New declared three-process balancedhalf-order plan reduces model restarts. Not launched.",
-    "performance": "Fresh actual-zero-option default benchmarks and broad cases pending. No performance claim from old16.173s for this binary.",
-    "fallback_and_vision": "runtime smoke pending",
-    "vllm_comparison": "no fresh parity claim"
   },
   "previous_candidate_quality": {
     "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/fixed-target-quality-v1/analysis.json",
@@ -169,13 +199,16 @@
   },
   "automatic_default": {
     "when": "Both execution overrides omitted; nativeFP4 package, declaredFP8KV, complete supported denseMTPhead and existing FA4 geometry/artifact availability.",
-    "selection": "Auto MTP resolvesdepth2; BF16 target bulk prefill with canonical attention through1024 contextpositions.",
+    "selection": "AutomaticMTP2/BF16bulk; chunksending<=2048usecanonicalF32attention.",
     "unsupported": "Canonical0; explicit overrides preserved.",
-    "capacity_fallback": "Automatic load only: synchronize/drop failed attempt, account own freed CUDA pool bytes, retry canonical0 once. Runtime smoke pending.",
+    "capacity_fallback": "Automatic-only single canonical0retry; retained V10runtime proof plus unchanged CLI/fallback source.",
     "user_options_required": false,
     "vision": "kept enabled",
     "extra_activation_or_state_families": false,
-    "prefix_graphs": "Both arithmetic captures share original arena, metadata and scratch. Each has its own optional profiling events."
+    "prefix_graphs": "Both arithmetic captures share original arena, metadata and scratch. Each has its own optional profiling events.",
+    "default_prefill_width": 1024,
+    "pool_prefill_floor": 1024,
+    "requires_complete_pool": true
   },
   "previous_v2_selected_quality": {
     "scope": "User narrowed to fastest BF16+MTP2 before lastBF16 shard finished; originalfour-arm cohort canceled onlyunusedB3 and is explicitly incomplete. FullA/C1024 each retained.",
@@ -209,5 +242,352 @@
       "summary_sha256": "19bd77582161f7bc5b932c5465fd4115847b9f745f52f8fc4c7ba6cba5dafedc"
     },
     "launch": "Diagnostic only: frozen complete cache and no-autotune avoid redundant preparation model load; final default qualification retains normal tuning. Scorer/caps unchanged."
+  },
+  "validated_runtime_commit": "3d37f8f5c657b2a6064e72140b935f5edad8594b",
+  "source_manifest_files_checked_against_primary": 731,
+  "final_evidence": {
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v12-validation-complete.json": "e43d65995d481790a22300e77e6af01d95185e3c5d9e1f9244bea01ac8b887a8",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v12-validation.log": "3de0d3b26f7b5df7b7bd3471446ef17d7a207f2bd2998faef88030ec7ef4ee4a",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-v9-model-check-complete.json": "bfa483ab9ef053ef2d395faae83d04bb507d068e7b687523a19e7cfcfacc2153",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-default-preview-v12/contract.json": "9322c1be5042c6f2639f61f5b7baddf2a1879b02ab71055a89e165252fcbd4f3",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-default-preview-v12/c0/report.json": "529bb2e01de9f5e01c2982fbe18869d3f67db88174152ed63c11c828a8dfe338",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-default-preview-v12/c0/server.log": "ad09d689227af724f3537c1c8bda6f3236768300be58e8006373cc4cbd34dae9",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-default-preview-v12/summary.json": "895d5461e1e5177d7f5525b50d258ae9f6bd0037c22feca2d220ddaa5286bb50",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-capacity-fallback-smoke-v1/contract.json": "75a7c4cfbf0bbf46c0c340c91c3c36d18e24f29e9c1dabd2b5054a2dbe7e1d2c",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-capacity-fallback-smoke-v1/report.json": "fd0dc793536bfbcce53aaece3af2d8c876dd417df12f36b372590bf865e1694a",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-teacher-forced.json": "8d8a02de2ba8bf60fcbe174bacff4d38e8cd0e20d3e07ad430e9164e9c76077b",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-diagnostic-v2-source-binding.json": "5bb28ef803ce2d1b084e950283cf0b022ec980f939960d783aa5ee3eeb705827",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-diagnostic-v1.log": "0b73b5e72a621161ffc096af48cb14c4c5fd2550e3195313c79c9f40027761d1",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-diagnostic-v2.log": "6ddc57eba768e1502a6873495038eee1ab88ec6a70536d60848f895a5a8c7085",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-trace-v1.log": "7e656aa7faf5cbae9b782e88dc0d858d0a5d8656f96203be94ac71050ae7dc29",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/regression580-diagnostic-v3.log": "ef3df1c9b2a2a99a075fe34e06d32e518e037b5a3723af1116acbdfa047f50fb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/contract.json": "7adc21a87e24d3f45ac5b8cf66bc98b1a0f3c954f55b7008b7835153efc7b609",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/analysis.json": "4dbaca0ed122f2f145d050118b405b54d480cc895bb47edc65b9c3d87b2b4b2d",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/performance-analysis.json": "12c88b1da7756b6d7e5f196e3408730c9d7157009027c8ad44918caeaea9ebac",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v6/contract.json": "cd6c09e998de01e62c635a362307bcdc53ffd64bcb88e69dbfa16bfb6005b230",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v6/analysis.json": "a32813e82dafba35ec31975f566afd3b298896cfcaf825117c41eae226985e5b",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v6/c-all.json": "46fa2767aa6633bace4f17271ddaec3ad0a85c50bf30a3d433014151b2795e22",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v6/c-all.server.log": "060cba2d4eb00b05e5194f20d5b7843af408c6ff0b21b061ff6c5c605232db50",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v6/c-all.performance.json": "0466a60e9f5393bddad8a549bfcbaa7b217b820235383f93c90aceb29750c65f",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/contract.json": "e64651b06f51e91c23fa43310515eecf28709fb28f007cb50825169e17eaaae2",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/analysis.json": "8881af4f499a031c8dba3a501f1d7219028312f435bac568ca16411845bfba96",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-first.json": "a503ef03e7b512e06dd78803ec9b7e991c402b644b200d87c7f1b962041e2a9f",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-first.server.log": "c5126294619c36eb4b2ed841205356fa340051a3f6bb77d9de840f2b83bdb6bb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-first.performance.json": "ae06d43cffb4dae32b46280bb7d6f12b8448bd3b6ee45e6482041a049cbc4960",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-last.json": "b2671d74e64573adbdeca0b54929a98ac7bd1e5d85b22a9f3b6afa74531b04d8",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-last.server.log": "f8aa2f9adb34e546c6a388cbb9f6bc7bd4616578d9c56340f353793803bf1227",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/a-last.performance.json": "21748ff8e9337b27feef03ef9631fc19ae56b7b21e353577063f2d4bc399be41",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-first.json": "73186199a80700b28171b1579b24e3c64aba64e711eeb68e0bc5a3e2e2ee39eb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-first.server.log": "c25870c9c2990769b375301297ac8f4de9a675998e94d230322350530f8c48db",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-first.performance.json": "7195e64a3032e5b50468ac0bd4fac6e7bb54a1570b933e6c1daccf5527b123af",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-last.json": "3c0fea8c8c5856ab754575a93c21f1ae00b487ef0e6ee6067857ea10bbb573c7",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-last.server.log": "b8dfb7305f36addbad887b597f9e1f791545909b479775067d377056216a8d2b",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v4/c-last.performance.json": "fa7e25ea2a5db2fffd39b4f4f217e94cbee160e7f0200d77c65ef2881d326dfb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a1/report.json": "e6b6a0ae5d45b6661fd057fd5fd0614211e04bf5ddba9dd7fd2c804e68553a42",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a1/server.log": "4ef7aa7dc34217b92e85177e0f4c441e969bbf06bfc860b90b356effb63d1741",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a1/telemetry.jsonl": "fa6330d77af024ff39738216ae9271805652ca344f96e9a726a2a6520528aaa3",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c1/report.json": "c1a487bf4367cbb778460c8e669b52597720853ea67f6bbde88b1b8e0a87c8c2",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c1/server.log": "603316d8b3b5f2419e1660a01f8ebdc3d88344c0ef73c2865dbc9abd538f6309",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c1/telemetry.jsonl": "9fe235edfb7c1cd0e3f457658d0063dc8c49396b5c7325a5b123420363e22266",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c2/report.json": "49365075ce0a44b756fa86d2bb48fa0f30da3993667fa5119c668d74d0bc81cb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c2/server.log": "14d65778a9a4a429d48303309d423077c20f185e32211e1b8bd0ed48e0920ebc",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/c2/telemetry.jsonl": "ad0e8b7f51f3d2060e4a78bc4482ad43dbd66dda6b97cb85dc9471dde1c1c0ff",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a2/report.json": "8d9972ab66bee700bddae0d4e66c5d5c25efbc553d40cd63667c676f9f6cc886",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a2/server.log": "b6443cbaec60003c7b35f1fd960bf7287723d89fa9e7fb394c082561a521b39e",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/a2/telemetry.jsonl": "d54d3c681e5a8fc492a26d628e3773b58a790f9f9a13c5b04924feea8d6f91cb",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v11-validation-continued1.log": "89acac05db737866fe5e0261d7bc35dd2e9178d74e3ff4ea1936398d2374b486",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v11-validation-complete.json": "60179f82804bc40408f0c14d0bbe6c121da292938bf6bda0392faf91adb299a7",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v5/contract.json": "024fb2884094eeebcad4a5dbe23aff9b479a1b1c31fc042611be47cb3c0f741e",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v5/c-all.json": "b6638aabfb999b030f73997c11dfed1b592435f1fe0d1dcf1f38353b1a6f50fa",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v5/c-all.partial.json": "d74c9c518156f994c3bdea071e108c716e1d3b59d9bf03f6abe02881d026cc70",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v5/c-all.log": "dbba93cc6eb815cb1c32d53ee7ffcaaae0eaa43fa5d797fe195dd2637a685dcf",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-quality-v5/complete.json": "9a98ec56510a30b650dd9a95aed9122bcc6322b1fb1ced2138f040bbd965bcc3",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/automatic-default-preview-v12/diagnostic-case-ids.json": "0eb554fb001e51eeb495e636561a1dabcd4fa62ce8e549d2c8f183ac313696f6",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/resource-validation.json": "03ee609e7d26da0b8fbdb7cab5ecebe74348d8ec571335f441187e65ec2c47e9",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/single-default-fixed-performance-v2/metadata-correction.json": "a56a56c250ae4a75997a498656054769746262d1e726825ef7e0dd35a0d36836"
+  },
+  "qualification": {
+    "quality": {
+      "scope": "Only one fixed BF16+MTP2 automatic-default candidate. Reuse ALL1024 qualified old-default grades from completed V4, whose binary/inputs/greedy512cap/scorer/C16 were unchanged. This is explicitly a retained paired regression control on the same previously used frozen corpus, not a fresh or unseen holdout. No old candidate results reused as new. All outputs/caps count. Candidate alone runs all1024 in one process within30min safety based on measured V10duration; normal tuning/noexecutionflags/visionon/.9/modelcontextdefault. Earlier all4V4arms retained with failedquality status.",
+      "contract_sha256": "cd6c09e998de01e62c635a362307bcdc53ffd64bcb88e69dbfa16bfb6005b230",
+      "raw_sha256": {
+        "a-first.json": "a503ef03e7b512e06dd78803ec9b7e991c402b644b200d87c7f1b962041e2a9f",
+        "a-last.json": "b2671d74e64573adbdeca0b54929a98ac7bd1e5d85b22a9f3b6afa74531b04d8",
+        "c-all.json": "46fa2767aa6633bace4f17271ddaec3ad0a85c50bf30a3d433014151b2795e22"
+      },
+      "comparison": {
+        "overall": {
+          "n": 1024,
+          "control_correct": 968,
+          "candidate_correct": 968,
+          "regressions": 2,
+          "gains": 2,
+          "gross_regression_rate": 0.001953125,
+          "cp95_upper": 0.00613535239623017,
+          "passes_2pct": true
+        },
+        "zero_shot": {
+          "n": 512,
+          "control_correct": 479,
+          "candidate_correct": 478,
+          "regressions": 2,
+          "gains": 1,
+          "gross_regression_rate": 0.00390625,
+          "cp95_upper": 0.01224498839614846,
+          "passes_2pct": true
+        },
+        "eight_shot": {
+          "n": 512,
+          "control_correct": 489,
+          "candidate_correct": 490,
+          "regressions": 0,
+          "gains": 1,
+          "gross_regression_rate": 0.0,
+          "cp95_upper": 0.005833955600555739,
+          "passes_2pct": true
+        }
+      },
+      "passes": true,
+      "arm_summary": {
+        "a": {
+          "correct": 968,
+          "n": 1024,
+          "length_capped": 40,
+          "capped_incorrect": 40
+        },
+        "c": {
+          "correct": 968,
+          "n": 1024,
+          "length_capped": 40,
+          "capped_incorrect": 40
+        }
+      },
+      "grade_changes": [
+        {
+          "id": "gsm8k-independent-v1:147:zero_shot",
+          "a": {
+            "correct": false,
+            "predicted": null,
+            "expected": "75",
+            "tokens": 512,
+            "capped": true
+          },
+          "c": {
+            "correct": true,
+            "predicted": "75",
+            "expected": "75",
+            "tokens": 466,
+            "capped": false
+          }
+        },
+        {
+          "id": "gsm8k-independent-v1:580:zero_shot",
+          "a": {
+            "correct": true,
+            "predicted": "500",
+            "expected": "500",
+            "tokens": 341,
+            "capped": false
+          },
+          "c": {
+            "correct": false,
+            "predicted": null,
+            "expected": "500",
+            "tokens": 512,
+            "capped": true
+          }
+        },
+        {
+          "id": "gsm8k-independent-v1:409:eight_shot",
+          "a": {
+            "correct": false,
+            "predicted": null,
+            "expected": "168000",
+            "tokens": 512,
+            "capped": true
+          },
+          "c": {
+            "correct": true,
+            "predicted": "168000",
+            "expected": "168000",
+            "tokens": 279,
+            "capped": false
+          }
+        },
+        {
+          "id": "gsm8k-independent-v1:325:zero_shot",
+          "a": {
+            "correct": true,
+            "predicted": "224000",
+            "expected": "224000",
+            "tokens": 485,
+            "capped": false
+          },
+          "c": {
+            "correct": false,
+            "predicted": null,
+            "expected": "224000",
+            "tokens": 512,
+            "capped": true
+          }
+        }
+      ]
+    },
+    "fresh_fixed_resource_performance": {
+      "scope": "One automatic BF16/MTP2 execution path versus qualified old default. Two FRESH process pairs, balancedA1C1C2A2; same model/vision/context262144/maxseq16/normalautotune, only --gpu-memory-utilization0.85 used for BOTH to make share the limiting budget on the shared desktop GPU. This is a fixed-resource execution-performance comparison, not zero-option capacity parity. All actual zero-option V11quality/postperformance outputs retained separately. Require exact recorded engine budget equality and all C16wall/short1wall/32KTTFT process medians improve in BOTHpairs; keep all raw outcomes; no95%confidenceclaim with only2pairs. Warm+3 C16 andshort1;warm+1long. Allfixedtokens/EOSempty performance-only; original taskquality untouched.",
+      "pairs": [
+        {
+          "control": "a1",
+          "candidate": "c1",
+          "control_budget_gib": 26.7,
+          "candidate_budget_gib": 26.7,
+          "resources_equal": true,
+          "comparisons": {
+            "c16": {
+              "metric": "wall",
+              "control_seconds": 22.89864699402824,
+              "candidate_seconds": 18.533626816119067,
+              "change_pct": -19.06234974951808
+            },
+            "short1": {
+              "metric": "wall",
+              "control_seconds": 4.966852889,
+              "candidate_seconds": 2.642322015,
+              "change_pct": -46.800880274672465
+            },
+            "long": {
+              "metric": "ttft",
+              "control_seconds": 20.575680539943278,
+              "candidate_seconds": 5.1192359970882535,
+              "change_pct": -75.11996754056153
+            }
+          },
+          "same_hardware": true,
+          "complete_telemetry": true,
+          "passes": true
+        },
+        {
+          "control": "a2",
+          "candidate": "c2",
+          "control_budget_gib": 26.7,
+          "candidate_budget_gib": 26.7,
+          "resources_equal": true,
+          "comparisons": {
+            "c16": {
+              "metric": "wall",
+              "control_seconds": 23.009518300998025,
+              "candidate_seconds": 18.582092880969867,
+              "change_pct": -19.241712764739283
+            },
+            "short1": {
+              "metric": "wall",
+              "control_seconds": 4.967196096,
+              "candidate_seconds": 2.642620291,
+              "change_pct": -46.79855113575931
+            },
+            "long": {
+              "metric": "ttft",
+              "control_seconds": 20.595135694020428,
+              "candidate_seconds": 5.102664233068936,
+              "change_pct": -75.22393487045372
+            }
+          },
+          "same_hardware": true,
+          "complete_telemetry": true,
+          "passes": true
+        }
+      ],
+      "passes": true,
+      "contract_sha256": "e64651b06f51e91c23fa43310515eecf28709fb28f007cb50825169e17eaaae2",
+      "raw_sha256": {
+        "a1": "e6b6a0ae5d45b6661fd057fd5fd0614211e04bf5ddba9dd7fd2c804e68553a42",
+        "c1": "c1a487bf4367cbb778460c8e669b52597720853ea67f6bbde88b1b8e0a87c8c2",
+        "c2": "49365075ce0a44b756fa86d2bb48fa0f30da3993667fa5119c668d74d0bc81cb",
+        "a2": "8d9972ab66bee700bddae0d4e66c5d5c25efbc553d40cd63667c676f9f6cc886"
+      }
+    },
+    "actual_default_runtime": "automatic-default-preview-v12/complete.json",
+    "actual_zero_option_quality_and_post_performance": "single-default-quality-v6/c-all.json and c-all.performance.json",
+    "capacity_fallback": "Retained V10automatic-capacity smoke; V11CLI load/fallback source unchanged, and the new normalization rule does not affect private canonical fallback.",
+    "vision_scope": "Tower enabled and loaded; native text/stricttool serving covered. No new image-generation claim.",
+    "vllm": "Separate descriptive reference may run after native qualification during final CI; see final PR body and fresh-vllm-reference-v2/ for its results. It is not a native merge gate. Historical2% is not a current-default claim.",
+    "performance_scope_correction": {
+      "scope": "Version label correction only; frozen contract,raw measurements,and analyses unchanged",
+      "original_contract_sha256": "e64651b06f51e91c23fa43310515eecf28709fb28f007cb50825169e17eaaae2",
+      "correction": "The phrase zero-optionV11quality/postperformance in frozen scope is an inherited label typo. The actual candidate is V12, binarySHA8913cd905927ec5c740bbc8b4deb11b4084f10f6b062d54037991a27ed38b6ee, source-validation marker default-bf16-mtp-v12-validation-complete.json, and actual zero-option quality/postperformance are single-default-quality-v6. BothCrawbinaryhashesconfirmV12.",
+      "actual_candidate": "V12"
+    },
+    "performance_share_limit_proof": {
+      "passes": true,
+      "scope": "The same .85 total-memory share, rather than physical-free clipping, bounds all4engines. Conservative +/-0.05GiB rounding bounds on initial CLI logs retain1GiB reservation. SameGPUconfirmedseparately.",
+      "processes": {
+        "a1": {
+          "total_gib_rounded": 31.4,
+          "initial_free_gib_rounded": 28.5,
+          "share_limited_even_with_rounding": true
+        },
+        "c1": {
+          "total_gib_rounded": 31.4,
+          "initial_free_gib_rounded": 28.6,
+          "share_limited_even_with_rounding": true
+        },
+        "c2": {
+          "total_gib_rounded": 31.4,
+          "initial_free_gib_rounded": 28.8,
+          "share_limited_even_with_rounding": true
+        },
+        "a2": {
+          "total_gib_rounded": 31.4,
+          "initial_free_gib_rounded": 28.9,
+          "share_limited_even_with_rounding": true
+        }
+      }
+    }
+  },
+  "normalization_repair": {
+    "cause": "Q norm changed from16-row to1-row dispatch when funded slots16to10 reducedlogicalqueryheads384to240 across256 threshold. Trace firstdiff atlayer3Qnorm<=9.54e-7; downstream hidden divergesdecode7 andtokensdecode10.",
+    "scope": "BF16target ordinary andverification serving pools retain established full16slot normalization policy. Candidate axis removed, final partial row tiles masked. Private,draft,canonical profile policies retained. Existing kernels only; no user option."
+  },
+  "serving_repairs": [
+    "Physical capture funding uses one cumulative original baseline and bounded unpublished-pool retries.",
+    "Private quotes include pending shared prompt workspace.",
+    "Restore pools in asynchronous reservations, reclaim idle programs/prefixes before capture.",
+    "Submit acknowledgements use existing resource budget capped by request deadline; controls keep control budget.",
+    "Constraints retain host sampling while ordinary requests keepMTP2.",
+    "Immutable greedy key identity memoized; selected-entry numeric validation retained.",
+    "BF16target normalization stable when VRAM funding narrows pool.",
+    "Initial canonicalF32context extends through2Kchunk ends;BF16remainsactivebeyond2K.",
+    "Short native prompts stay whole behind earlierprefill work rather than splitting off one-token tails;largeprompt half-chunk progress andtinybudgetsingleton escape preserved."
+  ],
+  "previous_v10_full_quality": {
+    "status": "Rejected; allrawretained",
+    "analysis": "single-default-quality-v4/analysis.json",
+    "control_correct": 968,
+    "candidate_correct": 968,
+    "gross_regressions": 16,
+    "gains": 16,
+    "zero_regressions": 12,
+    "eight_regressions": 4,
+    "cp95_upper_percent": {
+      "overall": 2.3635345906627094,
+      "zero": 3.7697626123107244,
+      "eight": 1.7788140281130793
+    },
+    "performance": "Firstsame27.6GiBpair improved; secondC27.6/A27.2GiBresourceconfounded, no approval. Replaced by preregistered fresh .85 equal-budget comparison, all oldrawretained."
+  },
+  "previous_v11_rejection": {
+    "status": "Preregistered reject-only early stop, explicitly incomplete",
+    "attempted": 784,
+    "correct": 743,
+    "zero_gross_losses": 3,
+    "eight_gross_losses": 5,
+    "retained_path": "single-default-quality-v5/c-all.json",
+    "reason": "Already5eight-shot losses cannotmeet original full512stratumCP95upper<2%, so no need to spendremainingtime. No output excluded/retried. V12extendsprecisionandkeepsshortpromptsatomic;control/scorer/capsunchanged."
+  },
+  "selected_v12_diagnostic": {
+    "scope": "All8V11observed losses, not full qualification",
+    "correct": 7,
+    "n": 8,
+    "not_quality_approval": true
   }
 }
