@@ -233,7 +233,9 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
                 RuntimeConfig::default(),
             )?,
             CpuConfig {
-                device_control_timeout_ms: 50,
+                // Cancellation must precede its independent resource deadline. Keep the
+                // timeout branch short; the closed gate proves control liveness in both.
+                device_control_timeout_ms: if cancel { 30_000 } else { 50 },
                 ..Default::default()
             },
         )?;
@@ -247,13 +249,19 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
             sleep(Duration::from_millis(1)).await;
         }
         assert!(entered);
-        let inspection = timeout(Duration::from_millis(25), handle.inspect())
+        // A response while the gate remains closed proves independence from the owner;
+        // a 25-ms host scheduling budget does not, and flakes on shared CI machines.
+        let inspection = timeout(Duration::from_secs(3), handle.inspect())
             .await
             .map_err(|e| Error::invariant(e.to_string()))??;
         assert!(inspection.resource_release_pending);
         assert_eq!(owned.load(Ordering::Acquire), 1);
         if cancel {
-            handle.cancel(RequestId::ONE).await?;
+            timeout(Duration::from_secs(3), handle.cancel(RequestId::ONE))
+                .await
+                .map_err(|e| {
+                    Error::invariant(format!("cancel blocked by resource owner: {e}"))
+                })??;
         }
         let reason = terminal(&mut stream).await?;
         if cancel {
