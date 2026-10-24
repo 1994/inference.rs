@@ -745,3 +745,50 @@ fn resident_geometry_preserves_budget_progress_and_decode_protection_across_roun
         assert_eq!(totals.as_slice(), original.as_slice());
     }
 }
+
+#[test]
+fn native_short_prompt_does_not_leave_a_single_token_tail_behind_another_prompt() {
+    for native in [false, true] {
+        let mut r = resources();
+        r.max_num_batched_tokens = 1024;
+        r.scheduler.prefill_chunk_tokens = 1024;
+        r.gpu_budget_us = 1_000_000;
+        let mut first = work(1, ExecutionRole::Prefill, 897);
+        first.deadline_us = Some(1);
+        let mut short = work(2, ExecutionRole::Prefill, 128);
+        if native {
+            short.cost_query.prefill_geometry = Some(PrefillGeometry {
+                width: 1024,
+                narrow_width: 64,
+            });
+        }
+        let filler = work(3, ExecutionRole::Prefill, 64);
+        let decision = plan(&[first, short.clone(), filler], &r, 0);
+        let step = decision.step.unwrap();
+        assert_eq!(
+            step.work
+                .iter()
+                .find(|item| item.request.get() == 1)
+                .unwrap()
+                .token_count,
+            897
+        );
+        let selected = step.work.iter().find(|item| item.request.get() == 2);
+        if native {
+            assert!(selected.is_none());
+            assert_eq!(
+                step.work
+                    .iter()
+                    .find(|item| item.request.get() == 3)
+                    .unwrap()
+                    .token_count,
+                64
+            );
+            let next = plan(&[short], &r, 0).step.unwrap();
+            assert_eq!(next.work[0].token_count, 128);
+        } else {
+            assert_eq!(selected.unwrap().token_count, 127);
+        }
+        assert!(step.work.iter().map(|item| item.token_count).sum::<usize>() <= 1024);
+    }
+}

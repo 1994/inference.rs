@@ -59,7 +59,7 @@ impl BackendProvider for CudaBackend {
             .map(Some)
     }
     fn state_capacity_bytes(&self) -> Result<Option<u64>> {
-        Ok(Some(self.budget))
+        self.capacity_budget().map(Some)
     }
     fn free_state_bytes(&self) -> Result<Option<u64>> {
         self.available().map(Some)

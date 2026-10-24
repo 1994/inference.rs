@@ -20,6 +20,7 @@ use tokio::time::timeout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GateAt {
+    Quote,
     Reserve,
     Submit,
 }
@@ -56,6 +57,10 @@ impl BackendProvider for Gated {
     }
     fn execution_graph(&self, model: &ModelIr) -> Result<infer_ir::DataflowGraph> {
         self.inner.execution_graph(model)
+    }
+    fn prepare_state_reservation(&mut self, capacity: usize, readout: OutputReadout) -> Result<()> {
+        self.wait(GateAt::Quote)?;
+        self.inner.prepare_state_reservation(capacity, readout)
     }
     fn reserve_state(&mut self, state: StateId, capacity: usize) -> Result<()> {
         self.inner.reserve_state(state, capacity)?;
@@ -233,7 +238,9 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
                 RuntimeConfig::default(),
             )?,
             CpuConfig {
-                device_control_timeout_ms: 50,
+                // Cancellation must precede its independent resource deadline. Keep the
+                // timeout branch short; the closed gate proves control liveness in both.
+                device_control_timeout_ms: if cancel { 30_000 } else { 50 },
                 ..Default::default()
             },
         )?;
@@ -247,13 +254,19 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
             sleep(Duration::from_millis(1)).await;
         }
         assert!(entered);
-        let inspection = timeout(Duration::from_millis(25), handle.inspect())
+        // A response while the gate remains closed proves independence from the owner;
+        // a 25-ms host scheduling budget does not, and flakes on shared CI machines.
+        let inspection = timeout(Duration::from_secs(3), handle.inspect())
             .await
             .map_err(|e| Error::invariant(e.to_string()))??;
         assert!(inspection.resource_release_pending);
         assert_eq!(owned.load(Ordering::Acquire), 1);
         if cancel {
-            handle.cancel(RequestId::ONE).await?;
+            timeout(Duration::from_secs(3), handle.cancel(RequestId::ONE))
+                .await
+                .map_err(|e| {
+                    Error::invariant(format!("cancel blocked by resource owner: {e}"))
+                })??;
         }
         let reason = terminal(&mut stream).await?;
         if cancel {
@@ -271,5 +284,68 @@ async fn blocked_resource_owner_keeps_controls_live_and_delivers_cancel_or_timeo
         handle.shutdown().await?;
         assert_eq!(owned.load(Ordering::Acquire), 0);
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn admission_uses_resource_budget_while_controls_remain_responsive() -> Result<()> {
+    let ir = support::model(ModelId::ONE);
+    let (release, gate) = mpsc::channel();
+    let (entered, started) = mpsc::channel();
+    let owned = Arc::new(AtomicUsize::new(0));
+    let backend = Gated {
+        stage: GateAt::Quote,
+        inner: ProtocolBackend::new(4, 4, &ir)?,
+        gate: Some(gate),
+        entered,
+        owned: owned.clone(),
+    };
+    let mut registry = KernelRegistry::default();
+    registry.register(&support::DeclaredKernels)?;
+    let handle = RuntimeHandle::start_with_config(
+        Engine::new(
+            backend,
+            ir,
+            PrecisionPlan::f32(),
+            &registry,
+            RuntimeConfig::default(),
+        )?,
+        CpuConfig {
+            workers: 1,
+            max_jobs: 4,
+            command_timeout_ms: 3_000,
+            device_control_timeout_ms: 30_000,
+            ..Default::default()
+        },
+    )?;
+    let submitting = handle.clone();
+    let submission = tokio::spawn(async move { submitting.submit(request(1)?).await });
+    for _ in 0..5000 {
+        if started.try_recv().is_ok() {
+            break;
+        }
+        sleep(Duration::from_millis(1)).await;
+    }
+    // The backend quote is still gated. Inspection uses the independent control path.
+    handle.inspect().await?;
+    assert_eq!(owned.load(Ordering::Acquire), 0);
+    sleep(Duration::from_secs(5)).await;
+    let still_pending = !submission.is_finished();
+    release
+        .send(())
+        .map_err(|e| Error::invariant(e.to_string()))?;
+    assert!(
+        still_pending,
+        "admission expired at the shorter control deadline"
+    );
+    let mut output = submission
+        .await
+        .map_err(|e| Error::invariant(e.to_string()))??;
+    assert!(!matches!(
+        terminal(&mut output).await?,
+        FinishReason::Failed(_)
+    ));
+    handle.shutdown().await?;
+    assert_eq!(owned.load(Ordering::Acquire), 0);
     Ok(())
 }

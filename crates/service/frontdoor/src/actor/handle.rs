@@ -65,18 +65,23 @@ impl RuntimeHandle {
         self.cpu.inspect()
     }
     pub(super) async fn reply<T>(&self, response: oneshot::Receiver<T>) -> Result<T> {
-        timeout(
-            Duration::from_millis(self.config.command_timeout_ms),
+        Self::reply_with_budget(
             response,
+            Duration::from_millis(self.config.command_timeout_ms),
         )
         .await
-        .map_err(|_| {
-            Error::new(
-                ErrorCode::Backend,
-                "runtime command acknowledgement timed out",
-            )
-        })?
-        .map_err(|_| Error::new(ErrorCode::Backend, "engine actor stopped"))
+    }
+
+    async fn reply_with_budget<T>(response: oneshot::Receiver<T>, budget: Duration) -> Result<T> {
+        timeout(budget, response)
+            .await
+            .map_err(|_| {
+                Error::new(
+                    ErrorCode::Backend,
+                    "runtime command acknowledgement timed out",
+                )
+            })?
+            .map_err(|_| Error::new(ErrorCode::Backend, "engine actor stopped"))
     }
     pub(super) fn send(&self, command: Command) -> Result<()> {
         let sender = if matches!(command, Command::Submit { .. }) {
@@ -194,7 +199,17 @@ impl RuntimeHandle {
             output,
             reply,
         })?;
-        self.reply(response).await??;
+        // Admission may wait behind resource capture on the device owner. It uses
+        // that existing resource budget; inspection/cancellation keep the control budget.
+        let budget = Duration::from_millis(
+            self.config
+                .command_timeout_ms
+                .max(self.config.device_control_timeout_ms),
+        );
+        let budget = deadline.map_or(budget, |deadline| {
+            budget.min(deadline.saturating_duration_since(Instant::now()))
+        });
+        Self::reply_with_budget(response, budget).await??;
         Ok(receiver)
     }
     /// # Errors

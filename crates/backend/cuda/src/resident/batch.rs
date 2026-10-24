@@ -8,6 +8,7 @@ use super::{
     profile,
     prompt_scratch::PromptScratch,
 };
+use crate::attention_profile::PRECISE_PREFIX_POSITIONS;
 use crate::constants::ATTENTION_SPLIT_THRESHOLD;
 use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::EXTRA_WIDE_PREFILL_LANES;
@@ -82,11 +83,16 @@ enum PromptReadout {
 }
 
 /// Prompt readout variants captured against the same shared scratch.
-struct PromptCaptures {
+struct PromptGraphs {
     prefill: CudaGraph<()>,
     prefill_last: CudaGraph<()>,
     #[cfg(test)]
     state_prefill: Option<CudaGraph<()>>,
+}
+
+struct PromptCaptures {
+    regular: PromptGraphs,
+    precise: Option<PromptGraphs>,
 }
 
 pub(super) struct ProgramCaptures {
@@ -103,6 +109,7 @@ pub(super) struct BatchGraph {
     token_readout: Option<super::token_readout::TokenReadout>,
     prefill: CudaGraph<()>,
     prefill_last: CudaGraph<()>,
+    precise: Option<PromptGraphs>,
     #[cfg(test)]
     state_prefill: Option<CudaGraph<()>>,
     restore: Vec<CudaGraph<()>>,
@@ -139,6 +146,7 @@ pub(super) struct BatchGraph {
     /// Optional in-graph boundary events (`INFER_CUDA_PREFILL_PROFILE`); declared after
     /// the graphs so their executables are destroyed before the events they record.
     profile: Option<profile::PrefillProfile>,
+    precise_profile: Option<profile::PrefillProfile>,
     // Batched width-32 arena anchors every slot allocation past graph replays;
     // declared last so it drops after the graphs that reference its rows.
     _arena: Option<ActivationArena>,
@@ -382,7 +390,7 @@ impl BatchBuilder<'_> {
                         external: self.external,
                         capacity: self.capacity,
                         fusion: &mut no_fusion,
-                        mode: CaptureMode::Batched,
+                        mode: CaptureMode::Pooled,
                     }
                     .record(node)?,
                     Dispatch32::Row => {
@@ -544,6 +552,7 @@ impl BatchBuilder<'_> {
             readbacks: Readbacks::default(),
             prefill,
             prefill_last,
+            precise: None,
             #[cfg(test)]
             state_prefill: None,
             restore,
@@ -562,6 +571,7 @@ impl BatchBuilder<'_> {
             width,
             capacity: self.capacity,
             profile: None,
+            precise_profile: None,
             _arena: shared,
         })
     }
@@ -608,6 +618,12 @@ impl BatchBuilder<'_> {
             .map_err(device_error)?;
         let prefill_rotary = self.prompt_rotary()?;
         let mut profile = profile::PrefillProfile::from_env(self.device);
+        let mut precise_profile =
+            if self.weights.fusion.is_none() && self.weights.attention_profile.is_bf16() {
+                profile::PrefillProfile::from_env(self.device)
+            } else {
+                None
+            };
         let captures = self.capture_prompt_readouts(
             &mut arena,
             (
@@ -616,7 +632,7 @@ impl BatchBuilder<'_> {
                 &prefill_info,
                 prefill_rotary.as_ref(),
             ),
-            &mut profile,
+            (&mut profile, &mut precise_profile),
             &mut shared,
             prompt_row.as_mut(),
         )?;
@@ -628,10 +644,11 @@ impl BatchBuilder<'_> {
             graph: None,
             state_offset: Self::state_offset(self.weights),
             readbacks: Readbacks::default(),
-            prefill: captures.prefill,
-            prefill_last: captures.prefill_last,
+            prefill: captures.regular.prefill,
+            prefill_last: captures.regular.prefill_last,
+            precise: captures.precise,
             #[cfg(test)]
-            state_prefill: captures.state_prefill,
+            state_prefill: captures.regular.state_prefill,
             restore: Vec::new(),
             _partials: BTreeMap::new(),
             prompt_row,
@@ -648,6 +665,7 @@ impl BatchBuilder<'_> {
             width: self.width,
             capacity: self.capacity,
             profile,
+            precise_profile,
             _arena: Some(arena),
         })
     }
@@ -656,10 +674,43 @@ impl BatchBuilder<'_> {
         &mut self,
         arena: &mut ActivationArena,
         metadata: PromptMetadata<'_>,
-        profile: &mut Option<profile::PrefillProfile>,
+        profiles: (
+            &mut Option<profile::PrefillProfile>,
+            &mut Option<profile::PrefillProfile>,
+        ),
         scratch: &mut PromptScratch,
         mut prompt_row: Option<&mut Tensor<f32>>,
     ) -> Result<PromptCaptures> {
+        let (profile, precise_profile) = profiles;
+        let regular = self.capture_prompt_graphs(
+            arena,
+            metadata,
+            profile,
+            scratch,
+            prompt_row.as_deref_mut(),
+        )?;
+        // Both variants retain the same arenas, state and metadata. The target's
+        // first context block preserves canonical attention before BF16 bulk prefill.
+        let precise = if self.weights.fusion.is_none() && self.weights.attention_profile.is_bf16() {
+            self.attention.precise_prefill(true);
+            let result =
+                self.capture_prompt_graphs(arena, metadata, precise_profile, scratch, prompt_row);
+            self.attention.precise_prefill(false);
+            Some(result?)
+        } else {
+            None
+        };
+        Ok(PromptCaptures { regular, precise })
+    }
+
+    fn capture_prompt_graphs(
+        &mut self,
+        arena: &mut ActivationArena,
+        metadata: PromptMetadata<'_>,
+        profile: &mut Option<profile::PrefillProfile>,
+        scratch: &mut PromptScratch,
+        mut prompt_row: Option<&mut Tensor<f32>>,
+    ) -> Result<PromptGraphs> {
         let PromptScratch {
             partials,
             recurrent,
@@ -695,7 +746,7 @@ impl BatchBuilder<'_> {
             (partials, recurrent, fusion),
             prompt_row,
         )?;
-        Ok(PromptCaptures {
+        Ok(PromptGraphs {
             prefill,
             prefill_last,
             #[cfg(test)]
@@ -903,6 +954,7 @@ impl BatchBuilder<'_> {
                 (query_heads, kv_heads, head_dim),
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 self.weights.kv_scales[&id],
+                self.weights.fusion.is_none(),
             )
         };
         self.fp8_states.insert(id, (keys, values));
@@ -1679,6 +1731,31 @@ impl BatchGraph {
         Ok(())
     }
 
+    fn prompt_readout_graph<'a>(
+        regular: (&'a CudaGraph<()>, &'a CudaGraph<()>),
+        selected: Option<&'a PromptGraphs>,
+        state: Option<&'a CudaGraph<()>>,
+        readout: Option<bool>,
+        read_hidden: bool,
+    ) -> Result<&'a CudaGraph<()>> {
+        let prefill = selected.map_or(regular.0, |graphs| &graphs.prefill);
+        let last = selected.map_or(regular.1, |graphs| &graphs.prefill_last);
+        match readout {
+            Some(false) => {
+                #[cfg(test)]
+                if !read_hidden && super::prefill_demand::enabled() {
+                    let state = selected.map_or(state, |graphs| graphs.state_prefill.as_ref());
+                    return Ok(state.unwrap_or(prefill));
+                }
+                #[cfg(not(test))]
+                let _ = (read_hidden, state);
+                Ok(prefill)
+            }
+            Some(true) => Ok(last),
+            None => Err(Error::invalid("prompt-only batch cannot verify")),
+        }
+    }
+
     /// Batched slots read back in one copy each; per-lane rows are split on host.
     fn run32(
         &mut self,
@@ -1697,22 +1774,21 @@ impl BatchGraph {
         if staged_metadata {
             self.update_metadata_batch(device, tokens, position, overrides)?;
         }
-        let graph = match prefill {
-            Some(false) => {
-                #[cfg(test)]
-                if !read_hidden && super::prefill_demand::enabled() {
-                    self.state_prefill.as_ref().unwrap_or(&self.prefill)
-                } else {
-                    &self.prefill
-                }
-                #[cfg(not(test))]
-                {
-                    &self.prefill
-                }
-            }
-            Some(true) => &self.prefill_last,
-            None => return Err(Error::invalid("prompt-only batch cannot verify")),
-        };
+        let precise = self.precise.is_some()
+            && position
+                .checked_add(tokens.len())
+                .is_some_and(|end| end <= PRECISE_PREFIX_POSITIONS);
+        #[cfg(test)]
+        let state = self.state_prefill.as_ref();
+        #[cfg(not(test))]
+        let state = None;
+        let graph = Self::prompt_readout_graph(
+            (&self.prefill, &self.prefill_last),
+            self.precise.as_ref().filter(|_| precise),
+            state,
+            prefill,
+            read_hidden,
+        )?;
         if !staged_metadata {
             Self::update_metadata(
                 graph,
@@ -1757,33 +1833,44 @@ impl BatchGraph {
                 len: vocabulary,
             }),
         ];
-        if sources.iter().all(Option::is_none) && self.profile.is_none() {
+        let profile = if precise {
+            &self.precise_profile
+        } else {
+            &self.profile
+        };
+        if sources.iter().all(Option::is_none) && profile.is_none() {
             launch_detached(device, graph)?;
-            return Ok((0..tokens.len())
-                .map(|_| (Vec::new(), Vec::new()))
-                .collect());
+            return Ok(vec![(Vec::new(), Vec::new()); tokens.len()]);
         }
         let rows = self.readbacks.run(device, graph, &sources);
         if rows.is_ok()
-            && let Some(profile) = &self.profile
+            && let Some(profile) = profile
         {
             profile.report(prefill == Some(true), tokens.len(), position);
         }
-        let mut rows = rows?.into_iter();
+        Self::prompt_rows(rows?, (tokens.len(), hidden_dim), read_hidden)
+    }
+
+    fn prompt_rows(
+        rows: Vec<Vec<f32>>,
+        (lanes, hidden_dim): (usize, usize),
+        read_hidden: bool,
+    ) -> Result<BatchOutput> {
+        let mut rows = rows.into_iter();
         let hidden_rows = rows
             .next()
             .ok_or_else(|| Error::invariant("batch hidden readback"))?;
         let mut logits = rows
             .next()
             .ok_or_else(|| Error::invariant("batch logits readback"))?;
-        (0..tokens.len())
+        (0..lanes)
             .map(|lane| {
                 let hidden = if read_hidden {
                     hidden_rows[lane * hidden_dim..(lane + 1) * hidden_dim].to_vec()
                 } else {
                     Vec::new()
                 };
-                let logits = if lane + 1 == tokens.len() {
+                let logits = if lane + 1 == lanes {
                     take(&mut logits)
                 } else {
                     Vec::new()

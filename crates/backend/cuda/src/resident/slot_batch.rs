@@ -272,7 +272,14 @@ impl SlotPool {
         .and_then(|n| n.checked_mul(width as u64))
         .and_then(|n| n.checked_mul(F32_BYTES as u64))
         .ok_or_else(|| Error::invalid("pooled rollback overflow"))?;
-        Ok(elements)
+        let scratch = if super::slot_verify::fused_recurrent(graph, verify) {
+            super::canonical_recurrent::required_bytes(graph)?
+        } else {
+            0
+        };
+        elements
+            .checked_add(scratch)
+            .ok_or_else(|| Error::invalid("canonical recurrent quote overflow"))
     }
 
     /// Allocate `width` slots of `capacity` tokens each and capture the shared graph.
@@ -498,6 +505,11 @@ impl SlotPool {
         self.verify
             .as_ref()
             .is_some_and(SlotVerifyGraph::has_batched_commit)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_table(&self, device: &CudaDevice, slot: usize) -> Result<Vec<i32>> {
+        device.read_borrowed(&self.tables[slot])
     }
 
     #[cfg(test)]
@@ -1090,3 +1102,13 @@ mod draft;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_slot_batch_draft_tests.rs"]
 mod draft_tests;
+
+#[cfg(test)]
+impl SlotPool {
+    pub(crate) fn test_verify_logit_rows(&self, device: &CudaDevice) -> Result<Vec<Vec<f32>>> {
+        self.verify
+            .as_ref()
+            .ok_or_else(|| Error::invariant("diagnostic verify graph"))?
+            .test_logit_rows(device)
+    }
+}

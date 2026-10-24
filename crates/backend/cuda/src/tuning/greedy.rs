@@ -122,7 +122,35 @@ fn driver_build() -> Option<String> {
         .map(str::trim)
         .map(str::to_owned)
 }
+/// Kernel code, compiler options and driver identity are immutable in a live context.
+/// Keep the full identity; only its repeated construction is memoized, not validation.
 fn key(device: &CudaDevice, rows: usize, vocabulary: usize) -> Result<Key> {
+    type Identity = (usize, usize, usize, usize);
+    type Identities = Mutex<BTreeMap<Identity, Key>>;
+    static KEYS: OnceLock<Identities> = OnceLock::new();
+    let keys = KEYS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let identity = (
+        device.ordinal(),
+        device.stream.cu_stream() as usize,
+        rows,
+        vocabulary,
+    );
+    let cached = keys
+        .lock()
+        .map_err(|_| Error::invariant("greedy identity cache poisoned"))?
+        .get(&identity)
+        .cloned();
+    if let Some(key) = cached {
+        return Ok(key);
+    }
+    let key = build_key(device, rows, vocabulary)?;
+    keys.lock()
+        .map_err(|_| Error::invariant("greedy identity cache poisoned"))?
+        .insert(identity, key.clone());
+    Ok(key)
+}
+
+fn build_key(device: &CudaDevice, rows: usize, vocabulary: usize) -> Result<Key> {
     let input = api::meta::<f32>(&[rows, vocabulary])
         .sync_on(&device.stream)
         .map_err(device_error)?;

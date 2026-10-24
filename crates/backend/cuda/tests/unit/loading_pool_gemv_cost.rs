@@ -275,7 +275,7 @@ fn checkpoint_row_gemv_bits_and_cost() -> TestResult {
             ..LoadOptions::default()
         },
     )?;
-    for rows in [1, 2, 3, 4, 8, 16] {
+    for rows in [1, 2, 3, 4, 8, 16, 18, 36, 48, 144] {
         run_group(&loaded, rows)?;
     }
     Ok(())

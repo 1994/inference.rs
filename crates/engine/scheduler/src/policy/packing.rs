@@ -363,6 +363,20 @@ impl<'a> BatchBuilder<'a> {
     // state's actual worker rather than the service's larger private prompt chunk.
     fn partial_prompt_grant(&self, index: usize, chunk: usize, budget: usize) -> usize {
         let item = &self.ready[index];
+        // A short native prompt needs one replay. After another prompt has made
+        // progress, keep it whole instead of creating a tiny tail with another
+        // capture/normalization shape. Large chunks keep the half-chunk rule so
+        // active decodes cannot starve prompt work.
+        if item.cost_query.prefill_geometry.is_some_and(|geometry| {
+            chunk <= geometry.width / 2 && chunk <= self.resources.max_num_batched_tokens / 2
+        }) && self
+            .scratch
+            .queries
+            .iter()
+            .any(|query| query.role == ExecutionRole::Prefill)
+        {
+            return 0;
+        }
         let Some(geometry) = item.cost_query.prefill_geometry.filter(|geometry| {
             geometry.width > 0
                 && geometry.width < self.resources.scheduler.prefill_chunk_tokens

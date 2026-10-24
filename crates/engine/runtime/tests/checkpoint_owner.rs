@@ -145,3 +145,35 @@ fn live_constraints_reject_checkpoint_and_replay_without_losing_generation() -> 
     assert!(done.measurement.successful);
     Ok(())
 }
+
+#[test]
+fn constrained_generation_keeps_sampling_on_the_engine_with_a_loaded_draft() -> Result<()> {
+    let (backend, registry) = fixture()?;
+    let mut engine = Engine::new(
+        backend.requiring_engine_sampling(2),
+        support::model(ModelId::ONE),
+        PrecisionPlan::f32(),
+        &registry,
+        RuntimeConfig::default(),
+    )?;
+    let mut request = request()?;
+    request.sampling.temperature = 0.0;
+    let handle = infer_spi::ConstraintHandle::new(Box::new(ConstrainedToken), 32, 128);
+    let prepared = engine
+        .request_preparer()?
+        .prepare(request)?
+        .with_constraint(Some(handle))?;
+    engine.submit_prepared_with_trace(prepared, None)?;
+    let limit = Instant::now() + Duration::from_secs(5);
+    while !engine.is_idle() {
+        engine.tick(engine.now_us() + 1)?;
+        wait(limit)?;
+    }
+    engine.check_invariants()?;
+    let done = engine.take_completed(RequestId::ONE)?.unwrap();
+    // The matcher rejects every token except3. The backend rejects either a
+    // device-token hint or speculative sampling parameters, on prefill AND decode.
+    assert!(done.measurement.successful);
+    assert_eq!(done.measurement.output_tokens, 3);
+    Ok(())
+}

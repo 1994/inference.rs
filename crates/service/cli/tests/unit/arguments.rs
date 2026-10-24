@@ -6,10 +6,7 @@ fn model_path_serves_with_automatic_defaults() {
     let cli = Cli::try_parse_from(["infer", "/models/example"]).unwrap();
     assert_eq!(cli.backend, backend::BackendChoice::Auto);
     assert!(!cli.no_autotune);
-    assert_eq!(
-        cli.num_speculative_tokens,
-        backend::SpeculativeTokens::Depth(0)
-    );
+    assert!(cli.num_speculative_tokens.is_none());
     assert!(Cli::try_parse_from(["infer", "/models/example", "--chunked-recurrent"]).is_err());
     assert!(cli.block_size.is_none());
     assert!(cli.max_num_batched_tokens.is_none());
@@ -43,13 +40,13 @@ fn speculation_distinguishes_automatic_selection_from_explicit_zero() {
         ],
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
-        assert_eq!(cli.num_speculative_tokens, backend::SpeculativeTokens::Auto);
+        assert_eq!(
+            cli.num_speculative_tokens,
+            Some(backend::SpeculativeTokens::Auto)
+        );
     }
     let legacy = Cli::try_parse_from(["infer", "serve", "--package", "/models/example"]).unwrap();
-    assert_eq!(
-        legacy.num_speculative_tokens,
-        backend::SpeculativeTokens::Depth(0)
-    );
+    assert!(legacy.num_speculative_tokens.is_none());
     for invalid in ["automatic", "AUTO", "-1", "1.5", "18446744073709551616"] {
         assert!(
             Cli::try_parse_from([
@@ -72,18 +69,15 @@ fn speculation_distinguishes_automatic_selection_from_explicit_zero() {
         .unwrap();
         assert_eq!(
             cli.num_speculative_tokens,
-            backend::SpeculativeTokens::Depth(depth)
+            Some(backend::SpeculativeTokens::Depth(depth))
         );
     }
 }
 
 #[test]
-fn attention_profile_defaults_to_canonical_and_rejects_unknown_values() {
+fn attention_profile_distinguishes_omission_and_rejects_unknown_values() {
     let default = Cli::try_parse_from(["infer", "/models/example"]).unwrap();
-    assert_eq!(
-        default.cuda_attention_profile,
-        backend::CudaAttentionProfile::Canonical
-    );
+    assert!(default.cuda_attention_profile.is_none());
     for (name, expected) in [
         ("canonical", backend::CudaAttentionProfile::Canonical),
         ("bf16", backend::CudaAttentionProfile::Bf16),
@@ -92,7 +86,7 @@ fn attention_profile_defaults_to_canonical_and_rejects_unknown_values() {
         let cli =
             Cli::try_parse_from(["infer", "/models/example", "--cuda-attention-profile", name])
                 .unwrap();
-        assert_eq!(cli.cuda_attention_profile, expected);
+        assert_eq!(cli.cuda_attention_profile, Some(expected));
     }
     // The profile is a closed enum; a near-miss precision name is not a numerical option.
     assert!(

@@ -16,7 +16,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 24
+      "tests": 26
     },
     "compiler": {
       "benches": 0,
@@ -34,13 +34,13 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 285
+      "tests": 299
     },
     "frontdoor": {
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 65
+      "tests": 73
     },
     "ir": {
       "benches": 0,
@@ -70,7 +70,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 140
+      "tests": 147
     },
     "quality": {
       "benches": 0,
@@ -82,13 +82,13 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 78
+      "tests": 82
     },
     "scheduler": {
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 50
+      "tests": 51
     },
     "spi": {
       "benches": 0,
@@ -106,7 +106,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 15
+      "tests": 23
     }
   },
   "executor_consumers": [
@@ -152,6 +152,12 @@
     "target_os = \"macos\"": 1
   },
   "ignored_reasons": {
+    "CUDA/checkpoint/actual regression580/safe-run; diagnostic only": 1,
+    "CUDA/checkpoint/frozen tokens/safe-run; exact logits, partial commits and live state in actual speculation pools": 1,
+    "CUDA/checkpoint/frozen tokens/safe-run; ordinary-pool versus speculative-pool full target arithmetic": 2,
+    "CUDA/checkpoint/frozen tokens/safe-run; private M1 versus M3 full target outputs and state": 1,
+    "CUDA/checkpoint/frozen511tokens/safe-run; canonical2K prefix and subsequent decode bits": 1,
+    "real CUDA/MTP checkpoint; reserve graphs only after quote acknowledgement": 1,
     "real MTP2 checkpoint and CUDA; run inside safe-run": 1,
     "real MTP2 checkpoint, CUDA, frozen table/tokens and protected serial runner required": 1,
     "release CUDA performance diagnostic; run inside safe-run": 1,
@@ -259,6 +265,11 @@
     },
     {
       "crate": "cuda",
+      "file": "src/attention_profile.rs",
+      "mount": "../tests/unit/attention_profile_capabilities.rs"
+    },
+    {
+      "crate": "cuda",
       "file": "src/device/cublaslt.rs",
       "mount": "../../tests/unit/device_cublaslt.rs"
     },
@@ -296,6 +307,11 @@
       "crate": "cuda",
       "file": "src/executor/prefix_state.rs",
       "mount": "../../tests/unit/executor_prefix_state.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/executor/state.rs",
+      "mount": "../../tests/unit/executor_state.rs"
     },
     {
       "crate": "cuda",
@@ -391,6 +407,16 @@
       "crate": "cuda",
       "file": "src/loading/mod.rs",
       "mount": "../../tests/unit/resident_norm_maximum_model.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_canonical_verification.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/loading/mod.rs",
+      "mount": "../../tests/unit/loading_pooled_reference_verification.rs"
     },
     {
       "crate": "cuda",
@@ -984,6 +1010,11 @@
     },
     {
       "crate": "package",
+      "file": "src/input/constraint/mod.rs",
+      "mount": "../../../tests/unit/tool_constraint.rs"
+    },
+    {
+      "crate": "package",
       "file": "src/input/image.rs",
       "mount": "../../tests/unit/input_image.rs"
     },
@@ -1056,6 +1087,11 @@
       "crate": "cli",
       "file": "src/arguments.rs",
       "mount": "../tests/unit/arguments.rs"
+    },
+    {
+      "crate": "cli",
+      "file": "src/backend/defaults.rs",
+      "mount": "../../tests/unit/backend_defaults.rs"
     },
     {
       "crate": "cli",
@@ -1141,14 +1177,19 @@
       "crate": "frontdoor",
       "file": "tests/unit/http.rs",
       "mount": "../../../../engine/runtime/tests/support/mod.rs"
+    },
+    {
+      "crate": "frontdoor",
+      "file": "tests/unit/http_openai.rs",
+      "mount": "http_strict_tools.rs"
     }
   ],
   "totals": {
-    "all": 774,
+    "all": 818,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 774
+    "tests": 818
   }
 }

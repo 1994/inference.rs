@@ -125,6 +125,8 @@ impl CudaBackend {
                     target: "infer::cuda_admission",
                     phase = "memory_after_reclaim",
                     needed_bytes = needed,
+                    pending_scratch_bytes = scratch,
+                    physical_needed_bytes = physical_needed,
                     active_bytes = active,
                     cached_bytes = self.pool.bytes,
                     prefix_bytes = self.prefix.bytes(),
@@ -139,7 +141,7 @@ impl CudaBackend {
                 return Err(Error::new(
                     infer_core::ErrorCode::Capacity,
                     format!(
-                        "CUDA resident state admission budget exhausted: needed={needed}, active={active}, cached={}, prefix={}, physical={}, budget={}",
+                        "CUDA resident state admission budget exhausted: needed={needed}, scratch={scratch}, physical_needed={physical_needed}, active={active}, cached={}, prefix={}, physical={}, budget={}",
                         self.pool.bytes,
                         self.prefix.bytes(),
                         physical_available,

@@ -342,11 +342,6 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 None,
             )
         };
-        if constraint.is_some() && self.backend.speculation_capability().draft_depth > 0 {
-            return Err(Error::unsupported(
-                "constrained generation requires speculation disabled",
-            ));
-        }
         let admission = match quote {
             ReservationQuote::Acknowledged(bytes) => {
                 self.check_admission_with_bytes(&request, &plan, bytes)?
