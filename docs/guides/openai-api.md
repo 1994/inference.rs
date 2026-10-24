@@ -11,6 +11,7 @@
 | 方法与路径 | 行为 |
 |---|---|
 | `GET /v1/models` | 返回当前 engine 的单个模型，ID 为生效的部署名 |
+| `GET /v1/models/{model}` | 查询部署名对应的模型；不存在时返回 OpenAI 格式的 404 |
 | `POST /v1/chat/completions` | 用包内模板编码 messages，返回 `chat.completion` 或 SSE |
 | `POST /v1/completions` | 编码单个字符串 prompt，返回 `text_completion` 或 SSE |
 
@@ -36,8 +37,8 @@
 | `presence_penalty` | -2..2；省略时使用解析后的默认值 |
 | `repetition_penalty` | 正有限数；省略时使用解析后的默认值 |
 | `enable_thinking` | 布尔值，控制模板与受支持模型的模式预设 |
-| `tools` | 仅 chat，至多 128 个 function 工具，名称唯一 |
-| `tool_choice` | `"none"` 或 `"auto"`；其他模式返回 501 |
+| `tools` | 仅 chat，至多 128 个 function 工具，名称唯一，1..64 个 ASCII 字母、数字、下划线或短横线 |
+| `tool_choice` | `"none"` 或 `"auto"`；其他合法模式返回 501；指定未声明的 function 或错误的 type 返回 400 |
 | `parallel_tool_calls` | 仅 `true`；`false` 需要生成约束，返回 501 |
 
 可选字段允许为 `null`，按未提供处理。服务已读取包内 `generation_config.json`，并从 generation config / model config 解析 EOS；识别到的模型还会应用模式预设，显式请求字段最后覆盖。模型包配置了 EOS 时会参与停止判断，未配置时不凭空增加 EOS。请求级 `eos_token` 覆盖使用原生 API。
@@ -46,7 +47,7 @@
 
 `content` 可以是字符串、`null`，或 `{"type":"text","text":...}` 组成的列表；其他 content part 类型返回 501。`null` 按空文本处理，这是只有工具调用的 assistant 消息的常见形式。
 
-assistant 消息可以带 `tool_calls`，每项为 `{"id":..., "type":"function", "function":{"name":..., "arguments":...}}`，`arguments` 是该调用收到或产生的原始 JSON 文本。`tool` 消息必须带 `tool_call_id`，并关联到同一段历史中更早的一次 assistant 调用。id 重复、关联不存在的历史、或把 `tool_calls` / `tool_call_id` 放错 role 都返回 400。历史可以包含本次未声明的工具调用，本次声明集合只约束新产生的调用。
+assistant 消息可以带 `tool_calls`（`null` 按空列表处理），每项为 `{"id":..., "type":"function", "function":{"name":..., "arguments":...}}`，`arguments` 是该调用收到或产生的原始 JSON 文本。`tool` 消息必须带 `tool_call_id`，并关联到同一段历史中更早的一次 assistant 调用。id 重复、关联不存在的历史、或把 `tool_calls` / `tool_call_id` 放错 role 都返回 400。历史可以包含本次未声明的工具调用，本次声明集合只约束新产生的调用。
 
 ### 长度预算
 
@@ -100,7 +101,7 @@ schema 或输入错误返回 400，模型不存在 404，body 超限 413，容�
 
 ## 流式
 
-`stream=true` 返回 `text/event-stream`，每行 `data:` 一个 JSON chunk，末尾为 `data: [DONE]`。首个 chunk 发布 `delta.role`，随后是 `delta.content`（completions 为 `delta.text`），工具调用以 `delta.tool_calls` 发布，最后是一个带 `finish_reason` 的 chunk；`stream_options.include_usage` 会在终末原因与 `[DONE]` 之间追加一个 `choices` 为空、带 `usage` 的 chunk。
+`stream=true` 返回 `text/event-stream`，每行 `data:` 一个 JSON chunk，末尾为 `data: [DONE]`。Chat 的首个 chunk 发布 `delta.role`，随后是 `choices[0].delta.content`（completions 为 `choices[0].text`，不包含 `delta`），工具调用以 `delta.tool_calls` 发布，最后是一个带 `finish_reason` 的 chunk；`stream_options.include_usage` 会在终末原因与 `[DONE]` 之间追加一个 `choices` 为空、带 `usage` 的 chunk；开启时其余 chunk 都带 `usage: null`。Chat Completions 和 Completions 均支持此选项。流式错误使用与非流式相同的 `error.message/type/param/code` 结构。
 
 已发布的 `id`、`index` 与 arguments 前缀不会被回写。JSON 方言在名称确定后直接追加已扫描的对象参数字节；字符串包装的 JSON 对象需要等块闭合再解码。`function-parameter` 方言在名称确定时发布调用，在每个参数闭合时追加对应 JSON 字段，function 闭合时追加右括号。无需等整个工具块到齐才收到首段参数。
 
