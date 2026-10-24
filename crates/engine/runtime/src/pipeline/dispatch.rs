@@ -89,7 +89,9 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 tokens,
                 // Full sampling parameters are needed only for speculative acceptance.
                 // Plain output decisions use the allocation-free request flag above.
+                // A grammar owns token selection; None also prevents draft proposals.
                 sampling: (work.role == ExecutionRole::Decode
+                    && record.constraint.is_none()
                     && self.backend.speculation_capability().draft_depth > 0)
                     .then(|| record.request.sampling.clone()),
             });

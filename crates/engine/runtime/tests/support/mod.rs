@@ -136,6 +136,7 @@ struct State {
 }
 
 pub struct ProtocolBackend {
+    host_sampling_draft_depth: usize,
     identity: String,
     states: BoundedMap<StateId, State>,
     template: ModelOutput,
@@ -208,6 +209,7 @@ impl ProtocolBackend {
             value += 1.0;
         }
         Ok(Self {
+            host_sampling_draft_depth: 0,
             identity: tag.to_owned(),
             states: BoundedMap::new(requests)?,
             template: ModelOutput {
@@ -221,6 +223,14 @@ impl ProtocolBackend {
             capacity: requests,
             script: Vec::new(),
         })
+    }
+}
+
+impl ProtocolBackend {
+    /// Advertise a loaded draft while rejecting any task that permits backend sampling.
+    pub const fn requiring_engine_sampling(mut self, draft_depth: usize) -> Self {
+        self.host_sampling_draft_depth = draft_depth;
+        self
     }
 }
 
@@ -252,7 +262,10 @@ impl BackendProvider for ProtocolBackend {
             memory_bytes: 0,
             unified_memory: true,
             profiling: false,
-            speculation: infer_ir::SpeculationCapability::default(),
+            speculation: infer_ir::SpeculationCapability {
+                draft_depth: self.host_sampling_draft_depth,
+                greedy_only: self.host_sampling_draft_depth > 0,
+            },
         }
     }
     fn capture_execution_state(&self) -> Result<Option<Vec<u8>>> {
@@ -366,6 +379,12 @@ impl BackendProvider for ProtocolBackend {
         // tolerate anyway.
         let mut batch = Vec::with_capacity(tasks.len());
         for task in tasks {
+            if self.host_sampling_draft_depth > 0 && (task.plain_greedy || task.sampling.is_some())
+            {
+                return Err(Error::invariant(
+                    "constrained request allowed backend token selection",
+                ));
+            }
             let state = self
                 .states
                 .get_mut(&task.state)
