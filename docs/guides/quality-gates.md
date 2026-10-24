@@ -14,7 +14,7 @@
 | 数值常量 | `crates/*/*/src` 生产代码里的数字字面量必须写成带 `///` 说明的具名常量；白名单 `0`/`1`/`2`、数组下标、`const`/`static` 定义、字符串与字符字面量、注释、`#[cfg(test)]`/`#[cutile::module]` 段以及测试文件除外 |
 | 错误路径 | 生产代码禁止 `unwrap` / `expect` / `panic` / `todo` / `unimplemented` / `dbg` 与忽略 `Result` |
 | unsafe | 默认 `deny`；仅经局部安全证明的 OS/设备 FFI、CUDA PDL 与隔离的 benchmark allocator 开放，并说明安全条件 |
-| Feature 隔离 | 默认 CLI / IR / workspace 与显式 `infer-cli/test-backends` 分别构建；CUDA 在打包和硬件门禁单独启用，生产依赖图不含 CPU 执行器 |
+| Feature 隔离 | 默认 CLI / IR / workspace 与 CUDA feature 分别构建；CUDA 在打包和硬件门禁单独启用，生产依赖图不含 CPU 执行器 |
 | 编译与文档 | release 构建、unit / integration / doctest、独立 golden、Rustdoc 警告失败 |
 | CPU | release 协议、KV primitives、Engine tick 分配门禁，范围见 [CPU 性能测量](cpu-performance.md) |
 | MSRV | Rust 1.90 检查 workspace（不含 CUDA）与隔离的 CPU benchmark |
