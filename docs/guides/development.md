@@ -1,6 +1,6 @@
 # 开发与运行
 
-本页说明如何构建、运行和调试 inference.rs。环境要求与最低版本见 [README](../../README.md)，模型包格式见[模型执行](model-execution.md)。
+本页说明如何构建、运行和调试 inferloop。环境要求与最低版本见 [README](../../README.md)，模型包格式见[模型执行](model-execution.md)。
 
 以下为现有入口；构建、测试与 CI 的分工见 [构建与依赖方案](../plans/engineering/build-and-dependencies.md)。正式测试、设备验收和性能对比执行 [共同 release 与基线要求](../plans/performance/baseline.md)，不能把现有门禁通过当作服务基线已经验收。
 

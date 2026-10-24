@@ -1,10 +1,12 @@
-# inference.rs
+# inferloop
 
-[![Quality](https://github.com/1994/inference.rs/actions/workflows/ci.yml/badge.svg)](https://github.com/1994/inference.rs/actions/workflows/ci.yml)
+[![Quality](https://github.com/1994/inferloop/actions/workflows/ci.yml/badge.svg)](https://github.com/1994/inferloop/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-A native Rust inference engine for NVIDIA CUDA and Apple Metal. It loads Safetensors model packages, compiles them into device-resident execution graphs, and serves native token and OpenAI-compatible HTTP/SSE APIs from a single `infer` binary.
+**inferloop** is a native Rust inference engine for NVIDIA CUDA and Apple Metal. It loads Safetensors model packages, compiles them into device-resident execution graphs, and serves native token and OpenAI-compatible HTTP/SSE APIs from a single `infer` binary.
+
+The name comes from the engine's core loop: admission → scheduling → device execution → sampling → completion. Continuous decode batching keeps that loop populated instead of running one request at a time.
 
 > **Status: active development.** Model coverage is limited and production performance is not yet certified. There is no CPU inference backend. The engine is suitable for development, fixture validation, and controlled benchmarking; it is not a drop-in replacement for vLLM or a general-purpose CPU runtime.
 
@@ -54,8 +56,8 @@ A CPU-only host can build and run the test and lint suites, but cannot execute a
 ### Build
 
 ```sh
-git clone https://github.com/1994/inference.rs.git
-cd inference.rs
+git clone https://github.com/1994/inferloop.git
+cd inferloop
 
 # Native release binary with the platform backend:
 make local-build
