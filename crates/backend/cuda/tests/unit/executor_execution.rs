@@ -1,4 +1,4 @@
-use super::pooled_envelope;
+use super::{pool_retry_budget, pooled_envelope};
 use std::{env::var, error::Error};
 
 #[test]
@@ -81,4 +81,16 @@ fn lazy_pool_retries_after_a_live_private_reservation_is_released() -> Result<()
     assert!(backend.deferred_pool_plan.is_none());
     assert!(backend.homes.iter().all(Option::is_some));
     Ok(())
+}
+
+#[test]
+fn unquoted_capture_storage_cannot_expand_the_serving_envelope() {
+    // A quote nearly fills the envelope; capture materializes another 20 bytes.
+    let funding = pool_retry_budget(100, 99, 119, 8);
+    assert_eq!(funding, 80);
+    assert!(funding + 20 <= 100);
+    // Even exact tensor quotes leave one physical allocation quantum of headroom.
+    assert_eq!(pool_retry_budget(100, 100, 100, 8), 92);
+    assert_eq!(pool_retry_budget(8, 8, 100, 8), 0);
+    assert_eq!(pool_retry_budget(100, 100, 100, 0), 99);
 }

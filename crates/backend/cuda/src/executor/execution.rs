@@ -8,7 +8,7 @@ use crate::constants::WIDE_PREFILL_LANES;
 use crate::device::CudaDevice;
 use crate::loading::LoadedModel;
 use crate::resident::slot_batch::SlotPool;
-use infer_core::{Error, Result, StateId};
+use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::{
     ExecutionInput, ExecutionProgram, ExecutionTask, OutputReadout, StepPlan, TaskOutput,
 };
@@ -22,6 +22,8 @@ use std::sync::Arc;
 /// the recurrent state and synchronizes, so snapshotting every 2048-token chunk cost 0.12 s
 /// of a 32K prompt's TTFT; at 4096 a later turn recomputes at most one interval.
 const PREFIX_GRANULARITY: usize = 4096;
+/// Bound capture/replan work while adapting tensor quotes to observed driver storage.
+const POOL_CAPTURE_ATTEMPTS: usize = 3;
 
 /// Snapshot the KV rows a sequence has covered, when they form a reusable prompt prefix.
 ///
@@ -286,36 +288,81 @@ impl CudaBackend {
                 return;
             }
         };
-        let selected = match self.pooled_plan(capacity, maximum, envelope) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.pool_failure_reason = Some(error.to_string());
+        let mut funding = envelope;
+        // Capture can materialize driver/graph storage absent from tensor quotes.
+        // Retry against a smaller quote, never against a larger serving envelope.
+        for attempt in 0..POOL_CAPTURE_ATTEMPTS {
+            let selected = self.pooled_plan(capacity, maximum, funding);
+            let plan = match selected {
+                Ok(Some(plan)) => plan,
+                Ok(None) => {
+                    self.pool_failure_reason =
+                        Some(format!("joint pool quote exceeds {funding} bytes"));
+                    return;
+                }
+                Err(error) => {
+                    self.pool_failure_reason = Some(error.to_string());
+                    return;
+                }
+            };
+            let quoted_bytes = plan.bytes;
+            let allocated = self.capture_pool_plan(capacity, &plan);
+            if let Ok(allocated_bytes) = allocated
+                && allocated_bytes <= envelope
+            {
+                self.reclaimed_slot_capacity = None;
+                self.deferred_pool_plan = None;
+                self.slots_disabled = false;
+                tracing::info!(target: "infer::executor",
+                    width = self.slots.as_ref().map_or(0, SlotPool::width),
+                    capacity, quoted_bytes, allocated_bytes, envelope_bytes = envelope,
+                    "CUDA slot pool captured within serving envelope");
                 return;
             }
-        };
-        let Some(PoolPlan {
+            self.pool_failure_reason = Some(match &allocated {
+                Ok(bytes) => format!("pooled capture used {bytes} of {envelope} bytes"),
+                Err(error) => error.to_string(),
+            });
+            self.clear_unbound_pool();
+            if let Err(error) = self.loaded.device().reclaim_barrier() {
+                self.pool_failure_reason = Some(error.to_string());
+                self.slots_disabled = true;
+                return;
+            }
+            let Ok(allocated_bytes) = allocated else {
+                self.slots_disabled = true;
+                return;
+            };
+            funding =
+                pool_retry_budget(funding, quoted_bytes, allocated_bytes, self.kv_block_bytes);
+            funding = funding.min(self.physical_available().unwrap_or(0));
+            tracing::warn!(target: "infer::executor", attempt, allocated_bytes,
+                envelope_bytes = envelope, next_quote_budget = funding,
+                "pooled CUDA capture exceeded budget; replanning before publication");
+        }
+        self.slots_disabled = true;
+    }
+
+    /// Construct unpublished owners and measure their complete allocation.
+    fn capture_pool_plan(&mut self, capacity: usize, plan: &PoolPlan) -> Result<u64> {
+        let PoolPlan {
             width: planned_width,
             prompt_width,
             kv_tokens,
             bytes: quoted_bytes,
-        }) = selected
-        else {
-            self.pool_failure_reason = Some(format!("joint pool quote exceeds {envelope} bytes"));
-            return;
-        };
+        } = *plan;
         tracing::info!(target: "infer::executor", planned_width, prompt_width, quoted_bytes,
-            envelope_bytes = envelope, capacity, kv_tokens, "planned pooled CUDA serving storage");
-        let before_bytes = match self.physical_available() {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                self.pool_failure_reason = Some(error.to_string());
-                return;
-            }
-        };
+            capacity, kv_tokens, "planned pooled CUDA serving storage");
+        let before_bytes = self.physical_available()?;
         super::profiling::memory("before_pool", planned_width, self.loaded.device());
-        let Some(pool) = self.create_slot_pool(capacity, planned_width, kv_tokens) else {
-            return;
-        };
+        let pool = self
+            .create_slot_pool(capacity, planned_width, kv_tokens)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::Capacity,
+                    "could not construct pooled CUDA storage",
+                )
+            })?;
         let width = pool.width();
         super::profiling::memory("target_pool", width, self.loaded.device());
         self.draft_slots = self.prepare_draft_pool(width, capacity);
@@ -323,34 +370,16 @@ impl CudaBackend {
         self.slots = Some(pool);
         self.build_homes(prompt_width);
         super::profiling::memory("homes", width, self.loaded.device());
-        let allocated_bytes = self
-            .physical_available()
-            .map_or(u64::MAX, |free| before_bytes.saturating_sub(free));
-        // State-handle homes require a worker. Also validate the quote against allocation:
-        // never publish a plan that silently exceeds the operator's serving envelope.
         if self.worker.is_none()
             || (self.loaded.mtp_depth() > 0 && self.draft_slots.is_none())
             || self.homes.iter().any(Option::is_none)
-            || allocated_bytes > envelope
         {
-            tracing::warn!(target: "infer::executor", allocated_bytes, envelope,
-                "incomplete or oversized pooled CUDA serving plan; retaining private execution");
-            self.slots_disabled = true;
-            self.clear_unbound_pool();
-            return;
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "incomplete pooled CUDA serving capture",
+            ));
         }
-        self.reclaimed_slot_capacity = None;
-        self.deferred_pool_plan = None;
-        self.slots_disabled = false;
-        tracing::info!(
-            target: "infer::executor",
-            width,
-            capacity,
-            quoted_bytes,
-            allocated_bytes,
-            envelope_bytes = envelope,
-            "CUDA slot pool captured within serving envelope"
-        );
+        Ok(before_bytes.saturating_sub(self.physical_available()?))
     }
 
     /// Only construction calls this: no live sequence has leased these new homes.
@@ -510,10 +539,8 @@ impl CudaBackend {
     /// and the pool was off for the life of the process, with the checkpoint snapshots as the
     /// only consumer that scales with the verification width.
     fn reclaim_cached_for_pool(&mut self, error: &Error) -> bool {
-        matches!(
-            error.code,
-            infer_core::ErrorCode::Capacity | infer_core::ErrorCode::Backend
-        ) && (self.pool.evict() || self.prefix.evict())
+        matches!(error.code, ErrorCode::Capacity | ErrorCode::Backend)
+            && (self.pool.evict() || self.prefix.evict())
             && self.loaded.device().reclaim_barrier().is_ok()
     }
 
@@ -1375,6 +1402,12 @@ fn propose(
 fn pooled_envelope(physical: u64, budget: u64, active: u64, scratch: u64) -> u64 {
     let credit = if active == 0 { scratch } else { 0 };
     physical.min(budget.saturating_sub(active).saturating_add(credit))
+}
+
+/// Cover observed unquoted storage and one physical KV allocation quantum.
+/// Saturation terminates retries when the envelope cannot fund any complete pool.
+fn pool_retry_budget(funding: u64, quoted: u64, allocated: u64, kv_block: u64) -> u64 {
+    funding.saturating_sub(allocated.saturating_sub(quoted).max(kv_block).max(1))
 }
 
 #[cfg(test)]

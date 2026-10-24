@@ -11,6 +11,11 @@ use infer_backend_cuda::device::{CudaDevice, DeviceProfile};
 use infer_backend_cuda::target::CudaTarget;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use infer_backend_cuda::tuning::TuningReport;
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+use infer_backend_cuda::{
+    executor::CudaBackend,
+    loading::{LoadOptions, LoadedModel},
+};
 use infer_core::{Error, Result};
 use std::path::Path;
 
@@ -56,10 +61,6 @@ fn load_once(
 ) -> Result<SelectedBackend> {
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     {
-        use infer_backend_cuda::{
-            executor::CudaBackend,
-            loading::{LoadOptions, LoadedModel},
-        };
         if selection.num_gpu_blocks_override.is_some() || selection.upload_staging_mib.is_some() {
             return Err(Error::unsupported(
                 "CUDA physical KV blocks/upload staging overrides are not implemented",
@@ -138,11 +139,9 @@ fn load_once(
             elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "model loaded"
         );
-        Ok(SelectedBackend::Cuda(Box::new(CudaBackend::new(
-            loaded,
-            state_budget,
-            maximum_states,
-        )?)))
+        let backend = resident_backend(loaded, state_budget, maximum_states, *automatic_fast)
+            .map_err(|error| load_failure(&error, budget, selection))?;
+        Ok(SelectedBackend::Cuda(Box::new(backend)))
     }
     #[cfg(not(all(target_os = "linux", feature = "cuda")))]
     {
@@ -151,6 +150,24 @@ fn load_once(
             "CUDA execution requires Linux and a build with --features cuda",
         ))
     }
+}
+
+/// Automatic fast execution requires the complete batching resources it was selected for.
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+fn resident_backend(
+    loaded: LoadedModel,
+    budget: u64,
+    maximum: usize,
+    require_pool: bool,
+) -> Result<CudaBackend> {
+    let backend = CudaBackend::new(loaded, budget, maximum)?;
+    if require_pool && backend.execution_profile().pooled_prefill_width.is_none() {
+        return Err(Error::new(
+            infer_core::ErrorCode::Capacity,
+            "automatic fast execution could not fund a complete pooled serving plan",
+        ));
+    }
+    Ok(backend)
 }
 
 /// Device budget a load was admitted against, reported when the load cannot fit.
