@@ -1,6 +1,7 @@
 //! Opt-in host-side execution evidence; no token contents are recorded.
 use super::CudaBackend;
 use crate::device::CudaDevice;
+use crate::loading::PooledServingQuote;
 use infer_ir::{ExecutionInput, ExecutionTask};
 use std::collections::BTreeMap;
 use std::env::var_os;
@@ -8,7 +9,7 @@ use std::fs::OpenOptions;
 use std::{
     cell::RefCell,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -21,6 +22,8 @@ thread_local! {
     /// Host wall time accumulated per named phase while a step is in flight. Only written
     /// when the execution profile is enabled, so the steady path pays one `Option` check.
     static PHASES: RefCell<Option<Vec<(&'static str, Duration)>>> = const { RefCell::new(None) };
+    /// Previous allocatable byte count within one unpublished pool capture.
+    static PREVIOUS_ALLOCATABLE: RefCell<Option<u64>> = const { RefCell::new(None) };
 }
 
 /// Scratch phase accumulator bound to the calling thread for one step.
@@ -172,8 +175,42 @@ fn output_path() -> Option<&'static PathBuf> {
         .as_ref()
 }
 
+fn append_allocation_record(path: &Path, line: &serde_json::Value) {
+    if let Err(error) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{line}"))
+    {
+        eprintln!("CUDA allocation profile write failed: {error}");
+    }
+}
+
+/// Preserve the exact quote before its unpublished capture can be changed or discarded.
+pub(super) fn plan(attempt: usize, envelope: u64, quote: &PooledServingQuote) {
+    let Some(path) = output_path() else {
+        return;
+    };
+    append_allocation_record(
+        path,
+        &serde_json::json!({
+            "capture_attempt": attempt,
+            "pool_plan_quote": quote,
+            "envelope_bytes": envelope,
+        }),
+    );
+}
+
+fn memory_increment(stage: &str, previous: Option<u64>, current: u64) -> u64 {
+    if stage == "before_pool" {
+        0
+    } else {
+        previous.map_or(0, |bytes| bytes.saturating_sub(current))
+    }
+}
+
 /// Startup allocation evidence shares the opt-in host profile and never synchronizes the GPU.
-pub(super) fn memory(stage: &str, width: usize, device: &CudaDevice) {
+pub(super) fn memory(attempt: usize, stage: &str, width: usize, device: &CudaDevice) {
     let Some(path) = output_path() else {
         return;
     };
@@ -181,19 +218,75 @@ pub(super) fn memory(stage: &str, width: usize, device: &CudaDevice) {
     else {
         return;
     };
-    let line = serde_json::json!({
-        "memory_stage": stage,
-        "width": width,
-        "driver_free_bytes": free,
-        "pool_unused_bytes": reusable,
-        "allocatable_bytes": free.saturating_add(reusable).min(total),
+    let allocatable = free.saturating_add(reusable).min(total);
+    let incremental = PREVIOUS_ALLOCATABLE.with(|previous| {
+        let incremental = memory_increment(stage, *previous.borrow(), allocatable);
+        *previous.borrow_mut() = Some(allocatable);
+        incremental
     });
-    if let Err(error) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut file| writeln!(file, "{line}"))
-    {
-        eprintln!("CUDA memory profile write failed: {error}");
-    }
+    append_allocation_record(
+        path,
+        &serde_json::json!({
+            "capture_attempt": attempt,
+            "memory_stage": stage,
+            "width": width,
+            "driver_free_bytes": free,
+            "pool_unused_bytes": reusable,
+            "allocatable_bytes": allocatable,
+            "incremental_allocatable_decrease_bytes": incremental,
+        }),
+    );
 }
+
+fn capture_outcome_record(
+    attempt: usize,
+    outcome: &str,
+    quoted: u64,
+    allocated: Option<u64>,
+    envelope: u64,
+    next_funding: Option<u64>,
+    error: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "capture_attempt": attempt,
+        "pool_capture_outcome": outcome,
+        "quoted_bytes": quoted,
+        "allocated_bytes": allocated,
+        "unquoted_bytes": allocated.map(|bytes| bytes.saturating_sub(quoted)),
+        "allocated_over_envelope_bytes": allocated.map(|bytes| bytes.saturating_sub(envelope)),
+        "envelope_bytes": envelope,
+        "next_quote_budget": next_funding,
+        "error": error,
+    })
+}
+
+/// Join accepted and rejected captures to their quote and subsequent replan funding.
+pub(super) fn capture_outcome(
+    attempt: usize,
+    outcome: &str,
+    quoted: u64,
+    allocated: Option<u64>,
+    envelope: u64,
+    next_funding: Option<u64>,
+    error: Option<&str>,
+) {
+    let Some(path) = output_path() else {
+        return;
+    };
+    append_allocation_record(
+        path,
+        &capture_outcome_record(
+            attempt,
+            outcome,
+            quoted,
+            allocated,
+            envelope,
+            next_funding,
+            error,
+        ),
+    );
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/executor_profiling.rs"]
+mod tests;

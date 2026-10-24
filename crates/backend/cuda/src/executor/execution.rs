@@ -6,7 +6,7 @@ use crate::constants::MTP_KV_OFFSET;
 use crate::constants::PREFILL_LANES;
 use crate::constants::WIDER_PREFILL_LANES;
 use crate::device::CudaDevice;
-use crate::loading::LoadedModel;
+use crate::loading::{LoadedModel, PooledServingQuote};
 use crate::resident::slot_batch::SlotPool;
 use infer_core::{Error, ErrorCode, Result, StateId};
 use infer_ir::{
@@ -84,10 +84,7 @@ fn cacheable_prefix(
 
 /// All storage needed before publishing a load-time pooled serving geometry.
 struct PoolPlan {
-    width: usize,
-    prompt_width: usize,
-    kv_tokens: usize,
-    bytes: u64,
+    quote: PooledServingQuote,
 }
 
 impl CudaBackend {
@@ -304,16 +301,27 @@ impl CudaBackend {
                     return;
                 }
             };
-            let quoted_bytes = plan.bytes;
+            let quoted_bytes = plan.quote.total_bytes;
             // Keep the original baseline across retries: failed captures can leave
             // driver modules resident even after their tensor owners are reclaimed.
-            let allocated = self.capture_pool_plan(capacity, &plan).and_then(|()| {
-                self.physical_available()
-                    .map(|free| baseline.saturating_sub(free))
-            });
+            let allocated = self
+                .capture_pool_plan(attempt, capacity, envelope, &plan)
+                .and_then(|()| {
+                    self.physical_available()
+                        .map(|free| baseline.saturating_sub(free))
+                });
             if let Ok(allocated_bytes) = allocated
                 && allocated_bytes <= envelope
             {
+                super::profiling::capture_outcome(
+                    attempt,
+                    "accepted",
+                    quoted_bytes,
+                    Some(allocated_bytes),
+                    envelope,
+                    None,
+                    None,
+                );
                 self.reclaimed_slot_capacity = None;
                 self.deferred_pool_plan = None;
                 self.slots_disabled = false;
@@ -324,23 +332,13 @@ impl CudaBackend {
                     "CUDA slot pool captured within serving envelope");
                 return;
             }
-            self.pool_failure_reason = Some(match &allocated {
-                Ok(bytes) => format!("pooled capture used {bytes} of {envelope} bytes"),
-                Err(error) => error.to_string(),
-            });
-            self.clear_unbound_pool();
-            if let Err(error) = self.loaded.device().reclaim_barrier() {
-                self.pool_failure_reason = Some(error.to_string());
-                self.slots_disabled = true;
-                return;
-            }
-            let Ok(allocated_bytes) = allocated else {
+            let Some((allocated_bytes, next_funding)) =
+                self.reject_pool_capture(attempt, allocated, quoted_bytes, envelope, funding)
+            else {
                 self.slots_disabled = true;
                 return;
             };
-            funding =
-                pool_retry_budget(funding, quoted_bytes, allocated_bytes, self.kv_block_bytes);
-            funding = funding.min(self.physical_available().unwrap_or(0));
+            funding = next_funding;
             tracing::warn!(target: "infer::executor", attempt, allocated_bytes,
                 envelope_bytes = envelope, next_quote_budget = funding,
                 "pooled CUDA capture exceeded budget; replanning before publication");
@@ -348,17 +346,76 @@ impl CudaBackend {
         self.slots_disabled = true;
     }
 
+    fn reject_pool_capture(
+        &mut self,
+        attempt: usize,
+        allocated: Result<u64>,
+        quoted_bytes: u64,
+        envelope: u64,
+        funding: u64,
+    ) -> Option<(u64, u64)> {
+        self.pool_failure_reason = Some(match &allocated {
+            Ok(bytes) => format!("pooled capture used {bytes} of {envelope} bytes"),
+            Err(error) => error.to_string(),
+        });
+        self.clear_unbound_pool();
+        if let Err(error) = self.loaded.device().reclaim_barrier() {
+            let message = error.to_string();
+            super::profiling::capture_outcome(
+                attempt,
+                "rejected",
+                quoted_bytes,
+                allocated.ok(),
+                envelope,
+                None,
+                Some(&message),
+            );
+            self.pool_failure_reason = Some(message);
+            return None;
+        }
+        let Ok(allocated_bytes) = allocated else {
+            super::profiling::capture_outcome(
+                attempt,
+                "rejected",
+                quoted_bytes,
+                None,
+                envelope,
+                None,
+                self.pool_failure_reason.as_deref(),
+            );
+            return None;
+        };
+        let next = pool_retry_budget(funding, quoted_bytes, allocated_bytes, self.kv_block_bytes)
+            .min(self.physical_available().unwrap_or(0));
+        super::profiling::capture_outcome(
+            attempt,
+            "rejected",
+            quoted_bytes,
+            Some(allocated_bytes),
+            envelope,
+            Some(next),
+            None,
+        );
+        Some((allocated_bytes, next))
+    }
+
     /// Construct unpublished owners and measure their complete allocation.
-    fn capture_pool_plan(&mut self, capacity: usize, plan: &PoolPlan) -> Result<()> {
-        let PoolPlan {
-            width: planned_width,
-            prompt_width,
-            kv_tokens,
-            bytes: quoted_bytes,
-        } = *plan;
+    fn capture_pool_plan(
+        &mut self,
+        attempt: usize,
+        capacity: usize,
+        envelope: u64,
+        plan: &PoolPlan,
+    ) -> Result<()> {
+        let quote = plan.quote;
+        let planned_width = quote.width;
+        let prompt_width = quote.prompt_width;
+        let kv_tokens = quote.kv_tokens;
+        let quoted_bytes = quote.total_bytes;
+        super::profiling::plan(attempt, envelope, &quote);
         tracing::info!(target: "infer::executor", planned_width, prompt_width, quoted_bytes,
             capacity, kv_tokens, "planned pooled CUDA serving storage");
-        super::profiling::memory("before_pool", planned_width, self.loaded.device());
+        super::profiling::memory(attempt, "before_pool", planned_width, self.loaded.device());
         let pool = self
             .create_slot_pool(capacity, planned_width, kv_tokens)
             .ok_or_else(|| {
@@ -368,12 +425,12 @@ impl CudaBackend {
                 )
             })?;
         let width = pool.width();
-        super::profiling::memory("target_pool", width, self.loaded.device());
+        super::profiling::memory(attempt, "target_pool", width, self.loaded.device());
         self.draft_slots = self.prepare_draft_pool(width, capacity);
-        super::profiling::memory("draft_pool", width, self.loaded.device());
+        super::profiling::memory(attempt, "draft_pool", width, self.loaded.device());
         self.slots = Some(pool);
-        self.build_homes(prompt_width);
-        super::profiling::memory("homes", width, self.loaded.device());
+        self.build_homes(attempt, prompt_width);
+        super::profiling::memory(attempt, "homes", width, self.loaded.device());
         if self.worker.is_none()
             || (self.loaded.mtp_depth() > 0 && self.draft_slots.is_none())
             || self.homes.iter().any(Option::is_none)
@@ -409,19 +466,14 @@ impl CudaBackend {
         for width in (2..=maximum).rev() {
             let mut prompt_width = configured;
             loop {
-                if let Some((kv_tokens, bytes)) = self.loaded.funded_pooled_serving(
+                if let Some(quote) = self.loaded.funded_pooled_serving(
                     width,
                     capacity,
                     paged_tokens(width, capacity),
                     prompt_width,
                     envelope,
                 )? {
-                    return Ok(Some(PoolPlan {
-                        width,
-                        prompt_width,
-                        kv_tokens,
-                        bytes,
-                    }));
+                    return Ok(Some(PoolPlan { quote }));
                 }
                 if prompt_width <= minimum_prompt {
                     break;
@@ -439,7 +491,7 @@ impl CudaBackend {
         reason = "Audited slot alias: homes are declared before the pools and cleared before \
                   either pool drops, and only the slot's lease holder replays them"
     )]
-    fn build_homes(&mut self, prompt_width: usize) {
+    fn build_homes(&mut self, attempt: usize, prompt_width: usize) {
         self.worker = None;
         self.homes.clear();
         let Some(pool) = self.slots.as_ref() else {
@@ -456,7 +508,7 @@ impl CudaBackend {
                 "wide prompt worker unavailable; slot-resident prompts use the narrow graph"
             ),
         }
-        super::profiling::memory("worker", pool.width(), self.loaded.device());
+        super::profiling::memory(attempt, "worker", pool.width(), self.loaded.device());
         for slot in 0..pool.width() {
             // SAFETY: see the expectation above.
             let built = unsafe {

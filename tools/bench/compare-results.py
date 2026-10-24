@@ -83,6 +83,8 @@ def align(baseline, candidate):
     right_cache = (candidate["identity"].get("cache") or {}).get("effective")
     if left_cache != right_cache:
         raise ValueError("unaligned prefix cache state")
+    if baseline.get("vision_enabled") != candidate.get("vision_enabled"):
+        raise ValueError("unaligned vision availability")
     if baseline.get("gpu_memory_utilization") != candidate.get("gpu_memory_utilization"):
         raise ValueError("unaligned resource constraint: gpu_memory_utilization")
     # Both sides must have matched the same declared profile, or the comparison is between two

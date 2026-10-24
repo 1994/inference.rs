@@ -179,6 +179,14 @@ class CommandTest(unittest.TestCase):
         self.assertIn("--speculative-algorithm", command)
         self.assertIn("NEXTN", command)
 
+    def test_vision_is_explicit_instead_of_silently_disabled(self):
+        for engine in ("native", "vllm"):
+            with self.subTest(engine=engine):
+                text_only = module.build_command(self.arguments(engine=engine), 1234)
+                self.assertIn("--limit-mm-per-prompt", text_only)
+                vision = module.build_command(self.arguments(engine=engine, vision=True), 1234)
+                self.assertNotIn("--limit-mm-per-prompt", vision)
+
     def test_vllm_command_disables_prefix_caching_when_asked(self):
         arguments = self.arguments(
             engine="vllm", executable=Path("/venv/bin/python"), prefix_cache=False
@@ -192,6 +200,42 @@ class CommandTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module.require_cache_switch(arguments)
         module.require_cache_switch(self.arguments(prefix_cache=True))
+
+
+class ResourcePreflightTest(unittest.TestCase):
+    def arguments(self):
+        return SimpleNamespace(tokens=256, max_model_len=4352, max_num_seqs=16)
+
+    def row(self, **overrides):
+        row = {
+            "case": "c16",
+            "repeat": 0,
+            "slot": 0,
+            "concurrency": 16,
+            "tokens": [1] * 4096,
+        }
+        row.update(overrides)
+        return row
+
+    def test_c16_exact_context_and_custom_case_pass_preflight(self):
+        rows = [self.row()]
+        module.validate_workload_resources(self.arguments(), rows)
+        self.assertEqual(module.workload_matrix(rows, 3)["c16"]["concurrency"], 16)
+
+    def test_impossible_workload_is_rejected_before_server_startup(self):
+        with self.assertRaisesRegex(RuntimeError, "needs 4353 context tokens"):
+            module.validate_workload_resources(self.arguments(), [self.row(tokens=[1] * 4097)])
+        with self.assertRaisesRegex(RuntimeError, "concurrency 17"):
+            module.validate_workload_resources(self.arguments(), [self.row(concurrency=17)])
+
+    def test_reference_thread_defaults_are_bounded_and_explicit_values_survive(self):
+        with mock.patch.dict(module.os.environ, {}, clear=True):
+            environment = module.process_environment("vllm")
+            self.assertEqual(environment["OMP_NUM_THREADS"], "1")
+            self.assertEqual(environment["TOKENIZERS_PARALLELISM"], "false")
+            self.assertNotIn("OMP_NUM_THREADS", module.process_environment("native"))
+        with mock.patch.dict(module.os.environ, {"OMP_NUM_THREADS": "8"}, clear=True):
+            self.assertEqual(module.process_environment("vllm")["OMP_NUM_THREADS"], "8")
 
 
 def elf(section_names):
