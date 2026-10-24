@@ -390,7 +390,7 @@ impl BatchBuilder<'_> {
                         external: self.external,
                         capacity: self.capacity,
                         fusion: &mut no_fusion,
-                        mode: CaptureMode::Batched,
+                        mode: CaptureMode::Pooled,
                     }
                     .record(node)?,
                     Dispatch32::Row => {

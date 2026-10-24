@@ -1102,3 +1102,13 @@ mod draft;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_slot_batch_draft_tests.rs"]
 mod draft_tests;
+
+#[cfg(test)]
+impl SlotPool {
+    pub(crate) fn test_verify_logit_rows(&self, device: &CudaDevice) -> Result<Vec<Vec<f32>>> {
+        self.verify
+            .as_ref()
+            .ok_or_else(|| Error::invariant("diagnostic verify graph"))?
+            .test_logit_rows(device)
+    }
+}

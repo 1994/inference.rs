@@ -819,3 +819,16 @@ fn verify_lanes(
 #[cfg(test)]
 #[path = "../../tests/unit/resident_slot_verify.rs"]
 mod tests;
+
+#[cfg(test)]
+impl SlotVerifyGraph {
+    pub(crate) fn test_logit_rows(&self, device: &CudaDevice) -> Result<Vec<Vec<f32>>> {
+        let total = self.slots * self.verify;
+        let cols = self.logits.size() / total;
+        Ok(device
+            .read_borrowed(&self.logits)?
+            .chunks_exact(cols)
+            .map(<[f32]>::to_vec)
+            .collect())
+    }
+}

@@ -1,5 +1,6 @@
 use super::{ActivationArena, ProgramWeights, attention::attention, kernels::aux};
 use crate::constants::AUX_KERNEL_TILE;
+use crate::constants::CB_DECODE_SLOTS;
 use crate::constants::DEFAULT_TILE_COLUMNS;
 use crate::constants::DEFAULT_TILE_ROWS;
 #[cfg(test)]
@@ -27,6 +28,8 @@ pub(super) enum CaptureMode {
     Flat,
     /// Prefill width 32: every slot is one `[32, size]` tensor used as a whole.
     Batched,
+    /// Serving slots retain one normalization policy when physical funding narrows the pool.
+    Pooled,
     /// Verification preserves the ordinary pool's policy for its logical slots.
     Verification(usize),
     /// Contiguous prompt rows with [position, active rows, state offset, unused] metadata.
@@ -91,6 +94,7 @@ impl Capture<'_> {
         match self.mode {
             CaptureMode::Flat => identity(tensor),
             CaptureMode::Batched
+            | CaptureMode::Pooled
             | CaptureMode::Verification(_)
             | CaptureMode::Prefill
             | CaptureMode::PrefillRotary => tensor.view(&[tensor.size()]).map_err(error),
@@ -505,10 +509,31 @@ impl Capture<'_> {
             }
             _ => heads,
         };
+        // Physical funding must not change the automatic target's arithmetic.
+        // Match the established full serving pool even when fewer slots fit; candidate
+        // lanes are not serving slots. The row kernel masks its final partial tile.
+        let normalization_heads = if self.weights.fusion.is_none()
+            && self.weights.attention_profile.is_bf16()
+            && matches!(
+                self.mode,
+                CaptureMode::Pooled | CaptureMode::Verification(_)
+            ) {
+            let candidates = match self.mode {
+                CaptureMode::Verification(candidates) => candidates,
+                _ => 1,
+            };
+            let slots = self.arena.lanes() / candidates;
+            if slots == 0 || !logical_heads.is_multiple_of(slots) {
+                return Err(error("pooled normalization geometry"));
+            }
+            (logical_heads / slots) * CB_DECODE_SLOTS
+        } else {
+            logical_heads
+        };
         if dimension.is_power_of_two()
             && dimension <= NORM_ROWS_MAX_DIMENSION
-            && logical_heads >= NORM_ROWS * NORM_ROWS
-            && logical_heads.is_multiple_of(NORM_ROWS)
+            && normalization_heads >= NORM_ROWS * NORM_ROWS
+            && normalization_heads.is_multiple_of(NORM_ROWS)
         {
             self.scope.record(
                 aux::norm_rows(

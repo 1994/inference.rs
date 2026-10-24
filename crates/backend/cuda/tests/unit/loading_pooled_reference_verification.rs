@@ -243,3 +243,198 @@ fn checkpoint_verification_matches_ordinary_pool() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "CUDA/checkpoint/frozen tokens/safe-run; ordinary-pool versus speculative-pool full target arithmetic"]
+fn checkpoint_bf16_verification_keeps_funded_pool_target() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens = prompt()?;
+    let mut loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        model,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 64,
+            verification_width: CANDIDATES,
+            mtp_depth: 2,
+            autotune: false,
+            vision: false,
+            attention_profile: crate::AttentionProfile::Bf16,
+            ..LoadOptions::default()
+        },
+    )?;
+    let mut prefix = loaded.sequence_pooled(256)?;
+    for (index, part) in tokens[..127].chunks(64).enumerate() {
+        prefix.prefill_batch(part, index * 64, index == 1)?;
+    }
+    loaded.weights.prefill_width = 0;
+    loaded.weights.narrow_prefill_width = 0;
+    for (reference_width, verify_width, profile) in [
+        (7, 7, crate::AttentionProfile::Bf16),
+        (16, 7, crate::AttentionProfile::Canonical),
+        (10, 10, crate::AttentionProfile::Bf16),
+        (16, 10, crate::AttentionProfile::Canonical),
+    ] {
+        loaded.weights.batch_width = 0;
+        loaded.weights.attention_profile = profile;
+        let mut reference = SlotPool::new(
+            loaded.device(),
+            loaded.graph(),
+            &loaded.weights,
+            reference_width,
+            8192,
+            loaded.model.hidden_size,
+            (loaded.model.vocab_size, 0),
+            Some(8704),
+        )?;
+        loaded.weights.batch_width = CANDIDATES;
+        loaded.weights.attention_profile = crate::AttentionProfile::Bf16;
+        let mut target = loaded.slot_pool(verify_width, 8192, Some(8448))?;
+        for round in 0..CANDIDATES {
+            replay(
+                &loaded,
+                &prefix,
+                &mut reference,
+                &mut target,
+                &tokens,
+                round,
+            )?;
+        }
+        drop((reference, target));
+        loaded.device().reclaim_barrier()?;
+    }
+    Ok(())
+}
+
+fn teacher_forced_prefix() -> Result<(LoadedModel, DeviceProgram, Vec<u32>)> {
+    use super::quant_reuse_model_tests::{outputs, program_states};
+    use crate::AttentionProfile;
+    use std::fs::read;
+    CudaDevice::enable_kernel_cache()?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let path = var("INFER_TEST_REGRESSION").map_err(|e| Error::invalid(e.to_string()))?;
+    let fixture: serde_json::Value = serde_json::from_slice(&read(path).unwrap()).unwrap();
+    let prompt: Vec<u32> = serde_json::from_value(fixture["prompt"].clone()).unwrap();
+    let decode: Vec<u32> = serde_json::from_value(fixture["decode"].clone()).unwrap();
+    let mut loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        model,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 1024,
+            verification_width: 3,
+            mtp_depth: 2,
+            autotune: false,
+            attention_profile: AttentionProfile::Bf16,
+            vision: false,
+            ..LoadOptions::default()
+        },
+    )?;
+    let mut fast_prefix = loaded.sequence(2048)?;
+    loaded.weights.batch_width = 0;
+    loaded.weights.attention_profile = AttentionProfile::Canonical;
+    let mut control_prefix = loaded.sequence(2048)?;
+    let f = fast_prefix.prefill_batch(&prompt, 0, true)?;
+    let c = control_prefix.prefill_batch(&prompt, 0, true)?;
+    outputs(&f, &c);
+    program_states(&loaded, &fast_prefix, &control_prefix)?;
+    println!("ACTUAL DEFAULT prefix bits exact: prompt={}", prompt.len());
+    Ok((loaded, control_prefix, decode))
+}
+
+#[test]
+#[ignore = "CUDA/checkpoint/actual regression580/safe-run; diagnostic only"]
+fn checkpoint_actual_default_teacher_forced_target() -> Result<()> {
+    use crate::AttentionProfile;
+    let (mut loaded, control_prefix, decode) = teacher_forced_prefix()?;
+    loaded.weights.prefill_width = 0;
+    loaded.weights.narrow_prefill_width = 0;
+    let mut reference = SlotPool::new(
+        loaded.device(),
+        loaded.graph(),
+        &loaded.weights,
+        16,
+        8192,
+        loaded.model.hidden_size,
+        (loaded.model.vocab_size, 0),
+        Some(8704),
+    )?;
+    loaded.weights.batch_width = 3;
+    loaded.weights.attention_profile = AttentionProfile::Bf16;
+    let mut target = loaded.slot_pool(10, 8192, Some(8448))?;
+    for pool in [&mut reference, &mut target] {
+        for slot in 0..pool.width() {
+            assert!(pool.take_slot(slot));
+            assert!(pool.assign(slot, 512, loaded.device())?);
+            pool.bind(
+                slot,
+                control_prefix.states(),
+                control_prefix.fp8_states(),
+                control_prefix.position(),
+                loaded.device(),
+            )?;
+        }
+    }
+    for (round, input) in decode.as_chunks::<3>().0.iter().enumerate() {
+        let pos = control_prefix.position() + round * 3;
+        let lanes: Vec<_> = (0..10)
+            .flat_map(|slot| {
+                (0..3).map(move |lane| (slot, lane, input[lane], pos + lane, pos + lane))
+            })
+            .collect();
+        let selected = target.run_verify_readout(loaded.device(), &lanes, true)?;
+        let mut actual = selected.rows;
+        let logits = target.test_verify_logit_rows(loaded.device())?;
+        for (row, logits) in actual.iter_mut().zip(logits) {
+            row.1 = logits;
+        }
+        let selected = selected
+            .tokens
+            .expect("actual default device readout must execute");
+        for row in 0..30 {
+            let expected = actual[row]
+                .1
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|(ai, a), (bi, b)| a.total_cmp(b).then_with(|| bi.cmp(ai)))
+                .unwrap()
+                .0;
+            let expected = u32::try_from(expected).unwrap();
+            assert_eq!(
+                selected[row],
+                Some(expected),
+                "actual regression greedy round={round} row={row}"
+            );
+        }
+        for lane in 0..3 {
+            let ordinary: Vec<_> = (0..10)
+                .map(|slot| (slot, input[lane], pos + lane, pos + lane))
+                .collect();
+            let expected = reference.run_lanes(loaded.device(), &ordinary)?;
+            for slot in 0..10 {
+                bits(
+                    &reference.test_hidden(loaded.device(), slot)?,
+                    &actual[slot * 3 + lane].0,
+                    "actual default canonical16/BF16MTP10 hidden",
+                );
+                bits(
+                    &expected[slot].1,
+                    &actual[slot * 3 + lane].1,
+                    "actual default canonical16/BF16MTP10 logits",
+                );
+            }
+        }
+        let commits: Vec<_> = (0..10).map(|slot| (slot, 2)).collect();
+        target.commit_verify_many(loaded.device(), &commits)?;
+        for slot in 0..10 {
+            live_states(&loaded, &reference, &target, slot)?;
+        }
+        println!(
+            "actual default target exact through decode {}",
+            (round + 1) * 3
+        );
+    }
+    Ok(())
+}
