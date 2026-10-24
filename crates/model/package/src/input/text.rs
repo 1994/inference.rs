@@ -1,3 +1,4 @@
+use super::constraint::GrammarCache;
 use crate::constants::MIB;
 use crate::constants::MIB_U64;
 use crate::input::tool::MAX_TOOL_CALLS;
@@ -11,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::mem::take;
 use std::result::Result as StdResult;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{collections::BTreeMap, path::Path};
 use tokenizers::Tokenizer;
 
@@ -104,7 +105,8 @@ impl Default for ChatOptions {
     }
 }
 pub struct TextAssets {
-    tokenizer: Arc<Tokenizer>,
+    pub(super) constraint_cache: Mutex<GrammarCache>,
+    pub(super) tokenizer: Arc<Tokenizer>,
     template: Option<String>,
     special: BTreeMap<String, serde_json::Value>,
     pub fingerprint: String,
@@ -215,6 +217,7 @@ impl TextAssets {
         // pieces independently loses it. Only byte-level concatenation is decomposable.
         let streaming_decode = byte_level_decoder(&bytes);
         Ok(Self {
+            constraint_cache: Mutex::new(GrammarCache::default()),
             generation: crate::GenerationDefaults::open(root)?,
             tokenizer: Arc::new(tokenizer),
             template,
@@ -391,7 +394,7 @@ fn byte_level_decoder(bytes: &[u8]) -> bool {
 /// arrive, which keeps every published prefix stable: nothing already sent is ever rewritten.
 /// The decode cost is bounded by the bytes of one character rather than by the whole response.
 pub struct TextStreamDecoder {
-    tokenizer: Arc<Tokenizer>,
+    pub(super) tokenizer: Arc<Tokenizer>,
     /// Tokens whose decoded text is not yet known to be complete.
     pending: Vec<u32>,
 }

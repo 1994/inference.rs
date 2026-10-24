@@ -26,6 +26,10 @@ const EVENTS_RESPONSE_BASE_BYTES: usize = 256 << 10;
 const SHUTDOWN_ACK_TIMEOUT_SECS: u64 = 5;
 
 impl RuntimeHandle {
+    #[must_use]
+    pub fn vocabulary(&self) -> usize {
+        self.preparer.vocabulary()
+    }
     /// Allocate a process-local request identity shared by all clones of this handle.
     /// Explicit submissions advance the same counter; allocated identities are never reused.
     /// # Errors
@@ -136,6 +140,26 @@ impl RuntimeHandle {
         deadline_us: Option<u64>,
         work: impl FnOnce(&CpuContext) -> Result<CanonicalRequest> + Send + 'static,
     ) -> Result<async_mpsc::Receiver<Result<EngineOutput>>> {
+        self.submit_constrained_preparing(id, bytes, trace, deadline_us, move |context| {
+            Ok((work(context)?, None))
+        })
+        .await
+    }
+    /// Prepare a request and optional matcher on the bounded CPU pool.
+    /// # Errors
+    /// Returns preparation, constraint capability, or admission errors.
+    pub async fn submit_constrained_preparing(
+        &self,
+        id: RequestId,
+        bytes: usize,
+        trace: Option<TraceContext>,
+        deadline_us: Option<u64>,
+        work: impl FnOnce(
+            &CpuContext,
+        ) -> Result<(CanonicalRequest, Option<infer_spi::ConstraintHandle>)>
+        + Send
+        + 'static,
+    ) -> Result<async_mpsc::Receiver<Result<EngineOutput>>> {
         let now_us = self.clock_origin_us.saturating_add(
             u64::try_from(self.clock_started.elapsed().as_micros()).unwrap_or(u64::MAX),
         );
@@ -152,12 +176,12 @@ impl RuntimeHandle {
             .cpu
             .run_until(bytes, deadline, move |context| {
                 preparing.check()?;
-                let request = work(context)?;
+                let (request, constraint) = work(context)?;
                 if request.id != id {
                     return Err(Error::invalid("CPU preparation changed request identity"));
                 }
                 preparing.check()?;
-                preparer.prepare(request)
+                preparer.prepare(request)?.with_constraint(constraint)
             })
             .await?;
         pending.check()?;

@@ -77,3 +77,71 @@ fn checkpoint_is_acknowledged_by_owner_and_restored_states_rejoin_async_pipeline
     }
     Ok(())
 }
+
+struct ConstrainedToken;
+impl infer_spi::GenerationConstraint for ConstrainedToken {
+    fn mask(&mut self) -> Result<&[u32]> {
+        Ok(&[8])
+    }
+    fn commit(&mut self, token: u32) -> Result<()> {
+        if token == 3 {
+            Ok(())
+        } else {
+            Err(Error::invariant("unexpected constrained token"))
+        }
+    }
+}
+#[test]
+fn live_constraints_reject_checkpoint_and_replay_without_losing_generation() -> Result<()> {
+    let (backend, registry) = fixture()?;
+    let model = support::model(ModelId::ONE);
+    let mut engine = Engine::new(
+        backend,
+        model,
+        PrecisionPlan::f32(),
+        &registry,
+        RuntimeConfig::default(),
+    )?;
+    let handle = infer_spi::ConstraintHandle::new(Box::new(ConstrainedToken), 32, 128);
+    let prepared = engine
+        .request_preparer()?
+        .prepare(request()?)?
+        .with_constraint(Some(handle))?;
+    engine.submit_prepared_with_trace(prepared, None)?;
+    assert!(engine.snapshot().is_err());
+    let actions = engine.journal()?;
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, infer_runtime::ReplayAction::ConstrainedSubmit(_)))
+    );
+    let (backend, registry) = fixture()?;
+    let mut replay = Engine::new(
+        backend,
+        support::model(ModelId::ONE),
+        PrecisionPlan::f32(),
+        &registry,
+        RuntimeConfig::default(),
+    )?;
+    assert!(replay.replay(&actions).is_err());
+    assert!(replay.is_idle());
+    let mut injected = replay.snapshot()?;
+    injected
+        .requests
+        .insert(RequestId::ONE, engine.request(RequestId::ONE)?.clone());
+    let (backend, registry) = fixture()?;
+    assert!(
+        matches!(Engine::restore(backend, &registry, injected), Err(error) if error.code == infer_core::ErrorCode::Unsupported)
+    );
+    let limit = Instant::now() + Duration::from_secs(5);
+    while !engine.is_idle() {
+        engine.tick(engine.now_us() + 1)?;
+        wait(limit)?;
+    }
+    engine.check_invariants()?;
+    assert!(engine.request(RequestId::ONE)?.constraint.is_none());
+    let done = engine.take_completed(RequestId::ONE)?.unwrap();
+    assert_eq!(done.measurement.output_tokens, 3);
+    assert!(done.measurement.successful);
+    Ok(())
+}

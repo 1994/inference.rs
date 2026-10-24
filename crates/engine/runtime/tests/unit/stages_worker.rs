@@ -43,6 +43,7 @@ fn job(id: u64, projection: bool) -> Result<OutputJob> {
     }))
     .map_err(|error| Error::invalid(error.to_string()))?;
     Ok(OutputJob {
+        constraint: None,
         generated: Vec::new().into(),
         request: Arc::new(request),
         output: ModelOutput {

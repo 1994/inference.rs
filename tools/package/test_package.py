@@ -76,6 +76,21 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(command[-2:], ["--features", "cuda"])
         self.assertNotIn("test-backends", command)
 
+    def test_macos_packages_use_apple_linker_for_both_architectures(self):
+        for arch in ("aarch64", "x86_64"):
+            plan = package.resolve("auto", f"{arch}-apple-darwin")
+            with patch.object(package.platform, "system", return_value="Darwin"):
+                command = package.cargo("zigbuild", plan)
+            self.assertEqual(command[:2], ["cargo", "build"])
+            self.assertEqual(command[command.index("--target") + 1], plan["target"])
+            with patch.object(package.platform, "system", return_value="Linux"):
+                self.assertEqual(package.cargo("zigbuild", plan)[:2], ["cargo", "zigbuild"])
+        plan = package.resolve("auto", "x86_64-unknown-linux-gnu")
+        with patch.object(package.platform, "system", return_value="Darwin"):
+            command = package.cargo("zigbuild", plan)
+        self.assertEqual(command[:2], ["cargo", "zigbuild"])
+        self.assertIn("x86_64-unknown-linux-gnu.2.28", command)
+
     def test_build_script_rejects_wrong_features_and_target(self):
         plan = package.resolve("auto", "x86_64-unknown-linux-gnu")
         with tempfile.TemporaryDirectory() as temporary:

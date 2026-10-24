@@ -26,9 +26,7 @@ pub(super) struct RequestedOutput {
 
 /// Tool calling enabled by one request.
 ///
-/// The first delivery supports `none` and `auto` by parsing a completed response. `required`,
-/// a named function and `strict` schemas need generation-time constraints, so they are refused
-/// explicitly rather than approximated after the fact.
+/// Strict schemas, required/named choices and single-call requests carry a generation matcher.
 #[derive(Debug)]
 pub(super) enum ToolPolicy {
     /// No `tools`, or `tool_choice: "none"`. Structured calls are not published.
@@ -38,10 +36,18 @@ pub(super) enum ToolPolicy {
         declared: BTreeSet<String>,
         /// The declared tools as the chat template expects them.
         template: Value,
+        constraint: Option<infer_models::ToolConstraints>,
     },
 }
 
 impl ToolPolicy {
+    pub(super) fn constraint(&self) -> Option<infer_models::ToolConstraints> {
+        match self {
+            Self::Disabled => None,
+            Self::Auto { constraint, .. } => constraint.clone(),
+        }
+    }
+
     /// Declared names for the parser, if any call may be published.
     pub(super) const fn declared(&self) -> Option<&BTreeSet<String>> {
         match self {
@@ -157,7 +163,7 @@ impl GenerationRequest {
     /// Resolve the request's tool-calling mode.
     ///
     /// # Errors
-    /// Rejects a mode that needs generation-time constraints, a malformed declaration, or a
+    /// Rejects a malformed declaration or a
     /// `tool_choice` that names a tool the request did not declare.
     pub(super) fn tool_policy(&self, chat: bool) -> Result<ToolPolicy> {
         if !chat {
@@ -186,11 +192,6 @@ impl GenerationRequest {
                     "tool function name must be 1..64 ASCII letters, digits, underscores or dashes",
                 ));
             }
-            if tool.function.strict == Some(true) {
-                return Err(Error::unsupported(
-                    "strict tool schemas require generation constraints",
-                ));
-            }
             if !names.insert(name.clone()) {
                 return Err(Error::invalid("tool function names must be unique"));
             }
@@ -199,24 +200,17 @@ impl GenerationRequest {
                 "function": tool.function,
             }));
         }
-        // `parallel_tool_calls: false` needs a constraint that limits the call count. Trimming a
-        // second call after generation would not satisfy the contract, so it is refused.
         let parallel = self.parallel_tool_calls.unwrap_or(true);
-        if !parallel && !declared_tools.is_empty() {
-            return Err(Error::unsupported(
-                "parallel_tool_calls=false requires generation constraints",
-            ));
-        }
-        // `none` keeps the declared tools in the prompt but publishes no structured call.
+        let mut required = false;
+        let mut selected = None;
         let enabled = match &self.tool_choice {
             None => !declared_tools.is_empty(),
             Some(WireToolChoice::Mode(mode)) => match mode.as_str() {
                 "auto" => !declared_tools.is_empty(),
                 "none" => false,
                 "required" => {
-                    return Err(Error::unsupported(
-                        "tool_choice=required requires generation constraints",
-                    ));
+                    required = true;
+                    true
                 }
                 _ => return Err(Error::invalid("unknown tool_choice mode")),
             },
@@ -226,18 +220,33 @@ impl GenerationRequest {
                         "tool_choice must name a declared function tool",
                     ));
                 }
-                return Err(Error::unsupported(format!(
-                    "tool_choice naming {:?} requires generation constraints",
-                    function.name
-                )));
+                selected = Some(function.name.clone());
+                true
             }
         };
         if !enabled {
             return Ok(ToolPolicy::Disabled);
         }
+        if names.is_empty() && required {
+            return Err(Error::invalid("required tool choice needs tools"));
+        }
+        let template = Value::Array(template);
+        let constrained = required
+            || selected.is_some()
+            || !parallel
+            || declared_tools
+                .iter()
+                .any(|tool| tool.function.strict == Some(true));
+        let constraint = constrained.then(|| infer_models::ToolConstraints {
+            tools: template.clone(),
+            required,
+            named: selected,
+            parallel,
+        });
         Ok(ToolPolicy::Auto {
             declared: names,
-            template: Value::Array(template),
+            template,
+            constraint,
         })
     }
 

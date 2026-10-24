@@ -12,6 +12,7 @@ pub use memory::request_bytes;
 const RETAINED_OVERHEAD_BYTES: usize = 4096;
 
 pub struct PreparedRequest {
+    pub(crate) constraint: Option<infer_spi::ConstraintHandle>,
     pub(crate) request: Arc<CanonicalRequest>,
     pub(crate) plan: WorkloadPlan,
     pub(crate) tenant: Arc<str>,
@@ -20,6 +21,27 @@ pub struct PreparedRequest {
     pub(crate) provider: String,
 }
 impl PreparedRequest {
+    /// Attach a matcher built on the bounded preparation pool.
+    /// # Errors
+    /// Rejects mismatched vocabularies or non-generation workloads.
+    pub fn with_constraint(
+        mut self,
+        constraint: Option<infer_spi::ConstraintHandle>,
+    ) -> Result<Self> {
+        if constraint
+            .as_ref()
+            .is_some_and(|c| c.vocabulary() != self.model.vocab_size)
+            || (constraint.is_some()
+                && !matches!(self.request.workload, infer_ir::Workload::Generate { .. }))
+        {
+            return Err(Error::invalid(
+                "constraint requires generation with matching vocabulary",
+            ));
+        }
+        self.constraint = constraint;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn id(&self) -> infer_core::RequestId {
         self.request.id
@@ -34,6 +56,10 @@ pub struct RequestPreparer {
     limits: crate::ResolvedLengthLimits,
 }
 impl RequestPreparer {
+    #[must_use]
+    pub fn vocabulary(&self) -> usize {
+        self.model.vocab_size
+    }
     pub(crate) fn new(
         model: ModelIr,
         program: ProgramId,
@@ -66,6 +92,7 @@ impl RequestPreparer {
         let generated = generation_storage(&request)?;
         let tenant = Arc::from(request.qos.tenant.as_str());
         Ok(PreparedRequest {
+            constraint: None,
             generated,
             tenant,
             request: request.into(),

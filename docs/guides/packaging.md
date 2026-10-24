@@ -2,7 +2,7 @@
 
 平台契约统一在根目录 [`build.rs`](../../build.rs)。CLI 的 Cargo manifest 将它注册为 build script；打包入口还将同一文件编译为宿主机工具，提前获取 target/backend/features 计划和 SDK 检查结果。不存在另一份 Python 平台矩阵。
 
-`build.rs` 负责目标平台、glibc 参数、生产 feature 组合、macOS SDK 前置条件和 `OUT_DIR/infer-build.json`。它不递归启动 Cargo，也不在二进制链接前制作归档。Makefile 只传参数；`tools/package/package.py` 负责调用 `cargo zigbuild`、核对 Cargo 回传的构建契约、组装归档和验证产物。
+`build.rs` 负责目标平台、glibc 参数、生产 feature 组合、macOS SDK 前置条件和 `OUT_DIR/infer-build.json`。它不递归启动 Cargo，也不在二进制链接前制作归档。Makefile 只传参数；`tools/package/package.py` 负责调用目标构建命令、核对 Cargo 回传的构建契约、组装归档和验证产物。
 
 ## 工具与目标
 
@@ -38,7 +38,7 @@ make build TARGET=aarch64-unknown-linux-gnu
 make test-package TARGET=aarch64-unknown-linux-gnu
 ```
 
-流程：契约/SDK 预检 → 目标检查 → Zig release 编译 → ELF/Mach-O 架构核对 → 归档 → 解压完整性校验 → 本地产物目录。
+流程：契约/SDK 预检 → 目标检查 → release 编译 → ELF/Mach-O 架构核对 → 归档 → 解压完整性校验 → 本地产物目录。
 
 宿主套件（布局、策略、格式、Clippy 与工作区测试）由同一条流水线的 Rust 与 tools job 负责，
 `make package` 不再重复执行：打包 job 有 4 个目标，重复一次就等于把最贵的检查乘以 4。
@@ -46,11 +46,11 @@ make test-package TARGET=aarch64-unknown-linux-gnu
 仓库自身的测试入口是 **`make test`**（等于 `gate.sh test`，只跑工作区测试条目，不触发打包）。
 
 - target 等于 host 时：启动解压后的 CLI `--version` / `--help`。
-- 交叉 target：用 Zig **编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed`、`smoke_executed: false`，以及这份包
+- 交叉 target：用目标构建命令**编译目标 CLI 测试，但不运行**；归档后验证文件摘要和实际机器码架构，不尝试在宿主机执行异构程序。manifest 明确记录 `cross-cli-tests-compiled-not-executed`、`smoke_executed: false`，以及这份包
 依赖的 `source_checks`（`make check-rust`/`make check-tools`）与 `commit`/`dirty`。
 - 在目标机器上再运行 `verify-package` 即可执行启动检查。GPU 推理需要下面的独立 `accept`。
 
-`CARGO_TARGET_DIR`、`CARGO_BUILD_JOBS` 和 CUDA 工具链变量仍有效；工具从 Cargo JSON artifact 读取真实二进制路径，不猜测输出目录。使用 `--target` 确保 Zig 链接器实际生效，不注入 `target-cpu=native`。
+`CARGO_TARGET_DIR`、`CARGO_BUILD_JOBS` 和 CUDA 工具链变量仍有效；工具从 Cargo JSON artifact 读取真实二进制路径，不猜测输出目录。显式保留 `--target`，不注入 `target-cpu=native`。macOS 主机构建 Apple Silicon 或 Intel macOS 目标时使用 `cargo build` 和 Apple 链接器，避免 Zig 对依赖动态库导出符号参数的处理错误；其他目标继续使用 `cargo zigbuild`，保留 Linux glibc 基线。
 
 ## 本机开发构建
 

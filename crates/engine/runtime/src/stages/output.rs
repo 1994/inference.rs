@@ -11,6 +11,7 @@ pub struct OutputShape {
     pub width: usize,
 }
 pub struct OutputJob {
+    pub constraint: Option<infer_spi::ConstraintHandle>,
     pub request: Arc<CanonicalRequest>,
     pub output: ModelOutput,
     pub shape: OutputShape,
@@ -51,6 +52,7 @@ impl DecidedTokens {
     }
 }
 pub struct ProcessedOutput {
+    pub constraint: Option<infer_spi::ConstraintHandle>,
     pub output: Option<ModelOutput>,
     /// Tokens decided by this step: one from the engine sampler, or several when a backend
     /// ran speculative decoding and returned `ModelOutput::tokens`.
@@ -63,6 +65,11 @@ impl OutputJob {
         workloads: &dyn WorkloadProvider,
         scratch: &mut infer_workloads::SamplingWorkspace,
     ) -> Result<ProcessedOutput> {
+        if self.constraint.is_some()
+            && (self.output.next_token.is_some() || !self.output.tokens.is_empty())
+        {
+            return Err(Error::invariant("backend bypassed constrained sampling"));
+        }
         self.validate_backend_token()?;
         self.shape.validate(&self.output)?;
         if self.output.tokens.len() + usize::from(self.sample.is_some()) > DECIDED_TOKEN_CAPACITY {
@@ -81,23 +88,11 @@ impl OutputJob {
             }
             let token = match self.output.next_token.take() {
                 Some(token) => token,
-                None => infer_workloads::sample_with_history(
-                    &self.output.logits,
-                    &self.request.sampling,
-                    self.request.id.get(),
-                    position,
-                    infer_workloads::SamplingHistory {
-                        prompt: match &self.request.input {
-                            infer_ir::RequestInput::Sequence { tokens, .. } => tokens,
-                            infer_ir::RequestInput::Pairs { .. } => &[],
-                        },
-                        generated: &self.generated,
-                    },
-                    scratch,
-                )?,
+                None => self.sample_token(position, scratch)?,
             };
             tokens.push(token);
             return Ok(ProcessedOutput {
+                constraint: self.constraint,
                 output: Some(self.output),
                 tokens,
                 projection: None,
@@ -112,16 +107,52 @@ impl OutputJob {
             outputs.push(self.output);
             let projection = workloads.postprocess(&self.request, &outputs)?;
             return Ok(ProcessedOutput {
+                constraint: self.constraint,
                 output: None,
                 tokens: DecidedTokens::default(),
                 projection: Some(projection),
             });
         }
         Ok(ProcessedOutput {
+            constraint: self.constraint,
             output: Some(self.output),
             tokens: DecidedTokens::default(),
             projection: None,
         })
+    }
+
+    fn sample_token(
+        &mut self,
+        position: usize,
+        scratch: &mut infer_workloads::SamplingWorkspace,
+    ) -> Result<u32> {
+        let mut sample = |mask: Option<infer_workloads::TokenMask<'_>>| {
+            infer_workloads::sample_constrained(
+                &self.output.logits,
+                &self.request.sampling,
+                self.request.id.get(),
+                position,
+                infer_workloads::SamplingHistory {
+                    prompt: match &self.request.input {
+                        infer_ir::RequestInput::Sequence { tokens, .. } => tokens,
+                        infer_ir::RequestInput::Pairs { .. } => &[],
+                    },
+                    generated: &self.generated,
+                },
+                mask,
+                scratch,
+            )
+        };
+        if let Some(constraint) = &mut self.constraint {
+            constraint.select(position, |words| {
+                sample(Some(infer_workloads::TokenMask::new(
+                    words,
+                    self.output.logits.len(),
+                )?))
+            })
+        } else {
+            sample(None)
+        }
     }
 
     fn validate_backend_token(&self) -> Result<()> {

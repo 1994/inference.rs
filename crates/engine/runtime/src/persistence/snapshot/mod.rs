@@ -18,6 +18,7 @@ use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ReplayAction {
     Submit(Arc<CanonicalRequest>),
+    ConstrainedSubmit(RequestId),
     Tick { now_us: u64 },
     Poll { now_us: u64 },
     Quiesce { now_us: u64 },

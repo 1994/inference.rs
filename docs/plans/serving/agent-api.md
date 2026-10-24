@@ -1,10 +1,10 @@
 # Agent 工具调用与服务配置方案
 
-状态：基础工具协议与增量 parser 已实施，生成约束保留设计。初始调研源码基点为 `7c79d99`，日期为 2026 年 10 月 9 日；本次实现基于 `3a188f4`。当前公开能力以 [OpenAI 接口指南](../../guides/openai-api.md) 为准，下面的约束设计不表示已经交付。
+状态：基础工具协议、增量 parser 与非推测生成约束已实施，HTTP 严格工具模式按支持子集开放。初始调研源码基点为 `7c79d99`，日期为 2026 年 10 月 9 日；本次实现基于 `3a188f4`。当前公开能力以 [OpenAI 接口指南](../../guides/openai-api.md) 为准，推测组合仍属设计范围。
 
 整体排期与任务状态见 [路线图](../README.md) 的 S1、S2；生成约束按实际需求另行启动。本文维护本项设计与验收。性能对比的 release、配置、统计和证据规则沿用 [统一基线方案](../performance/baseline.md)，不另设一套门槛。
 
-当前已实现 typed 工具历史、结果关联、`none/auto`、文本 SSE，以及 JSON 与 function/parameter 两种方言的增量输出。`--max-model-len`、输出与序列 cap 及有效配置读回已有共同解析路径。`infer-agent` 继续负责引擎诊断；外部工具由调用方执行。`required`、指定工具、`strict` schema 与禁止并行调用尚无采样约束，保持显式拒绝。
+当前已实现 typed 工具历史、结果关联、`none/auto`、文本 SSE，以及 JSON 与 function/parameter 两种方言的增量输出。`--max-model-len`、输出与序列 cap 及有效配置读回已有共同解析路径。`infer-agent` 继续负责引擎诊断；外部工具由调用方执行。`required`、指定工具、`strict` schema 与禁止并行调用使用 llguidance 1.9.1；不支持的 schema 与推测组合显式拒绝。编译 grammar 和 tokenizer trie 按模型缓存，请求独占 matcher 随 CPU 输出任务移交，正常逐 token 路径不加共享锁；未请求约束时保留 backend greedy 快速路径。
 
 外部源码以 vLLM `v0.31.0`（`db9527a46873454610df6dbedf79a36d6bf1a7f6`）、SGLang `59eb71a831f6b87babc2400737c7faabed5ee01c` 为调研参照。`latest` 文档用于理解能力范围；实施和验收固定实际参考版本。这些实现提供机制与反例，不决定本项目的参数集合和默认值。
 
@@ -22,15 +22,27 @@
 |---|---|---|
 | Agent 控制面 | [infer-agent](../../architecture/agent.md) 提供 JSON-RPC 诊断、控制和实验 | 不承担模型生成内容的解析；不能把模型输出直接分发到 `AgentService::register` |
 | 工具提示词 | [TextAssets / ChatOptions](../../../crates/model/package/src/input/text.rs) 编码工具定义、typed assistant 调用历史及关联结果；模板绑定输出方言 | 后续方言需补真实模板、tokenizer 与输出样本 |
-| OpenAI 请求 | [GenerationRequest](../../../crates/service/frontdoor/src/http/openai/request.rs) 支持文本、nullable assistant content、工具历史、none/auto 与 SSE；未知字段拒绝 | required/named/strict、parallel=false 的生成约束 |
+| OpenAI 请求 | [GenerationRequest](../../../crates/service/frontdoor/src/http/openai/request.rs) 支持文本、nullable assistant content、工具历史、none/auto、required/named/strict、parallel=false 与 SSE；未知字段拒绝 | 更完整的 schema 及推测组合 |
 | OpenAI 输出 | [execution](../../../crates/service/frontdoor/src/http/openai/execution.rs) 与 [stream](../../../crates/service/frontdoor/src/http/openai/stream.rs) 共用 parser；支持 reasoning、tool_calls 与参数 deltas | 新方言或约束接入时复用当前事件契约 |
-| 结构化生成 | [IR FeaturePlan](../../../crates/foundation/ir/src/workload.rs) 有 grammar 元数据；Decision workload 用于评分/分类 | 尚无消费 grammar 的生成约束路径；不能把 Decision 当作 JSON Schema 生成能力 |
+| 结构化生成 | [IR FeaturePlan](../../../crates/foundation/ir/src/workload.rs) 有 grammar 元数据；Decision workload 用于评分/分类 | 工具约束通过独立 matcher 接入，通用 response_format 尚未开放；不能把 Decision 当作 JSON Schema 生成能力 |
 | 模型上下文 | [Qwen provider](../../../crates/model/package/src/providers/qwen.rs) 导入 `max_sequence`；服务、workload 与 runtime 共用 `P+G<=L` 预算 | 后续扩展上下文能力另行验收 |
 | 输入上限 | [RuntimeConfig](../../../crates/engine/runtime/src/config.rs) 将输入 cap 与总上下文分别表达 | 保持各入口共同规则 |
 | 输出上限 | OpenAI 两种输出预算字段互斥，统一为 `max_new_tokens`，受服务输出 cap 与剩余上下文限制 | 后续能力保持来源与冲突规则 |
 | 服务配置 | [CLI](../../../crates/service/cli/src/arguments.rs) 支持总上下文、输出/序列 cap、部署名；有效值和来源可读回 | 需要新覆盖时先确定真实调用场景 |
 
 当前采样并非始终 greedy：[GenerationDefaults](../../../crates/model/package/src/generation/mod.rs) 已加载包内 generation config / EOS，应用识别到的模型模式预设，再覆盖请求参数。基线需要保存最终参数和来源，不能只比较客户端是否传了同名字段。
+
+## 严格工具实施进度
+
+2026-10-23 开始接入生成约束。首步在 `infer-workloads` 增加借用的词表 bitset
+`TokenMask`、`sample_constrained` 与 `probabilities_constrained`：合法集合先于
+top-k/top-p/min-p 过滤；penalty 仍按原始 token ID 处理；greedy 与随机采样均不能选中
+被禁止的 token（包括 EOS）。空合法集合、词表尺寸不匹配和非有限 logits 显式失败，
+不回退无约束采样。全允许 mask 保持原来的确定性采样轨迹；已有调用者继续走无约束路径。
+
+现已接通 `infer-models` 的 llguidance grammar 编译、模型 tokenizer 对齐与有界缓存，`infer-spi` 的请求 matcher 契约，以及 preparation/output worker 的所有权移交。严格工具请求禁用绕过 mask 的 backend token 快速路径；未实现的推测组合、活动 matcher checkpoint/replay 显式拒绝。
+
+HTTP 完整与 SSE 路径共用这些约束；CPU 测试覆盖 required/named/strict、调用数量、嵌套/nullable schema、标记字符串、EOS、长度截断与缓存状态隔离。支持范围和资源上限见接口指南。尚未进行真实模型或 GPU 严格工具验收，不把协议测试当作设备性能证明。
 
 ## 可以参考哪些实现
 
@@ -202,3 +214,8 @@ CPU 微基准使用真实目标 tokenizer 和工具 schema：普通长文本、8
 本项先交付长度 resolver、实际部署所需的有效配置与参数错误合同，再交付文本流式、工具历史和基础 parser；生成约束、严格工具模式及推测组合有具体场景时，按已具备的共同接口接入。基础工具闭环不等待 DFlash2，也不阻塞当前 token 诊断基线建立。
 
 参数只在实际路径和验收完成后进入当前使用文档。交付以实际 Agent 闭环、预算生效和测量可复算为标准，不以兼容参数数量为标准。
+
+
+### 约束成本复测
+
+`INFER_CONSTRAINT_PACKAGE=/path/to/package cargo run --locked --release -p infer-cpu-bench` 使用指定包的实际 tokenizer，对固定严格 `ping` 调用轨迹测量冷编译（不计 TextAssets 加载）、缓存命中与 mask/commit 的 p50/p95，以及分配次数。基准包括特殊 EOS，遇到不合法轨迹立即失败；不执行 GPU、不测网络或完整推理吞吐，也不代表与 XGrammar 的对比。当前 matcher 仍有库内分配，尚未实现 GPU 重叠或强制 token 快进；不能宣称严格模式零分配或已获得端到端加速。

@@ -9,6 +9,9 @@ The configurations come from the same `build.rs` plan the native build and packa
 use, so this file cannot drift from them. `--record` refreshes the record; the default
 run compares against it and fails on a new duplicate, a stale record or a test-only
 executor appearing in a production graph.
+
+Build dependencies are resolved for the running host, even with `--target`. A cross-host
+`--record` is provisional: confirm each entry on its native CI runner before committing it.
 """
 
 import argparse
@@ -181,7 +184,8 @@ def mismatches(record, current):
         if previous["features"] != entry["features"] or previous["target"] != entry["target"]:
             problems.append(f"{name}: target or resolved features changed; re-record")
         problems.extend(
-            f"{name}: {key} changed; re-record and review the difference"
+            f"{name}: {key} changed ({previous[key]} -> {entry[key]}); "
+            "re-record and review the difference"
             for key in ("crates", "edges", "duplicates")
             if previous[key] != entry[key]
         )

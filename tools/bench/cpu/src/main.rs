@@ -3,11 +3,13 @@ use std::env::consts::ARCH;
 use std::env::consts::OS;
 use std::env::var_os;
 use std::error::Error;
+use std::path::Path;
 #[allow(
     unsafe_code,
     reason = "Standalone measurement shim delegates GlobalAlloc to mimalloc; never linked into production"
 )]
 mod allocator;
+mod constraint;
 mod cycle;
 mod engine;
 mod measure;
@@ -15,6 +17,13 @@ mod primitives;
 #[global_allocator]
 static ALLOCATOR: allocator::CountingAllocator = allocator::CountingAllocator;
 fn main() -> Result<(), Box<dyn Error>> {
+    if let Some(root) = var_os("INFER_CONSTRAINT_PACKAGE") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&constraint::run(Path::new(&root))?)?
+        );
+        return Ok(());
+    }
     if var_os("INFER_ENGINE_ONLY").is_some() {
         println!(
             "{}",
