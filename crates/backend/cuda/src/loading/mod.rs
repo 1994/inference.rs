@@ -718,6 +718,10 @@ fn bind_vision(
 mod support;
 
 #[cfg(test)]
+#[path = "../../tests/unit/loading_shape_ab.rs"]
+mod shape_ab_tests;
+
+#[cfg(test)]
 #[path = "../../tests/unit/loading_prefill_width.rs"]
 mod prefill_width_tests;
 
