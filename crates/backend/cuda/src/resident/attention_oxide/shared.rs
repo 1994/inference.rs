@@ -7,7 +7,7 @@ use crate::device::CudaDevice;
 use infer_core::Result;
 use std::sync::{Arc, OnceLock};
 const PTX: &str = include_str!("../../../kernels/shared-attention/attention-sm120.ptx");
-pub(super) const LANES: usize = 256;
+pub(super) const LANES: [usize; 3] = [256, 1024, 2048];
 const THREADS: u32 = 384;
 const ROWS_PER_CTA: usize = 12;
 pub(super) fn load(device: &CudaDevice) -> Result<Option<Support>> {
@@ -28,6 +28,7 @@ pub(super) fn load(device: &CudaDevice) -> Result<Option<Support>> {
         stream: device.stream.cu_stream() as usize,
         threads: THREADS,
         rows_per_cta: ROWS_PER_CTA,
+        lanes: &LANES,
     }))
 }
 pub(super) fn artifact_identity() -> &'static str {

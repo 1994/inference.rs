@@ -20,6 +20,7 @@ help:
 	@echo '  make verify-package PACKAGE_FILE=/path/to/archive.tar.gz'
 	@echo '  make accept PACKAGE_FILE=... MODEL=... GOLDEN=...'
 	@echo '  DIST_DIR=artifacts/packages overrides the artifact directory.'
+	@echo 'CUDA artifacts: make check-cuda-artifacts | list-cuda-kernels'
 	@echo 'Quality gates: check, check-rust, check-tools, check-security,'
 	@echo '  test-cuda, test-cuda-hosted (CUDA compile/lint/tests, no GPU), test-metal, bench'
 	@echo '  (aliases: check-cuda, check-metal, check-cpu),'
@@ -92,3 +93,11 @@ clean-artifacts:
 setup-build:
 	cargo install --locked cargo-zigbuild --version $(CARGO_ZIGBUILD_VERSION)
 	"$${CARGO_ZIGBUILD_ZIG_PATH:-zig}" version
+
+# Artifact integrity is portable and does not require a CUDA Toolkit or GPU.
+.PHONY: check-cuda-artifacts list-cuda-kernels
+check-cuda-artifacts:
+	$(PYTHON) tools/cuda/kernels.py verify
+
+list-cuda-kernels:
+	$(PYTHON) tools/cuda/kernels.py list
