@@ -181,7 +181,8 @@ def mismatches(record, current):
         if previous["features"] != entry["features"] or previous["target"] != entry["target"]:
             problems.append(f"{name}: target or resolved features changed; re-record")
         problems.extend(
-            f"{name}: {key} changed; re-record and review the difference"
+            f"{name}: {key} changed ({previous[key]} -> {entry[key]}); "
+            "re-record and review the difference"
             for key in ("crates", "edges", "duplicates")
             if previous[key] != entry[key]
         )
