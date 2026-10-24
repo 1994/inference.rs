@@ -4,7 +4,7 @@ use crate::constants::CB_SLOT_TOKENS;
 use crate::constants::MIB;
 use crate::constants::MTP_KV_OFFSET;
 use crate::constants::PREFILL_LANES;
-use crate::constants::WIDE_PREFILL_LANES;
+use crate::constants::WIDER_PREFILL_LANES;
 use crate::device::CudaDevice;
 use crate::loading::LoadedModel;
 use crate::resident::slot_batch::SlotPool;
@@ -404,8 +404,8 @@ impl CudaBackend {
     ) -> Result<Option<PoolPlan>> {
         let configured = self.loaded.pooled_prompt_width();
         // Preserve wide-prompt throughput: at most one halving, and never cross the
-        // delegated projection floor. Deeper shrinking saves memory but adds replays.
-        let minimum_prompt = (configured / 2).max(WIDE_PREFILL_LANES).min(configured);
+        // established 1024-row worker floor. Deeper shrinking saves memory but adds replays.
+        let minimum_prompt = (configured / 2).max(WIDER_PREFILL_LANES).min(configured);
         for width in (2..=maximum).rev() {
             let mut prompt_width = configured;
             loop {

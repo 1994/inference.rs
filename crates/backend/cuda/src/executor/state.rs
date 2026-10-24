@@ -9,6 +9,9 @@ impl CudaBackend {
     }
 
     pub(super) fn capacity_budget(&self) -> Result<u64> {
+        if self.slots.is_some() {
+            return Ok(self.budget);
+        }
         self.state_funding().map(|(_, capacity)| capacity)
     }
 
@@ -112,19 +115,6 @@ impl CudaBackend {
         capacity: usize,
         readout: OutputReadout,
     ) -> Result<()> {
-        if self.slots.is_none()
-            && self.states.is_empty()
-            && readout == OutputReadout::Logits
-            && let Some(previous) = self.reclaimed_slot_capacity
-            && capacity <= previous
-        {
-            self.idle()?;
-            // Cached private programs retain the old wide scratch. Compatible requests
-            // return to the pool, so retire those idle shells before planning its storage.
-            while self.pool.evict() {}
-            self.loaded.reclaim_idle_prompt_scratch()?;
-            self.warm_slot_pool_at(previous);
-        }
         let Some(pool) = &self.slots else {
             return Ok(());
         };
@@ -181,6 +171,25 @@ impl CudaBackend {
         Ok(())
     }
 
+    /// A quote never captures CUDA graphs. Restore only after the request has
+    /// entered the asynchronous reservation phase, whose owner retains its state.
+    fn restore_slot_pool_for(&mut self, capacity: usize, readout: OutputReadout) -> Result<()> {
+        if self.slots.is_none()
+            && self.states.is_empty()
+            && readout == OutputReadout::Logits
+            && let Some(previous) = self.reclaimed_slot_capacity
+            && capacity <= previous
+        {
+            self.idle()?;
+            // Cached private programs retain the old wide scratch. Compatible requests
+            // return to the pool, so retire those idle shells before planning its storage.
+            while self.pool.evict() {}
+            self.loaded.reclaim_idle_prompt_scratch()?;
+            self.warm_slot_pool_at(previous);
+        }
+        Ok(())
+    }
+
     pub(super) fn reserve(
         &mut self,
         id: StateId,
@@ -194,6 +203,7 @@ impl CudaBackend {
                 "CUDA state already reserved",
             ));
         }
+        self.restore_slot_pool_for(capacity, readout)?;
         self.prepare_reservation_for(capacity, readout)?;
         if self.reserve_home(id, capacity, readout)? {
             return Ok(());
