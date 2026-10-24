@@ -184,6 +184,8 @@ impl CudaBackend {
             // Cached private programs retain the old wide scratch. Compatible requests
             // return to the pool, so retire those idle shells before planning its storage.
             while self.pool.evict() {}
+            // Restore pooled throughput before retaining idle long-prefix snapshots.
+            while self.prefix.evict() {}
             self.loaded.reclaim_idle_prompt_scratch()?;
             self.warm_slot_pool_at(previous);
         }
