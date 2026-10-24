@@ -6,11 +6,11 @@ use serde::Serialize;
 
 /// Initial context kept on F32 before the target BF16 bulk path.
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-pub const PRECISE_PREFIX_POSITIONS: usize = 1024;
+pub const PRECISE_PREFIX_POSITIONS: usize = 2048;
 
 /// Target prefill attention arithmetic selected by the operator.
 ///
-/// `Canonical` keeps the established F32 path. `Bf16` keeps initial context through 1024
+/// `Canonical` keeps the established F32 path. `Bf16` keeps initial context through 2048
 /// positions on that path and uses FA4 BF16-QKV/F32 accumulation for bulk prefill afterwards.
 /// The CLI pairs it with MTP only when the package and device support both; library callers
 /// retain the canonical default. `Fp16` remains an explicit experimental SM120 profile.

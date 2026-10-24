@@ -3,6 +3,7 @@ use super::{
     LoadOptions, LoadedModel,
     quant_reuse_model_tests::{outputs, program_states},
 };
+use crate::resident::DeviceProgram;
 use crate::{
     AttentionProfile,
     device::CudaDevice,
@@ -100,15 +101,44 @@ fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Re
     Ok(())
 }
 
+fn precise_prefix_checkpoint(
+    loaded: &LoadedModel,
+    fast: &mut DeviceProgram,
+    canonical: &mut DeviceProgram,
+    tokens: &[u32],
+    length: usize,
+) -> Result<()> {
+    fast.reset()?;
+    canonical.reset()?;
+    for (index, chunk) in tokens[..length].chunks(1024).enumerate() {
+        let last = (index + 1) * 1024 >= length;
+        outputs(
+            &fast.prefill_batch(chunk, index * 1024, last)?,
+            &canonical.prefill_batch(chunk, index * 1024, last)?,
+        );
+    }
+    program_states(loaded, fast, canonical)?;
+    for step in 0..4 {
+        let pos = fast.position();
+        let token = tokens[(length + step) % tokens.len()];
+        outputs(
+            &vec![fast.step(token, pos, pos, None, true)?],
+            &vec![canonical.step(token, pos, pos, None, true)?],
+        );
+    }
+    program_states(loaded, fast, canonical)?;
+    println!("precise2K prefix canonical bits passed: prompt={length}, subsequent_steps=4");
+    Ok(())
+}
 #[test]
-#[ignore = "CUDA/checkpoint/frozen511tokens/safe-run; canonical prefix and subsequent decode bits"]
+#[ignore = "CUDA/checkpoint/frozen511tokens/safe-run; canonical2K prefix and subsequent decode bits"]
 fn bf16_precise_prefix_matches_canonical_checkpoint_bits() -> Result<()> {
     CudaDevice::enable_kernel_cache()?;
     let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
     let tokens: Vec<_> = super::quant_reuse_model_tests::prompt()?
         .into_iter()
         .cycle()
-        .take(1025)
+        .take(2049)
         .collect();
     let mut loaded = LoadedModel::open(
         CudaDevice::new(0)?,
@@ -125,34 +155,20 @@ fn bf16_precise_prefix_matches_canonical_checkpoint_bits() -> Result<()> {
         },
     )?;
     loaded.weights.narrow_prefill_width = 64;
-    let mut fast = loaded.sequence(2048)?;
+    let mut fast = loaded.sequence(4096)?;
     loaded.weights.attention_profile = AttentionProfile::Canonical;
-    let mut canonical = loaded.sequence(2048)?;
-    for length in [1, 51, 127, 257, 511, 1024] {
-        fast.reset()?;
-        canonical.reset()?;
-        outputs(
-            &fast.prefill_batch(&tokens[..length], 0, true)?,
-            &canonical.prefill_batch(&tokens[..length], 0, true)?,
-        );
-        program_states(&loaded, &fast, &canonical)?;
-        for step in 0..4 {
-            let pos = fast.position();
-            let token = tokens[(length + step) % tokens.len()];
-            outputs(
-                &vec![fast.step(token, pos, pos, None, true)?],
-                &vec![canonical.step(token, pos, pos, None, true)?],
-            );
-        }
-        program_states(&loaded, &fast, &canonical)?;
-        println!("precise prefix canonical bits passed: prompt={length}, subsequent_steps=4");
+    let mut canonical = loaded.sequence(4096)?;
+    for length in [1, 51, 127, 257, 511, 1024, 1025, 1536, 2048] {
+        precise_prefix_checkpoint(&loaded, &mut fast, &mut canonical, &tokens, length)?;
     }
     fast.reset()?;
     canonical.reset()?;
-    fast.prefill_batch(&tokens[..1024], 0, false)?;
-    canonical.prefill_batch(&tokens[..1024], 0, false)?;
-    let a = fast.prefill_batch(&tokens[1024..1025], 1024, true)?;
-    let b = canonical.prefill_batch(&tokens[1024..1025], 1024, true)?;
+    for (index, chunk) in tokens[..2048].chunks(1024).enumerate() {
+        fast.prefill_batch(chunk, index * 1024, false)?;
+        canonical.prefill_batch(chunk, index * 1024, false)?;
+    }
+    let a = fast.prefill_batch(&tokens[2048..2049], 2048, true)?;
+    let b = canonical.prefill_batch(&tokens[2048..2049], 2048, true)?;
     let mut changed = 0;
     for ((ah, al), (bh, bl)) in a.iter().zip(&b) {
         for (a, b) in ah.iter().chain(al).zip(bh.iter().chain(bl)) {
@@ -160,10 +176,7 @@ fn bf16_precise_prefix_matches_canonical_checkpoint_bits() -> Result<()> {
             changed += usize::from(a.to_bits() != b.to_bits());
         }
     }
-    assert!(
-        changed > 0,
-        "bulk BF16 must not silently become canonical F32"
-    );
-    println!("BF16 bulk remains active beyond precise prefix: differing_values={changed}");
+    assert!(changed > 0, "bulkBF16 must remain active after2048");
+    println!("BF16 bulk remains active after2K: differing_values={changed}");
     Ok(())
 }

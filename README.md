@@ -89,7 +89,7 @@ infer /path/to/model
 
 This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace, input limits and CUDA memory admission are derived from the loaded model and device. Projection autotuning is enabled by default and reuses validated cached measurements.
 
-For supported CUDA FP4 checkpoints with FP8 KV and a complete MTP head, the server automatically pairs two draft tokens with the BF16 bulk-prefill path. Initial context through 1024 positions retains canonical F32 attention. Unsupported packages and devices retain canonical attention without MTP. Vision support stays enabled. `--num-speculative-tokens 0` selects the conservative canonical configuration.
+For supported CUDA FP4 checkpoints with FP8 KV and a complete MTP head, the server automatically pairs two draft tokens with the BF16 bulk-prefill path. Prompt chunks ending within the first 2048 positions retain canonical F32 attention. Unsupported packages and devices retain canonical attention without MTP. Vision support stays enabled. `--num-speculative-tokens 0` selects the conservative canonical configuration.
 
 Optional flags override these choices, for example `infer /path/to/model --listen 127.0.0.1:9000`. An explicit `--config` preserves the supplied runtime budgets; the original `infer serve --package ...` syntax remains supported. CPU execution requires explicit selection.
 
