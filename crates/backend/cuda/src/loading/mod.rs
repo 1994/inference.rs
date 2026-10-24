@@ -669,6 +669,14 @@ fn select_prompt_width(
             &[MAX_PREFILL_LANES]
         };
         for &wide in rungs {
+            // Target and draft retain separate prompt workspaces. Keep the automatic
+            // fast pair on the joint 1024-row rung so long private states remain fundable.
+            if weights.batch_width > 1
+                && weights.attention_profile.is_bf16()
+                && wide > WIDER_PREFILL_LANES
+            {
+                continue;
+            }
             let needed = prompt_logits::required_bytes(graph, weights, wide)?;
             tracing::info!(
                 target: "infer::load",

@@ -5,17 +5,41 @@ use infer_ir::OutputReadout;
 use std::collections::BTreeSet;
 impl CudaBackend {
     pub(super) fn available(&self) -> Result<u64> {
-        let used = self.active_budget()?;
-        // Idle programs and prefix snapshots are reclaimable. Omitting them makes
-        // repeated requests fail admission even when their exact state is already cached.
+        self.state_funding().map(|(free, _)| free)
+    }
+
+    pub(super) fn capacity_budget(&self) -> Result<u64> {
+        self.state_funding().map(|(_, capacity)| capacity)
+    }
+
+    /// Price shared prompt storage before publishing private-state capacity.
+    fn state_funding(&self) -> Result<(u64, u64)> {
+        let active = self.active_budget()?;
         let reclaimable = self
             .pool
             .reclaimable_bytes
             .saturating_add(self.prefix.bytes());
-        Ok(self
-            .budget
-            .saturating_sub(used)
-            .min(self.physical_available()?.saturating_add(reclaimable)))
+        let scratch = if self.slots.is_none() {
+            self.loaded.pending_prompt_scratch_bytes(true)?
+        } else {
+            0
+        };
+        let (free, capacity) = private_funding(
+            self.budget,
+            active,
+            self.physical_available()?,
+            reclaimable,
+            scratch,
+        );
+        // Pooled homes already own their workspace; their capacity is the prepaid pool.
+        Ok((
+            free,
+            if self.slots.is_some() {
+                self.budget
+            } else {
+                capacity
+            },
+        ))
     }
     pub(super) fn physical_available(&self) -> Result<u64> {
         Ok(self
@@ -511,3 +535,22 @@ impl CudaBackend {
         )
     }
 }
+
+/// Shared scratch consumes physical memory once, independently of per-state admission.
+fn private_funding(
+    budget: u64,
+    active: u64,
+    physical: u64,
+    reclaimable: u64,
+    scratch: u64,
+) -> (u64, u64) {
+    let headroom = physical.saturating_add(reclaimable).saturating_sub(scratch);
+    (
+        budget.saturating_sub(active).min(headroom),
+        budget.min(active.saturating_add(headroom)),
+    )
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/executor_state.rs"]
+mod tests;
