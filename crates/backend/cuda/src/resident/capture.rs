@@ -27,8 +27,8 @@ pub(super) enum CaptureMode {
     Flat,
     /// Prefill width 32: every slot is one `[32, size]` tensor used as a whole.
     Batched,
-    /// Pooled target verification keeps the established per-head reduction order.
-    Verification,
+    /// Verification preserves the ordinary pool's policy for its logical slots.
+    Verification(usize),
     /// Contiguous prompt rows with [position, active rows, state offset, unused] metadata.
     Prefill,
     /// Prefill width 32 with a per-lane `(t, h, w)` rotary table instead of one base position.
@@ -39,9 +39,9 @@ pub(super) enum CaptureMode {
 }
 
 impl CaptureMode {
-    pub(super) const fn verification(canonical: bool) -> Self {
+    pub(super) const fn verification(canonical: bool, candidates: usize) -> Self {
         if canonical {
-            Self::Verification
+            Self::Verification(candidates)
         } else {
             Self::Batched
         }
@@ -91,7 +91,7 @@ impl Capture<'_> {
         match self.mode {
             CaptureMode::Flat => identity(tensor),
             CaptureMode::Batched
-            | CaptureMode::Verification
+            | CaptureMode::Verification(_)
             | CaptureMode::Prefill
             | CaptureMode::PrefillRotary => tensor.view(&[tensor.size()]).map_err(error),
             CaptureMode::Row(lane) => self.arena.row(id, lane).map_err(error),
@@ -496,11 +496,19 @@ impl Capture<'_> {
         };
         #[cfg(test)]
         let options = super::gated_norm_discovery::model_options(dimension, gated, heads, options);
-        if self.mode != CaptureMode::Verification
-            && dimension.is_power_of_two()
+        let logical_heads = match self.mode {
+            CaptureMode::Verification(candidates) => {
+                if candidates == 0 || !heads.is_multiple_of(candidates) {
+                    return Err(error("verification normalization geometry"));
+                }
+                heads / candidates
+            }
+            _ => heads,
+        };
+        if dimension.is_power_of_two()
             && dimension <= NORM_ROWS_MAX_DIMENSION
-            && heads >= NORM_ROWS * NORM_ROWS
-            && heads.is_multiple_of(NORM_ROWS)
+            && logical_heads >= NORM_ROWS * NORM_ROWS
+            && logical_heads.is_multiple_of(NORM_ROWS)
         {
             self.scope.record(
                 aux::norm_rows(

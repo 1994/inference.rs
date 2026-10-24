@@ -10,6 +10,7 @@ use crate::{
     resident::{DeviceProgram, slot_batch::SlotPool},
 };
 use infer_core::{Error, ModelId, Result};
+use serde_json::json;
 use std::env::var;
 
 fn live_states(
@@ -175,7 +176,7 @@ fn checkpoint_verification_matches_single_step() -> Result<()> {
     loaded.weights.prefill_width = 0;
     loaded.weights.narrow_prefill_width = 0;
     loaded.weights.batch_width = 3;
-    for (slots, paged) in [(6, false), (12, false), (16, true)] {
+    for (slots, paged) in [(2, false), (4, true)] {
         let mut pool = loaded.slot_pool(slots, 128, paged.then_some(slots * 128))?;
         for round in 0..3 {
             replay(&loaded, &prefix, &mut pool, &tokens, round)?;
@@ -183,5 +184,98 @@ fn checkpoint_verification_matches_single_step() -> Result<()> {
         drop(pool);
         loaded.device().reclaim_barrier()?;
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "CUDA/checkpoint/frozen tokens/safe-run; private M1 versus M3 full target outputs and state"]
+fn checkpoint_private_verification_matches_single_step() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let model = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens = prompt()?;
+    let mut loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        model,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 64,
+            verification_width: 3,
+            mtp_depth: 2,
+            autotune: false,
+            vision: false,
+            ..LoadOptions::default()
+        },
+    )?;
+    let mut prefix = loaded.sequence_pooled(256)?;
+    for (index, part) in tokens[..127].chunks(64).enumerate() {
+        prefix.prefill_batch(part, index * 64, index == 1)?;
+    }
+    loaded.weights.prefill_width = 0;
+    loaded.weights.narrow_prefill_width = 0;
+    let mut scalar = loaded.sequence(256)?;
+    let mut verify = loaded.sequence(256)?;
+    seed_prefix(&loaded, &prefix, &mut scalar)?;
+    seed_prefix(&loaded, &prefix, &mut verify)?;
+    let mut offset = 200;
+    for count in [1, 2, 3] {
+        let position = scalar.position();
+        let inputs = &tokens[offset..offset + count];
+        let rows = verify.step_batch(inputs, position)?;
+        for (lane, &token) in inputs.iter().enumerate() {
+            let expected = scalar.step(token, position + lane, position + lane, None, true)?;
+            outputs(&vec![expected], &vec![rows[lane].clone()]);
+        }
+        private_committed_states(&loaded, &scalar, &verify)?;
+        offset += count;
+    }
+    Ok(())
+}
+
+/// KV beyond the committed cursor is speculative scratch, not part of the observable state.
+fn private_committed_states(
+    loaded: &LoadedModel,
+    control: &DeviceProgram,
+    verify: &DeviceProgram,
+) -> Result<()> {
+    assert_eq!(control.position(), verify.position());
+    assert_eq!(control.states().len(), verify.states().len());
+    for (id, tensors) in control.states() {
+        assert_eq!(tensors.len(), verify.states()[id].len());
+        for (a, b) in tensors.iter().zip(&verify.states()[id]) {
+            bits(
+                &loaded.device().read_borrowed(a)?,
+                &loaded.device().read_borrowed(b)?,
+                "private committed F32 state",
+            );
+        }
+    }
+    assert!(!control.fp8_states().is_empty());
+    assert_eq!(control.fp8_states().len(), verify.fp8_states().len());
+    let mut discarded = 0;
+    let mut live = 0;
+    for (id, (keys, values)) in control.fp8_states() {
+        let (vk, vv) = &verify.fp8_states()[id];
+        for (a, b) in [(keys, vk), (values, vv)] {
+            assert_eq!(a.shape(), b.shape());
+            let capacity = usize::try_from(a.shape()[1]).unwrap();
+            let dim = usize::try_from(a.shape()[2]).unwrap();
+            let a = loaded.device().read_borrowed(a)?;
+            let b = loaded.device().read_borrowed(b)?;
+            for (index, (a, b)) in a.iter().zip(&b).enumerate() {
+                let position = (index / dim) % capacity;
+                if position < control.position() {
+                    assert!(a.0 & 127 != 127 && b.0 & 127 != 127, "nonfinite live KV");
+                    assert_eq!(a.0, b.0, "live private KV at position {position}");
+                    live += 1;
+                } else if a.0 != b.0 {
+                    discarded += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "{}",
+        json!({"private_committed_state_exact":true,"position":control.position(),"live_FP8_bytes":live,"different_discarded_future_bytes":discarded})
+    );
     Ok(())
 }

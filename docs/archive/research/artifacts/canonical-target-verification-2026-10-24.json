@@ -1,24 +1,25 @@
 {
-  "status": "Numeric regression validated; task quality and serving performance pending. Defaults unchanged canonical/MTP0.",
+  "status": "Ordinary serving-pool target math numerically validated; fresh four-arm task quality running. Defaults remain canonical/MTP0; not approved for merge or fast defaults.",
   "host": "192.168.1.45",
   "base_commit": "3a74be076f0b2134acd00b9d14a99a4580d1712d",
   "binary": {
-    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-canonical-target-v1",
-    "sha256": "e511ea023c807211faee3983a7a226f4f546a4a855b44b57b1382ae9b231f609"
+    "binary": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-pooled-reference-v2",
+    "sha256": "e2f3c9a8c23b206e6f4e163c45ca4b7233b9f8877778343114d265ea33c800e5"
   },
   "source_files": {
-    "crates/backend/cuda/src/loading/mod.rs": "99243b46b371808390787e6f04385af2a08a817633745cb51847f1ed3c37d5c2",
+    "crates/backend/cuda/src/loading/mod.rs": "9be5fbfe6a93b59dc79d07169d5a7547f7db4a904808c29fbbdab6e51e686e26",
     "crates/backend/cuda/src/resident/attention_decode/workspace.rs": "7066ad631e342cd867bfcb5cc5e636f893d9e939657606c78ae814b5c6451366",
     "crates/backend/cuda/src/resident/batch.rs": "3de4a4640e3e430c90c9c660e21b88483a0a2b5b98f372111ee6755c5b6fca13",
-    "crates/backend/cuda/src/resident/capture.rs": "a7c8f8c36b5fb25c552a9d6804b665a2273be2c3d55cf22ab3acd973445feef4",
+    "crates/backend/cuda/src/resident/capture.rs": "8cea71b4e6a0a59519a29f97f5cfa4d65deedb686832b3a3430c16e689b3fffe",
     "crates/backend/cuda/src/resident/mod.rs": "8fb15b948180c76674bd6cf6082b11c43d48c124f96c0d411e896e80c6ad4a10",
     "crates/backend/cuda/src/resident/pool_gemv.rs": "9aa2aa5e078e0168505206ffddfb31e1c54e05fe907cdbb0949cb88881cb7062",
     "crates/backend/cuda/src/resident/slot_batch.rs": "70e2026498808cb4d42ab2c3f4b7fb4a92ef904cc085c4dd0d632696fde1f6c7",
-    "crates/backend/cuda/src/resident/slot_verify.rs": "5413fd4674e3f01739869e4754c8127b6bca48847dfb7624725cc0ea2c649a70",
+    "crates/backend/cuda/src/resident/slot_verify.rs": "dc1baa758147f27dc1265f37c9bf5b09dad15895a186c0a2fce971d52eee68b4",
     "crates/backend/cuda/src/resident/slot_verify_attention.rs": "05e1fa0c130acc921b1a5310b49659ba2195827f118a31c7aa39d77c1482d4f5",
     "crates/backend/cuda/tests/unit/loading_pool_gemv_cost.rs": "3d8008b0d1c8c22c6bc15f06794514aa7e0b764aa76eb442ec1a4114fa762a45",
-    "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "23e4d3c4a0ff1defe4e24c65c7e24d988d75925a05af31fc6aefcf0fc71e8cf0",
-    "crates/backend/cuda/src/resident/canonical_recurrent.rs": "9a12e69443696da0d6278f0797e886879e54968b2397499aa750345c97d9c533"
+    "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "d5bb66fb1cdaef3eb768109b3d7c9cc2b9b006fb13c1955a8c65b658b2afbc2d",
+    "crates/backend/cuda/src/resident/canonical_recurrent.rs": "9a12e69443696da0d6278f0797e886879e54968b2397499aa750345c97d9c533",
+    "crates/backend/cuda/tests/unit/loading_pooled_reference_verification.rs": "0ff19e95b04cb7779c30172fc90760369e8efb6d7ad059c5714d2560cfcb547c"
   },
   "raw_logs": {
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/geometry.log": "3b3a1dbb917497b7ac47a4d4747dd303824b1dc970b4f234e3a6718b867efe26",
@@ -33,19 +34,26 @@
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-build.log": "3c67beca2a973964fd2675d1bc8cd0206ec429126002b93bcf62a316ea6382cf",
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-validation.log": "60be9dc8516d2775e16d653bfbbc2dac1ef7a1bb29bcf0f1ad303d385973bf04",
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-wide.log": "f514ac167f42008e13eaf9931b819c1042f8fefcc15632ccd097d1ee416ddb5c",
-    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-gpu-regressions.log": "7fb3946557c63e1a5f92160ece6fb79caa3560d619db30fbdeceea071b0ff058"
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-gpu-regressions.log": "7fb3946557c63e1a5f92160ece6fb79caa3560d619db30fbdeceea071b0ff058",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-validation.log": "224a9b65dd89e66a52a453ac0a46ebddf71ed68a8b1fcdfe58c569f4bb2e7b18",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-full-cache-assert-v1.log": "224a9b65dd89e66a52a453ac0a46ebddf71ed68a8b1fcdfe58c569f4bb2e7b18",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-no-decode-fixture-v1.log": "f27da320c1acd3fd8e61c692120c163a38dbf0cfc11466ed7ae3ef9e53b8e81f",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-ordinary.log": "2ae45206ce1741fe3d1ef53e53efa25051c8b2c853899c9f34256c26d9990438"
   },
   "causes": [
     "Small DenseA/B projections above16 flattened rows switched accumulation provider.",
     "Three-lane grouped attention used a different reduction/partition geometry from single-step target attention.",
     "Snapshot-free Delta scoring and commit used distinct fused arithmetic; value-split matching alone did not remove differences.",
-    "Pooled normalization crossed the256-head threshold and switched from per-head norm to norm_rows."
+    "Candidate rows changed normalization dispatch. Derive dispatch from logical ordinary-pool heads after removing the candidate axis, preserving each ordinary serving-pool kernel choice."
   ],
   "retained_failures": [
     "Small projection fix alone:private84 hidden rows changed,4greedy mismatches; pooled18 rows changed.",
     "Canonical attention fixesprivate84outputs/42states; pooled remains different.",
     "Matching Delta value split1 still leaves all18pooled outputs different.",
-    "Canonical Delta scratch fixesfirstDelta; pooledfirstremainingGatedNorm differs1146/6144elements, max4.76837158203125e-7."
+    "Canonical Delta scratch fixesfirstDelta; pooledfirstremainingGatedNorm differs1146/6144elements, max4.76837158203125e-7.",
+    "V1 full quality failed despite private-oracle proof: canonical2 zero-shot upper bound2.80156%; BF162 overall2.71076%,zero4.24174%,eight2.04229%.",
+    "V2 test fixture full discarded KV comparison failed; retained evidence shows all live prefix bytes/F32 states exact, differences only beyond committed cursor.",
+    "V2 first ordinary-reference fixture accidentally created a verification-only pool and had no decode graph; retained failure, corrected reference constructor before successful oracle."
   ],
   "numeric_regression": {
     "historical14teacher_forced_cases": {
@@ -58,7 +66,7 @@
       "all_reported_bit_differences": 0
     },
     "independent_frozen_fixture": "shared-quant-reuse-2026-10-13/tokens-511.json",
-    "independent_pool_coverage": "6/12/16slots;allactive/even/last;diverse tokens;accepted1/2/3;release/rebind;16slotpagedKV;exacthidden/fullvocabulary/recurrent/liveFP8prefix;no rejected KV suffix comparison.",
+    "independent_pool_coverage": "Private reference only for2/4slots; separate ordinary serving-pool oracle6/6,12/12,16/12,16/16. Logical capacity8192; physical KV8704/8448; prefix127 across128 boundary; all/even/last active; fullhidden/logits; accepted1/2/3; release/rebind; F32 state/liveFP8 prefix exact and unchanged before commit.",
     "real_small_weights": 96,
     "fixtures_per_weight": 8,
     "row_widths": [
@@ -76,7 +84,32 @@
     "ordinary_tests": 136,
     "affected_gpu_tests": 9,
     "strict_cuda_clippy": "passed",
-    "layout_source_policy_inventory": "passed on staged source export without unrelated local staging trees"
+    "layout_source_policy_inventory": "passed on staged source export without unrelated local staging trees",
+    "v1_private_oracle_limitation": "V1 compared large pools with a private single-step reference, but ordinary serving pools already select norm_rows. Passing that oracle did not establish preservation of serving target math.",
+    "ordinary_serving_oracle": {
+      "output_pairs": 219,
+      "slot_state_checks": 276,
+      "bit_differences": 0
+    },
+    "private_committed_prefix": {
+      "cursors": [
+        128,
+        130,
+        133
+      ],
+      "live_FP8_bytes": [
+        4194304,
+        4259840,
+        4358144
+      ],
+      "bit_differences": 0,
+      "discarded_future_bytes_differing": [
+        65535,
+        32768,
+        0
+      ],
+      "scope": "Only valid prefix is observable after rollback; all F32 recurrent state remains exact."
+    }
   },
   "scratch": {
     "geometries": "one state and output per unique(value_heads,key_dim,value_dim)",
@@ -85,9 +118,23 @@
     "per_slot_full_rollback_snapshots": false
   },
   "qualification_pending": {
-    "task_quality": "original1024 frozen GSM8K;unchanged512cap/scorer/C16/gross2pct CP95 overall and512strata, canonical2 andBF162 each contrasted withmain0;prepared but not run",
-    "performance": "fresh3profile actual-default pilot running; old13.417s BF16MTP2 is not a measurement of this repaired binary",
+    "task_quality": {
+      "status": "RUNNING",
+      "root": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-quality-v2",
+      "contract_sha256": "91a3b5980a6923042068876070d00399bcc8248c6eae640e9c4e7ab928411c52",
+      "arms": "Fresh maincanonical0 / correctedcanonical2 / correctedBF162 / correctedFP162,1024tasks each,16processes, balanced pair order. Original512cap/scorer/C16/CP95gross2pct overall and512zero/eight strata unchanged. No V1 samples reused; no joint-family confidence claim."
+    },
+    "performance": "Prior V1 descriptive C16 medians18.640s default,20.392s canonical2,16.173s BF162. Not a performance claim for this V2 binary; no new performance/default qualification yet.",
     "default_flags": "unchanged",
     "vllm_comparison": "no fresh parity claim"
+  },
+  "previous_candidate_quality": {
+    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/fixed-target-quality-v1/analysis.json",
+    "sha256": "7820470cae5a3b16c5115271572c0ed329d08b4112a573118a5b33ad6c64b292",
+    "all_raw_bindings": {
+      "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/fixed-target-quality-v1/analysis-all-raw-bindings.json",
+      "sha256": "07d3b6a4bad02e3b3ba94faed98448eacae96e1564ee5f07f6610fdf7288b4b9"
+    },
+    "status": "Rejected; original analyzer omitted c raw hashes only, numeric c results correct. Supplemental bindings retain all12 raw files; no frozen analyzer/statistic changes."
   }
 }

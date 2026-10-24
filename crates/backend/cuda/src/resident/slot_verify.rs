@@ -412,7 +412,7 @@ impl BatchBuilder<'_> {
                         external: self.external,
                         capacity: self.capacity,
                         fusion: &mut no_fusion,
-                        mode: CaptureMode::verification(self.weights.fusion.is_none()),
+                        mode: CaptureMode::verification(self.weights.fusion.is_none(), verify),
                     }
                     .record(node)?,
                     Dispatch32::Row if fused && super::slot_recurrent::covers(node) => {
