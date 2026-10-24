@@ -8,6 +8,7 @@ pub use input::{image, mrope, prompt, video, vision};
 mod workload;
 /// Canonical provider import result, re-exported for package consumers.
 pub use infer_spi::ImportedModel;
+pub use input::constraint::{CONSTRAINT_REQUEST_BYTES, ToolConstraints};
 pub use input::image::{ImageProcessor, PreprocessedImage, RgbImage};
 pub use input::prompt::{
     ExpandedPrompt, MediaLayout, MediaSpan, PreparedPrompt, PromptImage, RawImage, VisualPlacement,

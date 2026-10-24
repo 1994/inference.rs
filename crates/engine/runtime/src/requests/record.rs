@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestRecord {
+    #[serde(default)]
+    pub constraint: Option<infer_spi::ConstraintHandle>,
     pub request: Arc<CanonicalRequest>,
     pub tenant: Arc<str>,
     #[serde(skip)]

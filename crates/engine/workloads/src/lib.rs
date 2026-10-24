@@ -2,8 +2,8 @@
 mod constants;
 mod sampling;
 pub use sampling::{
-    SamplingHistory, SamplingWorkspace, probabilities, sample, sample_reusing, sample_with_history,
-    sampling_uniform,
+    SamplingHistory, SamplingWorkspace, TokenMask, probabilities, probabilities_constrained,
+    sample, sample_constrained, sample_reusing, sample_with_history, sampling_uniform,
 };
 mod registry;
 pub use registry::WorkloadRegistry;

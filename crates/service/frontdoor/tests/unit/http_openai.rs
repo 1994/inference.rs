@@ -237,11 +237,7 @@ async fn invalid_and_unsupported_requests_return_errors_without_admission() {
             json!([{"type": "function"}]),
             StatusCode::BAD_REQUEST,
         ),
-        (
-            "tool_choice",
-            json!("required"),
-            StatusCode::NOT_IMPLEMENTED,
-        ),
+        ("tool_choice", json!("required"), StatusCode::BAD_REQUEST),
         ("max_completion_tokens", json!(3), StatusCode::BAD_REQUEST),
     ];
     for (field, value, expected) in cases {
@@ -635,3 +631,6 @@ async fn completion_stream_uses_sdk_choice_schema_and_reports_usage() {
     assert_eq!(chunks.last().unwrap(), "[DONE]");
     handle.shutdown().await.unwrap();
 }
+
+#[path = "http_strict_tools.rs"]
+mod strict_tools;

@@ -2,6 +2,9 @@
 use infer_core::{Error, Result};
 use infer_ir::Sampling;
 
+mod mask;
+pub use mask::TokenMask;
+
 /// Odd multiplier that mixes the request id into the seeded random state.
 const SEED_MIX_MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
 /// First avalanche multiplier applied to the mixed random state.
@@ -95,9 +98,35 @@ pub fn sample_with_history(
     history: SamplingHistory<'_>,
     scratch: &mut SamplingWorkspace,
 ) -> Result<u32> {
+    sample_constrained(logits, sampling, request, position, history, None, scratch)
+}
+
+/// Sample from the legal tokens for the current committed generation prefix.
+///
+/// The caller owns the grammar state and supplies its mask for this position. Filtering happens
+/// before top-k, top-p and min-p, so those transforms operate on the legal distribution. A missing
+/// mask preserves unconstrained sampling. This function does not advance a grammar matcher.
+/// # Errors
+/// Rejects invalid parameters, non-finite logits (even for masked tokens), mismatched vocabulary,
+/// invalid history, or a mask with no legal tokens. An empty legal set never falls back to ordinary
+/// sampling or unconditionally selects EOS.
+pub fn sample_constrained(
+    logits: &[f32],
+    sampling: &Sampling,
+    request: u64,
+    position: usize,
+    history: SamplingHistory<'_>,
+    mask: Option<TokenMask<'_>>,
+    scratch: &mut SamplingWorkspace,
+) -> Result<u32> {
     sampling.validate()?;
+    if mask.is_some_and(|mask| mask.vocabulary() != logits.len()) {
+        return Err(Error::invalid(
+            "token mask vocabulary does not match logits",
+        ));
+    }
     if sampling.uses_plain_greedy() {
-        return greedy(logits);
+        return greedy(logits, mask);
     }
     if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) {
         return Err(Error::invalid("invalid sampling logits"));
@@ -107,6 +136,12 @@ pub fn sample_with_history(
         .candidates
         .extend(logits.iter().copied().enumerate());
     penalties(sampling, history, scratch)?;
+    if let Some(mask) = mask {
+        scratch.candidates.retain(|(index, _)| mask.allows(*index));
+        if scratch.candidates.is_empty() {
+            return Err(Error::invalid("token mask allows no candidates"));
+        }
+    }
     let order = |a: &(usize, f32), b: &(usize, f32)| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0));
     if sampling.temperature == 0.0 {
         return scratch
@@ -137,17 +172,23 @@ fn token(index: usize) -> Result<u32> {
 
 /// Greedy decoding needs neither an indexed vocabulary copy nor sorting scratch.
 /// Preserve total ordering (including signed zero) and the lowest-index tie rule.
-fn greedy(logits: &[f32]) -> Result<u32> {
+fn greedy(logits: &[f32], mask: Option<TokenMask<'_>>) -> Result<u32> {
     let mut best = None;
     for (index, &value) in logits.iter().enumerate() {
         if !value.is_finite() {
             return Err(Error::invalid("invalid sampling logits"));
         }
+        if mask.is_some_and(|mask| !mask.allows(index)) {
+            continue;
+        }
         if best.is_none_or(|(_, maximum): (usize, f32)| value.total_cmp(&maximum).is_gt()) {
             best = Some((index, value));
         }
     }
-    token(best.ok_or_else(|| Error::invalid("empty logits"))?.0)
+    token(
+        best.ok_or_else(|| Error::invalid("no legal sampling candidates"))?
+            .0,
+    )
 }
 #[expect(
     clippy::cast_precision_loss,
@@ -264,8 +305,23 @@ pub fn probabilities(
     sampling: &Sampling,
     history: SamplingHistory<'_>,
 ) -> Result<Vec<f64>> {
+    probabilities_constrained(logits, sampling, history, None)
+}
+
+/// Return the normalized filtered distribution over legal tokens, with zero mass elsewhere.
+///
+/// This is the distribution used by [`sample_constrained`]. Speculative verification must use a
+/// separate mask for each candidate prefix; this helper does not implement matcher rollback.
+/// # Errors
+/// Rejects the same invalid inputs as constrained sampling.
+pub fn probabilities_constrained(
+    logits: &[f32],
+    sampling: &Sampling,
+    history: SamplingHistory<'_>,
+    mask: Option<TokenMask<'_>>,
+) -> Result<Vec<f64>> {
     let mut scratch = SamplingWorkspace::default();
-    let selected = sample_with_history(logits, sampling, 0, 0, history, &mut scratch)?;
+    let selected = sample_constrained(logits, sampling, 0, 0, history, mask, &mut scratch)?;
     let mut probabilities = vec![0.0; logits.len()];
     if sampling.temperature == 0.0 {
         probabilities[selected as usize] = 1.0;

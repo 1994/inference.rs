@@ -6,3 +6,5 @@ pub mod text;
 pub mod tool;
 pub mod video;
 pub mod vision;
+
+pub mod constraint;

@@ -182,6 +182,7 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
         r.status
             .transition(RequestStatus::Finished(reason.clone()))?;
         r.pending_finish = None;
+        r.constraint = None;
         r.outputs.clear();
         if let Some(output) = &mut output {
             output.attach_credit(

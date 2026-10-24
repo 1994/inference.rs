@@ -7,6 +7,7 @@ fn job() -> Result<OutputJob> {
     }))
     .map_err(|error| Error::invalid(error.to_string()))?;
     Ok(OutputJob {
+        constraint: None,
         request: Arc::new(request),
         output: ModelOutput {
             next_token: Some(5),
@@ -90,5 +91,62 @@ fn legacy_output_serialization_and_host_sampling_remain_valid() -> Result<()> {
     let mut value = job()?;
     value.output = old;
     assert_eq!(process(value)?.tokens.as_slice(), &[7]);
+    Ok(())
+}
+
+struct OnlyTokenTwo;
+impl infer_spi::GenerationConstraint for OnlyTokenTwo {
+    fn mask(&mut self) -> Result<&[u32]> {
+        Ok(&[4])
+    }
+    fn commit(&mut self, token: u32) -> Result<()> {
+        if token == 2 {
+            Ok(())
+        } else {
+            Err(Error::invariant("illegal token committed"))
+        }
+    }
+}
+fn constrained_job() -> Result<OutputJob> {
+    let mut value = job()?;
+    value.constraint = Some(infer_spi::ConstraintHandle::new(
+        Box::new(OnlyTokenTwo),
+        8,
+        128,
+    ));
+    value.output.tokens.clear();
+    value.output.next_token = None;
+    value.output.logits = vec![0.0, 100.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    Ok(value)
+}
+#[test]
+fn constrained_output_masks_the_peak_and_transfers_position_state() -> Result<()> {
+    let first = process(constrained_job()?)?;
+    assert_eq!(first.tokens.as_slice(), &[2]);
+    let mut second = constrained_job()?;
+    second.constraint = first.constraint;
+    second.sample = Some(1);
+    second.generated.push(2);
+    let mut result = process(second)?;
+    assert_eq!(result.tokens.as_slice(), &[2]);
+    let handle = result.constraint.as_mut().unwrap();
+    assert!(handle.select(1, |_| Ok(2)).is_err());
+    // Diagnostic clones cannot deserialize into a matcher that silently restarts at position 0.
+    let wire = serde_json::to_string(handle).unwrap();
+    assert!(serde_json::from_str::<infer_spi::ConstraintHandle>(&wire).is_err());
+    let mut clone = handle.clone();
+    assert_eq!(clone.select(2, |_| Ok(2))?, 2);
+    assert!(handle.select(2, |_| Ok(2)).is_err());
+    Ok(())
+}
+#[test]
+fn constrained_output_rejects_device_tokens_and_speculative_prefixes() -> Result<()> {
+    let mut device = constrained_job()?;
+    device.output.next_token = Some(1);
+    device.output.logits.clear();
+    assert!(process(device).is_err());
+    let mut speculative = constrained_job()?;
+    speculative.output.tokens.push(1);
+    assert!(process(speculative).is_err());
     Ok(())
 }

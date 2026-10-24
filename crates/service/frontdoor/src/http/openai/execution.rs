@@ -32,6 +32,8 @@ pub(super) struct Prepared {
 
 /// Everything the preparation closure needs to encode one request.
 struct Encoding {
+    constraint: Option<infer_models::ToolConstraints>,
+    vocabulary: usize,
     assets: Arc<infer_models::TextAssets>,
     messages: Option<Vec<infer_models::ChatMessage>>,
     prompt: Option<String>,
@@ -47,7 +49,10 @@ struct Encoding {
 
 impl Encoding {
     /// Encode the prompt and describe the workload to run over it.
-    fn encode(self, context: &CpuContext) -> infer_core::Result<CanonicalRequest> {
+    fn encode(
+        self,
+        context: &CpuContext,
+    ) -> infer_core::Result<(CanonicalRequest, Option<infer_spi::ConstraintHandle>)> {
         context.check()?;
         let tokens = if let Some(messages) = self.messages {
             let rendered = self.assets.render_chat(
@@ -69,21 +74,38 @@ impl Encoding {
                 .encode(self.prompt.as_deref().unwrap_or_default(), true)?
         };
         self.count.store(tokens.len(), Ordering::Relaxed);
-        Ok(CanonicalRequest {
-            id: self.id,
-            model: self.model,
-            session: None,
-            input: RequestInput::Sequence {
-                tokens: tokens.into(),
-                media: vec![],
+        let constraint = self
+            .constraint
+            .as_ref()
+            .map(|spec| {
+                self.assets.tool_constraint(
+                    spec,
+                    &self.sampling,
+                    self.enable_thinking,
+                    self.reasoning_open.load(Ordering::Acquire),
+                    self.vocabulary,
+                )
+            })
+            .transpose()?;
+        context.check()?;
+        Ok((
+            CanonicalRequest {
+                id: self.id,
+                model: self.model,
+                session: None,
+                input: RequestInput::Sequence {
+                    tokens: tokens.into(),
+                    media: vec![],
+                },
+                workload: Workload::Generate {
+                    max_new_tokens: self.max_new_tokens,
+                },
+                qos: infer_ir::Qos::default(),
+                sampling: self.sampling,
+                extensions: BTreeMap::new(),
             },
-            workload: Workload::Generate {
-                max_new_tokens: self.max_new_tokens,
-            },
-            qos: infer_ir::Qos::default(),
-            sampling: self.sampling,
-            extensions: BTreeMap::new(),
-        })
+            constraint,
+        ))
     }
 }
 
@@ -99,19 +121,7 @@ pub(super) async fn prepare(
 ) -> ApiResult<Prepared> {
     let requested = request.validate(chat)?;
     let policy = request.tool_policy(chat)?;
-    if policy.parses() && !state.assets.supports_tool_calls() {
-        return Err(
-            Error::unsupported("the model template has no supported tool-call dialect").into(),
-        );
-    }
-    // Streaming publishes text incrementally, so it needs a decoder that never rewrites a
-    // published prefix. Packages without one are refused rather than degraded silently.
-    if request.stream == Some(true) && !state.assets.supports_streaming_decode() {
-        return Err(Error::unsupported(
-            "streaming needs a byte-level tokenizer decoder; this package cannot publish a stable incremental decode",
-        )
-        .into());
-    }
+    validate_capabilities(state, &request, &policy)?;
     let inspection = state.handle.inspect().await?;
     let limits = inspection.lengths;
     // An explicit budget over the service cap is a parameter error; an omitted budget uses the
@@ -124,7 +134,14 @@ pub(super) async fn prepare(
         .into());
     }
     let max_new_tokens = requested.tokens.min(limits.output_cap);
-    let bytes = request.preparation_bytes(max_new_tokens)?;
+    let bytes = request
+        .preparation_bytes(max_new_tokens)?
+        .checked_add(if policy.constraint().is_some() {
+            infer_models::CONSTRAINT_REQUEST_BYTES
+        } else {
+            0
+        })
+        .ok_or_else(|| Error::invalid("constraint preparation budget overflow"))?;
     if request.model != inspection.model_name {
         return Err(Error::new(ErrorCode::NotFound, "model is not served; see /v1/models").into());
     }
@@ -170,6 +187,8 @@ pub(super) async fn prepare(
         "resolved sampling parameters"
     );
     let encoding = Encoding {
+        constraint: policy.constraint(),
+        vocabulary: state.handle.vocabulary(),
         assets,
         messages,
         prompt,
@@ -184,10 +203,11 @@ pub(super) async fn prepare(
     };
     let receiver = state
         .handle
-        .submit_preparing(
+        .submit_constrained_preparing(
             id,
             bytes,
             super::super::trace_parent(headers),
+            None,
             move |context| encoding.encode(context),
         )
         .await?;
@@ -389,3 +409,24 @@ pub(super) fn finish_reason(reason: &FinishReason) -> infer_core::Result<&'stati
 #[cfg(test)]
 #[path = "../../../tests/unit/http_openai_execution.rs"]
 mod tests;
+
+fn validate_capabilities(
+    state: &TextState,
+    request: &GenerationRequest,
+    policy: &ToolPolicy,
+) -> ApiResult<()> {
+    if policy.parses() && !state.assets.supports_tool_calls() {
+        return Err(
+            Error::unsupported("the model template has no supported tool-call dialect").into(),
+        );
+    }
+    // Streaming publishes text incrementally, so it needs a decoder that never rewrites a
+    // published prefix. Packages without one are refused rather than degraded silently.
+    if request.stream == Some(true) && !state.assets.supports_streaming_decode() {
+        return Err(Error::unsupported(
+            "streaming needs a byte-level tokenizer decoder; this package cannot publish a stable incremental decode",
+        )
+        .into());
+    }
+    Ok(())
+}

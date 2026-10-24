@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 fn policy(names: &[&str]) -> ToolPolicy {
     ToolPolicy::Auto {
+        constraint: None,
         declared: names
             .iter()
             .map(|name| (*name).to_string())

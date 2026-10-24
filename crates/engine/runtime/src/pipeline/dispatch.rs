@@ -82,7 +82,8 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
                 plain_greedy: matches!(
                     record.request.workload,
                     infer_ir::Workload::Generate { .. }
-                ) && record.request.sampling.uses_plain_greedy(),
+                ) && record.constraint.is_none()
+                    && record.request.sampling.uses_plain_greedy(),
                 request: work.request,
                 state: work.state,
                 tokens,

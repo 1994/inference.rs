@@ -46,6 +46,11 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     /// # Errors
     /// Returns a conflict error while execution is in flight, or a state/cost-provider error while capturing a checkpoint.
     pub fn snapshot(&self) -> Result<RuntimeSnapshot> {
+        if self.host.requests.values().any(|r| r.constraint.is_some()) {
+            return Err(Error::unsupported(
+                "live generation constraints cannot be checkpointed",
+            ));
+        }
         if !self.resources_pending.is_empty() || !self.output_pending.is_empty() {
             return Err(Error::new(
                 ErrorCode::Conflict,
@@ -91,11 +96,22 @@ impl<B: BackendProvider, P: SchedulingPolicy> Engine<B, P> {
     /// # Errors
     /// Returns validation, planning, backend, or invariant errors if an action cannot be applied to this engine.
     pub fn replay(&mut self, actions: &[ReplayAction]) -> Result<()> {
+        if actions
+            .iter()
+            .any(|action| matches!(action, ReplayAction::ConstrainedSubmit(_)))
+        {
+            return Err(Error::unsupported(
+                "constrained generation journal cannot be replayed",
+            ));
+        }
         self.replaying = true;
         let result = (|| {
             for action in actions {
                 match action {
                     ReplayAction::Submit(request) => self.submit((**request).clone())?,
+                    ReplayAction::ConstrainedSubmit(_) => {
+                        return Err(Error::unsupported("constrained replay"));
+                    }
                     ReplayAction::Tick { now_us } => {
                         self.tick(*now_us)?;
                     }

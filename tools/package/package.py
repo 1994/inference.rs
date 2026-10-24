@@ -1,4 +1,4 @@
-"""Thin cargo-zigbuild/archive driver; target policy and metadata belong to build.rs."""
+"""Cargo/Apple-linker and cargo-zigbuild archive driver; target policy belongs to build.rs."""
 
 import argparse
 import hashlib
@@ -69,6 +69,14 @@ def digest(path):
 
 
 def cargo(action, plan):
+    # Apple clang supports both macOS architectures. Use its native linker for cdylib
+    # dependencies: Zig loses rustc's exported-symbols-list argument on this path.
+    if (
+        action == "zigbuild"
+        and plan["target"].endswith("-apple-darwin")
+        and platform.system() == "Darwin"
+    ):
+        action = "build"
     command = [
         "cargo",
         action,

@@ -132,6 +132,7 @@ impl KernelProvider for DeclaredKernels {
 
 struct State {
     history: Vec<u32>,
+    output_cursor: usize,
 }
 
 pub struct ProtocolBackend {
@@ -141,6 +142,7 @@ pub struct ProtocolBackend {
     resources: infer_spi::ResourcePool,
     hidden: usize,
     capacity: usize,
+    script: Vec<usize>,
 }
 
 impl ProtocolBackend {
@@ -176,6 +178,16 @@ impl ProtocolBackend {
         Ok(backend)
     }
 
+    /// A declared sequence of peaks, advanced once per logits readout for each request.
+    pub fn scripted(tokens: Vec<usize>, ir: &ModelIr) -> Result<Self> {
+        if tokens.iter().any(|&token| token >= ir.vocab_size) {
+            return Err(Error::invalid("script token outside vocabulary"));
+        }
+        let mut backend = Self::new(16, 8, ir)?;
+        backend.script = tokens;
+        Ok(backend)
+    }
+
     /// The same double with a declared weight tag.
     ///
     /// A snapshot records the backend's `identity` as its weights fingerprint, so a scene that
@@ -207,6 +219,7 @@ impl ProtocolBackend {
             resources: infer_spi::ResourcePool::new(requests + 4)?,
             hidden: ir.hidden_size,
             capacity: requests,
+            script: Vec::new(),
         })
     }
 }
@@ -269,7 +282,13 @@ impl BackendProvider for ProtocolBackend {
         }
         self.states.clear();
         for (id, tokens) in history {
-            self.states.insert(id, State { history: tokens })?;
+            self.states.insert(
+                id,
+                State {
+                    history: tokens,
+                    output_cursor: 0,
+                },
+            )?;
         }
         Ok(())
     }
@@ -307,6 +326,7 @@ impl BackendProvider for ProtocolBackend {
             state,
             State {
                 history: Vec::new(),
+                output_cursor: 0,
             },
         )?;
         Ok(())
@@ -356,6 +376,12 @@ impl BackendProvider for ProtocolBackend {
             let rows = state.history.len();
             let readout = task.tokens.readout();
             let mut output = self.template.clone();
+            if readout == OutputReadout::Logits && !self.script.is_empty() {
+                output.logits.fill(0.0);
+                let token = self.script[state.output_cursor.min(self.script.len() - 1)];
+                output.logits[token] = 10.0;
+                state.output_cursor += 1;
+            }
             if readout == OutputReadout::None {
                 output.logits.clear();
             }
