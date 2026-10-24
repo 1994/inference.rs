@@ -397,7 +397,7 @@ async fn streaming_completions_agree_with_the_complete_reply() {
     );
     let text: String = chunks
         .iter()
-        .filter_map(|chunk| chunk["choices"][0]["delta"]["text"].as_str())
+        .filter_map(|chunk| chunk["choices"][0]["text"].as_str())
         .collect();
     assert_eq!(text, complete["choices"][0]["text"]);
     assert_eq!(chunks[0]["object"], "text_completion");
@@ -598,5 +598,40 @@ async fn auto_tools_require_a_package_bound_output_dialect() {
     payload["model"] = json!(model);
     let (status, _) = call(app, "/v1/chat/completions", Some(payload)).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn retrieve_model_matches_list_and_rejects_unknown_names() {
+    let (handle, assets) = fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let (_, list) = call(app.clone(), "/v1/models", None).await;
+    let (status, model) = call(app.clone(), "/v1/models/1", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(model, list["data"][0]);
+    let (status, error) = call(app, "/v1/models/missing", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(error["error"]["code"], "model_not_found");
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn completion_stream_uses_sdk_choice_schema_and_reports_usage() {
+    let (handle, assets) = streaming_fixture();
+    let app = router_with_text(handle.clone(), assets);
+    let payload = json!({"model":"1", "prompt":"hello", "max_tokens":2,
+        "stream":true, "stream_options":{"include_usage":true}});
+    let (status, body) = call_stream(app, "/v1/completions", payload).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let chunks = stream_data(&body);
+    for chunk in &chunks[..chunks.len() - 2] {
+        assert!(chunk["choices"][0]["text"].is_string(), "{chunk}");
+        assert!(chunk["choices"][0].get("delta").is_none());
+        assert!(chunk.get("usage").unwrap().is_null());
+    }
+    let usage = &chunks[chunks.len() - 2];
+    assert_eq!(usage["choices"], json!([]));
+    assert_eq!(usage["usage"]["completion_tokens"], 2);
+    assert_eq!(chunks.last().unwrap(), "[DONE]");
     handle.shutdown().await.unwrap();
 }

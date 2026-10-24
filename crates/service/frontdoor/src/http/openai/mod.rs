@@ -11,7 +11,7 @@ use super::text::TextState;
 use axum::extract::rejection::JsonRejection;
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
     routing::get,
@@ -27,6 +27,7 @@ type Payload = Result<Json<GenerationRequest>, JsonRejection>;
 pub(super) fn routes() -> Router<TextState> {
     Router::new()
         .route("/v1/models", get(models))
+        .route("/v1/models/{model}", get(retrieve_model))
         .route("/v1/chat/completions", post(chat))
         .route("/v1/completions", post(completion))
 }
@@ -37,6 +38,23 @@ async fn models(State(state): State<TextState>) -> ApiResult<Json<Value>> {
     Ok(Json(json!({"object":"list", "data":[{
         "id":model, "object":"model", "created":0, "owned_by":"inference.rs"
     }]})))
+}
+
+async fn retrieve_model(
+    State(state): State<TextState>,
+    Path(model): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let served = state.handle.inspect().await?.model_name;
+    if model != served {
+        return Err(infer_core::Error::new(
+            infer_core::ErrorCode::NotFound,
+            "model is not served; see /v1/models",
+        )
+        .into());
+    }
+    Ok(Json(
+        json!({"id":served, "object":"model", "created":0, "owned_by":"inference.rs"}),
+    ))
 }
 
 async fn chat(

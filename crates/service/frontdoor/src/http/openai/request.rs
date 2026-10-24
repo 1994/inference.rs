@@ -5,6 +5,7 @@ use infer_core::{Error, Result};
 use infer_models::{ChatMessage, ToolCall};
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::result::Result as StdResult;
 
 /// Maximum chat messages accepted in one generation request.
 const MAX_CHAT_MESSAGES: usize = 256;
@@ -12,6 +13,8 @@ const MAX_CHAT_MESSAGES: usize = 256;
 const DEFAULT_MAX_COMPLETION_TOKENS: usize = 16;
 /// Largest number of function tools accepted in one request.
 const MAX_TOOLS: usize = 128;
+/// `OpenAI` function names contain at most 64 ASCII characters.
+const MAX_TOOL_NAME_BYTES: usize = 64;
 
 /// The generated-token budget a request asked for, before the service cap and remaining
 /// context apply.
@@ -118,7 +121,6 @@ impl GenerationRequest {
             || self.tools.is_some()
             || self.tool_choice.is_some()
             || self.parallel_tool_calls.is_some()
-            || self.stream_options.is_some()
         {
             return Err(Error::invalid(
                 "completions require a nonempty string prompt; use max_tokens",
@@ -173,16 +175,23 @@ impl GenerationRequest {
             if tool.kind != "function" {
                 return Err(Error::unsupported("only function tools are supported"));
             }
-            let name = tool.function.name.trim();
-            if name.is_empty() {
-                return Err(Error::invalid("tool function name must not be empty"));
+            let name = &tool.function.name;
+            if name.is_empty()
+                || name.len() > MAX_TOOL_NAME_BYTES
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            {
+                return Err(Error::invalid(
+                    "tool function name must be 1..64 ASCII letters, digits, underscores or dashes",
+                ));
             }
             if tool.function.strict == Some(true) {
                 return Err(Error::unsupported(
                     "strict tool schemas require generation constraints",
                 ));
             }
-            if !names.insert(name.to_string()) {
+            if !names.insert(name.clone()) {
                 return Err(Error::invalid("tool function names must be unique"));
             }
             template.push(serde_json::json!({
@@ -211,7 +220,12 @@ impl GenerationRequest {
                 }
                 _ => return Err(Error::invalid("unknown tool_choice mode")),
             },
-            Some(WireToolChoice::Named { function, .. }) => {
+            Some(WireToolChoice::Named { kind, function }) => {
+                if kind != "function" || !names.contains(&function.name) {
+                    return Err(Error::invalid(
+                        "tool_choice must name a declared function tool",
+                    ));
+                }
                 return Err(Error::unsupported(format!(
                     "tool_choice naming {:?} requires generation constraints",
                     function.name
@@ -320,10 +334,19 @@ pub(super) struct WireMessage {
     pub role: String,
     #[serde(default)]
     pub content: Option<Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_tool_calls")]
     pub tool_calls: Vec<WireToolCall>,
     #[serde(default)]
     pub tool_call_id: Option<String>,
+}
+
+/// SDK message serialization can include `tool_calls: null`.
+fn nullable_tool_calls<'de, D>(deserializer: D) -> StdResult<Vec<WireToolCall>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(Option::<Vec<WireToolCall>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl WireMessage {
@@ -440,7 +463,7 @@ pub(super) enum WireToolChoice {
     Mode(String),
     Named {
         #[serde(rename = "type")]
-        _kind: String,
+        kind: String,
         function: WireToolName,
     },
 }
