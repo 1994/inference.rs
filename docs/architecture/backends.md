@@ -46,6 +46,9 @@ shared storage 用于 CPU / device 可见数据，private storage 用于设备�
 3. 注册匹配目标的 kernel，并通过独立数值、状态 invariance、取消 / 排空与跨 owner 拒绝测试。
 4. 接入 CLI catalog、硬件门禁、profile 与原始性能报告；未经过实机执行的能力保持明确的 Unsupported。
 
+Tier 划分、共享装载/状态契约、一致性检查与完成定义见[新增 backend](../guides/adding-a-backend.md)；
+接入成本盘点与分阶段计划见[Backend 标准化与接入 SOP 研究](../research/backend-standardization-2026-10-25.md)。
+
 ## CUDA 与支持限制
 
 CUDA provider 已接入 CLI/HTTP，执行设备驻留图、状态/图复用、受限连续解码批处理与贪心 MTP。provider 当前同步执行；批处理受 slot、KV 容量和请求兼容性约束，不能视作任意模型或批次均可融合。模型提供 topology、draft 和精度策略；设备侧选择 kernel 与融合，调度不依赖具体实现。
