@@ -1,4 +1,4 @@
-"""Thin cargo-zigbuild/archive driver; target policy and metadata belong to build.rs."""
+"""Cargo/Apple-linker and cargo-zigbuild archive driver; target policy belongs to build.rs."""
 
 import argparse
 import hashlib
