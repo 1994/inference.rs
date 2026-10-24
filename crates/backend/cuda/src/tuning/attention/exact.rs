@@ -22,7 +22,7 @@ use std::{
 
 const SCHEMA: &str = "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1";
 const SUPPORTED_GEOMETRY: (usize, usize, usize) = (24, 4, 256);
-const SUPPORTED_LANES: [usize; 2] = [64, 256];
+const SUPPORTED_LANES: [usize; 4] = [64, 256, 1024, 2048];
 const SHA256_HEX_LEN: usize = 64;
 const TIMED_FIXTURES: [usize; 2] = [0, 1];
 
@@ -169,7 +169,8 @@ fn resolve(
             return Ok(entry.selected);
         }
     }
-    if !autotune || !session.permits_attention_search() {
+    // Wide quadratic F64 proofs are prepared offline, never added to model startup.
+    if shape.lanes > SUPPORTED_LANES[1] || !autotune || !session.permits_attention_search() {
         return Ok(Choice::Simt);
     }
     let Some(entry) = tune(device, key.clone(), session)? else {
@@ -280,3 +281,29 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/tuning_attention_fp8_convert.rs"]
 mod fp8_convert_tests;
+
+#[cfg(test)]
+pub(crate) fn validate_and_cache(
+    device: &CudaDevice,
+    shape: Shape,
+    session: &ResidentTuningSession,
+) -> Result<Choice> {
+    let key = key(device, shape)?;
+    let entry = tune(device, key.clone(), session)?
+        .ok_or_else(|| Error::invalid("offline exact attention proof budget expired"))?;
+    if !entry.valid()
+        || !update_table(table_path().as_deref(), |table| {
+            table.resident_exact_attention.retain(|e| e.key != key);
+            table.resident_exact_attention.push(entry.clone());
+        })
+    {
+        return Err(Error::invalid(
+            "offline exact attention proof could not be cached",
+        ));
+    }
+    println!(
+        "WIDE_EXACT_ATTENTION_TUNING {}",
+        serde_json::to_string(&entry).map_err(device_error)?
+    );
+    Ok(entry.selected)
+}

@@ -4,6 +4,7 @@
 
 | 目录 | 入口 | 用途 |
 |---|---|---|
+| `cuda` | [kernels.py](cuda/kernels.py) | CUDA AOT 制品统一清单、完整性校验和固定工具链重建，见 [Kernel 工程](../crates/backend/cuda/kernels/README.md) |
 | `check` | [gate.sh](check/gate.sh) | 本地与 CI 共用的 fail-fast 门禁 |
 | `check` | [layout.py](check/layout.py)、[policy.py](check/policy.py) | 目录与依赖边界、文档链接、lint/feature 与闲置依赖规则 |
 | `check` | [clean-artifacts.py](check/clean-artifacts.py) | 删除可重建输出，保留文档引用的证据与模型资产 |

@@ -1,0 +1,496 @@
+{
+  "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+  "host": "192.168.1.45",
+  "bottleneck": {
+    "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+    "diagnostic_only": true,
+    "contract": {
+      "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+      "binary": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-main",
+      "sha256": "d5fc5563dc3fa23ecd2c0cc0bfa6e505cf5134d43e96805936df8ab5124ecf42",
+      "source_binding": "Same production tree as4231667;2085fe7 and merge only documentation/tree-preserving merge. Frozen scoped-v5 validation and source binding retained in previous evidence.",
+      "configuration": "Default canonical/MTP0, autotune enabled, default batch budget;32768context and16sequence resource envelope for all arms.",
+      "profile_only": "Per-node events and execution traces are diagnostic, not performance acceptance."
+    },
+    "execution_profile": {
+      "prefill_width": 2048,
+      "pooled_prefill_width": 2048,
+      "batch_width": 0,
+      "draft_depth": 0,
+      "automatic_prefill": true,
+      "arena_budget_bytes": 1054928896,
+      "attention_profile": "canonical"
+    },
+    "cases": [
+      {
+        "case": "c16",
+        "prefill_records": 32,
+        "device_event_ms": 21032.316748227895,
+        "by_op_ms": {
+          "add": 202.12774312496185,
+          "attention": 13830.527236938477,
+          "conv": 179.6042539998889,
+          "delta": 934.4977291822433,
+          "embedding": 77.7257285118103,
+          "gated_norm": 138.27500741183758,
+          "linear": 5056.658153824479,
+          "multiply": 111.71110483258963,
+          "norm": 243.86393523216248,
+          "rope": 125.25772624462843,
+          "sigmoid": 26.133504401892424,
+          "silu": 47.510624185204506,
+          "split": 58.42400033771992
+        },
+        "fraction": {
+          "add": 0.009610341340166076,
+          "attention": 0.6575845829301609,
+          "conv": 0.008539442237861013,
+          "delta": 0.04443151652615638,
+          "embedding": 0.003695538130308882,
+          "gated_norm": 0.006574406855273712,
+          "linear": 0.24042325980329934,
+          "multiply": 0.005311402741307706,
+          "norm": 0.011594725305414087,
+          "rope": 0.005955488772067023,
+          "sigmoid": 0.001242540454041723,
+          "silu": 0.0022589344176364963,
+          "split": 0.0027778204863067456
+        },
+        "profiled_wall_seconds": 23.563574001018424
+      },
+      {
+        "case": "long",
+        "prefill_records": 16,
+        "device_event_ms": 57300.58466980641,
+        "by_op_ms": {
+          "add": 99.82415940612555,
+          "attention": 53680.071197509766,
+          "conv": 91.37907136976719,
+          "delta": 463.60182523727417,
+          "embedding": 38.12774419784546,
+          "gated_norm": 69.38687990605831,
+          "linear": 2550.2078406963265,
+          "multiply": 55.54348845034838,
+          "norm": 122.69481553509831,
+          "rope": 64.36783912405372,
+          "sigmoid": 12.142784103751183,
+          "silu": 24.42377609014511,
+          "split": 28.813248179852962
+        },
+        "fraction": {
+          "add": 0.001742114150865309,
+          "attention": 0.9368154183214745,
+          "conv": 0.0015947319193396969,
+          "delta": 0.008090699735592077,
+          "embedding": 0.0006653988683982179,
+          "gated_norm": 0.0012109279565976326,
+          "linear": 0.04450579091630309,
+          "multiply": 0.0009693354574026903,
+          "norm": 0.0021412489286474993,
+          "rope": 0.0011233365155865727,
+          "sigmoid": 0.00021191379064845075,
+          "silu": 0.0004262395616185538,
+          "split": 0.000502843877525662
+        },
+        "profiled_wall_seconds": 58.442206321
+      },
+      {
+        "case": "long4",
+        "prefill_records": 64,
+        "device_event_ms": 223289.82035811915,
+        "by_op_ms": {
+          "add": 397.59519762918353,
+          "attention": 208944.10272789001,
+          "conv": 356.8929252848029,
+          "delta": 1831.909008860588,
+          "embedding": 150.79340863227844,
+          "gated_norm": 275.4551680088043,
+          "linear": 10120.767060513783,
+          "multiply": 221.84832134842873,
+          "norm": 482.627581872046,
+          "rope": 248.77929289266467,
+          "sigmoid": 48.11699218675494,
+          "silu": 94.0425922870636,
+          "split": 116.89008071273565
+        },
+        "fraction": {
+          "add": 0.0017806239307797732,
+          "attention": 0.9357529259183378,
+          "conv": 0.0015983394348761935,
+          "delta": 0.008204176105845378,
+          "embedding": 0.0006753259436118999,
+          "gated_norm": 0.0012336217010118094,
+          "linear": 0.04532569843211742,
+          "multiply": 0.0009935442690249896,
+          "norm": 0.002161440145806884,
+          "rope": 0.001114154207718313,
+          "sigmoid": 0.00021549120380670922,
+          "silu": 0.00042116829211575864,
+          "split": 0.000523490414947102
+        },
+        "profiled_wall_seconds": 226.44455362
+      }
+    ],
+    "requests_finished": true,
+    "raw_sha256": {
+      "report.json": "80540c8d8a30f898b1a866abdaa1f4070af0a1bbdfcf8cf7e6a6e33a7659ddf9",
+      "operators.jsonl": "4022b97c8b0cbcbc46bc2312ede3678a116f96a398b1b30d1c3a4c018fc1061b",
+      "execution.jsonl": "aa73585a7a482db36c386adf3ebaf7708cfefe1c66f2ec7d8e8982ee522870ec"
+    }
+  },
+  "change": "Qualify both1024/2048-row exact Rust SIMT and shared KV attention, covering the default pooled planner halving and private prefill. Pass pooled KV physical stride to the exact provider. Preserve canonical F32 arithmetic, FP8 KV encoding and numerical/speculative defaults. Wide proofs are cache-only at startup, avoiding quadratic F64 work outside the existing30second search budget.",
+  "hardware_proof": {
+    "resident_exact_attention": [
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "e10e76ea3540a66445d1e7c17fbb44985e1e6538dd7c3a69dfdcc030d663b89b",
+          "schema": "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 1024,
+            "window": 0
+          }
+        },
+        "selected": "RustSimt",
+        "verified_fixtures": 4,
+        "verified_elements": 25165824,
+        "max_f64_error": 3.382872751367394e-07,
+        "history_verified_elements": null,
+        "raw_entry_sha256": "05675944e9795a33aead0272384c3dc1738ef1be7a18dc6b17fc09f5ba013b6b",
+        "complete_proof": "crates/backend/cuda/baselines/tuning.json"
+      },
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "cb93a12253e1b8fadf2ed79cda4e2edfaf2a890eb54bd56df012f85852179f26",
+          "schema": "oxide-sm120:fp8-e4m3-kv:f32-q-out:canonical-d256:original-append:full-bits-and-f64:fixtures4:history-cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 2048,
+            "window": 0
+          }
+        },
+        "selected": "RustSimt",
+        "verified_fixtures": 4,
+        "verified_elements": 50331648,
+        "max_f64_error": 5.275024328454947e-07,
+        "history_verified_elements": null,
+        "raw_entry_sha256": "66f1fb132b3f98e9582030fa8f383450be60dc23cb9eb58be0b0d65f9b55e1be",
+        "complete_proof": "crates/backend/cuda/baselines/tuning.json"
+      }
+    ],
+    "resident_shared_attention": [
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "a96f9678a381a7588f6d71dd41f96a39dba335e60fa37ca04738755ea8dc4092",
+          "schema": "shared-kv32:gqa6:q2:canonical-f32:original-append:short-no-regress5:history8k32k:cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 1024,
+            "window": 0
+          }
+        },
+        "selected": "SharedKv",
+        "verified_fixtures": 4,
+        "verified_elements": 25165824,
+        "max_f64_error": 3.382872751367394e-07,
+        "history_verified_elements": 18874368,
+        "raw_entry_sha256": "4fdb6d9e553060a49749a898b1c1e6edefd783c9904263c64426087bdce5df79",
+        "complete_proof": "crates/backend/cuda/baselines/tuning.json"
+      },
+      {
+        "key": {
+          "hardware": "{\"name\":\"NVIDIA GeForce RTX 5090\",\"architecture\":\"sm_120\",\"multiprocessors\":170,\"total_memory_bytes\":33757724672,\"memory_clock_khz\":14001000,\"memory_bus_width_bits\":512,\"l2_cache_bytes\":100663296}",
+          "driver_api": 13040,
+          "driver_build": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (root@)",
+          "fingerprint": "39df31e7a521eed152fd98910fe2a7caa89738765b64245c5899fa0198005075",
+          "schema": "shared-kv32:gqa6:q2:canonical-f32:original-append:short-no-regress5:history8k32k:cold-warm-ab-ba-v1",
+          "shape": {
+            "heads": 24,
+            "kv_heads": 4,
+            "dim": 256,
+            "lanes": 2048,
+            "window": 0
+          }
+        },
+        "selected": "SharedKv",
+        "verified_fixtures": 4,
+        "verified_elements": 50331648,
+        "max_f64_error": 5.275024328454947e-07,
+        "history_verified_elements": 37748736,
+        "raw_entry_sha256": "89384f178b316535c70853046048ac21ddf3d400db1f94dbada021af394f73ca",
+        "complete_proof": "crates/backend/cuda/baselines/tuning.json"
+      }
+    ]
+  },
+  "checkpoint_bits": {
+    "passed": true,
+    "prefill_width": 2048,
+    "narrow_width": 0,
+    "lengths": [
+      2049,
+      1025,
+      511,
+      1
+    ],
+    "captures": 32,
+    "decode_steps_per_prompt": 4,
+    "full_hidden_logits_and_recurrent_fp8_kv_state_bits": true
+  },
+  "validation_reports": {
+    "protected_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-v3.log",
+    "serving_contract": "/home/r/benchmarks/inference.rs/default-attention-auto-serving-2026-10-23/contract.json",
+    "serving_analysis": "/home/r/benchmarks/inference.rs/default-attention-auto-serving-2026-10-23/analysis.json",
+    "quality_contract": "/home/r/benchmarks/inference.rs/default-attention-auto-quality-2026-10-23/contract.json",
+    "quality_analysis": "/home/r/benchmarks/inference.rs/default-attention-auto-quality-2026-10-23/analysis.json",
+    "completion_record": "Final PR validation summary records the outcomes and hashes of serving/quality reports created after this evidence snapshot.",
+    "protected_patched_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-patched.log",
+    "corrected_pooled_build_and_tests": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-pooled-v2.log",
+    "supplementary_analysis": "/home/r/benchmarks/inference.rs/default-attention-auto-supplementary-2026-10-23/analysis.json",
+    "capacity_confirm_contract": "/home/r/benchmarks/inference.rs/default-attention-capacity-confirm-2026-10-23/contract.json",
+    "capacity_confirm_analysis": "/home/r/benchmarks/inference.rs/default-attention-capacity-confirm-2026-10-23/analysis.json"
+  },
+  "negative_attempt": "Initial wide startup-style search exhausted the30second budget before producing a complete proof; no incomplete entry was enabled. This led to offline hardware proof and shipped evidence without increasing startup budget. Initial logs validate-v1/v2 are preserved.",
+  "performance_plan": {
+    "purpose": "Default numerical and speculative configuration throughput/long-prefill qualification, separate from instrumented diagnosis.",
+    "base": "2859fc65374e63ca9fc5f786a34cc301f43802a2",
+    "configuration": {
+      "attention": "default canonical; no profile flag",
+      "mtp": "default0; no speculation flag",
+      "autotune": "enabled; no disable flag",
+      "batch_budget": "default; no max-num-batched-tokens flag",
+      "gpu_memory_utilization": "default0.9; no flag",
+      "max_model_len": "model default262144; no flag",
+      "max_num_seqs": "default16; no flag"
+    },
+    "pairs": 6,
+    "order": [
+      "a1",
+      "b1",
+      "b2",
+      "a2",
+      "a3",
+      "b3",
+      "b4",
+      "a4",
+      "a5",
+      "b5",
+      "b6",
+      "a6"
+    ],
+    "per_process": "Each workload one excluded warmup and one measured frozen group. Independent statistical unit is the fresh process pair, not token or request.",
+    "workloads": {
+      "c16": "Frozen4K C16,256output tokens each,pre-serialized sends at10ms intervals",
+      "long": "Frozen32K C1,16output tokens"
+    },
+    "primary": "For each of C16 makespan and32K C1 TTFT, require positive lower bound of two-sided95%paired Student t interval(df5) across fixed6pairs. No adaptive extra pairs or exclusions.",
+    "required": "All requests finish; fixed output work; same runtime readback and capacity; report complete token equality. Full1024question matching canonical/MTP0 quality keeps fixed2% one-sided95%gross regression bound overall and in zero/eight-shot strata. Investigate and fix failures without changing grading/limits.",
+    "supplementary": "short/511/C4/hot-prefix functional/latency checks and32K C4 completion/capacity; confirm actual model-context default launch.",
+    "status": "Plan frozen before any uninstrumented candidate serving comparison. Bind source and binary/cache hashes in contract before starting.",
+    "default_launch": "Only executable, model path and --listen are supplied. Every numerical, speculative, memory, context, sequence and batching option uses the CLI default.",
+    "security_control": "Both builds useTokio1.53.3. The old .88/32768envelope study was retired before any candidate arm ran. This new contract uses actual CLI defaults and is frozen before all patched measurements.",
+    "implementation_revision": "Cover both actual default prefill rungs1024/2048 and pass the physical pooled KV stride. Previous2048-only prototype is retired incomplete; no performance samples reused.",
+    "prior_data": "Previous patched study is retired incomplete after source diagnosis; first pair long55.536->20.984s andC16 27.794->27.821s retained. A new implementation is qualified from scratch under this fixed protocol, with no reused performance samples."
+  },
+  "security_fix": {
+    "advisory": "RUSTSEC-2026-0386",
+    "tokio_from": "1.53.2",
+    "tokio_to": "1.53.3",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
+    "scope": "Same patch on control and candidate. Original unpatched study retired before any candidate arm ran; all raw data retained."
+  },
+  "patched_validation": {
+    "cuda_clippy": "passed",
+    "ordinary_backend": {
+      "passed": 136,
+      "failed": 0,
+      "ignored": 148
+    },
+    "checkpoint_bits": "passed again afterTokio patch;32actualwidecaptures,lengths2049/1025/511/1",
+    "log_sha256": "45c2872a3bdeb73a59beb7b46d3cb9cfe7929323e49a48bd3f82d411b4ae0abc",
+    "wide_cache_injection": "Formal cache has no2048attention entries; candidate must accept the shipped proof.",
+    "source_scope": "Historical patched private-only build, before the pooled physical-stride fix. See pooled_checkpoint_bits and final_pooled_binary_binding for the final source."
+  },
+  "historical_patched_binary_binding": {
+    "source_commit": "563e4c6806a4a3941db56931b5c32efd473e7fe4",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
+    "binaries": {
+      "a": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-control-patched",
+        "sha256": "5f6a9ec28f75f7cfd15cd0c3c7b8e13475bc82e0e7fe454716c287664ff1d641"
+      },
+      "b": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-wide-patched",
+        "sha256": "f013ea3a896374a8e31a1308d6886cf51d13e5b883a4fcfac8e9edcc9b2dac6d"
+      }
+    },
+    "build_log_sha256": "45c2872a3bdeb73a59beb7b46d3cb9cfe7929323e49a48bd3f82d411b4ae0abc",
+    "same_tokio_lock": true
+  },
+  "pooled_dispatch_diagnosis": {
+    "root_cause": "Exact prefill provider received logical per-sequence capacity, while its KV tensor uses the larger physical paged-pool stride. Shape validation rejected it and retained the cuTile fallback.",
+    "reproduction": {
+      "logical_capacity": 4096,
+      "physical_rows": 12288,
+      "before_fix_captures": 0,
+      "expected_failure": "wide exact attention must be captured",
+      "raw_log_sha256": "1017bfada494487e244e02feb64a0d682feb241c44a84f743a6bc7de8d0835ed"
+    },
+    "first_pair": {
+      "c16": {
+        "a_wall": 27.793520537030417,
+        "b_wall": 27.821031994069926,
+        "identical": 16
+      },
+      "long": {
+        "a_wall": 55.535993649,
+        "b_wall": 20.983929881,
+        "identical": 1
+      }
+    },
+    "raw_sha256": {
+      "a1": "8d83534217301b7bdb446c306bb216f3a8f1b2c033d261df2976771b50eaa7d1",
+      "b1": "57e63228b02264ab8506bf8a9915cd2675d9b2bc08b4099e42907f85c8a50faa"
+    }
+  },
+  "pooled_checkpoint_bits": {
+    "passed": true,
+    "logical_capacity": 4096,
+    "physical_rows": 12288,
+    "actual_captures": 32,
+    "lengths": [
+      2049,
+      1025,
+      511,
+      1
+    ],
+    "full_hidden_logits_and_recurrent_fp8_kv_bits": true,
+    "private_checkpoint_regression": "also passed;32captures",
+    "ordinary_backend": {
+      "passed": 136,
+      "failed": 0,
+      "ignored": 149
+    },
+    "log_sha256": "7f261dec86ec4c6d4d66488dfe3badf7dd4021c7706ce7d3ed166d65f5fad987"
+  },
+  "automatic_width_coverage": {
+    "loaded_prefill_width": 2048,
+    "actual_worker_widths": [
+      1024,
+      2048
+    ],
+    "allocation_policy": "At most one halving; no change to default resource flags or planner.",
+    "pooled_checkpoint_global_width": 2048,
+    "pooled_checkpoint_worker_widths": [
+      1024,
+      2048
+    ],
+    "actual_captures_per_width": 32,
+    "private_width2048_bits": "passed",
+    "hardware_validation_log": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/validate-auto-widths.log",
+    "delegated_worker_model_log": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/delegated-pooled-check.log"
+  },
+  "historical_2048_only_pooled_binding": {
+    "source_commit": "bfb3f825e00e302ea21b19cf2d479fadc7e8b67d",
+    "control_commit": "fb8b6d8be4105a8cf32ddf63664004f0b919334f",
+    "binaries": {
+      "a": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-control-patched",
+        "sha256": "5f6a9ec28f75f7cfd15cd0c3c7b8e13475bc82e0e7fe454716c287664ff1d641"
+      },
+      "b": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-default-pooled",
+        "sha256": "53f5a12ab8bb1c3ba8fc67d43b319ff35660fa0d3ecec96bc8043bc3668fd8ec"
+      }
+    },
+    "build_log_sha256": "7f261dec86ec4c6d4d66488dfe3badf7dd4021c7706ce7d3ed166d65f5fad987",
+    "same_tokio_lock": true
+  },
+  "final_binary_binding": {
+    "source_commit": "4b9c17015f054e04079610769c748dc6f36d87f3",
+    "binaries": {
+      "a": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-control-patched",
+        "sha256": "5f6a9ec28f75f7cfd15cd0c3c7b8e13475bc82e0e7fe454716c287664ff1d641"
+      },
+      "b": {
+        "path": "/home/r/benchmarks/inference.rs/default-bottleneck-2026-10-23/infer-default-auto",
+        "sha256": "462fba5f82ff7e55d0cefc081a2e89dc1846236459bb22707f8dc6d22262a28f"
+      }
+    },
+    "same_tokio_lock": true,
+    "build_log_sha256": "5fd414674c0b4d14aa3250ca85b955ef3a022f3910b05f04d280ffd859c8b70f",
+    "delegated_model_log_sha256": "9c4172e10d1017b2ec7c88e63de927def6e7b4ebc7b035ee01011c16b942ff2d",
+    "working_tree_clean": true
+  },
+  "final_validation": {
+    "cuda_clippy": "passed",
+    "ordinary_backend": {
+      "passed": 136,
+      "failed": 0,
+      "ignored": 149
+    },
+    "global2048_pooled_workers1024_2048": "both passed full hidden/logit/recurrent/FP8 KV bit equality;32captures each",
+    "private2048": "passed full bits",
+    "clean_export_layout_policy_inventory": "passed;774test entries,0tests under src",
+    "logs_sha256": {
+      "validate-auto-widths.log": "5fd414674c0b4d14aa3250ca85b955ef3a022f3910b05f04d280ffd859c8b70f",
+      "delegated-pooled-check.log": "9c4172e10d1017b2ec7c88e63de927def6e7b4ebc7b035ee01011c16b942ff2d"
+    }
+  },
+  "default_capacity_control": {
+    "original_study": "Preserve all original six pairs and the original strict gate. The first pair has15vs16slots and therefore cannot pass strict capacity equality; it is not confirmatory evidence.",
+    "diagnosis": "Default load limit is min(utilization*total, free-1GiB); load state budget and pooled envelope use current global free memory. Within-control a1 has15slots and a2 has16. Raw quote/envelope and physical KV allocation vary even at the same runtime capacity.",
+    "independent_confirmation": "Freeze six fresh pairs before launch, same default command and immutable binaries/inputs. Require identical native runtime readback and fixed16slots/8192slot capacity and identical automatic pooled prompt width within each pair (1024or2048) in every arm. Additionally require >=69632physical KV positions in every arm, covering all16*(4096prompt+256output)requests. Publish quote/envelope/physical KV allocations without demanding byte equality of excess storage. No old samples reused, exclusions or adaptive extra pairs.",
+    "quality": "The unchanged full1024question quality gate is independent of the performance confirmation. Final PR summary records raw report hashes and results.",
+    "physical_capacity_diagnosis": "Runtime inspection uses slot-granular block vocabulary while funded paged KV tokens come from the joint storage plan. Original b1/b2 fund67264/66912physical positions, below the69632needed for the fullC16workload; b3 funds75488. Thus a16-slot check alone does not establish equal usable capacity. The added physical floor was frozen before any independent confirmation arm.",
+    "automatic_rung_control": "Actual-default quality startup selected2048when external free memory increased. Before any independent confirmation arm, the protocol allows either already-qualified automatic rung and requires exact paired readback/prompt-width equality,16slots,8192slot capacity and>=69632physical KV positions. Unequal pairs fail the entire study; no automatic retry or replacement samples."
+  },
+  "upstream_integration": {
+    "upstream_main": "9fa8f6c5d8c55baf52739aa667f166f3c4eec5ed",
+    "integration_commit": "f370f3ce84c24ff7cbe4cb350df74d3b4664421b",
+    "frozen_production_source": "4b9c17015f054e04079610769c748dc6f36d87f3",
+    "production_inputs_unchanged": true,
+    "changed_nonproduction_paths": [
+      "Makefile",
+      "crates/backend/cuda/README.md",
+      "crates/backend/cuda/kernels/README.md",
+      "crates/backend/cuda/kernels/oxide-attention/verify-artifact.py",
+      "crates/backend/cuda/kernels/oxide-gdn/verify-artifact.py",
+      "crates/backend/cuda/kernels/shared-attention/verify-artifact.py",
+      "crates/backend/cuda/kernels/vector-attention-combined/verify-artifact.py",
+      "crates/backend/cuda/kernels/vector-attention/verify-artifact.py",
+      "docs/archive/research/artifacts/default-wide-attention-2026-10-23.json",
+      "docs/research/cuda-kernel-engineering-2026-10-23.md",
+      "tools/README.md",
+      "tools/check/gate.sh",
+      "tools/check/test_cuda_artifacts.py",
+      "tools/cuda/compile_f16.py",
+      "tools/cuda/fa4.py",
+      "tools/cuda/kernels.json",
+      "tools/cuda/kernels.py"
+    ],
+    "artifact_integrity": {
+      "verified": 8,
+      "abi": "LinuxFA4verified"
+    },
+    "artifact_tool_tests": {
+      "passed": 10,
+      "failed": 0
+    }
+  }
+}

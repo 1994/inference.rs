@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 281
+      "tests": 285
     },
     "frontdoor": {
       "benches": 0,
@@ -189,6 +189,8 @@
     "requires CUDA, frozen INFER_TEST_MODEL/TOKENS/table; safe-run; complete F32/FP8 state and vocabulary comparisons": 1,
     "requires CUDA, release, safe-run; validates actual probe input bits and temporary ownership": 1,
     "requires CUDA/checkpoint/failing52token inputs/safe-run; GPUselected versus full logits/crosscapacity join": 1,
+    "requires CUDA/checkpoint/frozen1025tokens/safe-run; default-width full chunks and state bits": 1,
+    "requires CUDA/checkpoint/frozen1025tokens/safe-run; pooled physical KV stride and complete bits": 1,
     "requires CUDA/checkpoint/frozen511tokens/safe-run; actual parallel quantization and complete state equivalence": 1,
     "requires CUDA/checkpoint/frozen511tokens/safe-run; complete model output and state equivalence": 2,
     "requires CUDA/checkpoint/frozen511tokens/safe-run; original private versus default pool full-model bits": 1,
@@ -208,6 +210,7 @@
     "requires CUDA/safe-run; graph operand lifetime and cross-stream access contract": 1,
     "requires CUDA/safe-run; shared KV graph operand lifetime and exclusive access": 1,
     "requires CUDA/safe-run; vector KV graph ownership and exclusive access": 1,
+    "requires CUDA/safe-run; wide full F64/bitwise and history cold/warm AB/BA gates": 1,
     "requires CUDA; complete FP8/F64/bitwise gate; safe-run --test-threads 1": 1,
     "requires CUDA; exact ordered recurrence at captured prompt widths": 1,
     "requires CUDA; full F64/cache numerical gate and hardware AB/BA tuning": 1,
@@ -1141,11 +1144,11 @@
     }
   ],
   "totals": {
-    "all": 770,
+    "all": 774,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 770
+    "tests": 774
   }
 }

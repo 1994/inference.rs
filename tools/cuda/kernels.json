@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "nvcc_version": "13.4.92",
+  "kernels": [
+    {
+      "name": "oxide-attention",
+      "builder": "oxide",
+      "source": "src/main.rs",
+      "ptx": "attention-sm120.ptx",
+      "target": "sm_120",
+      "symbols": [
+        "attention_fp8_256"
+      ],
+      "profile": "canonical-f32",
+      "rebuild_scope": "complete-ptx",
+      "shared_bytes": [
+        16,
+        128,
+        128
+      ]
+    },
+    {
+      "name": "oxide-gdn",
+      "builder": "oxide",
+      "source": "src/main.rs",
+      "ptx": "gdn-sm120.ptx",
+      "target": "sm_120",
+      "symbols": [
+        "gdn_f32_128"
+      ],
+      "profile": "canonical-f32",
+      "rebuild_scope": "complete-ptx",
+      "shared_bytes": [
+        1024,
+        32,
+        512
+      ]
+    },
+    {
+      "name": "shared-attention",
+      "builder": "nvcc",
+      "source": "attention-sm120.cu",
+      "ptx": "attention-sm120.ptx",
+      "target": "sm_120",
+      "symbols": [
+        "attention_fp8_256"
+      ],
+      "profile": "canonical-f32",
+      "rebuild_scope": "complete-ptx",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_120",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true",
+        "--prec-sqrt=true"
+      ]
+    },
+    {
+      "name": "vector-attention",
+      "builder": "nvcc",
+      "source": "attention-sm120.cu",
+      "ptx": "attention-sm120.ptx",
+      "target": "sm_120",
+      "symbols": [
+        "attention_fp8_256_vec_k"
+      ],
+      "profile": "canonical-f32",
+      "rebuild_scope": "complete-ptx",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_120",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true",
+        "--prec-sqrt=true"
+      ]
+    },
+    {
+      "name": "vector-attention-combined",
+      "builder": "nvcc",
+      "source": "v-combined.cu",
+      "ptx": "v-combined.ptx",
+      "target": "sm_120",
+      "symbols": [
+        "attention_fp8_256_vec_k_combined"
+      ],
+      "profile": "canonical-f32",
+      "rebuild_scope": "complete-ptx",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_120",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true",
+        "--prec-sqrt=true"
+      ]
+    },
+    {
+      "name": "fa4-attention",
+      "builder": "fa4",
+      "source": "bridge.cu",
+      "ptx": "bridge.ptx",
+      "target": "sm_90",
+      "symbols": [
+        "prepare_fa4",
+        "finish_fa4"
+      ],
+      "profile": "bf16-qkv-f32-acc-bf16-out",
+      "rebuild_scope": "complete-aot",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_90",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true"
+      ]
+    },
+    {
+      "name": "fa4-attention-f32",
+      "builder": "nvcc",
+      "source": "bridge.cu",
+      "ptx": "bridge.ptx",
+      "target": "sm_90",
+      "symbols": [
+        "prepare_fa4_f32"
+      ],
+      "profile": "bf16-qkv-f32-acc-bf16-out",
+      "rebuild_scope": "complete-bridge",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_90",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true"
+      ]
+    },
+    {
+      "name": "fa4-attention-f16",
+      "builder": "fa4-f16",
+      "source": "bridge.cu",
+      "ptx": "bridge.ptx",
+      "target": "sm_90",
+      "symbols": [
+        "prepare_fa4_f16",
+        "finish_fa4_f16"
+      ],
+      "profile": "fp16-qkv-f32-acc-fp16-out",
+      "rebuild_scope": "complete-aot",
+      "arguments": [
+        "--ptx",
+        "-arch=compute_90",
+        "-O3",
+        "--fmad=false",
+        "--ftz=false",
+        "--prec-div=true"
+      ]
+    }
+  ]
+}

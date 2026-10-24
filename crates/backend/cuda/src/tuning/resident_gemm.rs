@@ -85,6 +85,8 @@ const JIT_OPT_LEVEL: u8 = 3;
 /// Default elapsed allowance for new-shape searches in one model load.
 /// A JIT or measurement already in progress is not interruptible; this is not a hard time cap.
 const MODEL_SEARCH_BUDGET: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const HARDWARE_VALIDATION_BUDGET: Duration = Duration::from_secs(600);
 
 /// Shared by target/draft weights and every program created from one loaded model.
 ///
@@ -113,6 +115,13 @@ impl Default for ResidentTuningSession {
 }
 
 impl ResidentTuningSession {
+    #[cfg(test)]
+    pub(crate) fn for_hardware_validation() -> Self {
+        Self {
+            budget: HARDWARE_VALIDATION_BUDGET,
+            ..Self::default()
+        }
+    }
     #[cfg(test)]
     pub(crate) fn without_search_budget() -> Self {
         Self {

@@ -24,7 +24,7 @@ const HEADS: usize = 24;
 const KV_HEADS: usize = 4;
 const DIM: usize = 256;
 const THREADS: u32 = 256;
-const SUPPORTED_LANES: [usize; 3] = [64, 256, 512];
+const SUPPORTED_LANES: [usize; 5] = [64, 256, 512, 1024, 2048];
 const REQUIRED_METADATA_FIELDS: usize = 3;
 
 pub struct Support {
@@ -32,6 +32,7 @@ pub struct Support {
     stream: usize,
     threads: u32,
     rows_per_cta: usize,
+    lanes: &'static [usize],
 }
 
 pub struct Bindings<'a, E: DType> {
@@ -81,6 +82,7 @@ impl Support {
             stream: device.stream.cu_stream() as usize,
             threads: THREADS,
             rows_per_cta: 1,
+            lanes: &SUPPORTED_LANES,
         }))
     }
 
@@ -108,6 +110,7 @@ impl Support {
             stream: device.stream.cu_stream() as usize,
             threads: THREADS,
             rows_per_cta: 1,
+            lanes: &SUPPORTED_LANES,
         })
     }
     #[expect(
@@ -123,8 +126,7 @@ impl Support {
         scales: [f32; 2],
     ) -> StdResult<bool, DeviceError> {
         if (heads, kv_heads, dim) != (HEADS, KV_HEADS, DIM)
-            || !SUPPORTED_LANES.contains(&lanes)
-            || (self.rows_per_cta != 1 && lanes != shared::LANES)
+            || !self.lanes.contains(&lanes)
             || E::DTYPE != cuda_core::f8e4m3fn::DTYPE
             || size_of::<E>() != 1
             || capacity == 0
