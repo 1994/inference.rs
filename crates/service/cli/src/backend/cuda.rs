@@ -6,7 +6,7 @@ use crate::constants::MIB_U64;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use crate::support::memory::utilization_bytes;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
-use infer_backend_cuda::device::DeviceProfile;
+use infer_backend_cuda::device::{CudaDevice, DeviceProfile};
 #[cfg(all(target_os = "linux", feature = "cuda"))]
 use infer_backend_cuda::target::CudaTarget;
 #[cfg(all(target_os = "linux", feature = "cuda"))]
@@ -22,8 +22,41 @@ use std::time::Instant;
 pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<SelectedBackend> {
     #[cfg(all(target_os = "linux", feature = "cuda"))]
     {
+        let mut automatic_fast = false;
+        let result = load_once(path, memory_bytes, selection, &mut automatic_fast);
+        if automatic_fast
+            && let Err(error) = &result
+            && (error.code == infer_core::ErrorCode::Capacity || out_of_memory(&error.message))
+        {
+            tracing::warn!(target: "infer::load", %error,
+                "automatic execution profile did not fit; retrying canonical attention without MTP");
+            let recovery = CudaDevice::new(0)?;
+            recovery.synchronize()?;
+            drop(recovery);
+            let conservative = Selection {
+                num_speculative_tokens: Some(super::SpeculativeTokens::Depth(0)),
+                attention_profile: Some(super::CudaAttentionProfile::Canonical),
+                ..selection.clone()
+            };
+            return load_once(path, memory_bytes, &conservative, &mut automatic_fast);
+        }
+        result
+    }
+    #[cfg(not(all(target_os = "linux", feature = "cuda")))]
+    {
+        load_once(path, memory_bytes, selection, &mut false)
+    }
+}
+
+fn load_once(
+    path: &Path,
+    memory_bytes: u64,
+    selection: &Selection,
+    automatic_fast: &mut bool,
+) -> Result<SelectedBackend> {
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    {
         use infer_backend_cuda::{
-            device::CudaDevice,
             executor::CudaBackend,
             loading::{LoadOptions, LoadedModel},
         };
@@ -35,7 +68,9 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
         let started = Instant::now();
         CudaDevice::enable_kernel_cache()?;
         let device = CudaDevice::new(0)?;
-        let (free, total) = device.memory_info()?;
+        let (_, total) = device.memory_info()?;
+        // A retry may reuse freed blocks still reserved in this context's pool.
+        let free = device.allocatable_memory_bytes()?;
         // vLLM semantics: the utilization fraction bounds the whole engine, weights included.
         let share = utilization_bytes(total, selection.gpu_memory_utilization)?;
         let requested = share.min(if memory_bytes == 0 {
@@ -45,15 +80,19 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
         });
         let limit = requested.min(free.saturating_sub(GIB_U64));
         let budget = LoadBudget { limit, free, total };
-        let summary = preflight(path, device.target(), limit, selection)
-            .map_err(|error| load_failure(&error, budget, selection))?;
-        report_environment(
-            device.profile()?,
-            budget,
+        let summary = preflight(
+            path,
+            device.target(),
+            &device.profile()?.architecture,
+            limit,
             selection,
-            memory_bytes,
-            summary.mtp_depth,
-        );
+        )
+        .map_err(|error| load_failure(&error, budget, selection))?;
+        *automatic_fast = selection.num_speculative_tokens.is_none()
+            && selection.attention_profile.is_none()
+            && summary.mtp_depth == 2
+            && summary.attention_profile == super::CudaAttentionProfile::Bf16;
+        report_environment(device.profile()?, budget, selection, memory_bytes, &summary);
         report_model(path, &summary);
         let loaded = LoadedModel::open(
             device,
@@ -63,7 +102,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
                 prefill_width: selection.max_num_batched_tokens.unwrap_or(0),
                 mtp_depth: summary.mtp_depth,
                 autotune: selection.autotune,
-                attention_profile: selection.attention_profile.into(),
+                attention_profile: summary.attention_profile.into(),
                 vision: !selection.text_only,
                 ..LoadOptions::default()
             },
@@ -107,7 +146,7 @@ pub fn load(path: &Path, memory_bytes: u64, selection: &Selection) -> Result<Sel
     }
     #[cfg(not(all(target_os = "linux", feature = "cuda")))]
     {
-        let _ = (path, memory_bytes, selection);
+        let _ = (path, memory_bytes, selection, automatic_fast);
         Err(Error::unsupported(
             "CUDA execution requires Linux and a build with --features cuda",
         ))
@@ -164,7 +203,7 @@ fn report_environment(
     budget: LoadBudget,
     selection: &Selection,
     memory_bytes: u64,
-    mtp_depth: usize,
+    summary: &PackageSummary,
 ) {
     tracing::info!(
         target: "infer::load",
@@ -185,9 +224,10 @@ fn report_environment(
     );
     tracing::info!(
         target: "infer::load",
-        mtp_depth,
-        automatic_mtp = selection.num_speculative_tokens == super::SpeculativeTokens::Auto,
-        attention_profile = selection.attention_profile.name(),
+        mtp_depth = summary.mtp_depth,
+        automatic_mtp = (selection.num_speculative_tokens.is_none() && summary.mtp_depth > 0)
+            || selection.num_speculative_tokens == Some(super::SpeculativeTokens::Auto),
+        attention_profile = summary.attention_profile.name(),
         autotune = selection.autotune,
         max_num_batched_tokens = %optional(selection.max_num_batched_tokens),
         block_size = %optional(selection.block_size),
@@ -277,6 +317,7 @@ struct PackageSummary {
     tensors: usize,
     mtp_tensors: usize,
     mtp_depth: usize,
+    attention_profile: super::CudaAttentionProfile,
     payload_bytes: u64,
     native_fp4: bool,
     kv_cache: &'static str,
@@ -286,6 +327,7 @@ struct PackageSummary {
 fn preflight(
     path: &Path,
     target: &CudaTarget,
+    architecture: &str,
     budget: u64,
     selection: &Selection,
 ) -> Result<PackageSummary> {
@@ -324,6 +366,23 @@ fn preflight(
             ),
         ));
     }
+    let fast_supported = native_fp4
+        && package.kv_cache_dtype == Some(infer_models::TensorDtype::F8E4m3)
+        && super::speculation::resolve(
+            super::SpeculativeTokens::Auto,
+            selection.max_num_batched_tokens,
+            &package,
+        ) == 2
+        && infer_backend_cuda::AttentionProfile::supports_bf16_prefill(
+            architecture,
+            &package.graph,
+            selection.max_num_batched_tokens.unwrap_or(0),
+        );
+    let (requested_depth, attention_profile) = super::defaults::resolve(
+        selection.num_speculative_tokens,
+        selection.attention_profile,
+        fast_supported,
+    );
     Ok(PackageSummary {
         provider: package.provider.metadata().name,
         layers: package.imported.model.mixers.len(),
@@ -333,10 +392,11 @@ fn preflight(
         tensors: package.weights.len(),
         mtp_tensors: package.mtp.len(),
         mtp_depth: super::speculation::resolve(
-            selection.num_speculative_tokens,
+            requested_depth,
             selection.max_num_batched_tokens,
             &package,
         ),
+        attention_profile,
         payload_bytes: minimum,
         native_fp4,
         kv_cache: kv_cache_label(&package),

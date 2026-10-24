@@ -22,6 +22,7 @@ use infer_core::{Result, TensorId};
 use infer_ir::{DataflowGraph, TensorOp};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::mem::swap;
 use std::result::Result as StdResult;
 
 #[cfg(test)]
@@ -67,6 +68,8 @@ pub struct Workspace {
     buffers: BTreeMap<(usize, usize), Buffers>,
     pub(super) pooled: Option<super::pooled::Workspace>,
     prefill: BTreeMap<(TensorId, usize), Choice>,
+    precise_prefill: BTreeMap<(TensorId, usize), Choice>,
+    precise_active: bool,
 }
 
 impl Workspace {
@@ -146,6 +149,8 @@ impl Workspace {
             buffers,
             pooled: None,
             prefill: BTreeMap::new(),
+            precise_prefill: BTreeMap::new(),
+            precise_active: false,
         })
     }
 
@@ -241,6 +246,7 @@ impl Workspace {
         let enabled = enabled || taps::forced_choice().is_some();
         if !enabled && !self.oxide_available && self.mma.is_none() && self.mma_f16.is_none() {
             self.prefill.retain(|(_, width), _| *width != lanes);
+            self.precise_prefill.retain(|(_, width), _| *width != lanes);
             return;
         }
         let architecture = device
@@ -292,27 +298,36 @@ impl Workspace {
                 lanes,
                 window: window.unwrap_or(0),
             };
-            let choice = *choices.entry((shape, fp8)).or_insert_with(|| {
+            let (choice, precise) = *choices.entry((shape, fp8)).or_insert_with(|| {
                 if fp8 {
-                    self.fp8_prefill_choice(device, shape, weights)
+                    self.fp8_prefill_choices(device, shape, weights)
                 } else {
-                    mma_f32_select(device, shape, false, &weights.resident_tuning)
+                    let choice = mma_f32_select(device, shape, false, &weights.resident_tuning);
+                    (choice, choice)
                 }
             });
             #[cfg(test)]
-            let choice = taps::forced_choice().unwrap_or(choice);
+            let (choice, precise) = (
+                taps::forced_choice().unwrap_or(choice),
+                taps::forced_choice().unwrap_or(precise),
+            );
             self.prefill.insert((node.outputs[0], lanes), choice);
+            self.precise_prefill
+                .insert((node.outputs[0], lanes), precise);
         }
         self.prepare_mma_modules(device);
         self.prepare_modules(device);
+        swap(&mut self.prefill, &mut self.precise_prefill);
+        self.prepare_modules(device);
+        swap(&mut self.prefill, &mut self.precise_prefill);
     }
 
-    fn fp8_prefill_choice(
+    fn fp8_prefill_choices(
         &self,
         device: &CudaDevice,
         shape: Shape,
         weights: &super::super::ProgramWeights,
-    ) -> Choice {
+    ) -> (Choice, Choice) {
         let baseline = if self.oxide_available {
             let baseline = select(device, shape, weights.autotune, &weights.resident_tuning);
             shared_select(
@@ -331,12 +346,25 @@ impl Workspace {
         let baseline = vector_combined_select(device, shape, baseline);
         #[cfg(test)]
         if taps::forced_choice().is_some() {
-            return baseline;
+            return (baseline, baseline);
         }
-        if self.mma.is_some() {
+        let selected = if self.mma.is_some() {
             mma_select(device, shape, false, &weights.resident_tuning, baseline)
         } else {
             baseline
+        };
+        (selected, baseline)
+    }
+
+    pub(crate) const fn precise_prefill(&mut self, enabled: bool) {
+        self.precise_active = enabled;
+    }
+
+    fn prefill_choice(&self, output: TensorId, lanes: usize) -> Option<&Choice> {
+        if self.precise_active {
+            self.precise_prefill.get(&(output, lanes))
+        } else {
+            self.prefill.get(&(output, lanes))
         }
     }
 
@@ -481,7 +509,7 @@ impl Workspace {
         &mut super::super::attention_mma::Support,
         super::super::attention_mma::catalog::Variant,
     )> {
-        match *self.prefill.get(&(output, lanes))? {
+        match *self.prefill_choice(output, lanes)? {
             Choice::Mma { variant } => Some((&mut self.mma.as_mut()?.support, variant)),
             Choice::MmaF16 => Some((
                 &mut self.mma_f16.as_mut()?.support,
@@ -496,7 +524,7 @@ impl Workspace {
         output: TensorId,
         lanes: usize,
     ) -> Option<&super::super::attention_oxide::Support> {
-        match self.prefill.get(&(output, lanes)) {
+        match self.prefill_choice(output, lanes) {
             Some(Choice::RustSimt) => self.oxide.as_ref(),
             Some(Choice::SharedKv) => self.shared.as_ref(),
             Some(Choice::VectorSharedKv) => self.vector.as_ref(),
@@ -514,8 +542,7 @@ impl Workspace {
         if !fp8 {
             return None;
         }
-        self.prefill
-            .get(&(output, lanes))
+        self.prefill_choice(output, lanes)
             .and_then(|choice| choice.query_tile())
     }
 

@@ -42,7 +42,7 @@ pub(super) fn record(
     else {
         return Ok(false);
     };
-    // Canonical serving did not qualify; enable only the explicitly selected BF16 profile.
+    // Preserve canonical normalization dispatch; fuse only in the resolved BF16 profile.
     if !weights.attention_profile.is_bf16()
         || weights.fusion.is_some()
         || norm.inputs.len() != 2

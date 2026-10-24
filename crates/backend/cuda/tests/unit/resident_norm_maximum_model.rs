@@ -99,3 +99,71 @@ fn checkpoint_bits(profile: AttentionProfile, width: usize, narrow: usize) -> Re
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "CUDA/checkpoint/frozen511tokens/safe-run; canonical prefix and subsequent decode bits"]
+fn bf16_precise_prefix_matches_canonical_checkpoint_bits() -> Result<()> {
+    CudaDevice::enable_kernel_cache()?;
+    let path = var("INFER_TEST_MODEL").map_err(|e| Error::invalid(e.to_string()))?;
+    let tokens: Vec<_> = super::quant_reuse_model_tests::prompt()?
+        .into_iter()
+        .cycle()
+        .take(1025)
+        .collect();
+    let mut loaded = LoadedModel::open(
+        CudaDevice::new(0)?,
+        path,
+        ModelId::ONE,
+        LoadOptions {
+            prefill_width: 1024,
+            verification_width: 0,
+            mtp_depth: 0,
+            autotune: false,
+            attention_profile: AttentionProfile::Bf16,
+            vision: false,
+            ..LoadOptions::default()
+        },
+    )?;
+    loaded.weights.narrow_prefill_width = 64;
+    let mut fast = loaded.sequence(2048)?;
+    loaded.weights.attention_profile = AttentionProfile::Canonical;
+    let mut canonical = loaded.sequence(2048)?;
+    for length in [1, 51, 127, 257, 511, 1024] {
+        fast.reset()?;
+        canonical.reset()?;
+        outputs(
+            &fast.prefill_batch(&tokens[..length], 0, true)?,
+            &canonical.prefill_batch(&tokens[..length], 0, true)?,
+        );
+        program_states(&loaded, &fast, &canonical)?;
+        for step in 0..4 {
+            let pos = fast.position();
+            let token = tokens[(length + step) % tokens.len()];
+            outputs(
+                &vec![fast.step(token, pos, pos, None, true)?],
+                &vec![canonical.step(token, pos, pos, None, true)?],
+            );
+        }
+        program_states(&loaded, &fast, &canonical)?;
+        println!("precise prefix canonical bits passed: prompt={length}, subsequent_steps=4");
+    }
+    fast.reset()?;
+    canonical.reset()?;
+    fast.prefill_batch(&tokens[..1024], 0, false)?;
+    canonical.prefill_batch(&tokens[..1024], 0, false)?;
+    let a = fast.prefill_batch(&tokens[1024..1025], 1024, true)?;
+    let b = canonical.prefill_batch(&tokens[1024..1025], 1024, true)?;
+    let mut changed = 0;
+    for ((ah, al), (bh, bl)) in a.iter().zip(&b) {
+        for (a, b) in ah.iter().chain(al).zip(bh.iter().chain(bl)) {
+            assert!(a.is_finite() && b.is_finite());
+            changed += usize::from(a.to_bits() != b.to_bits());
+        }
+    }
+    assert!(
+        changed > 0,
+        "bulk BF16 must not silently become canonical F32"
+    );
+    println!("BF16 bulk remains active beyond precise prefix: differing_values={changed}");
+    Ok(())
+}

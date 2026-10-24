@@ -1,15 +1,15 @@
 {
-  "status": "Ordinary serving-pool target math numerically validated; fresh four-arm task quality running. Defaults remain canonical/MTP0; not approved for merge or fast defaults.",
+  "status": "Draft automatic-default candidate: source/numeric validation passed, selected diagnostic15 recovery14, expanded51 diagnosis running; actual-default performance and complete final task quality pending. Not approved for merge.",
   "host": "192.168.1.45",
   "base_commit": "3a74be076f0b2134acd00b9d14a99a4580d1712d",
   "binary": {
-    "binary": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-pooled-reference-v2",
-    "sha256": "e2f3c9a8c23b206e6f4e163c45ca4b7233b9f8877778343114d265ea33c800e5"
+    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-default-bf16-mtp-v3",
+    "sha256": "fb3a3145674e6a49d6f5bb9a19b0d780ac2b030d9bd6dd2c17b98bf5e4713d66"
   },
   "source_files": {
     "crates/backend/cuda/src/loading/mod.rs": "9be5fbfe6a93b59dc79d07169d5a7547f7db4a904808c29fbbdab6e51e686e26",
-    "crates/backend/cuda/src/resident/attention_decode/workspace.rs": "7066ad631e342cd867bfcb5cc5e636f893d9e939657606c78ae814b5c6451366",
-    "crates/backend/cuda/src/resident/batch.rs": "3de4a4640e3e430c90c9c660e21b88483a0a2b5b98f372111ee6755c5b6fca13",
+    "crates/backend/cuda/src/resident/attention_decode/workspace.rs": "4070b9487293fcace2f95a40b32465e230b456156b7834253e9e149a4db1facc",
+    "crates/backend/cuda/src/resident/batch.rs": "89def17ba276f23f0f98dd3023434a323bc12786db7dff3007dd6539698b8ca4",
     "crates/backend/cuda/src/resident/capture.rs": "8cea71b4e6a0a59519a29f97f5cfa4d65deedb686832b3a3430c16e689b3fffe",
     "crates/backend/cuda/src/resident/mod.rs": "8fb15b948180c76674bd6cf6082b11c43d48c124f96c0d411e896e80c6ad4a10",
     "crates/backend/cuda/src/resident/pool_gemv.rs": "9aa2aa5e078e0168505206ffddfb31e1c54e05fe907cdbb0949cb88881cb7062",
@@ -19,7 +19,19 @@
     "crates/backend/cuda/tests/unit/loading_pool_gemv_cost.rs": "3d8008b0d1c8c22c6bc15f06794514aa7e0b764aa76eb442ec1a4114fa762a45",
     "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "d5bb66fb1cdaef3eb768109b3d7c9cc2b9b006fb13c1955a8c65b658b2afbc2d",
     "crates/backend/cuda/src/resident/canonical_recurrent.rs": "9a12e69443696da0d6278f0797e886879e54968b2397499aa750345c97d9c533",
-    "crates/backend/cuda/tests/unit/loading_pooled_reference_verification.rs": "0ff19e95b04cb7779c30172fc90760369e8efb6d7ad059c5714d2560cfcb547c"
+    "crates/backend/cuda/tests/unit/loading_pooled_reference_verification.rs": "0ff19e95b04cb7779c30172fc90760369e8efb6d7ad059c5714d2560cfcb547c",
+    "crates/service/cli/src/arguments.rs": "bd3eb5d87e191eafcaf410b0c3a44519ecd41c784e53a1b415a6e59dfe39e9f8",
+    "crates/service/cli/tests/unit/arguments.rs": "722c2ef35b3b4883a282d3f1e9370bd5207a487c932cca4914557a1fa8d77eee",
+    "crates/service/cli/tests/unit/backend_selected.rs": "a024c5bbf2b06dff00d2a3b41f8cd5bca910629469d64b27471ec980bd5130a6",
+    "crates/service/cli/tests/unit/backend_defaults.rs": "124ca855542aa4b6270e550d5044596ee660f6567f92163401f975ad6ceebd5f",
+    "crates/service/cli/src/backend/cuda.rs": "f135e1b14acb6f3c772105abc35b387527d39d33b78d9562d731d306d78185e7",
+    "crates/service/cli/src/backend/metal.rs": "179d2844729c498cd1356a690256a300b8842b7f74960068ff31cf9eb64c52a1",
+    "crates/service/cli/src/backend/mod.rs": "5f231d4581eb74899607364394382ea2dc96628724a53049d3b5d71f353ca4b9",
+    "crates/service/cli/src/backend/defaults.rs": "295e8e3528eaf3014f881c44638cf7b726da48e842511a6fe309be39e108323f",
+    "crates/backend/cuda/src/attention_profile.rs": "f842c8e16d594819daaf9e2b197e4697784ab404ab53abcdd3bb0aa0eddfb98b",
+    "crates/backend/cuda/tests/unit/resident_norm_maximum_model.rs": "d6e490ef33703f380dd1786ec7f97de10bf7202ab550eb1dd8058d7cc765c3fc",
+    "crates/backend/cuda/tests/unit/attention_profile_capabilities.rs": "9583a28014930ce9f468ec6864748f86d341dd35c15a9153417063afe9df0207",
+    "crates/backend/cuda/src/resident/norm_maximum.rs": "e174aaa04b83a2ccb7f01f665728b24a779d49ece7d4252dcf7c34f596e7fd23"
   },
   "raw_logs": {
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/geometry.log": "3b3a1dbb917497b7ac47a4d4747dd303824b1dc970b4f234e3a6718b867efe26",
@@ -38,7 +50,14 @@
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-validation.log": "224a9b65dd89e66a52a453ac0a46ebddf71ed68a8b1fcdfe58c569f4bb2e7b18",
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-full-cache-assert-v1.log": "224a9b65dd89e66a52a453ac0a46ebddf71ed68a8b1fcdfe58c569f4bb2e7b18",
     "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-no-decode-fixture-v1.log": "f27da320c1acd3fd8e61c692120c163a38dbf0cfc11466ed7ae3ef9e53b8e81f",
-    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-ordinary.log": "2ae45206ce1741fe3d1ef53e53efa25051c8b2c853899c9f34256c26d9990438"
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-v2-ordinary.log": "2ae45206ce1741fe3d1ef53e53efa25051c8b2c853899c9f34256c26d9990438",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v3-validation-complete.json": "35a308f426c65e9a3c3f5a0ccbb260db6a9e789f6a044e265a995aa1a080d4b3",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v3-host-pass-backend-lint-failure.log": "28ccc7e48e54c7d81a24541e5bebac25b3c7c7a245911da76c264d06ce119c15",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-bf16-mtp-v3-validation-continued4.log": "e5b088578ba24ac1b527b88c0d910f8d6871354f3c32a472306bedd231cb479b",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/precise-prefix-proof-complete.json": "5ba09f7d4eeab6cc89c0e365375584f06ea2cbc415e42a387d0ef5b8190af428",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/precise-prefix-counterexamples-v1/contract.json": "de37693443b12335b9cdfaf7944bf6b17b4f00e2dcde222cf3a7db02d204514f",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/precise-prefix-counterexamples-v1/summary.json": "19bd77582161f7bc5b932c5465fd4115847b9f745f52f8fc4c7ba6cba5dafedc",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/default-candidate-diagnostic-v3/contract.json": "c28eb3efe6c08501d81000b88d14de7247e46800a383a58f9efde000d32cb855"
   },
   "causes": [
     "Small DenseA/B projections above16 flattened rows switched accumulation provider.",
@@ -81,10 +100,10 @@
       48,
       144
     ],
-    "ordinary_tests": 136,
+    "ordinary_tests": 138,
     "affected_gpu_tests": 9,
     "strict_cuda_clippy": "passed",
-    "layout_source_policy_inventory": "passed on staged source export without unrelated local staging trees",
+    "layout_source_policy_inventory": "passed;782testentries/4CPUexecutorconsumers",
     "v1_private_oracle_limitation": "V1 compared large pools with a private single-step reference, but ordinary serving pools already select norm_rows. Passing that oracle did not establish preservation of serving target math.",
     "ordinary_serving_oracle": {
       "output_pairs": 219,
@@ -109,6 +128,21 @@
         0
       ],
       "scope": "Only valid prefix is observable after rollback; all F32 recurrent state remains exact."
+    },
+    "precise_initial_context": {
+      "independent_fixture": "shared-quant-reuse-2026-10-13/tokens-511.json repeated deterministically",
+      "lengths": [
+        1,
+        51,
+        127,
+        257,
+        511,
+        1024
+      ],
+      "subsequent_decode_steps_per_length": 4,
+      "complete_hidden_logits_recurrent_KV_bits": "exact vscanonical",
+      "bulk_after1024_differing_hidden_logits_values": 253440,
+      "scope": "Bulk-path assertion proves BF16 not silently replaced everywhere."
     }
   },
   "scratch": {
@@ -118,14 +152,10 @@
     "per_slot_full_rollback_snapshots": false
   },
   "qualification_pending": {
-    "task_quality": {
-      "status": "RUNNING",
-      "root": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-quality-v2",
-      "contract_sha256": "91a3b5980a6923042068876070d00399bcc8248c6eae640e9c4e7ab928411c52",
-      "arms": "Fresh maincanonical0 / correctedcanonical2 / correctedBF162 / correctedFP162,1024tasks each,16processes, balanced pair order. Original512cap/scorer/C16/CP95gross2pct overall and512zero/eight strata unchanged. No V1 samples reused; no joint-family confidence claim."
-    },
-    "performance": "Prior V1 descriptive C16 medians18.640s default,20.392s canonical2,16.173s BF162. Not a performance claim for this V2 binary; no new performance/default qualification yet.",
-    "default_flags": "unchanged",
+    "expanded_diagnostic": "51cases:ALL33V2gradechanges,available4MTP-onlyregressions,16unchangedcorrect8perstratum. Before explicitoldBF16/MTP2 vsafterimplicitdefault. Running;notfullquality.",
+    "task_quality": "Only olddefault/newdefault; full original1024each,512cap/C16/scorer/CP95grossupper2pct overall/strata unchanged. New declared three-process balancedhalf-order plan reduces model restarts. Not launched.",
+    "performance": "Fresh actual-zero-option default benchmarks and broad cases pending. No performance claim from old16.173s for this binary.",
+    "fallback_and_vision": "runtime smoke pending",
     "vllm_comparison": "no fresh parity claim"
   },
   "previous_candidate_quality": {
@@ -136,5 +166,48 @@
       "sha256": "07d3b6a4bad02e3b3ba94faed98448eacae96e1564ee5f07f6610fdf7288b4b9"
     },
     "status": "Rejected; original analyzer omitted c raw hashes only, numeric c results correct. Supplemental bindings retain all12 raw files; no frozen analyzer/statistic changes."
+  },
+  "automatic_default": {
+    "when": "Both execution overrides omitted; nativeFP4 package, declaredFP8KV, complete supported denseMTPhead and existing FA4 geometry/artifact availability.",
+    "selection": "Auto MTP resolvesdepth2; BF16 target bulk prefill with canonical attention through1024 contextpositions.",
+    "unsupported": "Canonical0; explicit overrides preserved.",
+    "capacity_fallback": "Automatic load only: synchronize/drop failed attempt, account own freed CUDA pool bytes, retry canonical0 once. Runtime smoke pending.",
+    "user_options_required": false,
+    "vision": "kept enabled",
+    "extra_activation_or_state_families": false,
+    "prefix_graphs": "Both arithmetic captures share original arena, metadata and scratch. Each has its own optional profiling events."
+  },
+  "previous_v2_selected_quality": {
+    "scope": "User narrowed to fastest BF16+MTP2 before lastBF16 shard finished; originalfour-arm cohort canceled onlyunusedB3 and is explicitly incomplete. FullA/C1024 each retained.",
+    "analysis": {
+      "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-reference-quality-v2/selected-bf16-analysis.json",
+      "sha256": "93629c133b632bede4e35ae2b677f53a755a6b4a3566d66fe6582f64fce064cc"
+    },
+    "control_correct": 970,
+    "candidate_correct": 973,
+    "regressions": 15,
+    "gains": 18,
+    "cp95_upper_percent": {
+      "overall": 2.2466546679757955,
+      "zero_shot": 3.2904108456953294,
+      "eight_shot": 2.042288268669038
+    },
+    "passed": false
+  },
+  "diagnostic_counterexamples": {
+    "selection": "All15 original V2 BF16 regressions, not unseen qualification",
+    "failed_last_attention_only": {
+      "before_correct": 3,
+      "after_correct": 4,
+      "adopted": false
+    },
+    "precise_prefix": {
+      "before_correct": 2,
+      "after_correct": 14,
+      "n": 15,
+      "summary_path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/precise-prefix-counterexamples-v1/summary.json",
+      "summary_sha256": "19bd77582161f7bc5b932c5465fd4115847b9f745f52f8fc4c7ba6cba5dafedc"
+    },
+    "launch": "Diagnostic only: frozen complete cache and no-autotune avoid redundant preparation model load; final default qualification retains normal tuning. Scorer/caps unchanged."
   }
 }

@@ -22,7 +22,7 @@ pub enum BackendChoice {
     Metal,
     Cuda,
 }
-/// CLI draft-depth policy. Automatic selection is an explicit opt-in.
+/// Explicit CLI draft-depth override; absence is resolved with the attention profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpeculativeTokens {
     Auto,
@@ -44,9 +44,9 @@ impl FromStr for SpeculativeTokens {
 }
 /// Explicit target attention numerical profile.
 ///
-/// `Canonical` is the existing exact path. `Bf16` and `Fp16` are experimental target FP8-KV
-/// prefill profiles that have not passed the fixed task-quality gate; neither is enabled
-/// implicitly.
+/// `Canonical` retains F32 attention. The omitted-option resolver pairs `Bf16` with MTP
+/// on supported native-FP4/FP8-KV packages; its initial context remains canonical.
+/// `Fp16` remains an explicit experimental override.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum CudaAttentionProfile {
     #[default]
@@ -120,11 +120,11 @@ pub struct Selection {
     /// Name clients address this deployment by (`--served-model-name`).
     pub served_model_name: Option<String>,
     pub upload_staging_mib: Option<usize>,
-    /// Defaults to depth zero; auto opts into capability-based CUDA draft selection.
-    pub num_speculative_tokens: SpeculativeTokens,
-    /// Target attention numerical profile, experimental for `bf16`.
+    /// Omitted execution options select a qualified pair or fall back to canonical/depth0.
+    pub num_speculative_tokens: Option<SpeculativeTokens>,
+    /// Explicit target attention profile; absence allows paired automatic selection.
     #[cfg(all(target_os = "linux", feature = "cuda"))]
-    pub attention_profile: CudaAttentionProfile,
+    pub attention_profile: Option<CudaAttentionProfile>,
     pub gpu_memory_utilization: f64,
     /// Measure uncovered geometries; both modes reuse validated cached choices.
     pub autotune: bool,
@@ -153,3 +153,6 @@ fn resolve(
 #[cfg(test)]
 #[path = "../../tests/unit/backend_mod.rs"]
 mod tests;
+
+#[cfg(any(test, all(target_os = "linux", feature = "cuda")))]
+mod defaults;

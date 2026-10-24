@@ -53,16 +53,14 @@ pub struct Cli {
     /// Disable new tuning measurements; reuse validated cached choices or conservative defaults.
     #[arg(long, global = true)]
     pub(super) no_autotune: bool,
-    /// Draft tokens proposed per step; 0 disables speculation (default). Explicit 'auto'
-    /// selects 2 on CUDA with a supported, complete MTP head, otherwise 0.
-    #[arg(long, global = true, default_value = "0", value_name = "COUNT|auto")]
-    pub(super) num_speculative_tokens: backend::SpeculativeTokens,
-    /// Target attention numerical profile. `bf16` is an experimental FA4 target FP8-KV prefill
-    /// profile. `fp16` is the validated-SM120 plain-FP16 variant of the same target-only
-    /// prefill profile. The fixed task-quality gate has not passed for either. Default is
-    /// canonical and the draft proposal path is unchanged.
-    #[arg(long, global = true, value_enum, default_value = "canonical")]
-    pub(super) cuda_attention_profile: backend::CudaAttentionProfile,
+    /// Draft tokens per step; 0 disables MTP, 'auto' selects a complete supported head.
+    /// With both execution options omitted, CUDA may select a validated fast profile.
+    #[arg(long, global = true, value_name = "COUNT|auto")]
+    pub(super) num_speculative_tokens: Option<backend::SpeculativeTokens>,
+    /// Target prefill attention profile. Omit both execution options for automatic selection;
+    /// an explicit override keeps the other option at canonical/depth0.
+    #[arg(long, global = true, value_enum)]
+    pub(super) cuda_attention_profile: Option<backend::CudaAttentionProfile>,
     /// Per-prompt multimodal item limits as JSON, as in vLLM (for example
     /// `{"image":0,"video":0}`). All-zero limits serve text only and skip loading the vision
     /// tower; image inputs are then rejected.

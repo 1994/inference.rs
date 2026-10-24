@@ -16,7 +16,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 24
+      "tests": 26
     },
     "compiler": {
       "benches": 0,
@@ -34,7 +34,7 @@
       "benches": 0,
       "src_inline": 0,
       "src_near": 0,
-      "tests": 288
+      "tests": 291
     },
     "frontdoor": {
       "benches": 0,
@@ -155,6 +155,7 @@
     "CUDA/checkpoint/frozen tokens/safe-run; exact logits, partial commits and live state in actual speculation pools": 1,
     "CUDA/checkpoint/frozen tokens/safe-run; ordinary-pool versus speculative-pool full target arithmetic": 1,
     "CUDA/checkpoint/frozen tokens/safe-run; private M1 versus M3 full target outputs and state": 1,
+    "CUDA/checkpoint/frozen511tokens/safe-run; canonical prefix and subsequent decode bits": 1,
     "real MTP2 checkpoint and CUDA; run inside safe-run": 1,
     "real MTP2 checkpoint, CUDA, frozen table/tokens and protected serial runner required": 1,
     "release CUDA performance diagnostic; run inside safe-run": 1,
@@ -259,6 +260,11 @@
       "crate": "cuda",
       "file": "src/attention/mod.rs",
       "mount": "../../tests/unit/attention.rs"
+    },
+    {
+      "crate": "cuda",
+      "file": "src/attention_profile.rs",
+      "mount": "../tests/unit/attention_profile_capabilities.rs"
     },
     {
       "crate": "cuda",
@@ -1072,6 +1078,11 @@
     },
     {
       "crate": "cli",
+      "file": "src/backend/defaults.rs",
+      "mount": "../../tests/unit/backend_defaults.rs"
+    },
+    {
+      "crate": "cli",
       "file": "src/backend/mod.rs",
       "mount": "../../tests/unit/backend_mod.rs"
     },
@@ -1157,11 +1168,11 @@
     }
   ],
   "totals": {
-    "all": 777,
+    "all": 782,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 777
+    "tests": 782
   }
 }

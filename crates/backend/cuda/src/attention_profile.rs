@@ -4,24 +4,71 @@
 //! loaded model creates. It never changes weights, KV storage or the draft proposal path.
 use serde::Serialize;
 
+/// Initial context kept on F32 before the target BF16 bulk path.
+#[cfg(all(target_os = "linux", feature = "cuda"))]
+pub const PRECISE_PREFIX_POSITIONS: usize = 1024;
+
 /// Target prefill attention arithmetic selected by the operator.
 ///
-/// `Canonical` keeps the existing exact attention path bit-for-bit. `Bf16` opts the target's
-/// FP8-KV prefill into the existing FA4 BF16-QKV / F32-accumulation / BF16-output kernel. `Fp16`
-/// opts only the validated SM120 target FP8-KV prefill into the plain-FP16-QKV /
-/// F32-accumulation / FP16-output kernel. Both experimental profiles are never selected
-/// automatically and are not production accuracy claims until the fixed task-quality gate passes.
+/// `Canonical` keeps the established F32 path. `Bf16` keeps initial context through 1024
+/// positions on that path and uses FA4 BF16-QKV/F32 accumulation for bulk prefill afterwards.
+/// The CLI pairs it with MTP only when the package and device support both; library callers
+/// retain the canonical default. `Fp16` remains an explicit experimental SM120 profile.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum AttentionProfile {
     /// Existing canonical attention, unchanged.
     #[default]
     Canonical,
-    /// Existing FA4 BF16 attention for target FP8-KV prefill; experimental, not quality-approved.
+    /// Canonical initial context followed by FA4 BF16 target FP8-KV bulk prefill.
     Bf16,
     /// FA4 plain-FP16 attention for validated SM120 target FP8-KV prefill; not quality-approved.
     Fp16,
 }
 impl AttentionProfile {
+    /// Whether every target attention node has an available BF16 prefill implementation.
+    /// This is an allocation-free geometry/artifact check; the CLI separately requires a
+    /// native FP4 package, declared FP8 KV and a complete supported optional head.
+    /// A zero width denotes the loader's automatic, lane-aligned prompt geometry.
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    #[must_use]
+    pub fn supports_bf16_prefill(
+        architecture: &str,
+        graph: &infer_ir::DataflowGraph,
+        width: usize,
+    ) -> bool {
+        use crate::resident::attention_mma::catalog;
+        let width = if width == 0 {
+            catalog::LANE_MULTIPLE
+        } else {
+            width
+        };
+        let mut found = false;
+        for node in &graph.nodes {
+            if let infer_ir::TensorOp::Attention {
+                query_heads,
+                kv_heads,
+                head_dim,
+                window,
+            } = node.op
+            {
+                found = true;
+                if node.states.is_empty()
+                    || !catalog::supported(
+                        architecture,
+                        query_heads,
+                        kv_heads,
+                        head_dim,
+                        width,
+                        window.unwrap_or(0),
+                    )
+                {
+                    return false;
+                }
+            }
+        }
+        found
+    }
+
     /// Stable readback/log name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -31,7 +78,7 @@ impl AttentionProfile {
             Self::Fp16 => "fp16",
         }
     }
-    /// Whether the explicit BF16 target profile is selected.
+    /// Whether the BF16 target profile is selected.
     #[must_use]
     pub const fn is_bf16(self) -> bool {
         matches!(self, Self::Bf16)
@@ -41,12 +88,16 @@ impl AttentionProfile {
     pub const fn is_fp16(self) -> bool {
         matches!(self, Self::Fp16)
     }
-    /// Whether a target prefill node may use one of the experimental FA4 profiles.
+    /// Whether a target prefill node may use a 16-bit FA4 profile.
     ///
     /// The caller still decides node-level FP8-KV, architecture and geometry eligibility; this
-    /// only separates the canonical default from the opt-in target profiles.
+    /// only separates canonical attention from the target FA4 profiles.
     #[must_use]
     pub const fn is_target_mma(self) -> bool {
         matches!(self, Self::Bf16 | Self::Fp16)
     }
 }
+
+#[cfg(all(test, target_os = "linux", feature = "cuda"))]
+#[path = "../tests/unit/attention_profile_capabilities.rs"]
+mod capability_tests;

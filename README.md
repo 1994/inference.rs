@@ -87,11 +87,13 @@ Once `infer` is on your `PATH`, the default entry point is simply:
 infer /path/to/model
 ```
 
-This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace and input limits are derived from the loaded model, and an exposed KV pool sets the logical page budget. CUDA derives its memory budget from device capacity and available memory; Metal uses the device's recommended working set. CUDA projection autotuning is enabled by default and reuses matching cached measurements. MTP is disabled by default. Explicit `--num-speculative-tokens auto` selects two MTP draft tokens when the CUDA provider supports a dense, single-layer head and the checkpoint contains all required bindings; other packages, Metal, and explicit prefill caps of one or two tokens use no draft tokens. Numeric depths remain explicit overrides.
+This starts the server at `http://127.0.0.1:8080`. The backend is selected automatically in CUDA → Metal order; a missing GPU produces an error. Workspace, input limits and CUDA memory admission are derived from the loaded model and device. Projection autotuning is enabled by default and reuses validated cached measurements.
+
+For supported CUDA FP4 checkpoints with FP8 KV and a complete MTP head, the server automatically pairs two draft tokens with the BF16 bulk-prefill path. Initial context through 1024 positions retains canonical F32 attention. Unsupported packages and devices retain canonical attention without MTP. Vision support stays enabled. `--num-speculative-tokens 0` selects the conservative canonical configuration.
 
 Optional flags override these choices, for example `infer /path/to/model --listen 127.0.0.1:9000`. An explicit `--config` preserves the supplied runtime budgets; the original `infer serve --package ...` syntax remains supported. CPU execution requires explicit selection.
 
-Automatic sizing, MTP and measured tile selection do not guarantee optimal end-to-end performance for every device, model, or workload. MTP remains opt-in: its fixed quality gate has not passed, and enabling it reduces available KV capacity. Performance changes must still pass the benchmark gates. Target attention remains canonical by default; the separate BF16 and FP16 numerical profiles still require explicit selection.
+Explicit execution overrides remain available for diagnostics; users do not need them to select the automatic fast path. The startup log reports the effective attention profile, draft depth and admitted pool geometry.
 
 ### Logs
 
