@@ -12,6 +12,12 @@
       "src_near": 0,
       "tests": 6
     },
+    "backend-conformance": {
+      "benches": 0,
+      "src_inline": 0,
+      "src_near": 0,
+      "tests": 14
+    },
     "cli": {
       "benches": 0,
       "src_inline": 0,
@@ -1182,14 +1188,39 @@
       "crate": "frontdoor",
       "file": "tests/unit/http_openai.rs",
       "mount": "http_strict_tools.rs"
+    },
+    {
+      "crate": "backend-conformance",
+      "file": "src/lib.rs",
+      "mount": "../tests/support/mod.rs"
+    },
+    {
+      "crate": "backend-conformance",
+      "file": "src/manifest.rs",
+      "mount": "../tests/unit/manifest.rs"
+    },
+    {
+      "crate": "backend-conformance",
+      "file": "src/program.rs",
+      "mount": "../tests/unit/program.rs"
+    },
+    {
+      "crate": "backend-conformance",
+      "file": "src/report.rs",
+      "mount": "../tests/unit/report.rs"
+    },
+    {
+      "crate": "backend-conformance",
+      "file": "src/state.rs",
+      "mount": "../tests/unit/state.rs"
     }
   ],
   "totals": {
-    "all": 818,
+    "all": 832,
     "benches": 0,
     "src": 0,
     "src_inline": 0,
     "src_near": 0,
-    "tests": 818
+    "tests": 832
   }
 }

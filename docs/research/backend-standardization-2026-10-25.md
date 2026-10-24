@@ -134,8 +134,10 @@ compute/storage dtype、head_dim 上下界、mask 种类、KV 布局（dense/pag
 
 **S3. 一致性套件**
 
-新增 `conformance` 模块（建议先放在 [`reference-ops`](../../crates/testing/cpu/reference-ops/src/lib.rs) 内，
-避免新增 crate 与修改布局规则；规模变大后再拆 `crates/testing/backend-conformance`）。
+新增 `conformance` 模块。已落地为独立 crate
+[`crates/testing/cpu/backend-conformance`](../../crates/testing/cpu/backend-conformance/src/lib.rs)
+（布局规则要求 `testing/cpu/<crate>`；没有放进 `reference-ops`，避免参考算子承担测试驱动）。
+当前套件覆盖 manifest、状态报价/生命周期与 program 身份；数值、分页、取消与 checkpoint 场景待补。
 套件只依赖 `BackendProvider`、`StateRecipe` 与 reference oracle，场景由清单驱动：
 
 1. 加载夹具 → 编译 → 预约 → prefill/decode → 输出与参考一致；
@@ -185,7 +187,7 @@ host-only 部分用协议 mock。**不恢复 CPU 执行 backend**：mock 只验�
 | 阶段 | 交付 | 验收 | 主要风险 |
 |---|---|---|---|
 | P0（本 PR） | 本文：盘点、分层、SOP 与待决问题 | 文档链接与布局门禁通过；维护者确认 Tier 划分 | 结论被误读为“立即重构 CUDA” |
-| P1 | S3 一致性套件骨架 + S5 SOP 文档；不改变生产行为 | mock 层在 CI 运行；Metal 在设备窗口通过 required 场景；CUDA 通过 host 可检查组，缺口逐条登记 | 设备依赖导致 CI 无法覆盖；套件变成第二套测试 |
+| P1 | S3 一致性套件骨架 + S5 SOP 文档；不改变生产行为 | **部分**：套件 crate 与 [guide](../guides/adding-a-backend.md) 已落地，14 项自测通过；Metal/CUDA 适配与数值/分页场景待设备窗口 | 设备依赖导致 CI 无法覆盖；套件变成第二套测试 |
 | P2 | S1 kernel 清单 + S2 `StateRecipe`/`load_weights` 强制；S4 CLI 宏 | 新 backend 只填表即可注册；报价与分配一致性由共享测试覆盖；CUDA 行为与报价不变 | StateRecipe 的内存分类不够用；CUDA 报价无法等价 |
 | P3 | 用目标设备做一次真实接入试点 | Tier-0 主机代码 ≤3,000 行、2–4 周、`engine`/`runtime`/`compiler` 零改动；模型夹具通过 | 目标设备工具链不成熟；kernel 工作量被低估 |
 | P4（可选） | S5 的主机骨架与 CUDA 收敛 | Metal 迁移无回退；CUDA 只收敛清单/报价/套件三处 | 抽象泄漏、热路径回退 |
@@ -224,12 +226,13 @@ P2 不要求 CUDA 改用 `StateRecipe`：常驻图与 pooled 程序有独立的�
 1. 目标 backend 的设备与内存模型是什么（独显 / 统一内存 / 多级显存）？这决定 `StateRecipe`
    是否需要扩展 region class，以及主机骨架的 buffer 抽象。
 2. 首版是否要求 checkpoint、prefix、连续批处理？还是允许显式 `Unsupported` 并进入 Tier-1？
-3. 是否接受一致性套件先放进 `reference-ops`（避免新 crate 与布局规则变更）？
+3. ~~是否接受一致性套件先放进 `reference-ops`~~ 已决定：独立 crate
+   `crates/testing/cpu/backend-conformance`，布局规则不允许 `crates/testing/backend-conformance`。
 4. 是否接受新增 `infer-backend-kit` 作为 P4 选项（而不是现在就建）？
 5. CUDA 是否接受“只收敛清单、报价对照与套件”三处，常驻图路径保持不动？
 6. 新 backend 的首个目标模型族是什么？这决定 13–17 个 kernel 中哪些必须先做。
 
-## 附 A：Tier-0 接入 checklist（草案，P1 移入 guide）
+## 附 A：Tier-0 接入 checklist（已移入 [guide](../guides/adding-a-backend.md)）
 
 ```text
 [ ] 能力与枚举：BackendKind / DeviceBackend / DeviceCapabilities / BackendRequirements

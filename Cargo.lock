@@ -1103,6 +1103,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "infer-backend-conformance"
+version = "0.1.0"
+dependencies = [
+ "infer-core",
+ "infer-ir",
+ "infer-kernel-api",
+ "infer-spi",
+]
+
+[[package]]
 name = "infer-backend-cuda"
 version = "0.1.0"
 dependencies = [

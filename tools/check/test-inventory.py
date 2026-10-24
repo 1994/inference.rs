@@ -86,7 +86,11 @@ def role(path):
 
 
 def crates():
-    return sorted(path for path in REPO_ROOT.glob("crates/*/*") if (path / "Cargo.toml").is_file())
+    """Crate roots at both supported depths: `group/crate` and `testing/cpu/crate`."""
+    groups = REPO_ROOT / "crates"
+    found = {manifest.parent for manifest in groups.glob("*/*/Cargo.toml")}
+    found |= {manifest.parent for manifest in groups.glob("testing/cpu/*/Cargo.toml")}
+    return sorted(found)
 
 
 def classify(relative):
@@ -250,7 +254,15 @@ def check_mounts(inventory, root=REPO_ROOT):
     seen = {}
     for mount in inventory["path_mounts"]:
         crate = root / "crates"
-        owner = next((path for path in crate.glob(f"*/{mount['crate']}") if path.is_dir()), None)
+        owner = next(
+            (
+                path
+                for pattern in (f"*/{mount['crate']}", f"testing/cpu/{mount['crate']}")
+                for path in crate.glob(pattern)
+                if path.is_dir()
+            ),
+            None,
+        )
         key = (mount["crate"], mount["file"], mount["mount"])
         seen[key] = seen.get(key, 0) + 1
         if owner is None:

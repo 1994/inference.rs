@@ -35,7 +35,7 @@ crate 名称（`infer-backend-cuda`、`infer-backend-metal`）不因目录组织
 2. 注册 `BackendKind` / `DeviceBackend` / `BackendRequirements`，并实现 CLI 选择 adapter。
 3. 公共结构不添加厂商 `Option` 字段；当前是编译期封闭枚举，新增 variant 必须通过穷尽匹配检查，不能悄悄退回 CPU。
 
-接入成本分层、可共享的主机侧契约与新后端 checklist 见 [Backend 标准化与接入 SOP 研究](../../docs/research/backend-standardization-2026-10-25.md)。
+接入步骤与 Tier-0 checklist 见[新增 backend 指南](../../docs/guides/adding-a-backend.md)；成本分层与研究结论见 [Backend 标准化与接入 SOP 研究](../../docs/research/backend-standardization-2026-10-25.md)。
 
 动态加载 ABI 尚未实现。CUDA 接入边界见 [CUDA 说明](cuda/README.md)，KV 合约见 [KV Cache Manager](../../docs/architecture/kv-manager.md)，公共加载器与 Metal forward 见[模型执行](../../docs/guides/model-execution.md)。
 

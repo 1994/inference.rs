@@ -1,0 +1,19 @@
+[package]
+name = "infer-backend-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Case bodies live in tests/; they are mounted by their module, so the directory
+# must not be auto-discovered as an integration target.
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+infer-core.workspace = true
+infer-ir.workspace = true
+infer-kernel-api.workspace = true
+infer-spi.workspace = true

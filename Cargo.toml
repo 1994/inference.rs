@@ -21,6 +21,7 @@ members = [
     "crates/service/agent",
     "crates/service/cli",
     "crates/testing/cpu/reference-ops",
+    "crates/testing/cpu/backend-conformance",
     # Development tool: a member so it shares the lock, versions and lints, but not part of the
     # default product build set.
     "tools/bench/cpu",

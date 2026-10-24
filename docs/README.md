@@ -18,6 +18,7 @@ Agent 接入、tool parser、文本流式、max length 与严格工具约束的�
 | [构建与打包](guides/packaging.md) | Zig 平台矩阵、归档、校验与 GitHub CI |
 | [模型执行](guides/model-execution.md) | 模型包、权重、prefill/decode |
 | [新增模型](guides/adding-a-model.md) | ModelProvider、执行图与注册 |
+| [新增 backend](guides/adding-a-backend.md) | Tier-0 checklist、共享装载/状态契约与一致性检查 |
 | [图像模型](guides/vision.md) | 视觉塔、MRoPE、独立参考与支持限制 |
 | [OpenAI 兼容接口](guides/openai-api.md) | 路由、参数与错误约定 |
 | [Linux 放置](guides/linux.md) | cpuset、NUMA 与硬件验收 |
