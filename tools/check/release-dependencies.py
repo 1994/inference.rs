@@ -9,6 +9,9 @@ The configurations come from the same `build.rs` plan the native build and packa
 use, so this file cannot drift from them. `--record` refreshes the record; the default
 run compares against it and fails on a new duplicate, a stale record or a test-only
 executor appearing in a production graph.
+
+Build dependencies are resolved for the running host, even with `--target`. A cross-host
+`--record` is provisional: confirm each entry on its native CI runner before committing it.
 """
 
 import argparse

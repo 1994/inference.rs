@@ -2,7 +2,7 @@
  "configurations": [
   {
    "backend": "cuda",
-   "crates": 220,
+   "crates": 221,
    "duplicates": {
     "getrandom": [
      "0.3.4",
@@ -42,7 +42,7 @@
      "2.0.21"
     ]
    },
-   "edges": 740,
+   "edges": 737,
    "features": [
     "cuda"
    ],
