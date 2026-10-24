@@ -136,6 +136,7 @@ class GateTests(unittest.TestCase):
             ("mtp_depth", 0),
             ("completed", False),
             ("hot_prefix_tokens_reused", 0),
+            ("vision_enabled", True),
         ]:
             with self.subTest(field=field):
                 old, new = report(), report()

@@ -28,6 +28,7 @@ use infer_models::vision::position_taps;
 pub use kv_scales::load as load_kv_scales;
 mod bindings;
 mod budget;
+pub(crate) use budget::PooledServingQuote;
 mod experts;
 mod phase;
 use crate::{
@@ -715,6 +716,10 @@ fn bind_vision(
 #[cfg(test)]
 #[path = "../../tests/unit/loading_support.rs"]
 mod support;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_shape_ab.rs"]
+mod shape_ab_tests;
 
 #[cfg(test)]
 #[path = "../../tests/unit/loading_prefill_width.rs"]

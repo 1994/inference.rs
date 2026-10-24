@@ -62,6 +62,16 @@ MODEL_ARTIFACTS = (
 # bytes for these names is not enough: std's backtrace symbolizer mentions them in read-only data
 # even when the section table has none, so the section table itself is read.
 DEBUG_PREFIXES = ("__debug_", ".debug_")
+# Keep reference-library fan-out bounded inside the protected task limit. Existing operator
+# choices remain authoritative, and only these non-secret values enter the evidence report.
+REFERENCE_PROCESS_ENV = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "TORCHINDUCTOR_COMPILE_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+}
 
 
 def http(url, payload=None, timeout=600):
@@ -344,10 +354,9 @@ def native_command(args, port):
         str(args.max_model_len),
         "--max-num-seqs",
         str(args.max_num_seqs),
-        # Same text-only service as the vLLM command: neither side loads the vision tower.
-        "--limit-mm-per-prompt",
-        '{"image":0,"video":0}',
     ]
+    if not getattr(args, "vision", False):
+        command += ["--limit-mm-per-prompt", '{"image":0,"video":0}']
     if args.extra:
         command += args.extra
     return command
@@ -374,9 +383,9 @@ def vllm_command(args, port):
         str(args.gpu_memory_utilization),
         "--generation-config",
         "vllm",
-        "--limit-mm-per-prompt",
-        '{"image":0,"video":0}',
     ]
+    if not getattr(args, "vision", False):
+        command += ["--limit-mm-per-prompt", '{"image":0,"video":0}']
     command.append("--enable-prefix-caching" if args.prefix_cache else "--no-enable-prefix-caching")
     if args.mtp:
         command += [
@@ -670,10 +679,15 @@ def measure_group(args, base, eos, counter, group):
     }
 
 
+def workload_cases(rows):
+    """Preserve declared case order without restricting profiles to the original four cases."""
+    return list(dict.fromkeys(row["case"] for row in rows))
+
+
 def measure(args, report, base, rows, save):
     counter = iter(range(1, 1_000_000))
     eos = report["eos_tokens"]
-    for case in CASES:
+    for case in workload_cases(rows):
         declared = [r for r in rows if r["case"] == case]
         if not declared:
             continue
@@ -731,7 +745,7 @@ def load_workload(path, repeats, max_input_tokens=0):
             raise SystemExit(
                 f"input of {len(tokens)} tokens exceeds --max-input-tokens {max_input_tokens}"
             )
-    for case in CASES:
+    for case in workload_cases(rows):
         declared = {r["concurrency"] for r in rows if r["case"] == case}
         if not declared:
             continue
@@ -746,8 +760,7 @@ def load_workload(path, repeats, max_input_tokens=0):
                 )
     missing = [
         f"{case}:{repeat}"
-        for case in CASES
-        if any(r["case"] == case for r in rows)
+        for case in workload_cases(rows)
         for repeat in range(-1, repeats)
         if not any(r["case"] == case and r["repeat"] == repeat for r in rows)
     ]
@@ -763,8 +776,7 @@ def workload_matrix(rows, repeats):
             "concurrency": next(r["concurrency"] for r in rows if r["case"] == case),
             "repeats": repeats,
         }
-        for case in CASES
-        if any(r["case"] == case for r in rows)
+        for case in workload_cases(rows)
     }
 
 
@@ -964,14 +976,43 @@ def require_cache_switch(args):
         )
 
 
+def validate_workload_resources(args, rows):
+    """Reject an impossible profile before an engine allocates its model or KV cache."""
+    if args.tokens < 1 or args.max_model_len < 1 or args.max_num_seqs < 1:
+        raise RuntimeError("output, context and sequence limits must all be positive")
+    for row in rows:
+        required = len(row["tokens"]) + args.tokens
+        if required > args.max_model_len:
+            raise RuntimeError(
+                f"{row['case']}/{row['repeat']}/{row['slot']} needs {required} context tokens, "
+                f"exceeding --max-model-len {args.max_model_len}"
+            )
+        if row["concurrency"] > args.max_num_seqs:
+            raise RuntimeError(
+                f"{row['case']} concurrency {row['concurrency']} exceeds "
+                f"--max-num-seqs {args.max_num_seqs}"
+            )
+
+
+def process_environment(engine):
+    """Bound reference thread fan-out and retain the exact non-secret process settings."""
+    environment = os.environ.copy()
+    if engine != "native":
+        for name, value in REFERENCE_PROCESS_ENV.items():
+            environment.setdefault(name, value)
+    return environment
+
+
 def run(args):
     require_cache_switch(args)
     require_protected_run()
     rows = load_workload(args.inputs, args.repeats, args.max_input_tokens)
+    validate_workload_resources(args, rows)
     eos = eos_tokens(args.model)
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     command = build_command(args, port)
+    environment = process_environment(args.engine)
     name = f"{args.model.name}-mtp{args.mtp}-{args.engine}"
     run_id = args.run_id or None
     stem = args.output_dir / (name if run_id is None else f"{name}-{run_id}")
@@ -1037,11 +1078,15 @@ def run(args):
         "eos_tokens": eos,
         "mtp_depth": args.mtp,
         "prefix_cache_enabled": bool(args.prefix_cache),
+        "vision_enabled": getattr(args, "vision", False),
         "binary_sha256": build.get("sha256"),
         "workload_file": str(args.inputs),
         "inputs_sha256": sha256_bytes(json.dumps(rows, sort_keys=True).encode()),
         "gpu_memory_utilization": args.gpu_memory_utilization,
         "allocator_config": os.environ.get("PYTORCH_ALLOC_CONF"),
+        "process_environment": {
+            name: environment[name] for name in REFERENCE_PROCESS_ENV if name in environment
+        },
         "matrix": workload_matrix(rows, args.repeats),
         "identity": identity,
         "trials": [],
@@ -1052,7 +1097,7 @@ def run(args):
         report_path.write_text(json.dumps(report, indent=2))
 
     with log_path.open("w") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=environment)
         try:
             report["startup_seconds"] = wait_ready(
                 args, process, base, log_path, args.startup_timeout
@@ -1185,6 +1230,11 @@ def main():
     )
     parser.add_argument("--prefix-cache", action="store_true", default=True)
     parser.add_argument("--no-prefix-cache", dest="prefix_cache", action="store_false")
+    parser.add_argument(
+        "--vision",
+        action="store_true",
+        help="keep the vision tower available instead of the text-only diagnostic default",
+    )
     parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="extra engine flags")
     args = parser.parse_args()
     if args.repeats < 3:
