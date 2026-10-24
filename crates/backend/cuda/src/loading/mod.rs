@@ -767,3 +767,7 @@ mod prompt_width_bucket_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/resident_norm_maximum_model.rs"]
 mod norm_maximum_model_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/loading_canonical_verification.rs"]
+mod canonical_verification_tests;

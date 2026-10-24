@@ -1,0 +1,93 @@
+{
+  "status": "Numeric regression validated; task quality and serving performance pending. Defaults unchanged canonical/MTP0.",
+  "host": "192.168.1.45",
+  "base_commit": "3a74be076f0b2134acd00b9d14a99a4580d1712d",
+  "binary": {
+    "path": "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/infer-canonical-target-v1",
+    "sha256": "e511ea023c807211faee3983a7a226f4f546a4a855b44b57b1382ae9b231f609"
+  },
+  "source_files": {
+    "crates/backend/cuda/src/loading/mod.rs": "99243b46b371808390787e6f04385af2a08a817633745cb51847f1ed3c37d5c2",
+    "crates/backend/cuda/src/resident/attention_decode/workspace.rs": "7066ad631e342cd867bfcb5cc5e636f893d9e939657606c78ae814b5c6451366",
+    "crates/backend/cuda/src/resident/batch.rs": "3de4a4640e3e430c90c9c660e21b88483a0a2b5b98f372111ee6755c5b6fca13",
+    "crates/backend/cuda/src/resident/capture.rs": "a7c8f8c36b5fb25c552a9d6804b665a2273be2c3d55cf22ab3acd973445feef4",
+    "crates/backend/cuda/src/resident/mod.rs": "8fb15b948180c76674bd6cf6082b11c43d48c124f96c0d411e896e80c6ad4a10",
+    "crates/backend/cuda/src/resident/pool_gemv.rs": "9aa2aa5e078e0168505206ffddfb31e1c54e05fe907cdbb0949cb88881cb7062",
+    "crates/backend/cuda/src/resident/slot_batch.rs": "70e2026498808cb4d42ab2c3f4b7fb4a92ef904cc085c4dd0d632696fde1f6c7",
+    "crates/backend/cuda/src/resident/slot_verify.rs": "5413fd4674e3f01739869e4754c8127b6bca48847dfb7624725cc0ea2c649a70",
+    "crates/backend/cuda/src/resident/slot_verify_attention.rs": "05e1fa0c130acc921b1a5310b49659ba2195827f118a31c7aa39d77c1482d4f5",
+    "crates/backend/cuda/tests/unit/loading_pool_gemv_cost.rs": "3d8008b0d1c8c22c6bc15f06794514aa7e0b764aa76eb442ec1a4114fa762a45",
+    "crates/backend/cuda/tests/unit/loading_canonical_verification.rs": "23e4d3c4a0ff1defe4e24c65c7e24d988d75925a05af31fc6aefcf0fc71e8cf0",
+    "crates/backend/cuda/src/resident/canonical_recurrent.rs": "9a12e69443696da0d6278f0797e886879e54968b2397499aa750345c97d9c533"
+  },
+  "raw_logs": {
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/geometry.log": "3b3a1dbb917497b7ac47a4d4747dd303824b1dc970b4f234e3a6718b867efe26",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/candidate-geometry.log": "78a49ec6bfc38c65c2cb319518cc1bdff1f2d26270d37ec2d811f7766bd82bb4",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/operator-trace.log": "8072b3266aee906aa1cbdb60230cdd83afb3a1111c3efb1930419a838e1353c9",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-verification-v2.log": "72f23ab61b43886b09f3965cf78e7288a7e9ce8ea531e46d8c974bd7462d92f8",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/pooled-operator-trace.log": "ae23e8275cc1218e50ece0b0a915e677dcab8bf8a4cff1e8e38ef658ac69ccd2",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-split-one.log": "68d432cc5a109518cc438d6d78ae32f06495144f39ba4ceb5e28e6f8da51cf6f",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-scratch-v3.log": "e6c94666696f39b9e0bf370562b78a15652f1718bae7ecf00c88903a8f40cff3",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-scratch-v3-trace.log": "aba7820073c3ffe16f1adcfe355c5411a6e0e8d7779ba3f1b5a2d001844f5c10",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-norm-v4.log": "713125d5e3fae523e72a672489dd743c4b4933af9631a0e75bd5d803ba9ead07",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-build.log": "3c67beca2a973964fd2675d1bc8cd0206ec429126002b93bcf62a316ea6382cf",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-validation.log": "60be9dc8516d2775e16d653bfbbc2dac1ef7a1bb29bcf0f1ad303d385973bf04",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-wide.log": "f514ac167f42008e13eaf9931b819c1042f8fefcc15632ccd097d1ee416ddb5c",
+    "/home/r/benchmarks/inference.rs/default-fast-combination-2026-10-24/canonical-target-v1-gpu-regressions.log": "7fb3946557c63e1a5f92160ece6fb79caa3560d619db30fbdeceea071b0ff058"
+  },
+  "causes": [
+    "Small DenseA/B projections above16 flattened rows switched accumulation provider.",
+    "Three-lane grouped attention used a different reduction/partition geometry from single-step target attention.",
+    "Snapshot-free Delta scoring and commit used distinct fused arithmetic; value-split matching alone did not remove differences.",
+    "Pooled normalization crossed the256-head threshold and switched from per-head norm to norm_rows."
+  ],
+  "retained_failures": [
+    "Small projection fix alone:private84 hidden rows changed,4greedy mismatches; pooled18 rows changed.",
+    "Canonical attention fixesprivate84outputs/42states; pooled remains different.",
+    "Matching Delta value split1 still leaves all18pooled outputs different.",
+    "Canonical Delta scratch fixesfirstDelta; pooledfirstremainingGatedNorm differs1146/6144elements, max4.76837158203125e-7."
+  ],
+  "numeric_regression": {
+    "historical14teacher_forced_cases": {
+      "prompt2048_vs1024": 14,
+      "same_geometry_prompt": 14,
+      "private_verify_outputs": 84,
+      "private_committed_states": 42,
+      "pooled_outputs": 18,
+      "pooled_committed_states": 9,
+      "all_reported_bit_differences": 0
+    },
+    "independent_frozen_fixture": "shared-quant-reuse-2026-10-13/tokens-511.json",
+    "independent_pool_coverage": "6/12/16slots;allactive/even/last;diverse tokens;accepted1/2/3;release/rebind;16slotpagedKV;exacthidden/fullvocabulary/recurrent/liveFP8prefix;no rejected KV suffix comparison.",
+    "real_small_weights": 96,
+    "fixtures_per_weight": 8,
+    "row_widths": [
+      1,
+      2,
+      3,
+      4,
+      8,
+      16,
+      18,
+      36,
+      48,
+      144
+    ],
+    "ordinary_tests": 136,
+    "affected_gpu_tests": 9,
+    "strict_cuda_clippy": "passed",
+    "layout_source_policy_inventory": "passed on staged source export without unrelated local staging trees"
+  },
+  "scratch": {
+    "geometries": "one state and output per unique(value_heads,key_dim,value_dim)",
+    "qwen_bytes": 3170304,
+    "persistent_target_state": "scoring leaves untouched; accepted prefix replays original single-step kernel",
+    "per_slot_full_rollback_snapshots": false
+  },
+  "qualification_pending": {
+    "task_quality": "original1024 frozen GSM8K;unchanged512cap/scorer/C16/gross2pct CP95 overall and512strata, canonical2 andBF162 each contrasted withmain0;prepared but not run",
+    "performance": "fresh3profile actual-default pilot running; old13.417s BF16MTP2 is not a measurement of this repaired binary",
+    "default_flags": "unchanged",
+    "vllm_comparison": "no fresh parity claim"
+  }
+}

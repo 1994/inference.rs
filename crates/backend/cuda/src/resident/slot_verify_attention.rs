@@ -66,7 +66,13 @@ impl BatchBuilder<'_> {
             .map(|&dim| usize::try_from(dim).map_err(error))
             .collect::<StdResult<Vec<_>, _>>()?;
         let mut output = output.reshape(&[metadata.len() * query_heads, head_dim])?;
-        if prefix > 0 {
+        // Batched appends are exact; only proposal graphs may use approximate grouped scoring.
+        let attend_prefix = if self.weights.fusion.is_some() {
+            prefix
+        } else {
+            0
+        };
+        if attend_prefix > 0 {
             let (keys, values) = &caches[0][&state];
             self.attention.record_pooled_attention(
                 scope,
@@ -80,7 +86,7 @@ impl BatchBuilder<'_> {
             )?;
         }
         let output = output.reshape(&restore)?;
-        if prefix == caches.len() {
+        if attend_prefix == caches.len() {
             arena.buffers[slot] = Some(output);
             return Ok(true);
         }
@@ -91,7 +97,7 @@ impl BatchBuilder<'_> {
             .0
             .iter_mut()
             .enumerate()
-            .skip(prefix)
+            .skip(attend_prefix)
         {
             let base = index * VERIFY_LANES;
             let queries = [
@@ -113,6 +119,7 @@ impl BatchBuilder<'_> {
                 (query_heads, kv_heads, head_dim),
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 self.weights.kv_scales[&state],
+                self.weights.fusion.is_none(),
             )?;
         }
         arena.buffers[slot] = Some(output);

@@ -903,6 +903,7 @@ impl BatchBuilder<'_> {
                 (query_heads, kv_heads, head_dim),
                 i32::try_from(window.unwrap_or(0)).map_err(error)?,
                 self.weights.kv_scales[&id],
+                self.weights.fusion.is_none(),
             )
         };
         self.fp8_states.insert(id, (keys, values));
