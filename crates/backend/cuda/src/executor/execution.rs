@@ -274,15 +274,14 @@ impl CudaBackend {
             return;
         }
         let maximum = self.maximum_states.min(CB_DECODE_SLOTS);
-        let envelope = match self.loaded.shared_scratch_bytes().and_then(|scratch| {
-            Ok(pooled_envelope(
-                self.physical_available()?,
-                self.budget,
-                self.active_budget()?,
-                scratch,
+        let (envelope, baseline) = match self.loaded.shared_scratch_bytes().and_then(|scratch| {
+            let physical = self.physical_available()?;
+            Ok((
+                pooled_envelope(physical, self.budget, self.active_budget()?, scratch),
+                physical,
             ))
         }) {
-            Ok(bytes) => bytes,
+            Ok(budget) => budget,
             Err(error) => {
                 self.pool_failure_reason = Some(error.to_string());
                 return;
@@ -306,13 +305,19 @@ impl CudaBackend {
                 }
             };
             let quoted_bytes = plan.bytes;
-            let allocated = self.capture_pool_plan(capacity, &plan);
+            // Keep the original baseline across retries: failed captures can leave
+            // driver modules resident even after their tensor owners are reclaimed.
+            let allocated = self.capture_pool_plan(capacity, &plan).and_then(|()| {
+                self.physical_available()
+                    .map(|free| baseline.saturating_sub(free))
+            });
             if let Ok(allocated_bytes) = allocated
                 && allocated_bytes <= envelope
             {
                 self.reclaimed_slot_capacity = None;
                 self.deferred_pool_plan = None;
                 self.slots_disabled = false;
+                self.pool_failure_reason = None;
                 tracing::info!(target: "infer::executor",
                     width = self.slots.as_ref().map_or(0, SlotPool::width),
                     capacity, quoted_bytes, allocated_bytes, envelope_bytes = envelope,
@@ -344,7 +349,7 @@ impl CudaBackend {
     }
 
     /// Construct unpublished owners and measure their complete allocation.
-    fn capture_pool_plan(&mut self, capacity: usize, plan: &PoolPlan) -> Result<u64> {
+    fn capture_pool_plan(&mut self, capacity: usize, plan: &PoolPlan) -> Result<()> {
         let PoolPlan {
             width: planned_width,
             prompt_width,
@@ -353,7 +358,6 @@ impl CudaBackend {
         } = *plan;
         tracing::info!(target: "infer::executor", planned_width, prompt_width, quoted_bytes,
             capacity, kv_tokens, "planned pooled CUDA serving storage");
-        let before_bytes = self.physical_available()?;
         super::profiling::memory("before_pool", planned_width, self.loaded.device());
         let pool = self
             .create_slot_pool(capacity, planned_width, kv_tokens)
@@ -379,7 +383,7 @@ impl CudaBackend {
                 "incomplete pooled CUDA serving capture",
             ));
         }
-        Ok(before_bytes.saturating_sub(self.physical_available()?))
+        Ok(())
     }
 
     /// Only construction calls this: no live sequence has leased these new homes.
